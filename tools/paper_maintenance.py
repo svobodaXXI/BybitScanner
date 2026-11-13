@@ -427,7 +427,7 @@ def _write_known_drain_receipt(
 ) -> None:
     """One protected, lock-serialized phase transition; no overwrite/retry."""
     from tools.vps_gitless_release_activate import _trusted_file, _sync_directory
-    if phase not in ("deferred", "continuation-invoked"):
+    if phase not in ("deferred", "continuation-invoked", "completed"):
         raise ValueError("invalid_natural_drain_phase")
     if (not journal_root.is_dir() or journal_root.is_symlink()
             or journal_root.stat().st_uid != uid
@@ -437,7 +437,8 @@ def _write_known_drain_receipt(
         b"STOP_INVOKED; not install authorization\\n"
     ):
         raise ValueError("original_stop_intent_unproven")
-    if (journal_root / (".stop-confirmed-" + target)).exists():
+    confirmed = journal_root / (".stop-confirmed-" + target)
+    if confirmed.exists() or confirmed.is_symlink():
         raise ValueError("original_stop_already_confirmed")
     fd = os.open(journal_root / ".release.lock", os.O_RDWR | os.O_NOFOLLOW)
     with os.fdopen(fd, "rb") as lock:
@@ -446,10 +447,14 @@ def _write_known_drain_receipt(
                 or meta.st_mode & 0o077):
             raise ValueError("untrusted_release_lock")
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        if phase == "continuation-invoked" and not _known_drain_receipt(
-            journal_root, target, old_sha, phase="deferred", uid=uid,
+        prerequisite = (
+            "deferred" if phase == "continuation-invoked"
+            else "continuation-invoked" if phase == "completed" else None
+        )
+        if prerequisite and not _known_drain_receipt(
+            journal_root, target, old_sha, phase=prerequisite, uid=uid,
         ):
-            raise ValueError("known_natural_drain_deferred_proof_missing")
+            raise ValueError("known_natural_drain_phase_proof_missing")
         path = _known_drain_path(journal_root, target, phase)
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         with os.fdopen(fd, "wb") as stream:
@@ -896,38 +901,57 @@ def deploy_staged_editor_only(
                     )
                     if _known_drain_receipt(
                         journal_root, target, current,
-                        phase="continuation-invoked", uid=trusted_uid,
+                        phase="completed", uid=trusted_uid,
                     ):
-                        return "BLOCKED: known_natural_drain_continuation_already_invoked; no retry"
-                    owner = RuntimeShutdown(root=root, env=_environment(env_file))
-                    try:
-                        owner.require_known_natural_drain_ready(current)
-                    except Exception as exc:
-                        return ("BLOCKED: known_natural_drain_not_quiescent:"
-                                + type(exc).__name__ + ":"
-                                + str(exc).replace(chr(10), " ")[:160]
-                                + "; original STOP not replayed")
-                    _write_known_drain_receipt(
-                        journal_root, target, current,
-                        phase="continuation-invoked", uid=trusted_uid,
-                    )
-                    try:
-                        result = owner.continue_known_natural_drain(current)
-                    except Exception as exc:
-                        return ("BLOCKED: known_natural_drain_continuation_unknown:"
-                                + type(exc).__name__
-                                + "; no STOP replay, no retry or deployment")
-                    if not (
-                        isinstance(result, ShutdownResult)
-                        and result.ok is True and result.runtime_stopped is True
-                        and result.scope == SCOPE_ALL
-                    ):
-                        return ("BLOCKED: known_natural_drain_continuation_unproven:"
-                                + str(getattr(result, "message", "unknown"))[:180]
-                                + "; no STOP replay, no retry or deployment")
-                    _confirmed_stop_receipt(
-                        journal_root, target, current, uid=trusted_uid, record=True,
-                    )
+                        # Only this separately sealed successful continuation
+                        # can authorize install recovery. Never forge a
+                        # CANONICAL_ALL_STOP_CONFIRMED receipt for the earlier
+                        # *failed* canonical invocation.
+                        if not _known_drain_receipt(
+                            journal_root, target, current,
+                            phase="continuation-invoked", uid=trusted_uid,
+                        ):
+                            return "BLOCKED: natural_drain_completion_without_invocation"
+                        result = ShutdownResult(
+                            SCOPE_ALL, True, "Previously proven paused-drain continuation",
+                            runtime_stopped=True,
+                        )
+                    else:
+                        if _known_drain_receipt(
+                            journal_root, target, current,
+                            phase="continuation-invoked", uid=trusted_uid,
+                        ):
+                            return "BLOCKED: known_natural_drain_continuation_already_invoked; no retry"
+                        owner = RuntimeShutdown(root=root, env=_environment(env_file))
+                        try:
+                            owner.require_known_natural_drain_ready(current)
+                        except Exception as exc:
+                            return ("BLOCKED: known_natural_drain_not_quiescent:"
+                                    + type(exc).__name__ + ":"
+                                    + str(exc).replace(chr(10), " ")[:160]
+                                    + "; original STOP not replayed")
+                        _write_known_drain_receipt(
+                            journal_root, target, current,
+                            phase="continuation-invoked", uid=trusted_uid,
+                        )
+                        try:
+                            result = owner.continue_known_natural_drain(current)
+                        except Exception as exc:
+                            return ("BLOCKED: known_natural_drain_continuation_unknown:"
+                                    + type(exc).__name__
+                                    + "; no STOP replay, no retry or deployment")
+                        if not (
+                            isinstance(result, ShutdownResult)
+                            and result.ok is True and result.runtime_stopped is True
+                            and result.scope == SCOPE_ALL
+                        ):
+                            return ("BLOCKED: known_natural_drain_continuation_unproven:"
+                                    + str(getattr(result, "message", "unknown"))[:180]
+                                    + "; no STOP replay, no retry or deployment")
+                        _write_known_drain_receipt(
+                            journal_root, target, current,
+                            phase="completed", uid=trusted_uid,
+                        )
                 elif (len(pending) == 1
                         and pending[0].name != ".stop-invoked-" + target
                         and proven_one_flat_orphan_handoff
