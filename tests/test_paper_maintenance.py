@@ -3774,3 +3774,176 @@ def test_editor_update_delegates_sealed_frontend_into_existing_monolith(monkeypa
                         lambda _sha, **kw: (seen.append(kw["frontend_bundle"]), "READY: editor")[1])
     assert maintenance.main([target, "--update-editor-only-from-stable"]) == 0
     assert seen == [bundle]
+
+
+# Owner-facing monolith: one exact-SHA action, no manual phase choreography.
+
+def test_monolith_one_action_update_and_start_completes_full_pipeline(monkeypatch, capsys):
+    from tools import paper_maintenance as maintenance
+    from tools import vps_release_identity as identity
+
+    old, target = "a" * 40, "b" * 40
+    stage = Path("/unused/self-preflighted-stage")
+    bundle = stage / "terminal/frontend/dist"
+    calls = []
+    monkeypatch.setattr(identity, "verify_release", lambda *_: old)
+    monkeypatch.setattr(maintenance, "_prepare_approved_editor_stage",
+                        lambda sha: (calls.append(("stage", sha)), stage)[1])
+    monkeypatch.setattr(maintenance, "_prepare_editor_frontend_bundle",
+                        lambda sha, *, stage: (calls.append(("frontend", sha, stage)), bundle)[1])
+    monkeypatch.setattr(maintenance, "deploy_staged_editor_only",
+                        lambda sha, **kw: (
+                            calls.append(("deploy", sha, kw["stage"], kw["frontend_bundle"])),
+                            "READY: exact EDITOR_ONLY"
+                        )[1])
+    monkeypatch.setattr(maintenance, "start_installed_paper_from_editor",
+                        lambda sha, **kw: (
+                            calls.append(("start", sha, kw["editor_status"])),
+                            "READY: exact PAPER runtime"
+                        )[1])
+
+    assert maintenance.main([target, "--action", "update-and-start"]) == 0
+    assert calls == [
+        ("stage", target),
+        ("frontend", target, stage),
+        ("deploy", target, stage, bundle),
+        ("start", target, "READY: exact EDITOR_ONLY"),
+    ]
+    assert "READY: exact PAPER runtime" in capsys.readouterr().out
+
+
+def test_monolith_one_action_update_only_never_starts_paper(monkeypatch, capsys):
+    from tools import paper_maintenance as maintenance
+
+    target = "b" * 40
+    stage = Path("/unused/sealed-stage")
+    calls = []
+    monkeypatch.setattr(maintenance, "_prepare_approved_editor_stage",
+                        lambda *_: stage)
+    monkeypatch.setattr(maintenance, "_prepare_editor_frontend_bundle",
+                        lambda _sha, *, stage: None)
+    monkeypatch.setattr(maintenance, "deploy_staged_editor_only",
+                        lambda *_a, **_kw: (calls.append("deploy"), "READY: EDITOR_ONLY")[1])
+    monkeypatch.setattr(maintenance, "start_installed_paper_from_editor",
+                        lambda *_a, **_kw: pytest.fail("update only cannot start trading"))
+
+    assert maintenance.main([target, "--action", "update"]) == 0
+    assert calls == ["deploy"]
+    assert "READY: EDITOR_ONLY" in capsys.readouterr().out
+
+
+def test_monolith_one_action_start_uses_existing_installed_owner_no_staging(
+    monkeypatch, capsys,
+):
+    from tools import paper_maintenance as maintenance
+    from tools import vps_release_identity as identity
+
+    target = "b" * 40
+    calls = []
+    monkeypatch.setattr(identity, "verify_release", lambda *_: target)
+    monkeypatch.setattr(maintenance, "_paper_full_readiness",
+                        lambda **_kw: "BLOCKED: stopped, not yet ready")
+    monkeypatch.setattr(maintenance, "_active_exact_paper_blocker",
+                        lambda *_a, **_kw: None)
+    monkeypatch.setattr(maintenance, "_prepare_approved_editor_stage",
+                        lambda *_a, **_kw: pytest.fail("no staging for start"))
+    monkeypatch.setattr(maintenance, "resume_installed_release",
+                        lambda *_a, **_kw: (calls.append("editor"), "READY: exact editor")[1])
+    monkeypatch.setattr(maintenance, "_complete_stop_intent", lambda *_a, **_kw: None)
+    monkeypatch.setattr(maintenance, "start_installed_paper_from_editor",
+                        lambda *_a, **_kw: (calls.append("paper"), "READY: full PAPER")[1])
+    assert maintenance.main([target, "--action", "start"]) == 0
+    assert calls == ["editor", "paper"]
+    assert "READY: full PAPER" in capsys.readouterr().out
+
+
+def test_monolith_one_action_update_blocked_never_attempts_paper_start(monkeypatch):
+    from tools import paper_maintenance as maintenance
+
+    target = "b" * 40
+    monkeypatch.setattr(maintenance, "_prepare_approved_editor_stage",
+                        lambda *_: Path("/unused/stage"))
+    monkeypatch.setattr(maintenance, "_prepare_editor_frontend_bundle",
+                        lambda _sha, *, stage: None)
+    monkeypatch.setattr(maintenance, "deploy_staged_editor_only",
+                        lambda *_a, **_kw: "BLOCKED: prior_STOP_outcome_unproven")
+    monkeypatch.setattr(maintenance, "start_installed_paper_from_editor",
+                        lambda *_a, **_kw: pytest.fail("blocked update cannot start PAPER"))
+    assert maintenance.main([target, "--action", "update-and-start"]) == 2
+
+
+def test_monolith_one_action_conflicting_flags_are_rejected_before_any_mutation(
+    monkeypatch,
+):
+    from tools import paper_maintenance as maintenance
+    monkeypatch.setattr(maintenance, "_prepare_approved_editor_stage",
+                        lambda *_a, **_kw: pytest.fail("no staging on invalid action"))
+    monkeypatch.setattr(maintenance, "_stop_exact_installed_paper_once",
+                        lambda *_a, **_kw: pytest.fail("no STOP on invalid action"))
+    with pytest.raises(SystemExit) as result:
+        maintenance.main(["b" * 40, "--action", "stop",
+                          "--start-paper-after-editor"])
+    assert result.value.code == 2
+
+
+def test_monolith_stop_action_blocks_unresolved_previous_release_before_stop(
+    monkeypatch, tmp_path,
+):
+    from tools import paper_maintenance as maintenance
+    from tools import vps_gitless_release_activate as activate
+    from tools import vps_release_identity as identity
+
+    old, pending = "a" * 40, "b" * 40
+    installed = tmp_path / "release"
+    installed.mkdir()
+    transactions = tmp_path / "transactions"
+    transactions.mkdir(mode=0o700)
+    lock = transactions / ".release.lock"
+    lock.write_bytes(b"")
+    lock.chmod(0o600)
+    marker = transactions / (".stop-invoked-" + pending)
+    marker.write_bytes(b"STOP_INVOKED; not install authorization\\n")
+    marker.chmod(0o600)
+    monkeypatch.setattr(maintenance, "REPO", installed)
+    monkeypatch.setattr(activate, "TRANSACTIONS", transactions)
+    monkeypatch.setattr(identity, "verify_release", lambda *_a: old)
+    monkeypatch.setattr(maintenance, "_proven_prior_exceptional_completion",
+                        lambda *_a, **_kw: False)
+    monkeypatch.setattr(maintenance, "RuntimeShutdown",
+                        lambda **_kw: pytest.fail("never repeat STOP after unknown outcome"))
+    result = maintenance._stop_exact_installed_paper_once(
+        old, env_file=None, trusted_uid=os.geteuid(),
+    )
+    assert result == "BLOCKED: installed_STOP_prior_outcome_unproven; no_replay"
+    assert marker.read_bytes() == b"STOP_INVOKED; not install authorization\\n"
+
+
+def test_monolith_stop_action_invokes_existing_canonical_stop_only_once(
+    monkeypatch, tmp_path,
+):
+    from tools import paper_maintenance as maintenance
+    from tools import vps_gitless_release_activate as activate
+    from tools import vps_release_identity as identity
+    from tools.stop_robot_runtime import ShutdownResult, SCOPE_ALL
+
+    sha = "a" * 40
+    installed = tmp_path / "release"
+    installed.mkdir()
+    journal = tmp_path / "transactions"
+    journal.mkdir(mode=0o700)
+    lock = journal / ".release.lock"
+    lock.write_bytes(b"")
+    lock.chmod(0o600)
+    calls = []
+    monkeypatch.setattr(maintenance, "REPO", installed)
+    monkeypatch.setattr(activate, "TRANSACTIONS", journal)
+    monkeypatch.setattr(identity, "verify_release", lambda *_a: sha)
+    monkeypatch.setattr(maintenance, "RuntimeShutdown",
+                        lambda **_kw: SimpleNamespace(run=lambda scope: (
+                            calls.append(scope),
+                            ShutdownResult(scope, True, "fully stopped", runtime_stopped=True)
+                        )[1]))
+    assert maintenance._stop_exact_installed_paper_once(
+        sha, env_file=None, trusted_uid=os.geteuid(),
+    ) == "READY: canonical PAPER STOP proven; no update or restart"
+    assert calls == [SCOPE_ALL]
