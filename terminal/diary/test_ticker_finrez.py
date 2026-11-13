@@ -311,20 +311,63 @@ class FinrezMixedControllerTests(unittest.TestCase):
         self.assertEqual([r["trade_episode_id"] for r in today["closed_episodes"]], ["today"])
         self.assertEqual(today["closed_episodes"][0]["pnl_usdt"], "4.8")
 
-    def test_other_mixed_ownership_remains_blocked(self):
+    def test_proven_mixed_lifecycles_are_joint_only_and_never_double_counted(self):
+        # VPS read-only source revision 526 exposed these previously blocked
+        # kinds, including MANUAL opening and ROBOT closing an episode.
         cases = [
             [(AllocationRole.OPEN, Origin.TERMINAL_MANUAL), (AllocationRole.CLOSE, Origin.ROBOT)],
             [(AllocationRole.OPEN, Origin.ROBOT), (AllocationRole.INCREASE, Origin.TERMINAL_MANUAL),
              (AllocationRole.CLOSE, Origin.TERMINAL_MANUAL)],
             [(AllocationRole.OPEN, Origin.ROBOT), (AllocationRole.REDUCE, Origin.TERMINAL_MANUAL),
              (AllocationRole.CLOSE, Origin.ROBOT)],
+            [(AllocationRole.OPEN, Origin.TERMINAL_MANUAL),
+             (AllocationRole.INCREASE, Origin.TERMINAL_MANUAL),
+             (AllocationRole.INCREASE, Origin.TERMINAL_MANUAL),
+             (AllocationRole.INCREASE, Origin.ROBOT),
+             (AllocationRole.CLOSE, Origin.ROBOT)],
         ]
         for i, roles in enumerate(cases):
             mixed, origins = _scoped_episode(f"mixed-{i}", "BTCUSDT", roles)
-            with self.subTest(case=i), self.assertRaisesRegex(StatisticsScopeError, "mixed_controller"):
+            snapshot = PaperSourceSnapshot(526, (mixed,), origins)
+            original = mixed.allocations
+            with self.subTest(case=i):
+                for period in ("DAY", "ALL"):
+                    reports = {
+                        owner: project_paper_ticker_pnl(
+                            snapshot, account_id="paper", owner=owner,
+                            period=period, now_ms=_ms(9, 12),
+                        ) for owner in ("ROBOT", "MANUAL")
+                    }
+                    for owner, report in reports.items():
+                        self.assertEqual(report["tickers"], [])
+                        self.assertEqual(report["manual_interventions"], [])
+                        self.assertEqual(report["joint_management"], [{
+                            "symbol": "BTCUSDT",
+                            "pnl_usdt": str(Decimal("5") - Decimal("0.1") * len(roles)),
+                            "trade_count": 1,
+                        }])
+                        self.assertEqual(report["attribution_coverage"]["status"], "COMPLETE")
+                        self.assertEqual(
+                            [(row["trade_episode_id"], row["cohort"]) for row in report["closed_episodes"]],
+                            [(f"mixed-{i}", "JOINT_MANAGEMENT")],
+                        )
+                    self.assertEqual(mixed.allocations, original)
+
+    def test_malformed_mixed_lifecycle_still_blocks_without_dropping_evidence(self):
+        # A second OPEN inside one episode is NOT an ordinary change of
+        # controller and must not be silently classified as legitimate joint PnL.
+        malformed, origins = _scoped_episode("bad-mixed", "BTCUSDT", [
+            (AllocationRole.OPEN, Origin.TERMINAL_MANUAL),
+            (AllocationRole.OPEN, Origin.ROBOT),
+            (AllocationRole.CLOSE, Origin.ROBOT),
+        ])
+        for owner in ("ROBOT", "MANUAL"):
+            with self.subTest(owner=owner), self.assertRaisesRegex(
+                StatisticsScopeError, "mixed_controller_trade_episode"
+            ):
                 project_paper_ticker_pnl(
-                    PaperSourceSnapshot(2, (mixed,), origins),
-                    account_id="paper", owner="ROBOT", period="ALL", now_ms=_ms(9, 12),
+                    PaperSourceSnapshot(526, (malformed,), origins),
+                    account_id="paper", owner=owner, period="ALL", now_ms=_ms(9, 12),
                 )
 
     def test_unknown_episode_is_excluded_and_reported_as_partial_not_zero(self):
