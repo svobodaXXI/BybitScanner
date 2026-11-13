@@ -392,6 +392,85 @@ def _complete_stop_intent(journal_root: Path, target: str, *, uid: int) -> None:
     _sync_directory(journal)
 
 
+_NATURAL_DRAIN_REFUSAL = (
+    "STOP BLOCKED: Robot PAUSED with OPEN trade: natural drain incomplete; "
+    "backend retained for STOP/TAKE protection"
+)
+_KNOWN_DRAIN_ALLOWED_STEPS = frozenset((
+    "autopilot:off", "scanner:stop", "robot:reconcile", "robot:pause",
+))
+
+
+def _known_drain_path(journal_root: Path, target: str, phase: str) -> Path:
+    return journal_root / (".known-natural-drain-" + phase + "-" + target)
+
+
+def _known_drain_payload(old_sha: str, target: str, phase: str) -> bytes:
+    return (f"KNOWN_NATURAL_DRAIN:{phase}:{old_sha}:{target}" + chr(10)).encode("ascii")
+
+
+def _known_drain_receipt(
+    journal_root: Path, target: str, old_sha: str, *, phase: str, uid: int,
+) -> bool:
+    """Verify protected evidence; a missing receipt is not proof of refusal."""
+    from tools.vps_gitless_release_activate import _trusted_file
+    path = _known_drain_path(journal_root, target, phase)
+    if not path.exists() and not path.is_symlink():
+        return False
+    if _trusted_file(path, uid) != _known_drain_payload(old_sha, target, phase):
+        raise ValueError("known_natural_drain_receipt_mismatch")
+    return True
+
+
+def _write_known_drain_receipt(
+    journal_root: Path, target: str, old_sha: str, *, phase: str, uid: int,
+) -> None:
+    """One protected, lock-serialized phase transition; no overwrite/retry."""
+    from tools.vps_gitless_release_activate import _trusted_file, _sync_directory
+    if phase not in ("deferred", "continuation-invoked"):
+        raise ValueError("invalid_natural_drain_phase")
+    if (not journal_root.is_dir() or journal_root.is_symlink()
+            or journal_root.stat().st_uid != uid
+            or journal_root.stat().st_mode & 0o077):
+        raise ValueError("untrusted_natural_drain_journal")
+    if _trusted_file(journal_root / (".stop-invoked-" + target), uid) != (
+        b"STOP_INVOKED; not install authorization\\n"
+    ):
+        raise ValueError("original_stop_intent_unproven")
+    if (journal_root / (".stop-confirmed-" + target)).exists():
+        raise ValueError("original_stop_already_confirmed")
+    fd = os.open(journal_root / ".release.lock", os.O_RDWR | os.O_NOFOLLOW)
+    with os.fdopen(fd, "rb") as lock:
+        meta = os.fstat(lock.fileno())
+        if (not stat.S_ISREG(meta.st_mode) or meta.st_uid != uid
+                or meta.st_mode & 0o077):
+            raise ValueError("untrusted_release_lock")
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if phase == "continuation-invoked" and not _known_drain_receipt(
+            journal_root, target, old_sha, phase="deferred", uid=uid,
+        ):
+            raise ValueError("known_natural_drain_deferred_proof_missing")
+        path = _known_drain_path(journal_root, target, phase)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(_known_drain_payload(old_sha, target, phase))
+            stream.flush()
+            os.fsync(stream.fileno())
+        _sync_directory(journal_root)
+
+
+def _known_natural_drain_failure(result: object) -> bool:
+    """Only the exact returned, non-ambiguous PAUSED drain refusal can resume."""
+    return (
+        isinstance(result, ShutdownResult)
+        and result.scope == SCOPE_ALL and result.ok is False
+        and result.runtime_stopped is False
+        and result.message == _NATURAL_DRAIN_REFUSAL
+        and isinstance(result.steps, tuple)
+        and all(step in _KNOWN_DRAIN_ALLOWED_STEPS for step in result.steps)
+    )
+
+
 def _record_one_shot_stop_intent(
     journal_root: Path, target: str, *, uid: int, root: Path = REPO,
 ) -> bool:
@@ -802,6 +881,54 @@ def deploy_staged_editor_only(
             ] if journal_root.is_dir() else []
             if pending:
                 if (len(pending) == 1
+                        and pending[0].name == ".stop-invoked-" + target
+                        and isinstance(current, str)
+                        and _known_drain_receipt(
+                            journal_root, target, current,
+                            phase="deferred", uid=trusted_uid,
+                        )):
+                    # A known returned PAUSED drain timeout, not an unknown
+                    # STOP/POST outcome. While real exposure exists, leave
+                    # its protection online; do not consume continuation.
+                    (preflight or inspect_staged_release)(
+                        target, stage=stage, root=root, manifest=manifest_path,
+                        unit_dir=installed_units, uid=trusted_uid,
+                    )
+                    if _known_drain_receipt(
+                        journal_root, target, current,
+                        phase="continuation-invoked", uid=trusted_uid,
+                    ):
+                        return "BLOCKED: known_natural_drain_continuation_already_invoked; no retry"
+                    owner = RuntimeShutdown(root=root, env=_environment(env_file))
+                    try:
+                        owner.require_known_natural_drain_ready()
+                    except Exception as exc:
+                        return ("BLOCKED: known_natural_drain_not_quiescent:"
+                                + type(exc).__name__ + ":"
+                                + str(exc).replace(chr(10), " ")[:160]
+                                + "; original STOP not replayed")
+                    _write_known_drain_receipt(
+                        journal_root, target, current,
+                        phase="continuation-invoked", uid=trusted_uid,
+                    )
+                    try:
+                        result = owner.continue_known_natural_drain()
+                    except Exception as exc:
+                        return ("BLOCKED: known_natural_drain_continuation_unknown:"
+                                + type(exc).__name__
+                                + "; no STOP replay, no retry or deployment")
+                    if not (
+                        isinstance(result, ShutdownResult)
+                        and result.ok is True and result.runtime_stopped is True
+                        and result.scope == SCOPE_ALL
+                    ):
+                        return ("BLOCKED: known_natural_drain_continuation_unproven:"
+                                + str(getattr(result, "message", "unknown"))[:180]
+                                + "; no STOP replay, no retry or deployment")
+                    _confirmed_stop_receipt(
+                        journal_root, target, current, uid=trusted_uid, record=True,
+                    )
+                elif (len(pending) == 1
                         and pending[0].name != ".stop-invoked-" + target
                         and proven_one_flat_orphan_handoff
                         and not dual_orphan_handoff and stop is None
@@ -891,6 +1018,16 @@ def deploy_staged_editor_only(
                             + type(exc).__name__ + "; no retry, no deployment")
                 if not (getattr(result, "ok", False) is True
                         and getattr(result, "runtime_stopped", False) is True):
+                    if _known_natural_drain_failure(result):
+                        # The old protected SHA must remain exact. Only a
+                        # *returned* refusal gets durable deferred evidence;
+                        # no inferred STOP result, no unknown POST replay.
+                        if verify_release(root, manifest_path) != current:
+                            return "BLOCKED: old_release_changed_after_known_drain; no retry"
+                        _write_known_drain_receipt(
+                            journal_root, target, current,
+                            phase="deferred", uid=trusted_uid,
+                        )
                     # Preserve the canonical refusal reason for the operator;
                     # never infer STOP success or authorize a replay from it.
                     reason = getattr(result, "message", None)
