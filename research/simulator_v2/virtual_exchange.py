@@ -625,9 +625,9 @@ class VirtualExchange:
                         side=request.side, quantity=request.quantity,
                         price=price, fee_rate=self.taker_fee_rate, suffix="_fill",
                     )
-                    self.account.append(receipt)
                     if next_pending_protection is None:
                         raise ValueError("unprotected L2 LIMIT entry is forbidden")
+                    self.account.append(receipt)
                     next_protection = next_pending_protection
                     next_pending = None
                     next_pending_protection = None
@@ -676,6 +676,11 @@ class VirtualExchange:
                 if trade.event_ms - self._l2_book.available_at_ms > 250:
                     raise ValueError("stale L2 book cannot prove STOP executable price")
                 side = "SELL" if is_long else "BUY"
+                # A prior book better than the later triggering print is not
+                # executable at that stale price; do not manufacture profit.
+                if ((is_long and self._l2_book.best_bid[0] > trade.price)
+                        or (not is_long and self._l2_book.best_ask[0] < trade.price)):
+                    raise ValueError("L2/last-trade STOP execution chronology is unproven")
                 price = self._l2_sweep(
                     side=side, quantity=plan.entry.quantity, limit_price=None,
                 )
