@@ -131,6 +131,38 @@ class ImpulseProtectedVirtualTests(unittest.TestCase):
         self.assertEqual(blocked.impulse_risk_rejections,1)
         self.assertEqual(blocked.report.virtual_fills,0)
 
+    def test_diagnostic_trace_excludes_terminal_impulse_even_if_detected(self):
+        original = chunk()
+        # Source has an authentic-looking upward impulse at BOTH the first
+        # tradable close and the final close. Terminal close has no next M1.
+        bars = original.candles[:-1] + (candle(4, "100", "103", "99", "102"),)
+        with_terminal = HistoryChunk(
+            symbol="BTCUSDT", start_ms=0, end_ms=5*M,
+            source_id=original.source_id, candles=bars,
+            sha256=_checksum(_rows(bars)),
+        )
+        recognized_closes = []
+        observed_closes = []
+
+        def on_flow(_active, bar):
+            if bar.start_ms in (M, 4*M):
+                observed_closes.append(bar.end_ms)
+                return flow(bar.end_ms)
+            return None
+
+        result = run_verified_impulse_chunks(
+            session("terminal_trace"), (with_terminal,),
+            start_ms=0, end_inclusive_ms=4*M,
+            risk_settings=risk(), flow_on_close=on_flow,
+            on_eligible_impulse_signal=lambda signal: recognized_closes.append(
+                signal.known_at_ms
+            ),
+        )
+        self.assertEqual(observed_closes, [2*M, 5*M])
+        self.assertEqual(recognized_closes, [2*M])
+        self.assertEqual(result.impulse_signals, 1)
+        self.assertEqual(result.submitted_protected_limits, 1)
+
     def test_noncausal_flow_blocks_replay(self):
         with self.assertRaisesRegex(ValueError,"same-close"):
             run_verified_impulse_chunks(
