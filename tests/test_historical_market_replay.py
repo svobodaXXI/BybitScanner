@@ -2,7 +2,7 @@
 from decimal import Decimal
 import unittest
 
-from research.historical_market_replay import Candle, EntryIntent, replay_candles
+from research.historical_market_replay import (Candle, EntryIntent, replay_candles, adverse_fill_price, stop_take_reference)
 
 
 def candle(index, open_, high, low, close, *, interval=300_000):
@@ -177,6 +177,25 @@ class HistoricalMarketReplayTests(unittest.TestCase):
                 simulation_run_id="../paper", candles=bars,
                 on_closed_bar=lambda _: None,
             )
+
+    def test_shared_execution_policy_long_short_gap_and_both(self):
+        slip = Decimal("0.002")
+        self.assertEqual(adverse_fill_price(Decimal("100"), "LONG", slip, entry=True), Decimal("100.200"))
+        self.assertEqual(adverse_fill_price(Decimal("100"), "SHORT", slip, entry=True), Decimal("99.800"))
+        self.assertEqual(adverse_fill_price(Decimal("100"), "LONG", slip, entry=False), Decimal("99.800"))
+        self.assertEqual(adverse_fill_price(Decimal("100"), "SHORT", slip, entry=False), Decimal("100.200"))
+        self.assertEqual(
+            stop_take_reference(side="LONG", bar_open=Decimal("90"), bar_high=Decimal("110"),
+                                bar_low=Decimal("89"), stop=Decimal("95"), take=Decimal("108")),
+            (True, True, Decimal("90")),
+        )
+        self.assertEqual(
+            stop_take_reference(side="SHORT", bar_open=Decimal("110"), bar_high=Decimal("111"),
+                                bar_low=Decimal("90"), stop=Decimal("105"), take=Decimal("95")),
+            (True, True, Decimal("110")),
+        )
+        with self.assertRaises(ValueError):
+            adverse_fill_price(Decimal("100"), "PAPER", slip, entry=True)
 
 
 if __name__ == "__main__":

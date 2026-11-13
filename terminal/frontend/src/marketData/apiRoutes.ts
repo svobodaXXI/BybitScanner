@@ -15,8 +15,10 @@ export const marketApiRoutes = {
   paperState: (symbol: string) => `/api/paper-state?symbol=${encodeURIComponent(symbol)}`,
   openPositions: "/api/open-positions",
   diaryTrades: "/api/diary/trades",
-  diaryTickerFinrez: (accountId: string, owner: "MANUAL" | "ROBOT", period: "TODAY" | "ALL") =>
+  diaryTickerFinrez: (accountId: string, owner: "MANUAL" | "ROBOT", period: "DAY" | "WEEK" | "MONTH" | "YEAR" | "ALL") =>
     `/api/diary/ticker-finrez?account_id=${encodeURIComponent(accountId)}&owner=${owner}&period=${period}`,
+  diaryEpisodeFacts: (accountId: string, owner: "MANUAL" | "ROBOT", episodeId: string, revision: number) =>
+    `/api/diary/episode-facts?account_id=${encodeURIComponent(accountId)}&owner=${owner}&trade_episode_id=${encodeURIComponent(episodeId)}&source_revision=${revision}`,
   diarySetups: "/api/diary/setups",
   diaryStatistics: "/api/diary/statistics",
   diaryScopedStatistics: (accountId: string, owner: "MANUAL" | "ROBOT") =>

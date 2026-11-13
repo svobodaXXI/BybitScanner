@@ -392,6 +392,90 @@ def _complete_stop_intent(journal_root: Path, target: str, *, uid: int) -> None:
     _sync_directory(journal)
 
 
+_NATURAL_DRAIN_REFUSAL = (
+    "STOP BLOCKED: Robot PAUSED with OPEN trade: natural drain incomplete; "
+    "backend retained for STOP/TAKE protection"
+)
+_KNOWN_DRAIN_ALLOWED_STEPS = frozenset((
+    "autopilot:off", "scanner:stop", "robot:reconcile", "robot:pause",
+))
+
+
+def _known_drain_path(journal_root: Path, target: str, phase: str) -> Path:
+    return journal_root / (".known-natural-drain-" + phase + "-" + target)
+
+
+def _known_drain_payload(old_sha: str, target: str, phase: str) -> bytes:
+    return (f"KNOWN_NATURAL_DRAIN:{phase}:{old_sha}:{target}" + chr(10)).encode("ascii")
+
+
+def _known_drain_receipt(
+    journal_root: Path, target: str, old_sha: str, *, phase: str, uid: int,
+) -> bool:
+    """Verify protected evidence; a missing receipt is not proof of refusal."""
+    from tools.vps_gitless_release_activate import _trusted_file
+    path = _known_drain_path(journal_root, target, phase)
+    if not path.exists() and not path.is_symlink():
+        return False
+    if _trusted_file(path, uid) != _known_drain_payload(old_sha, target, phase):
+        raise ValueError("known_natural_drain_receipt_mismatch")
+    return True
+
+
+def _write_known_drain_receipt(
+    journal_root: Path, target: str, old_sha: str, *, phase: str, uid: int,
+) -> None:
+    """One protected, lock-serialized phase transition; no overwrite/retry."""
+    from tools.vps_gitless_release_activate import _trusted_file, _sync_directory
+    if phase not in ("deferred", "continuation-invoked", "completed"):
+        raise ValueError("invalid_natural_drain_phase")
+    if (not journal_root.is_dir() or journal_root.is_symlink()
+            or journal_root.stat().st_uid != uid
+            or journal_root.stat().st_mode & 0o077):
+        raise ValueError("untrusted_natural_drain_journal")
+    if _trusted_file(journal_root / (".stop-invoked-" + target), uid) != (
+        b"STOP_INVOKED; not install authorization\\n"
+    ):
+        raise ValueError("original_stop_intent_unproven")
+    confirmed = journal_root / (".stop-confirmed-" + target)
+    if confirmed.exists() or confirmed.is_symlink():
+        raise ValueError("original_stop_already_confirmed")
+    fd = os.open(journal_root / ".release.lock", os.O_RDWR | os.O_NOFOLLOW)
+    with os.fdopen(fd, "rb") as lock:
+        meta = os.fstat(lock.fileno())
+        if (not stat.S_ISREG(meta.st_mode) or meta.st_uid != uid
+                or meta.st_mode & 0o077):
+            raise ValueError("untrusted_release_lock")
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        prerequisite = (
+            "deferred" if phase == "continuation-invoked"
+            else "continuation-invoked" if phase == "completed" else None
+        )
+        if prerequisite and not _known_drain_receipt(
+            journal_root, target, old_sha, phase=prerequisite, uid=uid,
+        ):
+            raise ValueError("known_natural_drain_phase_proof_missing")
+        path = _known_drain_path(journal_root, target, phase)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(_known_drain_payload(old_sha, target, phase))
+            stream.flush()
+            os.fsync(stream.fileno())
+        _sync_directory(journal_root)
+
+
+def _known_natural_drain_failure(result: object) -> bool:
+    """Only the exact returned, non-ambiguous PAUSED drain refusal can resume."""
+    return (
+        isinstance(result, ShutdownResult)
+        and result.scope == SCOPE_ALL and result.ok is False
+        and result.runtime_stopped is False
+        and result.message == _NATURAL_DRAIN_REFUSAL
+        and isinstance(result.steps, tuple)
+        and all(step in _KNOWN_DRAIN_ALLOWED_STEPS for step in result.steps)
+    )
+
+
 def _record_one_shot_stop_intent(
     journal_root: Path, target: str, *, uid: int, root: Path = REPO,
 ) -> bool:
@@ -616,6 +700,7 @@ def deploy_staged_editor_only(
     frontend_bundle: Path | None = None,
     frontend_expected_index_sha256: str | None = None,
     frontend_publisher=None,
+    confirmed_stop_only: bool = False,
 ) -> str:
     """Single bounded intent: preflight -> canonical STOP -> Gitless switch -> Editor.
 
@@ -639,6 +724,8 @@ def deploy_staged_editor_only(
         return "BLOCKED: invalid_approved_target"
     if dual_orphan_handoff and proven_one_flat_orphan_handoff:
         return "BLOCKED: competing_exceptional_handoff_options"
+    if confirmed_stop_only and (stop is not None or dual_orphan_handoff or proven_one_flat_orphan_handoff):
+        return "BLOCKED: confirmed_stop_only_conflicting_STOP_or_handoff"
     if (not root.is_dir() or root.is_symlink() or (root / ".git").exists()
             or not stage.is_dir() or stage.is_symlink()):
         return "BLOCKED: incorrect_Gitless_release_layout"
@@ -721,6 +808,13 @@ def deploy_staged_editor_only(
             if not journal.is_dir() or journal.is_symlink():
                 return "BLOCKED: installed_release_unproven_without_transaction"
             current = None
+        if confirmed_stop_only:
+            # Owner authorized continuation of a durable, exact prior STOP, not a
+            # second STOP or a new attempt. Refuse any different transaction shape.
+            if not isinstance(current, str) or current == target or journal.exists():
+                return "BLOCKED: confirmed_stop_only_release_or_journal_mismatch; no STOP"
+            if not _confirmed_stop_receipt(journal_root, target, current, uid=trusted_uid):
+                return "BLOCKED: confirmed_stop_only_receipt_missing; no STOP"
         if current != target and isinstance(current, str):
             # A previously installed and RUNNING release can be ready even if
             # the final editor-ready receipt was lost after its canonical STOP.
@@ -792,6 +886,73 @@ def deploy_staged_editor_only(
             ] if journal_root.is_dir() else []
             if pending:
                 if (len(pending) == 1
+                        and pending[0].name == ".stop-invoked-" + target
+                        and isinstance(current, str)
+                        and _known_drain_receipt(
+                            journal_root, target, current,
+                            phase="deferred", uid=trusted_uid,
+                        )):
+                    # A known returned PAUSED drain timeout, not an unknown
+                    # STOP/POST outcome. While real exposure exists, leave
+                    # its protection online; do not consume continuation.
+                    (preflight or inspect_staged_release)(
+                        target, stage=stage, root=root, manifest=manifest_path,
+                        unit_dir=installed_units, uid=trusted_uid,
+                    )
+                    if _known_drain_receipt(
+                        journal_root, target, current,
+                        phase="completed", uid=trusted_uid,
+                    ):
+                        # Only this separately sealed successful continuation
+                        # can authorize install recovery. Never forge a
+                        # CANONICAL_ALL_STOP_CONFIRMED receipt for the earlier
+                        # *failed* canonical invocation.
+                        if not _known_drain_receipt(
+                            journal_root, target, current,
+                            phase="continuation-invoked", uid=trusted_uid,
+                        ):
+                            return "BLOCKED: natural_drain_completion_without_invocation"
+                        result = ShutdownResult(
+                            SCOPE_ALL, True, "Previously proven paused-drain continuation",
+                            runtime_stopped=True,
+                        )
+                    else:
+                        if _known_drain_receipt(
+                            journal_root, target, current,
+                            phase="continuation-invoked", uid=trusted_uid,
+                        ):
+                            return "BLOCKED: known_natural_drain_continuation_already_invoked; no retry"
+                        owner = RuntimeShutdown(root=root, env=_environment(env_file))
+                        try:
+                            owner.require_known_natural_drain_ready(current)
+                        except Exception as exc:
+                            return ("BLOCKED: known_natural_drain_not_quiescent:"
+                                    + type(exc).__name__ + ":"
+                                    + str(exc).replace(chr(10), " ")[:160]
+                                    + "; original STOP not replayed")
+                        _write_known_drain_receipt(
+                            journal_root, target, current,
+                            phase="continuation-invoked", uid=trusted_uid,
+                        )
+                        try:
+                            result = owner.continue_known_natural_drain(current)
+                        except Exception as exc:
+                            return ("BLOCKED: known_natural_drain_continuation_unknown:"
+                                    + type(exc).__name__
+                                    + "; no STOP replay, no retry or deployment")
+                        if not (
+                            isinstance(result, ShutdownResult)
+                            and result.ok is True and result.runtime_stopped is True
+                            and result.scope == SCOPE_ALL
+                        ):
+                            return ("BLOCKED: known_natural_drain_continuation_unproven:"
+                                    + str(getattr(result, "message", "unknown"))[:180]
+                                    + "; no STOP replay, no retry or deployment")
+                        _write_known_drain_receipt(
+                            journal_root, target, current,
+                            phase="completed", uid=trusted_uid,
+                        )
+                elif (len(pending) == 1
                         and pending[0].name != ".stop-invoked-" + target
                         and proven_one_flat_orphan_handoff
                         and not dual_orphan_handoff and stop is None
@@ -822,24 +983,27 @@ def deploy_staged_editor_only(
                                 + type(exc).__name__ + ":" + str(exc)
                                 + "; no STOP replay or deployment retry")
                     return finish_frontend(status)
-                if (len(pending) != 1
-                        or pending[0].name != ".stop-invoked-" + target
-                        or not _confirmed_stop_receipt(
-                            journal_root, target, current, uid=trusted_uid,
-                        )):
-                    return "BLOCKED: prior_STOP_outcome_unproven_without_install_journal; no replay"
-                (preflight or inspect_staged_release)(
-                    target, stage=stage, root=root, manifest=manifest_path,
-                    unit_dir=installed_units, uid=trusted_uid,
-                )
-                # An fsynced receipt documents the canonical success already
-                # observed, not a guess based on missing processes. The real
-                # installer independently reattests stopped units/listeners.
-                result = ShutdownResult(
-                    SCOPE_ALL, True, "Verified prior canonical stop receipt",
-                    runtime_stopped=True,
-                )
+                else:
+                    if (len(pending) != 1
+                            or pending[0].name != ".stop-invoked-" + target
+                            or not _confirmed_stop_receipt(
+                                journal_root, target, current, uid=trusted_uid,
+                            )):
+                        return "BLOCKED: prior_STOP_outcome_unproven_without_install_journal; no replay"
+                    (preflight or inspect_staged_release)(
+                        target, stage=stage, root=root, manifest=manifest_path,
+                        unit_dir=installed_units, uid=trusted_uid,
+                    )
+                    # An fsynced receipt documents the canonical success already
+                    # observed, not a guess based on missing processes. The real
+                    # installer independently reattests stopped units/listeners.
+                    result = ShutdownResult(
+                        SCOPE_ALL, True, "Verified prior canonical stop receipt",
+                        runtime_stopped=True,
+                    )
             else:
+                if confirmed_stop_only:
+                    return "BLOCKED: confirmed_stop_only_pending_intent_missing; no STOP"
                 (preflight or inspect_staged_release)(
                     target, stage=stage, root=root, manifest=manifest_path,
                     unit_dir=installed_units, uid=trusted_uid,
@@ -879,6 +1043,16 @@ def deploy_staged_editor_only(
                             + type(exc).__name__ + "; no retry, no deployment")
                 if not (getattr(result, "ok", False) is True
                         and getattr(result, "runtime_stopped", False) is True):
+                    if _known_natural_drain_failure(result):
+                        # The old protected SHA must remain exact. Only a
+                        # *returned* refusal gets durable deferred evidence;
+                        # no inferred STOP result, no unknown POST replay.
+                        if verify_release(root, manifest_path) != current:
+                            return "BLOCKED: old_release_changed_after_known_drain; no retry"
+                        _write_known_drain_receipt(
+                            journal_root, target, current,
+                            phase="deferred", uid=trusted_uid,
+                        )
                     # Preserve the canonical refusal reason for the operator;
                     # never infer STOP success or authorize a replay from it.
                     reason = getattr(result, "message", None)
@@ -2016,6 +2190,8 @@ def main(argv=None) -> int:
                         help="single EDITOR_ONLY update: prepare exact stable Gitless stage and run canonical monolith")
     parser.add_argument("--staged-gitless-editor-only", type=Path,
                         help="owner-approved exact staged checkout; safe-stop and install once")
+    parser.add_argument("--continue-confirmed-stop-only", action="store_true",
+                        help="continue exact prior confirmed STOP; never invoke STOP again")
     parser.add_argument("--start-paper-after-editor", action="store_true",
                         help="after safe Gitless Editor recovery, start owner PAPER oneshot")
     parser.add_argument("--publish-frontend-only", action="store_true",
@@ -2040,7 +2216,8 @@ def main(argv=None) -> int:
                 or args.dual_orphan_handoff_20261103
                 or args.proven_one_flat_orphan_handoff
                 or args.resume_one_flat_from_prior_stop
-                or args.expected_old_backend or args.wait_seconds):
+                or args.expected_old_backend or args.wait_seconds
+                or args.continue_confirmed_stop_only):
             parser.error("automatic Editor update cannot combine with other operations")
         try:
             stage = _prepare_approved_editor_stage(args.sha)
@@ -2065,6 +2242,13 @@ def main(argv=None) -> int:
                           if bundle is not None else [])
         return main([args.sha, "--env-file", str(args.env_file),
                      *mode, *frontend_flags])
+    if args.continue_confirmed_stop_only and (
+        not args.staged_gitless_editor_only or args.resume_installed_editor_only
+        or args.start_paper_after_editor or args.publish_frontend_only
+        or args.dual_orphan_handoff_20261103 or args.proven_one_flat_orphan_handoff
+        or args.resume_one_flat_from_prior_stop or args.expected_old_backend
+    ):
+        parser.error("confirmed STOP continuation requires only exact Gitless staging")
     if args.staged_gitless_editor_only and REPO.is_dir():
         # Fail before preflight/STOP if Python imported tools from the target
         # staging checkout instead of the installed Gitless release.
@@ -2203,6 +2387,7 @@ def main(argv=None) -> int:
             proven_one_flat_orphan_handoff=args.proven_one_flat_orphan_handoff,
             frontend_bundle=args.frontend_bundle,
             frontend_expected_index_sha256=args.frontend_current_index_sha256,
+            confirmed_stop_only=args.continue_confirmed_stop_only,
         )
     elif args.resume_installed_editor_only:
         status = resume_installed_release(args.sha, root=REPO, env_file=args.env_file)

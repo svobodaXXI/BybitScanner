@@ -546,13 +546,15 @@ class MinEntryRrTests(unittest.TestCase):
             with self.subTest(raw=raw):
                 self.assertEqual(self._threshold(raw), Decimal("1.5"))
 
-    def test_late_admission_shares_nonweakening_wedge_two_r_floor(self):
+    def test_late_admission_shares_owner_approved_one_and_half_wedge_floor(self):
         import robot_protection
         from terminal.application.robot_late_admission import MIN_LATE_ADMISSION_RR
 
-        self.assertEqual(MIN_LATE_ADMISSION_RR, Decimal("2"))
+        self.assertEqual(MIN_LATE_ADMISSION_RR, Decimal("1.5"))
         with patch.dict(os.environ, {"ROBOT_MIN_ENTRY_RR": "0"}):
-            self.assertEqual(robot_protection.wedge_min_entry_rr(), Decimal("2"))
+            self.assertEqual(robot_protection.wedge_min_entry_rr(), Decimal("1.5"))
+        with patch.dict(os.environ, {"ROBOT_MIN_ENTRY_RR": "1.54"}):
+            self.assertEqual(robot_protection.wedge_min_entry_rr(), Decimal("1.54"))
         with patch.dict(os.environ, {"ROBOT_MIN_ENTRY_RR": "5"}):
             self.assertEqual(robot_protection.wedge_min_entry_rr(), Decimal("5"))
 

@@ -31,7 +31,7 @@ from terminal.paper.matching import (
 )
 
 
-MIN_LATE_ADMISSION_RR = robot_protection.WEDGE_MIN_ENTRY_RR  # same 2R floor as retest-LIMIT
+MIN_LATE_ADMISSION_RR = robot_protection.WEDGE_MIN_ENTRY_RR  # same owner-approved 1.5R Wedge floor as retest-LIMIT
 MIN_LATE_ADMISSION_REWARD = MIN_EXPECTED_REWARD
 MAX_LATE_ADMISSION_SLIPPAGE = MAX_ADVERSE_MOVE
 

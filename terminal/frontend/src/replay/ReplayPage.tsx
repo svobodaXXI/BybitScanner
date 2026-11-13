@@ -2,27 +2,26 @@ import {
   CandlestickSeries, ColorType, CrosshairMode, LineSeries, LineStyle, createChart,
   type IChartApi, type ISeriesApi, type Logical, type UTCTimestamp,
 } from "lightweight-charts";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   completeHourlyCandles, nextClosedCandleCursor, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations,
   visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy,
-  type ReplayDocument, type ReplayEvent,
+  type ReplayDocument, type ReplayEvent, type PublicScannerObservation,
 } from "./replayModel";
 import { visibleExecutionMarkers, TELEGRAM_BUY_COLOR, TELEGRAM_SELL_COLOR } from "./executionMarkers";
+import {
+  matchPaperFactsToMarket, parsePaperEpisodeFacts, revealedPaperMarkers,
+  type PaperEpisodeFacts, type PaperOverlay,
+} from "./paperEpisodeFacts";
 import { rayEndPoint } from "../chart/drawingGeometry";
 import { DrawingOverlay } from "../chart/DrawingOverlay";
 import type { DrawingObject, DrawingTool } from "../chart/drawingModel";
 import { chartLogicalAtTime, drawingLogicalToTime, timeAtChartLogical, timeToDrawingLogical } from "./replayDrawingCoordinates";
+import { RunSetupPanel } from "./RunSetupPanel";
+import { validateInclusiveWindow, makeWedgeRunRequest, formatRunCoordinates, onlyWedges, type RunSelection } from "./runSetup";
+type WedgeRunRequest = ReturnType<typeof makeWedgeRunRequest>;
 import "./replay.css";
 
-function label(event: ReplayEvent): string {
-  switch (event.kind) {
-    case "CANDLE_CLOSED": return "Свеча закрылась";
-    case "ENTRY_SIGNAL": return "Сигнал " + (event.side ?? "");
-    case "ENTRY_FILLED": return "Вход " + (event.side ?? "");
-    case "EXIT_FILLED": return "Выход " + (event.reason ?? "");
-  }
-}
 // The replay tools share the terminal's compact icon-first interaction, with
 // real vector pictograms rather than font-dependent textual approximations.
 const REPLAY_DRAWING_TOOLS: Array<{ tool: DrawingTool; label: string }> = [
@@ -57,9 +56,24 @@ function ReplayToolIcon({ tool }: { tool: DrawingTool | "delete" | "undo" }) {
     <path d={REPLAY_TOOL_PATHS[tool]} />
   </svg>;
 }
-function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selectedId,
+const PLAYER_PATHS = {
+  play: "M7 4L20 12L7 20Z",
+  pause: "M6 4h4v16H6zM14 4h4v16h-4z",
+  backward: "M12 5L4 12L12 19ZM21 5L13 12L21 19Z",
+  forward: "M3 5L11 12L3 19ZM12 5L20 12L12 19Z",
+  beginning: "M4 4v16M20 5L11 12L20 19ZM11 5L2 12L11 19Z",
+} as const;
+function PlayerIcon({ name }: { name: keyof typeof PLAYER_PATHS }) {
+  return <svg className="replay-player-icon" viewBox="0 0 24 24"
+    data-player-icon={name} aria-hidden="true" focusable="false">
+    <path d={PLAYER_PATHS[name]} />
+  </svg>;
+}
+function ReplayChart({ document, cursor, paperOverlay, paperFacts, selectedStrategies, showTrendGeometry, showDebug, timeframe, drawings, selectedId,
   drawingTool, onDrawingsChange, onSelectDrawing, onDrawingGesture }: {
-  document: ReplayDocument; cursor: number; showDebug: boolean; timeframe: "5m" | "1h";
+  document: ReplayDocument; cursor: number; paperOverlay: PaperOverlay;
+  paperFacts: PaperEpisodeFacts | null; selectedStrategies: readonly string[];
+  showTrendGeometry: boolean; showDebug: boolean; timeframe: "5m" | "1h";
   drawings: DrawingObject[]; selectedId: string | null; drawingTool: DrawingTool;
   onDrawingsChange: (next: DrawingObject[]) => void;
   onSelectDrawing: (id: string | null) => void;
@@ -91,14 +105,16 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
       return index >= 0 ? observedDmi[index] : undefined;
     })
     : observedDmi;
-  const observedTouches = useMemo(() => visibleObservations(document, shown.lastTimeMs), [document, shown.lastTimeMs]);
+  const observedTouches = useMemo(() =>
+    showTrendGeometry ? visibleObservations(document, shown.lastTimeMs) : [],
+    [document, shown.lastTimeMs, showTrendGeometry]);
   const blueRiskPreviews = useMemo(
-    () => visibleH017BlueRiskPreviews(document, shown.lastTimeMs),
-    [document, shown.lastTimeMs],
+    () => showTrendGeometry ? visibleH017BlueRiskPreviews(document, shown.lastTimeMs) : [],
+    [document, shown.lastTimeMs, showTrendGeometry],
   );
   const priorBreaks = useMemo(
-    () => visiblePriorBreaks(document, shown.lastTimeMs),
-    [document, shown.lastTimeMs],
+    () => showTrendGeometry ? visiblePriorBreaks(document, shown.lastTimeMs) : [],
+    [document, shown.lastTimeMs, showTrendGeometry],
   );
   const latestDmi = observedDmi.at(-1);
   const dmiValue = (value: number | null | undefined) => value == null ? "—" : value.toFixed(1);
@@ -227,16 +243,16 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
       // anchors/time of knowledge come from the frozen causal geometry feed;
       // DrawingOverlay's rayEndPoint extends the line to the price pane edge.
       // Never refit the line to the replayed price candles.
-      const knownLines = visibleGeometry(document, shown.lastTimeMs);
-      const historicalLines = visibleGeometryHistory(document, shown.lastTimeMs);
+      const knownLines = showTrendGeometry ? visibleGeometry(document, shown.lastTimeMs) : [];
+      const historicalLines = showTrendGeometry ? visibleGeometryHistory(document, shown.lastTimeMs) : [];
       // Both published and provisional history are immutable visual records:
       // a replaced slope cannot erase, relocate or backdate its predecessor.
       // Avoid double-painting an early guide with identical confirmed anchors.
       const confirmedKeys = new Set(historicalLines.map(line =>
         [line.kind, line.side, line.from_ms, line.to_ms, line.from_price, line.to_price].join(":")));
-      const drawableLines = [...historicalLines, ...earlyGeometry.filter(line =>
+      const drawableLines = [...historicalLines, ...(showTrendGeometry ? earlyGeometry : []).filter(line =>
         !confirmedKeys.has([line.kind, line.side, line.from_ms, line.to_ms, line.from_price, line.to_price].join(":")))];
-      const knownPriors = visiblePriorLevels(document, shown.lastTimeMs);
+      const knownPriors = showTrendGeometry ? visiblePriorLevels(document, shown.lastTimeMs) : [];
       const brokenByVersion = new Map(priorBreaks.map(item => [item.trend_version, item]));
       let paintedGeometry = 0;
       for (const line of drawableLines) {
@@ -280,6 +296,55 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
         paintedGeometry += 1;
       }
       context.setLineDash([]);
+      // Source-original detector geometry is read-only archive evidence and
+      // DISTINCT from the dynamically computed yellow H1 / blue M5 lines.
+      // The exact anchors are never refitted to candles; no pre-signal leak.
+      const original = paperOverlay.status === "MATCHED" &&
+        paperFacts?.setup_context?.status === "EXACT_D2_LINK" &&
+        paperFacts.setup_context.geometry_status === "ORIGINAL_ARCHIVE_HASH_VERIFIED"
+        ? paperFacts.setup_context.original_geometry : undefined;
+      let paintedOriginal = 0;
+      if (original && shown.lastTimeMs !== null && shown.lastTimeMs >= original.sent_at_ms
+          && displayCandles.length >= 2) {
+        const oldest = displayCandles[0].start_ms;
+        const newest = displayCandles[displayCandles.length - 1].start_ms;
+        for (const boundary of original.boundaries) {
+          const first = boundary.anchors[0];
+          const last = boundary.anchors[boundary.anchors.length - 1];
+          const startAt = boundary.kind === "horizontal"
+            ? oldest : Math.max(oldest, first.bar_open_time_ms);
+          const endAt = boundary.kind === "segment"
+            ? Math.min(newest, last.bar_open_time_ms) : newest;
+          // Map only to actual already-revealed chart bars; original time
+          // prices still come from the immutable anchor formula.
+          const leftBar = displayCandles.find(bar => bar.start_ms >= startAt);
+          const rightBar = displayCandles.slice().reverse().find(bar => bar.start_ms <= endAt);
+          if (!leftBar || !rightBar || leftBar.start_ms >= rightBar.start_ms) continue;
+          const priceAt = (at: number) => boundary.anchors.length === 1 ? first.price :
+            first.price + (last.price - first.price) *
+              (at - first.bar_open_time_ms) / (last.bar_open_time_ms - first.bar_open_time_ms);
+          const x1 = api.timeScale().timeToCoordinate((leftBar.start_ms / 1000) as UTCTimestamp);
+          const x2 = api.timeScale().timeToCoordinate((rightBar.start_ms / 1000) as UTCTimestamp);
+          const y1 = candleSeries.priceToCoordinate(priceAt(leftBar.start_ms));
+          const y2 = candleSeries.priceToCoordinate(priceAt(rightBar.start_ms));
+          if (x1 === null || x2 === null || y1 === null || y2 === null ||
+              !Number.isFinite(x1) || !Number.isFinite(x2) ||
+              !Number.isFinite(y1) || !Number.isFinite(y2)) continue;
+          const to = boundary.kind === "ray" || boundary.kind === "horizontal-ray"
+            ? rayEndPoint({ x: x1, y: y1 }, { x: x2, y: y2 },
+                { width: priceWidth, height: paneHeight })
+            : { x: x2, y: y2 };
+          context.beginPath();
+          context.strokeStyle = "#d08cf0";
+          context.lineWidth = 1.25;
+          context.setLineDash([3, 4]);
+          context.moveTo(x1, y1);
+          context.lineTo(to.x, to.y);
+          context.stroke();
+          paintedOriginal++;
+        }
+        context.setLineDash([]);
+      }
       // Purple prior: second confirmed touch of the H1 main line, at its wick.
       // Old levels stop at the time of replacement; only the latest level
       // extends into the right-hand whitespace. No future version is shown.
@@ -313,7 +378,7 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
       context.setLineDash([]);
       // Hollow marks are geometry observations, never entry/fill triangles.
       let paintedObservations = 0;
-      for (const item of (showDebug ? observedTouches : [])) {
+      for (const item of (showTrendGeometry && showDebug ? observedTouches : [])) {
         const x = api.timeScale().timeToCoordinate(((item.time_ms - 300_000) / 1000) as UTCTimestamp);
         const y = candleSeries.priceToCoordinate(
           item.kind === "MAIN_1H_TOUCH" ? item.line_price : item.price,
@@ -334,7 +399,7 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
       }
       // Hollow squares are H-017 blue-line risk previews, never fills.
       let paintedBlueRisk = 0;
-      for (const item of (showDebug ? blueRiskPreviews : [])) {
+      for (const item of (showTrendGeometry && showDebug ? blueRiskPreviews : [])) {
         const x = api.timeScale().timeToCoordinate((item.open_ms / 1000) as UTCTimestamp);
         const y = candleSeries.priceToCoordinate(item.entry_price);
         if (x === null || y === null || x < 0 || x > priceWidth || y < 0 || y > paneHeight) continue;
@@ -376,10 +441,70 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
         context.stroke();
         rendered += 1;
       }
+      // PAPER observations are a separate, hollow-ring overlay. These are
+      // original owner-imported execution prices, NOT SIMULATION fill events.
+      // Only plot a factual fill once its independently closed M5 is revealed.
+      let paintedPaper = 0;
+      for (const fill of revealedPaperMarkers(paperOverlay, shown.candles)) {
+        const stamp = timeframe === "1h"
+          ? Math.floor(fill.candle_start_ms / 3_600_000) * 3_600_000
+          : fill.candle_start_ms;
+        if (!displayCandles.some(bar => bar.start_ms === stamp)) continue;
+        const x = api.timeScale().timeToCoordinate((stamp / 1000) as UTCTimestamp);
+        const y = candleSeries.priceToCoordinate(fill.price);
+        if (x === null || y === null || !Number.isFinite(x) || !Number.isFinite(y) ||
+            x < 0 || x > priceWidth || y < 0 || y > paneHeight) continue;
+        context.beginPath();
+        context.arc(x, y, 5.5, 0, 2 * Math.PI);
+        context.fillStyle = "#121923";
+        context.fill();
+        context.strokeStyle = fill.order_side === "Buy" ? TELEGRAM_BUY_COLOR : TELEGRAM_SELL_COLOR;
+        context.lineWidth = 2;
+        context.stroke();
+        paintedPaper++;
+      }
+      // Real native Scanner research on public, CLOSED M5 only: small
+      // outlined markers, never ENTRY_SIGNAL/Robot order/fill triangles.
+      let paintedScanner = 0;
+      const revealedScanner = document.mode === "MARKET_ONLY" &&
+        shown.lastTimeMs !== null
+          ? (document.scanner_observations ?? []).filter(item =>
+              selectedStrategies.includes(item.strategy) &&
+              item.available_at_ms <= shown.lastTimeMs!)
+          : [];
+      for (const item of revealedScanner) {
+        const stamp = timeframe === "1h"
+          ? Math.floor(item.source_candle_start_ms / 3_600_000) * 3_600_000
+          : item.source_candle_start_ms;
+        if (!displayCandles.some(bar => bar.start_ms === stamp)) continue;
+        const x = api.timeScale().timeToCoordinate((stamp / 1000) as UTCTimestamp);
+        const y = candleSeries.priceToCoordinate(item.close_price);
+        if (x === null || y === null || !Number.isFinite(x) || !Number.isFinite(y) ||
+            x < 8 || x > priceWidth - 8 || y < 8 || y > paneHeight - 8) continue;
+        context.beginPath();
+        const isBox = item.strategy === "IKIGAI_BOX";
+        if (isBox) {
+          context.rect(x - 6, y - 6, 12, 12);
+        } else {
+          context.moveTo(x, y - 7);
+          context.lineTo(x + 7, y);
+          context.lineTo(x, y + 7);
+          context.lineTo(x - 7, y);
+          context.closePath();
+        }
+        context.strokeStyle = item.status === "FILTER_REJECTED"
+          ? "#f39b7e" : isBox ? "#4ce0bd" : "#d4b3ff";
+        context.lineWidth = 2;
+        context.stroke();
+        paintedScanner++;
+      }
       context.restore();
+      canvas.dataset.visibleScannerObservations = String(paintedScanner);
       canvas.dataset.visibleFills = String(rendered);
+      canvas.dataset.visiblePaperFills = String(paintedPaper);
+      canvas.dataset.visibleOriginalGeometry = String(paintedOriginal);
       canvas.dataset.visibleGeometry = String(knownLines.length);
-      canvas.dataset.visibleEarlyGeometry = String(earlyGeometry.length);
+      canvas.dataset.visibleEarlyGeometry = String(showTrendGeometry ? earlyGeometry.length : 0);
       canvas.dataset.visiblePriors = String(knownPriors.length);
       canvas.dataset.paintedPriors = String(paintedPriors);
       canvas.dataset.paintedGeometry = String(paintedGeometry);
@@ -390,7 +515,7 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
     // Chart recalculates pixel coordinates after updating series/timescale.
     const redrawId = requestAnimationFrame(() => renderExecutions.current());
     return () => cancelAnimationFrame(redrawId);
-  }, [shown, document, cursor, observedDmi, observedTouches, blueRiskPreviews, priorBreaks, showDebug, timeframe, displayCandles, earlyGeometry]);
+  }, [shown, document, cursor, paperOverlay, paperFacts, observedDmi, observedTouches, blueRiskPreviews, priorBreaks, selectedStrategies, showTrendGeometry, showDebug, timeframe, displayCandles, earlyGeometry]);
 
   // The editable layer reuses the terminal's drawing tools, but stores its X
   // anchors in absolute UTC M5 slots rather than indices of the selected TF.
@@ -417,7 +542,7 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
         <div className="replay-chart" ref={container}
           aria-label="Свечной график и нижняя панель ADX DMI" />
         <canvas ref={executionCanvas} className="replay-execution-overlay"
-          aria-hidden="true" data-visible-fills="0" data-visible-observations="0" data-visible-blue-risk="0" />
+          aria-hidden="true" data-visible-fills="0" data-visible-scanner-observations="0" data-visible-paper-fills="0" data-visible-original-geometry="0" data-visible-observations="0" data-visible-blue-risk="0" />
         {pricePaneHeight > 0 && displayCandles.length > 0 &&
           <div className={`replay-drawing-layer tool-${drawingTool}`} style={{ height: pricePaneHeight }}
             data-drawing-count={drawings.length}>
@@ -444,15 +569,28 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
   );
 }
 
-function utcDayOffset(daysAgo: number): string {
-  return new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
-}
-
 export function ReplayPage() {
   const [document, setDocument] = useState<ReplayDocument>(() => syntheticReplay());
   const [symbol, setSymbol] = useState("BTCUSDT");
-  const [startDate, setStartDate] = useState(() => utcDayOffset(3));
-  const [endDate, setEndDate] = useState(() => utcDayOffset(1));
+  const [selectedStrategies, setSelectedStrategies] = useState<RunSelection>(onlyWedges);
+  const showTrendGeometry = selectedStrategies.selected.includes("H1_TREND");
+  const showSelectedWedges = selectedStrategies.selected.includes("WEDGE_RISING") ||
+    selectedStrategies.selected.includes("WEDGE_FALLING");
+  const symbolEdited = useRef(false);
+  const currentSymbol = useRef(symbol);
+  currentSymbol.current = symbol;
+  const onPasteSymbol = useCallback((nextSymbol: string) => {
+    symbolEdited.current = true;
+    setSymbol(nextSymbol);
+  }, []);
+  const acceptArchiveSymbol = useCallback((archiveSymbol: string): boolean => {
+    if (symbolEdited.current) return currentSymbol.current === archiveSymbol;
+    if (currentSymbol.current === "BTCUSDT") {
+      setSymbol(archiveSymbol);
+      return true;
+    }
+    return currentSymbol.current === archiveSymbol;
+  }, []);
   const [historyLoading, setHistoryLoading] = useState(false);
   const historyRequest = useRef<AbortController | null>(null);
   const bundledRequest = useRef<AbortController | null>(null);
@@ -465,29 +603,109 @@ export function ReplayPage() {
   const [drawings, setDrawings] = useState<DrawingObject[]>([]);
   const [selectedDrawing, setSelectedDrawing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [fileLabel, setFileLabel] = useState("Синтетический пример");
+  const [fileLabel, setFileLabel] = useState("Тикер и период не выбраны");
+  // PAPER evidence is never inserted into document.events or VirtualAccount.
+  const [paperFacts, setPaperFacts] = useState<PaperEpisodeFacts | null>(null);
+  const [localEpisodeMessage, setLocalEpisodeMessage] = useState("");
+  const paperOverlay = useMemo(
+    () => matchPaperFactsToMarket(paperFacts, document), [paperFacts, document],
+  );
+  // The synthetic fixture is available only via the explicit Example button.
+  const [simulationGraphPending, setSimulationGraphPending] = useState(true);
+  const [preparedRun, setPreparedRun] = useState(false);
+  const [runLoading, setRunLoading] = useState(false);
+  const [runWaitingSeconds, setRunWaitingSeconds] = useState(0);
+  const [playRequestId, setPlayRequestId] = useState(0);
+
+  useEffect(() => {
+    if (!runLoading) { setRunWaitingSeconds(0); return; }
+    const since = Date.now();
+    const ticker = window.setInterval(
+      () => setRunWaitingSeconds(Math.floor((Date.now() - since) / 1000)), 1000,
+    );
+    return () => window.clearInterval(ticker);
+  }, [runLoading]);
   const shown = useMemo(() => visibleReplay(document.events, cursor), [document, cursor]);
+  const scannerObservations = useMemo(() =>
+    document.mode === "MARKET_ONLY" && shown.lastTimeMs !== null
+      ? (document.scanner_observations ?? []).filter(o =>
+          selectedStrategies.selected.includes(o.strategy) &&
+          o.available_at_ms <= shown.lastTimeMs!)
+      : [], [document, shown.lastTimeMs, selectedStrategies]);
+  const journal = useMemo(() => (document.demo ? [] : document.events.slice(0, cursor))
+    .filter(event => event.kind !== "CANDLE_CLOSED").map(event => {
+      const fmt = (value: string) => {
+        const number = Number(value);
+        return number > 0 ? "+" + number.toFixed(4) : number.toFixed(4);
+      };
+      let message: string;
+      switch (event.kind) {
+        case "WEDGE_ACCEPTED":
+          message = "Обнаружен паттерн: " + (event.pattern === "Rising Wedge"
+            ? "восходящий клин" : "нисходящий клин") +
+            ". Кандидат принят. Ожидается пробой"; break;
+        case "WEDGE_BREAKOUT": message = "Пробой подтверждён. Ожидается ретест"; break;
+        case "WEDGE_RETEST": message = "Ретест подтверждён"; break;
+        case "ENTRY_SIGNAL": message = "Выставлен LIMIT после ретеста"; break;
+        case "ENTRY_FILLED": message = "Позиция открыта, вход по ретесту"; break;
+        case "EXIT_FILLED":
+          message = "Позиция закрыта (" +
+            (event.reason === "STOP" ? "STOP" : event.reason === "TAKE" ? "TAKE" : "выход") +
+            ")" + (event.net_usdt !== undefined && event.pnl_percent !== undefined
+              ? ": " + fmt(event.net_usdt) + " USDT · " + fmt(event.pnl_percent) + "%"
+              : " · результат недоступен"); break;
+        default: message = "Событие";
+      }
+      return { sequence: event.sequence, time: event.time_ms, message };
+    }), [document.events, cursor]);
+  const paperSetupContext = paperFacts?.setup_context;
+  const paperSetupVisible = paperSetupContext?.status === "EXACT_D2_LINK" &&
+    paperOverlay.status === "MATCHED" && shown.lastTimeMs !== null &&
+    shown.lastTimeMs >= paperSetupContext.setup.created_at_ms;
+  // D2 observations remain outside SIMULATION events/journal/PnL. Like
+  // candles, a D2 decision cannot be seen until its timestamp is reached.
+  const paperDecisionObservations = useMemo(() =>
+    paperFacts?.setup_context?.status === "EXACT_D2_LINK" &&
+    paperOverlay.status === "MATCHED" && shown.lastTimeMs !== null
+      ? paperFacts.setup_context.decisions.filter(e => e.occurred_at_ms <= shown.lastTimeMs!)
+      : [], [paperFacts, paperOverlay, shown.lastTimeMs]);
+
   const total = document.events.length;
   const progress = Math.round(100 * cursor / total);
+  const playbackComplete = !simulationGraphPending && total > 0 && cursor >= total;
+  const seekPoints = useMemo(() => {
+    const result = [0];
+    for (let i = 0; i < document.events.length; i++) {
+      const closed = document.events[i];
+      if (closed.kind !== "CANDLE_CLOSED") continue;
+      let next = i + 1;
+      while (next < document.events.length &&
+             document.events[next].time_ms === closed.time_ms) next++;
+      if (next > result[result.length - 1]) result.push(next);
+      i = next - 1;
+    }
+    return result;
+  }, [document.events]);
+  const seekIndex = Math.max(0, seekPoints.indexOf(cursor));
   const priorBreaks = useMemo(
-    () => visiblePriorBreaks(document, shown.lastTimeMs),
-    [document, shown.lastTimeMs],
+    () => showTrendGeometry ? visiblePriorBreaks(document, shown.lastTimeMs) : [],
+    [document, shown.lastTimeMs, showTrendGeometry],
   );
   const latestPriorBreak = priorBreaks.at(-1);
   const publishedGeometry = useMemo(
-    () => visibleGeometry(document, shown.lastTimeMs),
-    [document, shown.lastTimeMs],
+    () => showTrendGeometry ? visibleGeometry(document, shown.lastTimeMs) : [],
+    [document, shown.lastTimeMs, showTrendGeometry],
   );
   const earlyGeometry = useMemo(
-    () => visibleEarlyGeometry(document, shown.lastTimeMs),
-    [document, shown.lastTimeMs],
+    () => showTrendGeometry ? visibleEarlyGeometry(document, shown.lastTimeMs) : [],
+    [document, shown.lastTimeMs, showTrendGeometry],
   );
   const earlyMain = earlyGeometry.find(line => line.kind === "MAIN_1H");
   const earlyBlueCount = earlyGeometry.filter(line => line.kind === "REFERENCE_5M").length;
   const activeMain = publishedGeometry.find(line => line.kind === "MAIN_1H");
   const latestPrior = useMemo(
-    () => visiblePriorLevels(document, shown.lastTimeMs).at(-1),
-    [document, shown.lastTimeMs],
+    () => showTrendGeometry ? visiblePriorLevels(document, shown.lastTimeMs).at(-1) : undefined,
+    [document, shown.lastTimeMs, showTrendGeometry],
   );
   const oppositeMainConfirmed = latestPriorBreak !== undefined &&
     activeMain?.side === latestPriorBreak.new_side &&
@@ -498,27 +716,20 @@ export function ReplayPage() {
     event.prior_price === latestPrior.price &&
     event.trend_version === latestPrior.trend_version
   );
-  const recentEvents = document.events.slice(Math.max(0, cursor - 8), cursor);
-  const recentFromMs = recentEvents[0]?.time_ms ?? Infinity;
-  const lastTimeline = [
-    ...recentEvents.map(event => ({
-      kind: "REPLAY" as const, time_ms: event.time_ms, key: String(event.sequence), event,
-    })),
-    ...priorBreaks.filter(item => item.confirmed_at_ms >= recentFromMs).map(item => ({
-      kind: "PRIOR_BREAK" as const, time_ms: item.confirmed_at_ms,
-      key: "prior-" + item.trend_version, breakEvent: item,
-    })),
-  ].sort((a, b) => b.time_ms - a.time_ms).slice(0, 8);
-  const observedTouches = useMemo(() => visibleObservations(document, shown.lastTimeMs), [document, shown.lastTimeMs]);
+  const observedTouches = useMemo(() =>
+    showTrendGeometry ? visibleObservations(document, shown.lastTimeMs) : [],
+    [document, shown.lastTimeMs, showTrendGeometry]);
   const blueRiskPreviews = useMemo(
-    () => visibleH017BlueRiskPreviews(document, shown.lastTimeMs),
-    [document, shown.lastTimeMs],
+    () => showTrendGeometry ? visibleH017BlueRiskPreviews(document, shown.lastTimeMs) : [],
+    [document, shown.lastTimeMs, showTrendGeometry],
   );
   const dmiCrossings = useMemo(
     () => visibleDmi(document, shown.candles.length).flatMap(point => point.crossings ?? []),
     [document, shown.candles.length],
   );
-  const retrospectiveStudy = useMemo(() => studyH017BlueCandidates(document), [document]);
+  const retrospectiveStudy = useMemo(
+    () => showTrendGeometry ? studyH017BlueCandidates(document) : [],
+    [document, showTrendGeometry]);
   const visibleStudy = useMemo(
     () => visibleH017CandidateStudy(retrospectiveStudy, shown.lastTimeMs),
     [retrospectiveStudy, shown.lastTimeMs],
@@ -528,14 +739,51 @@ export function ReplayPage() {
   const countTouch = (rows: typeof visibleStudy, kind: typeof visibleStudy[number]["first_touch"]) =>
     rows.filter(row => row.first_touch === kind).length;
   const fileInput = useRef<HTMLInputElement>(null);
+  const paperFileInput = useRef<HTMLInputElement>(null);
+
+  const onSimulationStart = useCallback((request: WedgeRunRequest) => {
+    // A new ticker/date must never inherit old candles or demonstration fills.
+    bundledRequest.current?.abort(); bundledRequest.current = null;
+    historyRequest.current?.abort(); historyRequest.current = null;
+    setHistoryLoading(false);
+    setPlaying(false); setCursor(0);
+    setError(null);
+    setDrawings([]); setSelectedDrawing(null); setDrawingTool("crosshair");
+    setFileLabel(formatRunCoordinates(request.symbol, request.start_utc, request.end_utc_inclusive));
+    setSimulationGraphPending(true);
+    setPreparedRun(true);
+    setRunLoading(false);
+  }, []);
+
+  const onSimulationAppend = useCallback((runId: string, events: ReplayEvent[]) => {
+    setDocument(previous => previous.simulation_run_id === runId
+      ? { ...previous, events: [...previous.events, ...events] }
+      : previous);
+  }, []);
+  const onSimulationFailed = useCallback(() => {
+    setPlaying(false);
+    setSimulationGraphPending(true);
+    setPreparedRun(true);
+    setCursor(0);
+  }, []);
+  const onSimulationReady = useCallback((replay: ReplayDocument) => {
+    if (replay.mode !== "STRATEGY" || replay.demo || !replay.symbol) {
+      throw new Error("Новый прогон не содержит проверенной истории");
+    }
+    symbolEdited.current = true;
+    setSymbol(replay.symbol);
+    setDocument(replay);
+    setCursor(0); setTimeframe("5m");
+    // The owner-selected ticker and date range stay visible in Source.
+    setSimulationGraphPending(false);
+    setPreparedRun(false);
+    setPlaying(true);
+  }, []);
 
   function syncImportedMarketSelection(parsed: ReplayDocument) {
-    if (parsed.symbol) setSymbol(parsed.symbol);
-    const first = parsed.events.find(item => item.kind === "CANDLE_CLOSED")?.candle;
-    const last = parsed.events.filter(item => item.kind === "CANDLE_CLOSED").at(-1)?.candle;
-    if (first && last) {
-      setStartDate(new Date(first.start_ms).toISOString().slice(0, 10));
-      setEndDate(new Date(last.end_ms).toISOString().slice(0, 10));
+    if (parsed.symbol) {
+      symbolEdited.current = true;
+      setSymbol(parsed.symbol);
     }
   }
 
@@ -561,6 +809,7 @@ export function ReplayPage() {
         }
         if (controller.signal.aborted) return;
         setDocument(parsed);
+        setSimulationGraphPending(false);
         syncImportedMarketSelection(parsed);
         setPlaying(false); setCursor(0);
         setFileLabel("Проверенный публичный архив · GRASSUSDT");
@@ -580,17 +829,23 @@ export function ReplayPage() {
     };
   }, []);
 
+  // Keep the requested candle cadence independent of network packet arrivals.
+  // A batch may contain many verified bars, but each timer tick reveals ONE M5.
+  // A stalled Scanner frontier costs no playback time: never catch up in a burst.
+  const availableEvents = useRef(document.events);
+  availableEvents.current = document.events;
   useEffect(() => {
     if (!playing) return;
     const timer = window.setInterval(() => {
-      setCursor((current) => nextClosedCandleCursor(document.events, current));
-    }, Math.max(16, Math.floor(1000 / rate)));
+      setCursor(current => nextClosedCandleCursor(availableEvents.current, current));
+    }, Math.max(16, 1000 / rate));
     return () => window.clearInterval(timer);
-  }, [playing, rate, document.events]);
+  }, [playing, rate]);
 
   useEffect(() => {
-    if (cursor >= total) setPlaying(false);
-  }, [cursor, total]);
+    // Do not stop when playback reaches the still-growing verified frontier.
+    if (cursor >= total && !runLoading) setPlaying(false);
+  }, [cursor, total, runLoading]);
 
   async function loadFile(file?: File) {
     if (!file) return;
@@ -604,6 +859,7 @@ export function ReplayPage() {
       const data: unknown = JSON.parse(await file.text());
       const parsed = parseReplayDocument(data);
       setDocument(parsed);
+      setSimulationGraphPending(false);
       // Manual import also replaces the market selection, never leave stale
       // BTC/date controls beside an imported GRASSUSDT archive.
       if (parsed.mode === "MARKET_ONLY") syncImportedMarketSelection(parsed);
@@ -618,7 +874,86 @@ export function ReplayPage() {
     }
   }
 
-  async function loadLocalHistory() {
+  async function loadPaperFacts(file?: File) {
+    if (!file) return;
+    setPlaying(false);
+    setPaperFacts(null); // Invalid replacement must not leave previous PAPER marks displayed.
+    try {
+      if (file.size > 4 * 1024 * 1024)
+        throw new Error("JSON PAPER больше 4 МБ");
+      const raw = await file.text();
+      const imported = parsePaperEpisodeFacts(JSON.parse(raw) as unknown);
+      // Import is an explicit owner file action and never calls VPS.
+      const saved = await fetch("/local-replay/paper-episode/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Local-Paper-Import": "explicit-file" },
+        body: raw,
+      });
+      if (!saved.ok) throw new Error(saved.status === 409
+        ? "Локальная запись этого ID отличается: автоматическая перезапись запрещена"
+        : "Локальное сохранение фактов сделки не подтвердилось");
+      const receipt: unknown = await saved.json();
+      if (!receipt || typeof receipt !== "object" ||
+          (receipt as Record<string, unknown>).stored_locally !== true ||
+          (receipt as Record<string, unknown>).trade_episode_id !== imported.trade_episode_id)
+        throw new Error("Не совпало подтверждение локального импорта");
+      setLocalEpisodeMessage("Факты сделки сохранены локально: " + imported.trade_episode_id);
+      setPaperFacts(imported);
+      setError(null);
+      // Instant inspection only when the selected, independently verified
+      // public M5 archive already covers every fact. Otherwise do not
+      // substitute a candle, download private history or invent a chart.
+      if (matchPaperFactsToMarket(imported, document).status === "MATCHED") {
+        setCursor(document.events.length);
+      } else {
+        // A single closed episode may be only one entry in a longer Robot
+        // signal campaign with STOP/reentries. Never auto-load a truncated
+        // single-episode window as the complete trade replay.
+        setError("Для полного графика необходима подтверждённая цепочка исходного сигнала, " +
+          "включая все STOP и повторные входы. Факты одного эпизода импортированы; " +
+          "полный интервал кампании ещё не подтверждён.");
+
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось прочитать факты PAPER");
+    } finally {
+      if (paperFileInput.current) paperFileInput.current.value = "";
+    }
+  }
+
+  async function lookupLocalEpisode(episodeId: string): Promise<void> {
+    setPlaying(false);
+    setPaperFacts(null);
+    setLocalEpisodeMessage("");
+    setError(null);
+    try {
+      const response = await fetch("/local-replay/paper-episode?trade_episode_id=" +
+        encodeURIComponent(episodeId), { method: "GET", cache: "no-store" });
+      if (response.status === 404) {
+        setError("Сделка " + episodeId + " отсутствует в локальной базе Симулятора. " +
+          "Нужна синхронизация фактов сделок с VPS (либо импорт проверенного JSON).");
+        return;
+      }
+      if (!response.ok) throw new Error("Локальная база не смогла подтвердить эту сделку");
+      const parsed = parsePaperEpisodeFacts(await response.json() as unknown);
+      if (parsed.trade_episode_id !== episodeId)
+        throw new Error("ID локальной записи не совпадает с запросом");
+      setPaperFacts(parsed);
+      setLocalEpisodeMessage("Найдены локальные факты сделки: " + episodeId);
+      if (matchPaperFactsToMarket(parsed, document).status === "MATCHED") {
+        setCursor(document.events.length);
+      } else {
+        setError("Факты сделки найдены, но полная история исходного сигнала с STOP " +
+          "и повторными входами пока не подтверждена. Нужна синхронизация цепочки " +
+          "эпизодов и свечей, не только одной записи.");
+      }
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Не удалось найти локальную сделку");
+    }
+  }
+
+  async function loadLocalHistory(selectedSymbol: string, selectedStart: string, selectedEnd: string,
+    choices: readonly string[]) {
     bundledRequest.current?.abort(); bundledRequest.current = null;
     historyRequest.current?.abort();
     const controller = new AbortController();
@@ -627,22 +962,43 @@ export function ReplayPage() {
     setPlaying(false);
     setError(null);
     try {
-      const query = new URLSearchParams({ symbol: symbol.trim().toUpperCase(), start: startDate, end: endDate });
+      const window = validateInclusiveWindow(selectedStart, selectedEnd);
+      // The legacy read-only public market loader accepts full UTC days,
+      // maximum 7; it cannot silently turn a minute interval into whole days.
+      if (window.startMs % 86_400_000 || window.endExclusiveMs % 86_400_000 ||
+          window.minutes > 7 * 1440) {
+        throw new Error("Публичный Bybit M5: выберите полные UTC-дни, не более 7. Для точных минут используйте SIMULATION.");
+      }
+      const query = new URLSearchParams({
+        symbol: selectedSymbol.trim().toUpperCase(),
+        start: new Date(window.startMs).toISOString().slice(0, 10),
+        end: new Date(window.endExclusiveMs).toISOString().slice(0, 10),
+      });
+      const native = choices.filter(item =>
+        item === "WEDGE_FALLING" || item === "WEDGE_RISING" || item === "IKIGAI_BOX");
+      if (native.length > 0) query.set("strategies", native.join(","));
       // Only the loopback Python viewer implements this research-only GET.
       // Never call /api: Vite's /api proxy belongs to the main PAPER backend.
       const response = await fetch("/local-replay/history?" + query.toString(), {
         method: "GET", cache: "no-store", signal: controller.signal,
       });
-      const raw: unknown = await response.json();
+      // Loopback returns plain-text errors (not JSON) for 400/502.
+      // A JSON.parse exception here previously concealed the actual failure.
+      // Public M5 never creates the local verified M1 + risk prerequisites
+      // for a SIMULATION strategy run.
       if (!response.ok) {
-        const reason = typeof raw === "object" && raw !== null && "error" in raw &&
-          typeof raw.error === "string" ? raw.error : "История недоступна";
-        throw new Error(reason);
+        if (response.status === 502) {
+          throw new Error("Публичный Bybit M5 недоступен (HTTP 502): запрос к рыночному API не завершился. График не загружен. Локальный торговый прогон отдельно требует архив M1 и профиль риска.");
+        }
+        const reason = (await response.text()).slice(0, 260).trim();
+        throw new Error(`Ошибка публичной истории HTTP ${response.status}: ${reason || "нет данных"}`);
       }
+      const raw: unknown = await response.json();
       const imported = parseReplayDocument(raw);
       if (imported.mode !== "MARKET_ONLY") throw new Error("История не соответствует режиму MARKET_ONLY");
       if (historyRequest.current !== controller) return;
       setDocument(imported);
+      setSimulationGraphPending(false);
       setDrawings([]); setSelectedDrawing(null); setDrawingTool("crosshair");
       setCursor(0);
       setFileLabel("Bybit · публичные свечи · без сделок");
@@ -663,34 +1019,43 @@ export function ReplayPage() {
         <div>
           <h1>Машина времени</h1>
         </div>
-        <span className="replay-badge">SIMULATION ONLY</span>
       </header>
 
-      <section className="replay-history-controls" aria-label="Публичная история Bybit">
-        <label>Инструмент <input aria-label="Инструмент" value={symbol} maxLength={30}
-          onChange={(e) => setSymbol(e.target.value.toUpperCase())} /></label>
-        <label>С UTC <input aria-label="С UTC" type="date" value={startDate}
-          onChange={(e) => setStartDate(e.target.value)} /></label>
-        <label>По UTC (не включительно) <input aria-label="По UTC" type="date" value={endDate}
-          onChange={(e) => setEndDate(e.target.value)} /></label>
-        <button type="button" onClick={() => void loadLocalHistory()} disabled={historyLoading}>
-          {historyLoading ? "Загружаю историю…" : "Загрузить Bybit (без сделок)"}
-        </button>
-      </section>
+      <RunSetupPanel symbol={symbol} onArchiveSymbol={acceptArchiveSymbol}
+        onPasteSymbol={onPasteSymbol} onSimulationStart={onSimulationStart}
+        onSimulationReady={onSimulationReady} onSimulationAppend={onSimulationAppend}
+        onSimulationFailed={onSimulationFailed} onSimulationBusy={setRunLoading}
+        playRequestId={playRequestId} showReport={!simulationGraphPending && !runLoading && cursor >= total}
+        onPublicHistoryRequest={(ticker, from, to, choices) => void loadLocalHistory(ticker, from, to, choices)}
+        publicHistoryLoading={historyLoading}
+        onStrategySelectionChange={setSelectedStrategies}
+        onEpisodeLookup={lookupLocalEpisode} />
       <section className="replay-controls" aria-label="Управление воспроизведением">
         <label className="replay-file">
           Загрузить JSON прогона
-          <input ref={fileInput} type="file" accept=".json,application/json"
+          <input ref={fileInput} type="file" accept=".json,application/json" disabled={runLoading}
             onChange={(e) => void loadFile(e.target.files?.[0])} />
         </label>
+        <label className="replay-file">
+          Импорт JSON сделки PAPER
+          <input ref={paperFileInput} aria-label="Импорт JSON сделки PAPER"
+            type="file" accept=".json,application/json" disabled={runLoading}
+            onChange={(e) => void loadPaperFacts(e.target.files?.[0])} />
+        </label>
+        {paperFacts && <button type="button" onClick={() => setPaperFacts(null)}>
+          Убрать факты PAPER
+        </button>}
         <button type="button" onClick={() => {
           bundledRequest.current?.abort(); bundledRequest.current = null;
           historyRequest.current?.abort(); historyRequest.current = null;
           setHistoryLoading(false); setPlaying(false); setCursor(0); setError(null);
-          setDocument(syntheticReplay()); setFileLabel("Синтетический пример");
+          setDocument(syntheticReplay()); setSimulationGraphPending(false);
+          setPreparedRun(false);
+          setFileLabel("Синтетический пример");
           setDrawings([]); setSelectedDrawing(null); setDrawingTool("crosshair");
         }}>Пример</button>
-        <button type="button" aria-label="Скачать журнал SIMULATION JSON" onClick={() => {
+        <button type="button" aria-label="Скачать журнал SIMULATION JSON"
+          disabled={simulationGraphPending} onClick={() => {
           const report = simulationActionJournal(document);
           const blob = new Blob([JSON.stringify(report, null, 2) + "\n"], { type: "application/json" });
           const url = URL.createObjectURL(blob);
@@ -702,34 +1067,75 @@ export function ReplayPage() {
           anchor.remove();
           // Browser owns this temporary object URL; no trade/network request.
           window.setTimeout(() => URL.revokeObjectURL(url), 0);
-        }}>Журнал JSON ({simulationActionJournal(document).actions.length})</button>
+        }}>Журнал JSON ({simulationGraphPending ? 0 : simulationActionJournal(document).actions.length})</button>
 
       </section>
 
+      {localEpisodeMessage && <p role="status" className="replay-note">{localEpisodeMessage}</p>}
       {error && <p role="alert" className="replay-error">{error}</p>}
+      {paperFacts && <p className="replay-note" role="status" aria-label="PAPER факты сделки">
+        PAPER · {paperFacts.symbol} · {paperFacts.trade_episode_id}
+        {" · "}{paperFacts.execution_allocations.length} фактических исполнений
+        {" · "}{paperOverlay.status === "MATCHED"
+          ? "Кружки на закрытых свечах · цена оригинального исполнения"
+          : paperOverlay.reason}
+        {" · "}PnL по цене и известным комиссиям: {paperFacts.pnl_usdt} USDT
+        {" · "}JSON без криптографической подписи; не виртуальные сделки и не решения Robot.
+        {paperSetupContext && (
+          paperSetupContext.status !== "EXACT_D2_LINK"
+            ? " · D2: нет подтверждённой связи с исходным setup"
+            : paperSetupVisible
+              ? ` · D2: ${paperSetupContext.setup.pattern} · ${paperSetupContext.setup.timeframe} · версия ${paperSetupContext.setup.strategy_version}` +
+                (paperSetupContext.geometry_status !== "ORIGINAL_ARCHIVE_HASH_VERIFIED"
+                  ? " · исходная геометрия не экспортирована"
+                  : shown.lastTimeMs !== null &&
+                    shown.lastTimeMs >= paperSetupContext.original_geometry!.sent_at_ms
+                    ? " · лиловая пунктирная: архивная исходная геометрия (только наблюдение, неподписанный JSON)"
+                    : " · архивная геометрия появится после времени исходного сигнала")
+              : " · D2: исходный setup появится после его подтверждённого времени на графике"
+        )}
+      </p>}
       <section className="replay-meta" aria-label="Состояние симулятора">
         <div><span>Источник</span><strong>{fileLabel}</strong></div>
-        <div><span>Прогон / рынок</span><strong>{document.simulation_run_id}{document.symbol ? " · " + document.symbol + " · 5m" : ""}</strong></div>
-        <div><span>Время рынка</span><strong>{shown.lastTimeMs === null ? "До первого события" :
+        <div><span>Время рынка</span><strong>{simulationGraphPending ? "До начала прогона" :
+          shown.lastTimeMs === null ? "До первого события" :
           new Date(shown.lastTimeMs).toLocaleString("ru-RU", { timeZone: "UTC" }) + " UTC"}</strong></div>
         <div><span>Свечи / входы / выходы</span>
-          <strong>{shown.candles.length} / {shown.fills.length} / {shown.exits.length}</strong></div>
+          <strong>{simulationGraphPending ? "0 / 0 / 0" :
+            `${shown.candles.length} / ${shown.fills.length} / ${shown.exits.length}`}</strong></div>
       </section>
+      {!simulationGraphPending && <>
       <div className="replay-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100}
         aria-valuenow={progress} aria-label="Прогресс воспроизведения">
         <div style={{ width: progress + "%" }} />
       </div>
-      {document.mode === "MARKET_ONLY" && <p className="replay-note">
+      {document.mode === "MARKET_ONLY" && <p className="replay-note" role="status" aria-label="Статус выбранных стратегий">
         РЕАЛЬНЫЕ СВЕЧИ BYBIT · БЕЗ СДЕЛОК:
         {" "}{document.market_data_source === "BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M"
           ? "исторические сделки из официального публичного архива, агрегированные в закрытые 5m OHLCV"
           : "публичные свечи API Bybit"}
-        {" "}· жёлтые 1H и синие 5m линии — предварительные кандидаты из подтверждённых экстремумов, не проверенная стратегия.
+        {" "}{showTrendGeometry
+          ? "Трендовые H1/M5 выбраны: жёлтые H1 и синие M5 — исследовательская геометрия, не торговые сигналы."
+          : "Трендовые H1/M5 выключены: их линии и приор скрыты."}
+        {" "}{document.scanner_research
+          ? `Оригинальные локальные детекторы M5 проверены: ${document.scanner_observations?.filter(o => o.strategy.startsWith("WEDGE_")).length ?? 0} клиньев и ${document.scanner_observations?.filter(o => o.strategy === "IKIGAI_BOX").length ?? 0} Ikigai Box (включая отфильтрованные кандидаты). Маркеры показываются после закрытия свечи; Robot здесь не торгует.`
+          : showSelectedWedges
+            ? "Клинья выбраны, но оригинальный Scanner ещё не запускался."
+            : "Клинья не выбраны и в публичном M5-просмотре не искались."}
+      </p>}
+      {document.mode === "MARKET_ONLY" && document.scanner_research && <p
+        className="replay-note" role="status" aria-label="Результат Scanner M5">
+        Локальный Scanner по закрытым M5 · найдено и раскрыто к текущему моменту:
+        {" "}{scannerObservations.length} из {document.scanner_observations?.length ?? 0}.
+        {scannerObservations.length === 0
+          ? " Пока нет подтверждённых наблюдений исходных детекторов."
+          : " Ромб — клин; квадрат — Ikigai Box. Розовый — отказ фильтра."}
+        {" "}Исследовательский режим, без Robot/PnL и исполнения.
       </p>}
       <details className="replay-diagnostics">
         <summary>Диагностика</summary>
         <label><input type="checkbox" checked={showDebug} onChange={(e) => setShowDebug(e.target.checked)} /> Показать опорные маркеры</label>
-      {document.mode === "MARKET_ONLY" && cursor > 0 && <p className="replay-geometry-note"
+      {document.mode === "MARKET_ONLY" && showTrendGeometry && cursor > 0 && <p className="replay-geometry-note"
         role="status" aria-label="Статус трендовой геометрии">
         {publishedGeometry.length
           ? "Геометрия: полная подтверждённая часовая пара 1–3 / 2–4; ранние синие M5-линии сохраняются в истории."
@@ -761,11 +1167,11 @@ export function ReplayPage() {
           ? "уровень уже сломан, остаётся только в истории."
           : "уровень второго подтверждённого касания трендовой."}{" "}Не торговый сигнал.
       </p>}
-      {document.mode === "MARKET_ONLY" && document.h017_blue_risk_previews && cursor > 0 &&
+      {document.mode === "MARKET_ONLY" && showTrendGeometry && document.h017_blue_risk_previews && cursor > 0 &&
         <p className="replay-geometry-note" role="status" aria-label="H-017 риск синей M5">
           Синяя M5: открытий за линией {blueRiskPreviews.length}, из них риск ≥1:1 — {blueRiskPreviews.filter(x => x.risk_status === "RISK_PASS").length}. Квадраты — исследовательские оценки по депозиту 200 USDT, не сделки.
         </p>}
-      {document.mode === "MARKET_ONLY" && document.h017_blue_risk_previews && cursor > 0 &&
+      {document.mode === "MARKET_ONLY" && showTrendGeometry && document.h017_blue_risk_previews && cursor > 0 &&
         <p className="replay-geometry-note" role="status" aria-label="H-017 сравнение DMI и исходов">
           H-017 · независимые сценарии касания фиксированных уровней для {visibleStudy.length} кандидатов ≥1R:
           {" "}цель раньше стопа {countTouch(visibleStudy, "TARGET_FIRST")},
@@ -789,35 +1195,52 @@ export function ReplayPage() {
       {document.demo && <p className="replay-note">
         ДЕМО: синтетические свечи и условные события, не реальные сигналы стратегии и не результат Bybit.
       </p>}
+      </>}
       <div className="replay-grid">
         <section className="replay-chart-panel">
           <div className="replay-timeframe-switch" role="group" aria-label="Таймфрейм графика">
+            <strong className="replay-chart-symbol" aria-label="Тикер графика">
+              {document.symbol?.replace(/USDT$/, "") || "—"}
+            </strong>
+            <button type="button" disabled title="Нет проверенной минутной истории в потоке графика">M1</button>
+            <button type="button" disabled title="Нет исходной ленты сделок для 15-секундного графика">15с</button>
             <button type="button" aria-pressed={timeframe === "5m"}
               onClick={() => setTimeframe("5m")}>M5</button>
             <button type="button" aria-pressed={timeframe === "1h"}
               onClick={() => setTimeframe("1h")}>H1</button>
             <div className="replay-playback-controls" role="group" aria-label="Управление воспроизведением">
-        <button type="button" onClick={() => { if (cursor === total) setCursor(0); setPlaying((s) => !s); }}>
-          {playing ? "Пауза" : "▶ Пуск"}
+        <button type="button" className="replay-player-button" title="В начало"
+          aria-label="В начало" disabled={simulationGraphPending}
+          onClick={() => { setPlaying(false); setCursor(0); }}>
+          <PlayerIcon name="beginning" />
         </button>
-        <button type="button" onClick={() => {
-          setPlaying(false);
-          setCursor((current) => {
-            const events = document.events;
-            // Rewind one complete candle step, not just one trade/event row.
-            const closed = events.slice(0, current).filter(event => event.kind === "CANDLE_CLOSED");
-            if (closed.length <= 1) return 0;
-            const previousClose = closed[closed.length - 2].time_ms;
-            let next = 0;
-            while (next < events.length && events[next].time_ms <= previousClose) next++;
-            return next;
-          });
-        }} disabled={shown.candles.length === 0}>◀ Шаг назад</button>
-        <button type="button" onClick={() => {
-          setPlaying(false);
-          setCursor((current) => nextClosedCandleCursor(document.events, current));
-        }} disabled={cursor >= total}>Шаг вперёд ▶</button>
-        <button type="button" onClick={() => { setPlaying(false); setCursor(0); }}>В начало</button>
+        <button type="button" className="replay-player-button"
+          title={playbackComplete ? "Прогон завершён" : playing ? "Пауза" : "Пуск"}
+          aria-label={playbackComplete ? "Прогон завершён" : playing ? "Пауза" : "Пуск"}
+          disabled={(simulationGraphPending && (runLoading || !preparedRun)) || playbackComplete}
+          onClick={() => {
+            if (simulationGraphPending) { setPlayRequestId(id => id + 1); return; }
+            setPlaying(s => !s);
+          }}>
+          <PlayerIcon name={playing ? "pause" : "play"} />
+        </button>
+        <button type="button" className="replay-player-button" title="Шаг назад"
+          aria-label="Шаг назад" onClick={() => {
+            setPlaying(false);
+            setCursor(seekPoints[Math.max(0, seekIndex - 1)]);
+          }} disabled={simulationGraphPending || shown.candles.length === 0}><PlayerIcon name="backward" /></button>
+        <button type="button" className="replay-player-button" title="Шаг вперёд"
+          aria-label="Шаг вперёд" onClick={() => {
+            setPlaying(false);
+            setCursor((current) => nextClosedCandleCursor(document.events, current));
+          }} disabled={simulationGraphPending || cursor >= total}><PlayerIcon name="forward" /></button>
+        <input className="replay-seek" type="range" min={0} max={seekPoints.length - 1}
+                step={1} value={simulationGraphPending ? 0 : seekIndex}
+                disabled={simulationGraphPending} aria-label="Перемотка воспроизведения"
+                onChange={e => {
+                  setPlaying(false);
+                  setCursor(seekPoints[Number(e.target.value)]);
+                }} />
         <label className="replay-rate">Скорость {rate} свечей/с
           <input type="range" min="1" max="60" value={rate} onChange={(e) => setRate(Number(e.target.value))} />
         </label>
@@ -846,31 +1269,64 @@ export function ReplayPage() {
               }} title="Удалить выбранное" aria-label="Удалить выбранное"><ReplayToolIcon tool="delete" /></button>
             <span className="replay-drawing-count" aria-live="polite">Ручных линий: {drawings.length}</span>
           </div>
-          <ReplayChart document={document} cursor={cursor} showDebug={showDebug} timeframe={timeframe}
-            drawings={drawings} selectedId={selectedDrawing} drawingTool={drawingTool}
-            onDrawingsChange={setDrawings} onSelectDrawing={setSelectedDrawing}
-            onDrawingGesture={() => setPlaying(false)} />
+          {simulationGraphPending
+            ? <div className="replay-chart-pending" aria-label="Пустой график до запуска">
+                {runLoading ? `Проверяю первые M1: ${runWaitingSeconds} с. Затем свечи появятся постепенно.` :
+                  "График нового прогона появится после нажатия ▶"}
+              </div>
+            : <ReplayChart document={document} cursor={cursor} paperOverlay={paperOverlay}
+                paperFacts={paperFacts} selectedStrategies={selectedStrategies.selected}
+                showTrendGeometry={showTrendGeometry}
+                showDebug={showDebug} timeframe={timeframe}
+                drawings={drawings} selectedId={selectedDrawing} drawingTool={drawingTool}
+                onDrawingsChange={setDrawings} onSelectDrawing={setSelectedDrawing}
+                onDrawingGesture={() => setPlaying(false)} />}
         </section>
         <aside className="replay-events" aria-label="Журнал событий">
-          <h2>События</h2>
-          {lastTimeline.length === 0 && <p>Нажмите «Пуск» или «Шаг».</p>}
-          {lastTimeline.map((item) => (
-            <div className="replay-event" key={item.key}>
-              <time>{new Date(item.time_ms).toLocaleTimeString("ru-RU", { timeZone: "UTC" })} UTC</time>
-              {item.kind === "REPLAY" ? <>
-                <strong>{label(item.event)}</strong>
-                {item.event.price !== undefined && <span>{item.event.price}</span>}
-                {item.event.trade_id && <small>{item.event.trade_id}</small>}
-              </> : <>
-                <strong>Слом приора H1 · {item.breakEvent.new_side === "BULL" ? "восходящий" : "нисходящий"} тренд</strong>
-                <span>{item.breakEvent.prior_price}</span>
-              </>}
-            </div>
-          ))}
+          <h2>Журнал событий</h2>
+          <div className="replay-events-list" aria-live="off">
+            {document.mode === "MARKET_ONLY" && document.scanner_research &&
+              scannerObservations.map((item: PublicScannerObservation) => (
+              <div className="replay-events-item" key={item.strategy + item.signal_id}>
+                <strong>{item.pattern === "Ikigai Box"
+                  ? "Ikigai Box" : item.pattern === "Falling Wedge" ? "Нисходящий клин" : "Восходящий клин"}</strong>
+                <span>{new Date(item.available_at_ms).toLocaleTimeString("ru-RU", { timeZone: "UTC" })} UTC
+                  {" · "}{item.status === "FILTER_APPROVED" ? "фильтр принят"
+                    : item.status === "FILTER_REJECTED" ? "фильтр отказал" : "структура подтверждена"}
+                  {" · "}{item.reason}
+                </span>
+              </div>))}
+            {journal.length === 0 && document.mode !== "MARKET_ONLY" &&
+              <p>Ожидаю события Scanner и Robot</p>}
+            {paperDecisionObservations.length > 0 && (
+              <section aria-label="Наблюдения PAPER D2" className="replay-d2-observations">
+                <strong>Подтверждённые наблюдения D2 · не полный журнал Robot</strong>
+                {paperDecisionObservations.map(event => (
+                  <div className="replay-events-item" key={event.decision_event_id}>
+                    <time>{new Date(event.occurred_at_ms).toLocaleString("ru-RU", {
+                      timeZone: "UTC", day: "2-digit", month: "2-digit",
+                      hour: "2-digit", minute: "2-digit",
+                    })} UTC</time>
+                    <span>{event.kind}: {event.previous_state ?? "—"} → {event.next_state} · {event.reason_code}</span>
+                    <span>Источник: {event.controller}</span>
+                  </div>
+                ))}
+              </section>
+            )}
+            {journal.map(item => <div className="replay-events-item" key={item.sequence}>
+              <time>{new Date(item.time).toLocaleString("ru-RU", {
+                timeZone: "UTC", day: "2-digit", month: "2-digit",
+                hour: "2-digit", minute: "2-digit",
+              })} UTC</time>
+              <span>{item.message}</span>
+            </div>)}
+          </div>
         </aside>
       </div>
       <footer className="replay-footer">
-        {cursor} из {total} событий. Вход на следующем открытии не раскрывает будущую свечу.
+        {simulationGraphPending ? "Ожидаю ▶ Пуск / проверенную историю нового прогона." :
+          runLoading ? `${cursor} из ${total} подтверждённых событий · Scanner/Robot продолжают расчёт.` :
+          `${cursor} из ${total} событий. Вход на следующем открытии не раскрывает будущую свечу.`}
         Только публичные GET-запросы к истории Bybit; без приватных API, торговли и записи в PAPER.
       </footer>
     </main>

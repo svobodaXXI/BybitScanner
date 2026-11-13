@@ -1,6 +1,8 @@
 /** Read-only contract for SIMULATION event logs, independent of PAPER and order APIs. */
 import syntheticDmiFixture from "./syntheticDmiFixture.json";
-export type ReplayKind = "CANDLE_CLOSED" | "ENTRY_SIGNAL" | "ENTRY_FILLED" | "EXIT_FILLED";
+export type ReplayKind =
+  "CANDLE_CLOSED" | "WEDGE_ACCEPTED" | "WEDGE_BREAKOUT" | "WEDGE_RETEST" |
+  "ENTRY_SIGNAL" | "ENTRY_FILLED" | "EXIT_FILLED";
 export type ReplayCandle = {
   start_ms: number;
   end_ms: number;
@@ -46,7 +48,12 @@ export type ReplayEvent = {
   kind: ReplayKind;
   time_ms: number;
   candle?: ReplayCandle;
+  dmi?: ReplayDmiPoint;
   trade_id?: string;
+  candidate_id?: string;
+  pattern?: "Falling Wedge" | "Rising Wedge";
+  net_usdt?: string;
+  pnl_percent?: string;
   side?: "LONG" | "SHORT";
   price?: number;
   stop?: number;
@@ -140,6 +147,31 @@ export type ReplayDmi = {
   adx_smoothing: number;
   points: ReplayDmiPoint[];
 };
+/** Local research observations from ORIGINAL native detectors on closed public M5.
+ * Not executable Scanner approvals, Robot decisions, orders or fills.
+ */
+export type PublicScannerObservation = {
+  strategy: "WEDGE_RISING" | "WEDGE_FALLING" | "IKIGAI_BOX";
+  timeframe: "5m";
+  pattern: "Falling Wedge" | "Rising Wedge" | "Ikigai Box";
+  signal_id: string;
+  available_at_ms: number;
+  source_candle_start_ms: number;
+  close_price: number;
+  status: "FILTER_APPROVED" | "FILTER_REJECTED" | "CONFIRMED_STRUCTURE_ONLY";
+  reason: string;
+  score?: number;
+  side?: "LONG" | "SHORT";
+  box_start_ms?: number;
+  box_end_ms?: number;
+  box_low?: number;
+  box_high?: number;
+};
+export type PublicScannerResearch = {
+  scope: "PUBLIC_M5_OBSERVATIONS_NO_ROBOT_EXECUTION";
+  detectors: PublicScannerObservation["strategy"][];
+  configuration: "RESEARCH_HUNTER_SCORE50_NATIVE_WEDGE_AND_BOX";
+};
 export type ReplayDocument = {
   source: "SIMULATION";
   simulation_run_id: string;
@@ -162,6 +194,8 @@ export type ReplayDocument = {
   /** Closed H1 evidence before the visible replay; never counted as playhead candles. */
   context_1h?: ReplayCandle[];
   dmi_5m?: ReplayDmi;
+  scanner_research?: PublicScannerResearch;
+  scanner_observations?: PublicScannerObservation[];
 };
 /** Counterfactual first-touch observations; NEVER simulated fills or trade results. */
 export type H017FirstTouch = "TARGET_FIRST" | "STOP_FIRST" | "BOTH_SAME_M5" | "UNRESOLVED";
@@ -204,7 +238,8 @@ function positiveInteger(value: unknown, label: string): number {
   return n;
 }
 const kinds = new Set<ReplayKind>([
-  "CANDLE_CLOSED", "ENTRY_SIGNAL", "ENTRY_FILLED", "EXIT_FILLED",
+  "CANDLE_CLOSED", "WEDGE_ACCEPTED", "WEDGE_BREAKOUT",
+  "WEDGE_RETEST", "ENTRY_SIGNAL", "ENTRY_FILLED", "EXIT_FILLED",
 ]);
 
 /** Reject foreign account/report data or any chronology violation; never rewrite input. */
@@ -227,6 +262,17 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
     object.timeframe !== "5m" || object.demo === true
   )) {
     throw new Error("Неверная идентичность реальной рыночной истории");
+  }
+  const verifiedStrategy = mode === "STRATEGY" &&
+    object.market_data_source !== undefined;
+  if (verifiedStrategy && (
+    object.demo === true ||
+    object.market_data_source !== "BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M" ||
+    typeof object.symbol !== "string" ||
+    !/^[A-Z0-9]{3,30}USDT$/.test(object.symbol) ||
+    object.timeframe !== "5m"
+  )) {
+    throw new Error("Торговый прогон без подтверждённой рыночной идентичности");
   }
   if (!Array.isArray(object.events) || !object.events.length || object.events.length > 100_000) {
     throw new Error("Ожидается от 1 до 100000 событий");
@@ -274,6 +320,26 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
     } else if (e.candle !== undefined) {
       throw new Error("Будущая OHLC в событии исполнения недопустима");
     }
+    let dmi: ReplayDmiPoint | undefined;
+    if (e.dmi !== undefined) {
+      if (kind !== "CANDLE_CLOSED" || mode !== "STRATEGY" || object.demo === true)
+        throw new Error("Недостоверный ADX в торговом событии");
+      const point = record(e.dmi);
+      if (point.time_ms !== time_ms) throw new Error("ADX доступен раньше закрытия M5");
+      const parseValue = (value: unknown): number | null => {
+        if (value === null) return null;
+        const n = safeNumber(value, "DMI");
+        if (n < 0 || n > 100) throw new Error("DMI вне диапазона");
+        return n;
+      };
+      const plus_di = parseValue(point.plus_di);
+      const minus_di = parseValue(point.minus_di);
+      const adx = parseValue(point.adx);
+      if ((plus_di === null) !== (minus_di === null) ||
+          (adx !== null && plus_di === null))
+        throw new Error("Неверная последовательность DMI");
+      dmi = { time_ms, plus_di, minus_di, adx };
+    }
     const side = e.side;
     if (side !== undefined && side !== "LONG" && side !== "SHORT") {
       throw new Error("Неверная сторона сделки");
@@ -286,11 +352,37 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
     if (e.reason !== undefined && typeof e.reason !== "string") {
       throw new Error("Неверная причина выхода");
     }
+    const isWedge = kind === "WEDGE_ACCEPTED" ||
+      kind === "WEDGE_BREAKOUT" || kind === "WEDGE_RETEST";
+    const candidate_id = e.candidate_id;
+    const pattern = e.pattern;
+    if (isWedge ? (
+      mode !== "STRATEGY" || typeof candidate_id !== "string" ||
+      !/^SIMWEDGE_[0-9a-f]{32}$/.test(candidate_id) ||
+      (pattern !== "Falling Wedge" && pattern !== "Rising Wedge") ||
+      e.trade_id !== undefined
+    ) : candidate_id !== undefined || pattern !== undefined)
+      throw new Error("Недостоверное событие Robot по клину");
+    const net_usdt = e.net_usdt;
+    const pnl_percent = e.pnl_percent;
+    if (net_usdt !== undefined || pnl_percent !== undefined) {
+      const decimal = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?$/;
+      if (kind !== "EXIT_FILLED" ||
+          typeof net_usdt !== "string" || typeof pnl_percent !== "string" ||
+          !decimal.test(net_usdt) || !decimal.test(pnl_percent) ||
+          !Number.isFinite(Number(net_usdt)) || !Number.isFinite(Number(pnl_percent)))
+        throw new Error("Недостоверный финансовый результат виртуального выхода");
+    }
     return {
       source: "SIMULATION", simulation_run_id: id, kind, sequence, time_ms,
       ...(candle ? { candle } : {}),
+      ...(dmi ? { dmi } : {}),
       ...(side ? { side } : {}),
       ...(trade_id ? { trade_id } : {}),
+      ...(isWedge ? { candidate_id: candidate_id as string,
+        pattern: pattern as "Falling Wedge" | "Rising Wedge" } : {}),
+      ...(net_usdt !== undefined ? { net_usdt: net_usdt as string,
+        pnl_percent: pnl_percent as string } : {}),
       ...(e.reason !== undefined ? { reason: e.reason } : {}),
       ...(e.price !== undefined ? { price: parseOptionalNumber(e.price, "price") } : {}),
       ...(e.stop !== undefined ? { stop: parseOptionalNumber(e.stop, "stop") } : {}),
@@ -779,10 +871,83 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
     });
     dmi_5m = { source: "SIMULATION", timeframe: "5m", di_length, adx_smoothing, points: verifiedPoints };
   }
+  let scanner_research: PublicScannerResearch | undefined;
+  let scanner_observations: PublicScannerObservation[] | undefined;
+  if (object.scanner_research !== undefined || object.scanner_observations !== undefined) {
+    if (mode !== "MARKET_ONLY" || object.demo === true ||
+        object.market_data_source !== "BYBIT_PUBLIC_KLINE" ||
+        !Array.isArray(object.scanner_observations) ||
+        object.scanner_observations.length > 512 || events.length > 288)
+      throw new Error("Неверный источник исследовательского Scanner");
+    const settings = record(object.scanner_research);
+    const choices = settings.detectors;
+    const supported = ["WEDGE_RISING", "WEDGE_FALLING", "IKIGAI_BOX"];
+    if (settings.scope !== "PUBLIC_M5_OBSERVATIONS_NO_ROBOT_EXECUTION" ||
+        settings.configuration !== "RESEARCH_HUNTER_SCORE50_NATIVE_WEDGE_AND_BOX" ||
+        !Array.isArray(choices) || choices.length === 0 || choices.length > 3 ||
+        new Set(choices).size !== choices.length ||
+        choices.some(choice => !supported.includes(choice as string)))
+      throw new Error("Неподтверждённый выбор локального детектора");
+    const detectors = choices as PublicScannerObservation["strategy"][];
+    const sourceBars = new Map(events.filter(e => e.kind === "CANDLE_CLOSED")
+      .map(e => [e.candle!.start_ms, e.candle!] as const));
+    const observed = new Set<string>();
+    let lastAvailable = -1;
+    scanner_observations = object.scanner_observations.map(raw => {
+      const o = record(raw);
+      const strategy = o.strategy as PublicScannerObservation["strategy"];
+      const at = positiveInteger(o.available_at_ms, "scanner.available_at_ms");
+      const sourceStart = positiveInteger(o.source_candle_start_ms, "scanner.source_candle");
+      const bar = sourceBars.get(sourceStart);
+      const price = safeNumber(o.close_price, "scanner.close_price");
+      if (!detectors.includes(strategy) || o.timeframe !== "5m" ||
+          !bar || bar.end_ms !== at || at < lastAvailable ||
+          price !== bar.close || price <= 0 ||
+          typeof o.signal_id !== "string" || o.signal_id.length > 150 ||
+          typeof o.reason !== "string" || o.reason.length > 240)
+        throw new Error("Scanner observation не соответствует закрытой M5");
+      lastAvailable = at;
+      const key = strategy + ":" + o.signal_id;
+      if (observed.has(key)) throw new Error("Дубликат Scanner observation");
+      observed.add(key);
+      if (strategy === "IKIGAI_BOX") {
+        const begin = positiveInteger(o.box_start_ms, "box.start_ms");
+        const end = positiveInteger(o.box_end_ms, "box.end_ms");
+        const low = safeNumber(o.box_low, "box.low");
+        const high = safeNumber(o.box_high, "box.high");
+        if (o.pattern !== "Ikigai Box" || o.status !== "CONFIRMED_STRUCTURE_ONLY" ||
+            !/^5m:(LONG|SHORT):[0-9]+:[0-9]+$/.test(o.signal_id) ||
+            (o.side !== "LONG" && o.side !== "SHORT") ||
+            !sourceBars.has(begin) || !sourceBars.has(end) || begin > end ||
+            end >= at || low <= 0 || high < low || o.score !== undefined)
+          throw new Error("Неверная подтверждённая Box-геометрия");
+        return { strategy, timeframe: "5m" as const, pattern: "Ikigai Box" as const,
+          signal_id: o.signal_id, available_at_ms: at, source_candle_start_ms: sourceStart,
+          close_price: price, status: "CONFIRMED_STRUCTURE_ONLY" as const,
+          reason: o.reason, side: o.side, box_start_ms: begin, box_end_ms: end,
+          box_low: low, box_high: high };
+      }
+      const expectedPattern = strategy === "WEDGE_FALLING" ? "Falling Wedge" : "Rising Wedge";
+      const score = safeNumber(o.score, "wedge.score");
+      if (o.pattern !== expectedPattern ||
+          o.status !== "FILTER_APPROVED" && o.status !== "FILTER_REJECTED" ||
+          !/^[0-9]+:[0-9]+$/.test(o.signal_id) ||
+          !(score >= 0 && score <= 100) ||
+          o.side !== undefined || o.box_start_ms !== undefined ||
+          o.box_end_ms !== undefined || o.box_low !== undefined ||
+          o.box_high !== undefined)
+        throw new Error("Неверное исходное наблюдение клина");
+      return { strategy, timeframe: "5m" as const, pattern: expectedPattern,
+        signal_id: o.signal_id, available_at_ms: at, source_candle_start_ms: sourceStart,
+        close_price: price, status: o.status, reason: o.reason, score };
+    });
+    scanner_research = { scope: "PUBLIC_M5_OBSERVATIONS_NO_ROBOT_EXECUTION",
+      detectors, configuration: "RESEARCH_HUNTER_SCORE50_NATIVE_WEDGE_AND_BOX" };
+  }
   return {
     source: "SIMULATION", simulation_run_id: id, events, demo: object.demo === true,
     ...(mode ? { mode } : {}),
-    ...(mode === "MARKET_ONLY" ? {
+    ...(mode === "MARKET_ONLY" || verifiedStrategy ? {
       symbol: object.symbol as string,
       timeframe: "5m" as const,
       market_data_source: object.market_data_source as
@@ -797,6 +962,7 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
     ...(geometry_warmup_hours !== undefined ? { geometry_warmup_hours } : {}),
     ...(context_1h ? { context_1h } : {}),
     ...(dmi_5m ? { dmi_5m } : {}),
+    ...(scanner_research ? { scanner_research, scanner_observations } : {}),
   };
 }
 
@@ -813,12 +979,17 @@ export function simulationActionJournal(document: ReplayDocument) {
     kind: event.kind,
     ...(document.symbol ? { symbol: document.symbol } : {}),
     ...(event.trade_id ? { trade_id: event.trade_id } : {}),
+    ...(event.candidate_id ? { candidate_id: event.candidate_id, pattern: event.pattern } : {}),
+    ...(event.net_usdt !== undefined ? { net_usdt: event.net_usdt, pnl_percent: event.pnl_percent } : {}),
     ...(event.side ? { side: event.side } : {}),
     ...(event.price !== undefined ? { price: event.price } : {}),
     ...(event.stop !== undefined ? { stop: event.stop } : {}),
     ...(event.take !== undefined ? { take: event.take } : {}),
     ...(event.reason ? { reason: event.reason } : {}),
-    comment: event.kind === "ENTRY_SIGNAL" ? `Сигнал ${event.side ?? ""}` :
+    comment: event.kind === "WEDGE_ACCEPTED" ? `Принят кандидат: ${event.pattern ?? ""}` :
+      event.kind === "WEDGE_BREAKOUT" ? "Пробой обнаружен. Ожидается ретест" :
+      event.kind === "WEDGE_RETEST" ? "Ретест подтверждён" :
+      event.kind === "ENTRY_SIGNAL" ? `LIMIT по ретесту ${event.side ?? ""}` :
       event.kind === "ENTRY_FILLED" ? `Вход ${event.side ?? ""}` :
       `Выход ${event.reason ?? ""}`,
   }));
@@ -841,7 +1012,9 @@ export function nextClosedCandleCursor(events: readonly ReplayEvent[], cursor: n
   const current = Math.max(0, Math.min(length, Math.floor(cursor)));
   let index = current;
   while (index < length && events[index].kind !== "CANDLE_CLOSED") index++;
-  if (index === length) return length;
+  // While streaming, an action after the last received closed candle
+  // belongs to an unseen future M1/M5. Do not reveal it on the chart.
+  if (index === length) return current;
   const closedAt = events[index].time_ms;
   index++;
   while (index < length && events[index].time_ms === closedAt) index++;
@@ -1494,10 +1667,13 @@ export function visibleH017CandidateStudy(
   );
 }
 
-/** For MARKET_ONLY, DMI has exactly one observation per completed 5m candle. */
+/** All DMI samples are stamped only on fully committed M5 closes. */
 export function visibleDmi(document: ReplayDocument, closedCandles: number): ReplayDmiPoint[] {
-  if (!document.dmi_5m || (document.mode !== "MARKET_ONLY" && document.demo !== true)) return [];
-  return document.dmi_5m.points.slice(
-    0, Math.max(0, Math.min(Math.floor(closedCandles), document.dmi_5m.points.length)),
-  );
+  const count = Math.max(0, Math.floor(closedCandles));
+  if (document.mode === "STRATEGY" && !document.demo) {
+    return document.events.filter(e => e.kind === "CANDLE_CLOSED")
+      .slice(0, count).flatMap(e => e.dmi ? [e.dmi] : []);
+  }
+  if (!document.dmi_5m || (document.mode !== "MARKET_ONLY" && !document.demo)) return [];
+  return document.dmi_5m.points.slice(0, Math.min(count, document.dmi_5m.points.length));
 }

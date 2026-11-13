@@ -18,7 +18,7 @@ from terminal.diary.scope_evidence import load_order_origins_from_connection
 from terminal.diary.scoped_statistics_archive import (
     ScopedStatisticsArchive, StatisticsScopeError, _attributed_episodes,
 )
-from terminal.domain.models import ExecutionDedupKey, Origin
+from terminal.domain.models import Execution, ExecutionDedupKey, Origin
 from terminal.persistence.sqlite_store import _execution_from_row
 
 
@@ -27,10 +27,14 @@ class PaperSourceSnapshot:
     source_revision: int
     episodes: tuple[TradeEpisode, ...]
     origins: Mapping[ExecutionDedupKey, Origin]
+    executions: tuple[Execution, ...] = ()
+    campaign_evidence: Mapping[str, tuple[Mapping[str, object], ...]] | None = None
 
 
-def load_paper_source_snapshot(db_path: str | Path) -> PaperSourceSnapshot:
-    """Use ONE read-only transaction for fills + command provenance + account proof."""
+def load_paper_source_snapshot(
+    db_path: str | Path, *, include_campaign_evidence: bool = False,
+) -> PaperSourceSnapshot:
+    """Use ONE read-only transaction for fills, provenance and optional Robot lineage."""
     path = Path(db_path)
     if not path.is_absolute() or not path.is_file() or path.is_symlink():
         raise StatisticsScopeError("paper_source_db_required")
@@ -54,6 +58,31 @@ def load_paper_source_snapshot(db_path: str | Path) -> PaperSourceSnapshot:
         ).fetchall()
         executions = tuple(_execution_from_row(row) for row in rows)
         origins = load_order_origins_from_connection(conn, account_id="paper")
+        campaign_evidence = None
+        if include_campaign_evidence:
+            # Optional read-only projection. Missing tables mean UNKNOWN lineage,
+            # never an empty authoritative campaign history. All joins share
+            # the same WAL snapshot as immutable fills and controller origins.
+            queries = {
+                "campaigns": """SELECT trading_account_id,campaign_id,symbol,direction,
+                                      first_candidate_id FROM robot_reentry_campaigns
+                                 WHERE trading_account_id=?""",
+                "attempts": """SELECT trading_account_id,campaign_id,attempt_index,
+                                     candidate_id,previous_stop_exec_id FROM robot_reentry_attempts
+                                WHERE trading_account_id=?""",
+                "trades": """SELECT trading_account_id,candidate_id,trade_id,symbol,direction,
+                                   pattern,source_timeframe,
+                                   signal_time_ms,entry_time_ms,exit_time_ms,exit_reason
+                              FROM robot_trades WHERE trading_account_id=?""",
+                "entry_ownership": """SELECT trading_account_id,candidate_id,order_id,role
+                                        FROM box_order_ownership WHERE trading_account_id=?""",
+                "obligations": """SELECT trading_account_id,trade_id,status,winning_leg,exec_id,order_id
+                                   FROM paper_protection_obligations WHERE trading_account_id=?""",
+            }
+            campaign_evidence = {
+                name: tuple(dict(row) for row in conn.execute(sql, ("paper",)).fetchall())
+                for name, sql in queries.items()
+            }
         conn.rollback()
     except sqlite3.Error as exc:
         raise StatisticsScopeError("paper_source_unavailable") from exc
@@ -70,6 +99,8 @@ def load_paper_source_snapshot(db_path: str | Path) -> PaperSourceSnapshot:
             executions, environment=DiaryEnvironment.PAPER,
         ),
         origins=origins,
+        executions=executions,
+        campaign_evidence=campaign_evidence,
     )
 
 

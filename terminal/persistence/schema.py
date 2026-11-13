@@ -834,7 +834,9 @@ SCHEMA_V22_MIGRATION_STATEMENTS = (
 SCHEMA_V23_MIGRATION_STATEMENTS = (
     """CREATE TABLE box_attempt_ownership (
         candidate_id TEXT PRIMARY KEY REFERENCES robot_candidates(candidate_id),
-        trading_account_id TEXT NOT NULL CHECK (trading_account_id = 'paper'),
+        trading_account_id TEXT NOT NULL CHECK (
+            trading_account_id = 'paper' OR trading_account_id LIKE 'simulation:%'
+        ),
         symbol TEXT NOT NULL,
         attempt INTEGER NOT NULL CHECK (attempt = 1),
         baseline_position_version INTEGER NOT NULL CHECK (baseline_position_version >= 1),
@@ -843,7 +845,9 @@ SCHEMA_V23_MIGRATION_STATEMENTS = (
         baseline_execution_hash TEXT NOT NULL CHECK (length(baseline_execution_hash) = 64)
     ) WITHOUT ROWID""",
     """CREATE TABLE box_order_ownership (
-        trading_account_id TEXT NOT NULL CHECK (trading_account_id = 'paper'),
+        trading_account_id TEXT NOT NULL CHECK (
+            trading_account_id = 'paper' OR trading_account_id LIKE 'simulation:%'
+        ),
         order_id TEXT NOT NULL CHECK (length(trim(order_id)) > 0),
         candidate_id TEXT NOT NULL REFERENCES box_attempt_ownership(candidate_id),
         role TEXT NOT NULL CHECK (role IN ('ENTRY', 'EXIT')),

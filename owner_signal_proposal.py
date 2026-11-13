@@ -26,6 +26,7 @@ PROPOSAL_DIR_ENV = "BYBITSCANNER_OWNER_SIGNAL_PROPOSAL_DIR"
 MAX_REQUEST_BYTES = 32768
 MAX_NOTE_LENGTH = 1024
 PATTERNS = frozenset({"Falling Wedge", "Rising Wedge"})
+OWNER_CHART_PATTERNS = PATTERNS | {"Ikigai Box"}
 REQUIRED = frozenset({
     "schema_version", "signal_id", "snapshot_revision", "bars_sha256",
     "pattern", "proposed_boundaries", "idempotency_key",
@@ -173,14 +174,23 @@ def _assess_geometry(payload: dict, snapshot: dict, *, review_bars=None) -> dict
 
 
 def record_owner_signal_proposal(payload: dict, snapshot: dict, *, directory=None, review_bars=None,
-                                 source_kind: str = "SCANNER") -> dict:
+                                 source_kind: str = "SCANNER",
+                                 owner_chart_submission: dict | None = None) -> dict:
     """Durably record a reviewed owner proposal without creating a Robot candidate."""
     try:
-        validate_snapshot(
-            snapshot, candidate_id=snapshot["signal_id"],
-            symbol=snapshot["symbol"], timeframe=snapshot["timeframe"],
-        )
-        submission = _normalize(payload, snapshot, review_bars=review_bars)
+        if owner_chart_submission is not None:
+            # Only the separately validated, untrusted owner-chart path can
+            # carry a Fibonacci boundary. It must never enter Scanner's
+            # trusted two-ray snapshot assessment or Robot admission.
+            if source_kind != "OWNER_CHART_UNVERIFIED" or review_bars is not None:
+                raise OwnerSignalProposalError("invalid_owner_chart_authority")
+            submission = owner_chart_submission
+        else:
+            validate_snapshot(
+                snapshot, candidate_id=snapshot["signal_id"],
+                symbol=snapshot["symbol"], timeframe=snapshot["timeframe"],
+            )
+            submission = _normalize(payload, snapshot, review_bars=review_bars)
     except (KeyError, TypeError, ValueError) as exc:
         if isinstance(exc, OwnerSignalProposalError):
             raise
@@ -248,6 +258,134 @@ def record_owner_signal_proposal(payload: dict, snapshot: dict, *, directory=Non
     return record
 
 
+
+OWNER_CHART_V3_PATTERNS = frozenset({
+    "Wedge", "Ikigai Box", "Triangle", "Double Top/Bottom",
+    "Head and Shoulders", "G-Shaped",
+})
+
+
+def _record_owner_chart_v3(payload: dict, *, directory=None, now_ms: int | None = None) -> dict:
+    """Archive manual pattern/movement annotations, never grant Robot admission."""
+    required = {
+        "schema_version", "source_kind", "symbol", "timeframe", "pattern",
+        "formation_movement", "bars", "proposed_boundaries", "idempotency_key",
+    }
+    if set(payload) - {"note", "wedge_subtype"} != required:
+        raise OwnerSignalProposalError("invalid_owner_chart_fields")
+    pattern = payload["pattern"]
+    if pattern not in OWNER_CHART_V3_PATTERNS:
+        raise OwnerSignalProposalError("unsupported_proposed_pattern")
+    if payload["formation_movement"] not in ("UP", "DOWN"):
+        raise OwnerSignalProposalError("invalid_formation_movement")
+    if pattern == "Wedge":
+        if payload.get("wedge_subtype") not in ("SLOWDOWN", "CORRECTION"):
+            raise OwnerSignalProposalError("invalid_wedge_subtype")
+    elif "wedge_subtype" in payload:
+        raise OwnerSignalProposalError("unexpected_wedge_subtype")
+    symbol, timeframe = payload["symbol"], payload["timeframe"]
+    from retrospective_signal_bars import TF_MS
+    if not isinstance(symbol, str) or not re.fullmatch(r"[A-Z0-9]{2,25}", symbol):
+        raise OwnerSignalProposalError("invalid_owner_chart_symbol")
+    if not isinstance(timeframe, str) or timeframe not in TF_MS:
+        raise OwnerSignalProposalError("invalid_owner_chart_timeframe")
+    period = TF_MS[timeframe]
+    note, token = payload.get("note", ""), payload["idempotency_key"]
+    if (not isinstance(note, str) or len(note) > MAX_NOTE_LENGTH or
+            not isinstance(token, str) or
+            not re.fullmatch(r"[A-Za-z0-9_.:-]{16,128}", token)):
+        raise OwnerSignalProposalError("invalid_owner_chart_note_or_key")
+    raw = payload["bars"]
+    if not isinstance(raw, list) or not 20 <= len(raw) <= 120:
+        raise OwnerSignalProposalError("invalid_owner_chart_window")
+    current = int(time.time() * 1000) if now_ms is None else now_ms
+    if type(current) is not int or current < 0:
+        raise OwnerSignalProposalError("invalid_owner_chart_time")
+    bars = []
+    for item in raw:
+        if not isinstance(item, dict) or set(item) != {
+            "open_time_ms", "open", "high", "low", "close",
+        }:
+            raise OwnerSignalProposalError("invalid_owner_chart_bar")
+        at = item["open_time_ms"]
+        if (type(at) is not int or at < 0 or at % period or
+                at + period > current or
+                (bars and at != bars[-1]["open_time_ms"] + period)):
+            raise OwnerSignalProposalError("invalid_owner_chart_chronology")
+        try:
+            values = {key: float(item[key]) for key in ("open", "high", "low", "close")}
+        except (ValueError, OverflowError, TypeError) as exc:
+            raise OwnerSignalProposalError("invalid_owner_chart_ohlc") from exc
+        if (not all(math.isfinite(value) and value > 0 for value in values.values())
+                or values["low"] > min(values["open"], values["close"])
+                or values["high"] < max(values["open"], values["close"])
+                or values["high"] < values["low"]):
+            raise OwnerSignalProposalError("invalid_owner_chart_ohlc")
+        bars.append({"open_time_ms": at, **values})
+    drawings = payload["proposed_boundaries"]
+    is_box = pattern == "Ikigai Box"
+    is_two_ray = pattern in ("Wedge", "Triangle")
+    if (not isinstance(drawings, list) or not 1 <= len(drawings) <= 8 or
+            (is_box and len(drawings) != 1) or
+            (is_two_ray and len(drawings) != 2)):
+        raise OwnerSignalProposalError("invalid_owner_chart_geometry")
+    times = {bar["open_time_ms"] for bar in bars}
+    permitted = frozenset({"ray", "trend", "horizontal", "horizontal-ray",
+                           "vertical", "fibonacci", "ruler", "rectangle"})
+    normalized = []
+    for index, line in enumerate(drawings):
+        if not isinstance(line, dict) or set(line) != {"id", "type", "anchors"}:
+            raise OwnerSignalProposalError("invalid_owner_chart_geometry")
+        boundary_id, kind = line["id"], line["type"]
+        expected_id = "first_impulse_fibonacci" if is_box else f"manual_{index + 1}"
+        if (boundary_id != expected_id or kind not in permitted or
+                (is_box and kind != "fibonacci") or
+                (is_two_ray and kind != "ray")):
+            raise OwnerSignalProposalError("invalid_owner_chart_geometry")
+        anchors = line["anchors"]
+        required_count = 1 if kind in ("horizontal", "horizontal-ray", "vertical") else 2
+        if not isinstance(anchors, list) or len(anchors) != required_count:
+            raise OwnerSignalProposalError("invalid_owner_chart_anchors")
+        pair = []
+        for anchor in anchors:
+            if not isinstance(anchor, dict) or set(anchor) != {"bar_open_time_ms", "price"}:
+                raise OwnerSignalProposalError("invalid_owner_chart_anchor")
+            at, price = anchor["bar_open_time_ms"], anchor["price"]
+            if (type(at) is not int or at not in times or
+                    type(price) not in (int, float, Decimal) or
+                    not math.isfinite(float(price)) or float(price) <= 0):
+                raise OwnerSignalProposalError("invalid_owner_chart_anchor")
+            pair.append({"bar_open_time_ms": at, "price": float(price)})
+        if len(pair) == 2 and pair[0]["bar_open_time_ms"] >= pair[1]["bar_open_time_ms"]:
+            raise OwnerSignalProposalError("invalid_owner_chart_anchor_order")
+        normalized.append({"boundary_id": boundary_id, "kind": kind, "anchors": pair})
+    # No inference from formation movement to trade direction or order intent.
+    snapshot = {
+        "schema_version": 1,
+        "signal_id": "owner-chart:" + hashlib.sha256(canonical_bytes({
+            "symbol": symbol, "timeframe": timeframe, "bars": bars,
+        })).hexdigest()[:40],
+        "symbol": symbol, "timeframe": timeframe,
+        "bars": bars, "boundaries": normalized,
+    }
+    proposal = {
+        "schema_version": 3, "signal_id": snapshot["signal_id"],
+        "snapshot_revision": source_revision(snapshot),
+        "bars_sha256": bars_digest(snapshot),
+        "pattern": pattern,
+        "formation_movement": payload["formation_movement"],
+        **({"wedge_subtype": payload["wedge_subtype"]} if pattern == "Wedge" else {}),
+        "proposed_boundaries": [{
+            "id": line["boundary_id"], "type": line["kind"], "anchors": line["anchors"]
+        } for line in normalized],
+        "idempotency_key": token, "note": note,
+    }
+    return record_owner_signal_proposal(
+        proposal, snapshot, directory=directory,
+        source_kind="OWNER_CHART_UNVERIFIED", owner_chart_submission=proposal,
+    )
+
+
 def record_owner_chart_proposal(payload: dict, *, directory=None, now_ms: int | None = None) -> dict:
     """Store owner-supplied candle examples with provenance explicitly UNVERIFIED.
 
@@ -255,12 +393,16 @@ def record_owner_chart_proposal(payload: dict, *, directory=None, now_ms: int | 
     These examples cannot create Robot candidates, edit PAPER DB or teach the
     running detector without a separate chronological offline evaluation.
     """
+    if isinstance(payload, dict) and payload.get("schema_version") == 3:
+        return _record_owner_chart_v3(payload, directory=directory, now_ms=now_ms)
     required = {
         "schema_version", "source_kind", "symbol", "timeframe", "pattern",
-        "bars", "proposed_boundaries", "idempotency_key",
+        "direction", "bars", "proposed_boundaries", "idempotency_key",
     }
-    if (not isinstance(payload, dict) or set(payload) - {"note"} != required
-            or payload.get("schema_version") != 1
+    legacy = isinstance(payload, dict) and payload.get("schema_version") == 1
+    if (not isinstance(payload, dict) or
+            set(payload) - {"note"} != (required - {"direction"} if legacy else required)
+            or payload.get("schema_version") not in (1, 2)
             or payload.get("source_kind") != "OWNER_CHART_UNVERIFIED"):
         raise OwnerSignalProposalError("invalid_owner_chart_fields")
     symbol, timeframe = payload["symbol"], payload["timeframe"]
@@ -270,8 +412,17 @@ def record_owner_chart_proposal(payload: dict, *, directory=None, now_ms: int | 
     if not isinstance(timeframe, str) or timeframe not in TF_MS:
         raise OwnerSignalProposalError("invalid_owner_chart_timeframe")
     period = TF_MS[timeframe]
-    if payload["pattern"] not in PATTERNS:
+    if payload["pattern"] not in OWNER_CHART_PATTERNS:
         raise OwnerSignalProposalError("unsupported_proposed_pattern")
+    if (legacy and payload["pattern"] == "Ikigai Box") or (
+            not legacy and payload["direction"] not in ("LONG", "SHORT")):
+        raise OwnerSignalProposalError("invalid_owner_chart_direction")
+    note = payload.get("note", "")
+    token = payload["idempotency_key"]
+    if (not isinstance(note, str) or len(note) > MAX_NOTE_LENGTH or
+            not isinstance(token, str) or
+            not re.fullmatch(r"[A-Za-z0-9_.:-]{16,128}", token)):
+        raise OwnerSignalProposalError("invalid_owner_chart_note_or_key")
     raw = payload["bars"]
     if not isinstance(raw, list) or not 20 <= len(raw) <= 120:
         raise OwnerSignalProposalError("invalid_owner_chart_window")
@@ -301,44 +452,85 @@ def record_owner_chart_proposal(payload: dict, *, directory=None, now_ms: int | 
             raise OwnerSignalProposalError("invalid_owner_chart_ohlc")
         bars.append({"open_time_ms": at, **values})
     lines = payload["proposed_boundaries"]
-    if not isinstance(lines, list) or len(lines) != 2:
-        raise OwnerSignalProposalError("two_complete_rays_required")
-    try:
-        normalized = [{
-            "boundary_id": line["id"], "kind": line["type"],
-            "anchors": [{"bar_open_time_ms": a["bar_open_time_ms"],
-                         "price": float(a["price"])}
-                        for a in line["anchors"]],
-        } for line in lines]
-        snapshot = {
-            "schema_version": 1,
-            "signal_id": "owner-chart:" + hashlib.sha256(canonical_bytes({
-                "symbol": symbol, "timeframe": timeframe, "bars": bars,
-            })).hexdigest()[:40],
-            "symbol": symbol, "timeframe": timeframe,
-            "bars": bars, "boundaries": normalized,
-        }
-        validate_snapshot(snapshot, candidate_id=snapshot["signal_id"],
-                          symbol=symbol, timeframe=timeframe)
-    except (KeyError, TypeError, ValueError, OverflowError) as exc:
-        raise OwnerSignalProposalError("invalid_owner_chart_geometry") from exc
+    is_box = payload["pattern"] == "Ikigai Box"
+    if not isinstance(lines, list) or len(lines) != (1 if is_box else 2):
+        raise OwnerSignalProposalError("invalid_owner_chart_geometry")
+    times = {bar["open_time_ms"] for bar in bars}
+    normalized = []
+    ids = set()
+    for line in lines:
+        if not isinstance(line, dict) or set(line) != {"id", "type", "anchors"}:
+            raise OwnerSignalProposalError("invalid_owner_chart_geometry")
+        boundary_id, kind = line["id"], line["type"]
+        if (boundary_id in ids or
+                (is_box and (boundary_id != "first_impulse_fibonacci" or kind != "fibonacci")) or
+                (not is_box and (boundary_id not in {"upper", "lower"} or kind != "ray"))):
+            raise OwnerSignalProposalError("invalid_owner_chart_geometry")
+        ids.add(boundary_id)
+        anchors = line["anchors"]
+        if not isinstance(anchors, list) or len(anchors) != 2:
+            raise OwnerSignalProposalError("invalid_owner_chart_anchors")
+        pair = []
+        for anchor in anchors:
+            if not isinstance(anchor, dict) or set(anchor) != {"bar_open_time_ms", "price"}:
+                raise OwnerSignalProposalError("invalid_owner_chart_anchor")
+            at, price = anchor["bar_open_time_ms"], anchor["price"]
+            if (type(at) is not int or at not in times or
+                    type(price) not in (int, float, Decimal) or
+                    not math.isfinite(float(price)) or float(price) <= 0):
+                raise OwnerSignalProposalError("invalid_owner_chart_anchor")
+            pair.append({"bar_open_time_ms": at, "price": float(price)})
+        if pair[0]["bar_open_time_ms"] >= pair[1]["bar_open_time_ms"]:
+            raise OwnerSignalProposalError("invalid_owner_chart_anchor_order")
+        normalized.append({"boundary_id": boundary_id, "kind": kind,
+                           "anchors": pair})
+    if is_box:
+        origin, terminal = normalized[0]["anchors"]
+        if (payload["direction"] == "SHORT" and
+                terminal["price"] <= origin["price"]) or (
+                payload["direction"] == "LONG" and
+                terminal["price"] >= origin["price"]):
+            raise OwnerSignalProposalError("invalid_owner_chart_impulse_direction")
+    elif ids != {"upper", "lower"}:
+        raise OwnerSignalProposalError("invalid_owner_chart_geometry")
+
+    snapshot = {
+        "schema_version": 1,
+        "signal_id": "owner-chart:" + hashlib.sha256(canonical_bytes({
+            "symbol": symbol, "timeframe": timeframe, "bars": bars,
+        })).hexdigest()[:40],
+        "symbol": symbol, "timeframe": timeframe,
+        "bars": bars, "boundaries": normalized,
+    }
+    if not is_box:
+        try:
+            validate_snapshot(snapshot, candidate_id=snapshot["signal_id"],
+                              symbol=symbol, timeframe=timeframe)
+        except (KeyError, TypeError, ValueError, OverflowError) as exc:
+            raise OwnerSignalProposalError("invalid_owner_chart_geometry") from exc
+
     proposal = {
-        "schema_version": 1, "signal_id": snapshot["signal_id"],
+        "schema_version": 1 if legacy else 2, "signal_id": snapshot["signal_id"],
         "snapshot_revision": source_revision(snapshot),
         "bars_sha256": bars_digest(snapshot),
-        "pattern": payload["pattern"], "proposed_boundaries": lines,
-        "idempotency_key": payload["idempotency_key"],
-        "note": payload.get("note", ""),
+        "pattern": payload["pattern"],
+        **({} if legacy else {"direction": payload["direction"]}),
+        "proposed_boundaries": [{
+            "id": line["boundary_id"], "type": line["kind"],
+            "anchors": line["anchors"],
+        } for line in normalized],
+        "idempotency_key": token, "note": note,
     }
     return record_owner_signal_proposal(
         proposal, snapshot, directory=directory,
         source_kind="OWNER_CHART_UNVERIFIED",
+        owner_chart_submission=proposal,
     )
 
 
 def list_owner_chart_training_examples(pattern: str, *, directory=None) -> list[dict]:
     """Category-filtered, read-only examples for offline Scanner replay."""
-    if pattern not in PATTERNS:
+    if pattern not in OWNER_CHART_PATTERNS | OWNER_CHART_V3_PATTERNS:
         raise OwnerSignalProposalError("unsupported_proposed_pattern")
     root = proposal_directory(directory)
     if not root.exists():

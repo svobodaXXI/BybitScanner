@@ -300,6 +300,62 @@ button {
 .editor-correction-export output {
   flex-basis: 100%;
 }
+.editor-correction-export .editor-review-success {
+  color: #43d67b;
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+.editor-review-fields {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.3rem;
+  min-width: 0;
+  width: 100%;
+}
+.editor-review-fields > select,
+.editor-review-fields > input,
+.editor-review-fields > button {
+  width: 100%;
+  min-width: 0;
+}
+.editor-review-fields > small {
+  overflow-wrap: anywhere;
+}
+.editor-correction-export.editor-review-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 46%);
+  align-items: stretch;
+  column-gap: 0.4rem;
+  padding-right: 0.4rem;
+}
+.editor-review-layout > .editor-review-fields {
+  grid-column: 1;
+  grid-row: 1;
+  align-self: start;
+}
+.editor-review-layout > .editor-bottom-actions {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  justify-self: end;
+  align-self: end;
+  gap: 0.35rem;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  /* The two navigation icons remain at the upper-right of this panel. */
+  padding-top: 5.3rem;
+}
+.editor-review-layout > .editor-bottom-actions > button {
+  width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: center;
+}
 
 .drawing-tools-panel {
   grid-column: 1;
@@ -344,6 +400,32 @@ button {
 .drawing-overlay.tool-select {
   cursor: default;
 }
+.chart-candle-close {
+  position: absolute;
+  z-index: 4;
+  right: 0;
+  box-sizing: border-box;
+  width: var(--chart-price-scale-width, 64px);
+  min-width: 0;
+  padding: 2px;
+  border-radius: 2px;
+  background: #1d4825;
+  color: #e9ffec;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  pointer-events: none;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.chart-candle-close.stale {
+  background: #453224;
+  color: #ffdcaa;
+  font-size: 10px;
+}
+
 .drawing-tools-panel {
   z-index: 5;
   align-self: start;
@@ -3676,34 +3758,72 @@ button {
   grid-template-rows: minmax(33rem, 1fr) auto;
 }
 
+/* Current-chart view uses the same top-anchored chart as other workspaces.
+   Labels/actions belong below the plot, never in an oversized header. */
 .editor-current-chart-overlay {
   position: fixed;
   inset: 0;
   z-index: 1000;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
   gap: 0.4rem;
+  min-height: 0;
   padding: 0.55rem;
   background: var(--chart-bg);
   color: #d7e0e8;
 }
 .editor-current-chart-toolbar {
   display: flex;
-  justify-content: space-between;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 0.6rem;
+  gap: 0.45rem;
   min-width: 0;
+  max-height: 34vh;
+  overflow-y: auto;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  font-size: 0.8rem;
+}
+.editor-current-chart-toolbar strong {
+  flex: 1 1 100%;
+  font-size: 0.8rem;
 }
 .editor-current-chart-toolbar button {
-  padding: 0.5rem;
+  flex: 1 1 auto;
+  min-height: 2.3rem;
+  padding: 0.35rem 0.5rem;
   border: 1px solid #394653;
   border-radius: 0.35rem;
   background: #171d24;
   color: inherit;
+  font-size: inherit;
   touch-action: manipulation;
+}
+.editor-current-chart-toolbar output {
+  flex: 1 1 100%;
 }
 .editor-current-chart-overlay .chart-panel {
   min-height: 0;
+  height: 100%;
+  grid-template-rows: minmax(0, 1fr);
+}
+.editor-current-chart-overlay .chart-content-row {
+  min-height: 0;
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+.editor-current-chart-overlay .chart-stage {
+  grid-row: 1;
+  min-height: 0;
+}
+.editor-current-chart-overlay .chart-engine {
+  min-height: 0;
+}
+.editor-current-chart-overlay .editor-correction-export {
+  grid-row: 2;
+  align-self: stretch;
+  margin: 0.35rem 0 0;
+  padding-right: 2.9rem;
+  max-height: 46dvh;
+  overflow-y: auto;
 }
 .workspace-market-row {
   position: relative;
@@ -3816,8 +3936,42 @@ button {
   .workspace-editor .workspace-market-row {
     min-height: 0;
   }
+  /* Keep review/actions below the drawing area. The toolbar and controls
+     must not occupy the same mobile grid cell. */
+  .workspace-editor .chart-content-row {
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+  .workspace-editor .editor-correction-export {
+    grid-row: 2;
+    align-self: stretch;
+    margin: 0.35rem 0 0;
+    max-height: 46dvh;
+    overflow-y: auto;
+  }
   .workspace-editor .chart-stage,
   .workspace-editor .chart-engine {
     min-height: 0;
   }
+}
+
+/* Owner create mode: controls remain below the chart and Save stays visible. */
+.editor-new-signal-title {
+  display: block;
+  font-weight: 700;
+  color: #d7e0e8;
+  font-size: 0.88rem;
+  margin-top: 0.2rem;
+}
+.editor-correction-export .editor-return-to-correction {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.55rem;
+  width: 100%;
+  margin-top: 0.35rem;
+  text-align: left;
+}
+.editor-return-to-correction span {
+  font-size: 1.1rem;
+  font-weight: 700;
 }

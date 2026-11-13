@@ -29,6 +29,7 @@ BACKEND_BLOCK = (
     "        proxy_pass http://127.0.0.1:8765;\n"
 )
 AUTH_BLOCK = "    location = /_auth {\n        internal;"
+BRIDGE_START = "    # Paired Windows Simulator agent only:"
 ROUTE_START = "    # MAIN reads are isolated from the PAPER backend."
 ROUTE_END = "    # The backend is never publicly exposed"
 MARKER = re.compile(r"(?m)^# configuration file ([^:\n]+):\s*$")
@@ -69,6 +70,35 @@ def _route_from_source(root: Path) -> str:
     return block
 
 
+def _simulator_bridge_from_source(root: Path) -> str:
+    """An independently reviewed device-token route, outside the MAIN block.
+
+    Keeping it separate retains byte-for-byte compatibility with the older
+    installed Monolith preflight during the protected release transition.
+    """
+    path = root / "deploy/terminal_ingress/nginx-authenticated.conf"
+    try:
+        contents = path.read_text(encoding="utf-8")
+        start = contents.index(BRIDGE_START)
+        end = contents.index(ROUTE_START, start)
+        block = contents[start:end]
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise MainGatewayBlocked("reviewed_simulator_bridge_unavailable") from exc
+    _require(
+        block.count("location = /api/diary/simulator-bridge/poll {") == 1
+        and block.count("location = /api/diary/simulator-bridge/ack {") == 1
+        and block.count("limit_except GET { deny all; }") == 1
+        and block.count("limit_except POST { deny all; }") == 1
+        and block.count("proxy_pass http://127.0.0.1:8765;") == 2
+        and block.count('proxy_set_header Cookie "";') == 2
+        and block.count('proxy_set_header Authorization "";') == 2
+        and block.count("client_max_body_size 1k;") == 2
+        and "auth_request" not in block,
+        "reviewed_simulator_bridge_invalid",
+    )
+    return block
+
+
 def _trusted_site(path: Path, *, nginx_dir: Path, uid: int) -> Path:
     # sites-enabled often contains an owner-controlled link to sites-available.
     # Follow only one root-owned link into the same protected Nginx tree.
@@ -106,11 +136,16 @@ def inspect_authenticated_site(
 ) -> tuple[Path, bytes, bytes]:
     """Read-only attestation. The caller must perform this *before* STOP."""
     route = _route_from_source(root)
+    bridge = _simulator_bridge_from_source(root)
     dump = _command(["nginx", "-T"], run=run)
     blocks = MARKER.split(dump)
     candidates = []
     count_route = dump.count("location ^~ /api/manual-main/ {")
     _require(count_route <= 1, "duplicate_main_gateway_routes")
+    bridge_poll = "location = /api/diary/simulator-bridge/poll {"
+    bridge_ack = "location = /api/diary/simulator-bridge/ack {"
+    _require(dump.count(bridge_poll) <= 1 and dump.count(bridge_ack) <= 1,
+             "duplicate_simulator_bridge_routes")
     for idx in range(1, len(blocks), 2):
         filename, body = blocks[idx], blocks[idx + 1]
         if AUTH_LISTENER in body and "location = /_auth {" in body:
@@ -133,8 +168,19 @@ def inspect_authenticated_site(
                  and count_route == 0, "unknown_main_gateway_route")
         contents = contents.replace(BACKEND_BLOCK, route + BACKEND_BLOCK, 1)
         updated = contents.encode("utf-8")
+    # The existing MAIN route may already be installed from an earlier
+    # release; adopt only the exact reviewed bridge without replacing it.
+    if bridge not in contents:
+        _require(bridge_poll not in contents and bridge_ack not in contents
+                 and dump.count(bridge_poll) == 0 and dump.count(bridge_ack) == 0,
+                 "unknown_simulator_bridge_route")
+        contents = contents.replace(BACKEND_BLOCK, bridge + BACKEND_BLOCK, 1)
+        updated = contents.encode("utf-8")
     _require(updated.decode("utf-8").count("location ^~ /api/manual-main/ {") == 1,
              "main_gateway_route_not_unique")
+    _require(updated.decode("utf-8").count(bridge_poll) == 1
+             and updated.decode("utf-8").count(bridge_ack) == 1,
+             "simulator_bridge_route_not_unique")
     return site, original, updated
 
 

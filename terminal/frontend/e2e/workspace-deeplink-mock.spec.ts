@@ -98,6 +98,7 @@ test("frozen Editor geometry reviews source even when browser draft storage is b
         snapshot_revision: "a".repeat(64),
         bars_sha256: "b".repeat(64),
         latest_review: null,
+        original_pattern: "Rising Wedge",
         snapshot: {
           schema_version: 1, signal_id: signalId, symbol: "BTCUSDT", timeframe: "5",
           bars: [
@@ -164,14 +165,16 @@ test("frozen Editor geometry reviews source even when browser draft storage is b
   // The toolbar is initially empty of undo history; clicking Undo must
   // not claim that the unchanged Scanner geometry is an unsaved review.
   await page.getByRole("button", { name: "Undo drawing" }).click();
-  await expect(page.getByLabel("Несохранённый отзыв")).toHaveCount(0);
-  await page.getByRole("combobox", { name: "Оценка сигнала" }).selectOption("CONFIRMED");
+  await expect(page.locator(".editor-review-success")).toHaveCount(0);
+  await expect(page.getByRole("combobox", { name: "Правильный паттерн" })).toHaveValue("Rising Wedge");
   await save.click();
-  await expect(page.getByText(/Не удалось сохранить: Сервер не подтвердил точное сохранение отзыва/)).toBeVisible();
-  await expect(page.getByText(/Сохранённый отзыв:/)).toHaveCount(0);
-  await save.click();
-  await expect(page.getByText(/Исправление сохранено в дневнике обратной связи/)).toBeVisible();
-  await expect(page.getByText(/Сохранённый отзыв: c{12}.*Верный сигнал/)).toBeVisible();
+  const rejected = page.getByRole("button", { name: "Не удалось сохранить" });
+  await expect(rejected).toHaveAttribute("title", /Сервер не подтвердил точное сохранение отзыва/);
+  await expect(page.locator(".editor-review-success")).toHaveCount(0);
+  await rejected.click();
+  // Successful confirmation of an unmodified signal must not claim geometry was corrected.
+  await expect(page.getByRole("button", { name: "Передать исправление" })).toBeVisible();
+  await expect(page.locator(".editor-review-success")).toHaveCount(0);
   expect(posted).toHaveLength(2);
   expect(posted[0].idempotency_key).toBe(posted[1].idempotency_key);
   expect(posted[0]).toMatchObject({
@@ -207,7 +210,7 @@ test("Editor saved correction survives a fresh open with original Scanner rays u
     review_id: string;
     submission: {
       signal_id: string; snapshot_revision: string; bars_sha256: string;
-      label: string; note: string;
+      label: string; note: string; corrected_pattern?: string;
       corrected_boundaries: Array<{ boundary_id: string; kind: string; anchors: Array<{ bar_open_time_ms: number; price: number }> }>;
     };
   } | null = null;
@@ -225,6 +228,7 @@ test("Editor saved correction survives a fresh open with original Scanner rays u
               ...savedReview.submission, bars_sha256: "f".repeat(64),
             } } : savedReview,
           snapshot_revision: "a".repeat(64), bars_sha256: "b".repeat(64),
+          original_pattern: "Rising Wedge",
         }) });
       return;
     }
@@ -233,11 +237,12 @@ test("Editor saved correction survives a fresh open with original Scanner rays u
       const body = request.postDataJSON() as {
         schema_version: 1; note: string;
         signal_id: string; label: string; snapshot_revision: string;
-        bars_sha256: string; idempotency_key: string;
+        bars_sha256: string; idempotency_key: string; corrected_pattern?: string;
         corrected_boundaries: Array<{ id: string; type: string; anchors: Array<{ bar_open_time_ms: number; price: number }> }>;
       };
       expect(body.signal_id).toBe(signalId);
       expect(body.label).toBe("GEOMETRY_CORRECTED");
+      expect(body.corrected_pattern).toBe("Triangle");
       expect(body.note).toBe("Upper anchor corrected after candle close");
       expect(body.corrected_boundaries).toHaveLength(2);
       correctedPrice = body.corrected_boundaries[0].anchors[0].price;
@@ -252,6 +257,7 @@ test("Editor saved correction survives a fresh open with original Scanner rays u
         submission: {
           signal_id: signalId, snapshot_revision: body.snapshot_revision,
           label: body.label, note: body.note, bars_sha256: body.bars_sha256,
+          corrected_pattern: body.corrected_pattern,
           corrected_boundaries: body.corrected_boundaries.map((item) => ({
             boundary_id: item.id, kind: item.type, anchors: item.anchors,
           })),
@@ -263,6 +269,7 @@ test("Editor saved correction survives a fresh open with original Scanner rays u
             schema_version: body.schema_version, note: body.note,
             signal_id: signalId, snapshot_revision: body.snapshot_revision,
             bars_sha256: body.bars_sha256, label: body.label,
+            corrected_pattern: body.corrected_pattern,
             idempotency_key: body.idempotency_key,
             corrected_boundaries: savedReview.submission.corrected_boundaries,
           } } }) });
@@ -342,15 +349,13 @@ test("Editor saved correction survives a fresh open with original Scanner rays u
     const upper = raw ? JSON.parse(raw).drawings.find((item: { id: string }) => item.id === "editable:upper") : null;
     return upper?.anchors[0] ?? null;
   }, startKey)).not.toEqual({ logical: 0, price: 115 });
-  await expect(page.getByLabel("Сравнение линий Scanner и исправления")).toContainText("Δ точка 1");
-  await expect(page.getByLabel("Несохранённый отзыв")).toContainText("Новые изменения не сохранены");
-  // "Confirmed" cannot silently discard an already moved Scanner boundary.
-  await page.getByRole("combobox", { name: "Оценка сигнала" }).selectOption("CONFIRMED");
-  await page.getByRole("button", { name: "Передать исправление" }).click();
-  await expect(page.locator(".editor-correction-export output[role=status]").last())
-    .toContainText("Линии изменены");
-  expect(writes).toBe(0);
-  await page.getByRole("combobox", { name: "Оценка сигнала" }).selectOption("GEOMETRY_CORRECTED");
+  // Diagnostics and stale/unsaved helper text were intentionally removed from the owner UI.
+  await expect(page.getByLabel("Сравнение линий Scanner и исправления")).toHaveCount(0);
+  await expect(page.getByLabel("Несохранённый отзыв")).toHaveCount(0);
+  // A changed pattern and a moved Scanner ray must be saved together.
+  // The verdict is derived from actual evidence, never a manually forced confirmation.
+  await expect(page.getByRole("combobox", { name: "Правильный паттерн" })).toHaveValue("Rising Wedge");
+  await page.getByRole("combobox", { name: "Правильный паттерн" }).selectOption("Triangle");
   const noteField = page.getByRole("textbox", { name: "Комментарий к исправлению" });
   await noteField.fill("Upper anchor corrected after candle close!");
   await noteField.press("Backspace");
@@ -362,16 +367,14 @@ test("Editor saved correction survives a fresh open with original Scanner rays u
     return raw ? JSON.parse(raw).drawings.map((item: { id: string }) => item.id) : [];
   }, startKey)).toEqual(["editable:upper", "editable:lower"]);
   await page.getByRole("button", { name: "Передать исправление" }).click();
-  await expect(page.locator(".editor-correction-export output[role=status]").last())
-    .toContainText("Исправление сохранено в дневнике обратной связи");
+  await expect(page.locator(".editor-review-success")).toHaveText("Исправление сохранено");
   expect(writes).toBe(1);
-  await expect(page.getByText(/Сохранённый отзыв: d{12}.*Исправлена геометрия/)).toBeVisible();
   await expect(page.getByLabel("Несохранённый отзыв")).toHaveCount(0);
   // Changing the review AFTER the server's confirmation must not imply that
   // the newly edited note has already been saved with the old geometry.
   await page.getByRole("textbox", { name: "Комментарий к исправлению" }).fill("New note after receipt");
-  await expect(page.getByLabel("Несохранённый отзыв")).toContainText("Новые изменения не сохранены");
-  await expect(page.getByText(/Сохранённый отзыв: d{12}.*предыдущая версия/)).toBeVisible();
+  await expect(page.locator(".editor-review-success")).toHaveCount(0);
+  await expect(page.getByText(/Сохранённый отзыв:/)).toHaveCount(0);
   expect(writes).toBe(1);
 
   // A stale local review cache must not override the authoritative persisted
@@ -391,7 +394,9 @@ test("Editor saved correction survives a fresh open with original Scanner rays u
   await expect(page.getByLabel("Несохранённый отзыв")).toHaveCount(0);
   await expect(page.getByRole("textbox", { name: "Комментарий к исправлению" }))
     .toHaveValue("Upper anchor corrected after candle close");
-  await expect(page.getByText(/Сохранённый отзыв: d{12}.*Исправлена геометрия/)).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "Правильный паттерн" })).toHaveValue("Triangle");
+  await expect(page.getByLabel("Название исходного сигнала")).toHaveText("Исходный сигнал: Rising Wedge");
+  await expect(page.locator(".editor-review-success")).toHaveCount(0);
   await expect.poll(() => page.evaluate((id) => {
     const savedKey = `bybitscanner:editor-drawings:v1:BTCUSDT:5m:${id}:review-${"d".repeat(64)}`;
     const raw = localStorage.getItem(savedKey);
