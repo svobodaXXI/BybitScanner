@@ -1135,6 +1135,41 @@ describe("Finrez first-screen UI", () => {
 });
 
 describe("shared statistics trade action standard", () => {
+  it("renders source-verified entry-notional return, not guessed leveraged ROI", async () => {
+    const base = {
+      trade_episode_id: "te_" + "a".repeat(24), symbol: "BTCUSDT", side: "LONG",
+      opened_at_ms: 1_793_001_000_000, closed_at_ms: 1_793_002_000_000,
+      pnl_usdt: "4.8", execution_count: 2, cohort: "ROBOT",
+      replay_evidence: "EPISODE_INDEX_ONLY",
+    };
+    const matched = {
+      ...base, pnl_pct: "2.4",
+      entry_notional_usdt: "200",
+      pnl_pct_basis: "KNOWN_COST_PNL_OVER_EXECUTED_ENTRY_NOTIONAL",
+    };
+    const unsupported = {
+      ...base, trade_episode_id: "te_" + "b".repeat(24), symbol: "ETHUSDT",
+      pnl_pct: "50", entry_notional_usdt: "200",
+      pnl_pct_basis: "KNOWN_COST_PNL_OVER_EXECUTED_ENTRY_NOTIONAL",
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ...finrezResponse, closed_episodes: [matched, unsupported],
+    }), { status: 200 })));
+    render(<DiaryOverlay accountKey="paper:percent" initialSection="DEALS"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    expect(await screen.findByText("PnL %: +2,40%")).toBeInTheDocument();
+    expect(screen.getByText("PnL %: —")).toHaveAttribute(
+      "title", "Процент недоступен без подтверждённой базы расчёта",
+    );
+    expect(screen.getByText("PnL %: +2,40%")).toHaveAttribute("title",
+      expect.stringContaining("Не ROI на маржу"));
+    fireEvent.click(screen.getByRole("button", { name: /BTCUSDT/ }));
+    expect(screen.getByText("PnL % от номинала входа")).toBeInTheDocument();
+    expect(screen.getByText("+2,40%")).toBeInTheDocument();
+    expect(screen.getByText("Фактический номинал входов")).toBeInTheDocument();
+    expect(screen.getByText("200,00 USDT")).toBeInTheDocument();
+  });
+
 
   it("shows only exact, source-checked D2 pattern on the selected closed episode and remembers it in the list", async () => {
     const deal = {
