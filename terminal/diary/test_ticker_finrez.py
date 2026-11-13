@@ -481,6 +481,22 @@ class EntryNotionalReturnTests(unittest.TestCase):
         self.assertEqual(Decimal(row["pnl_pct"]), Decimal("-5.1"))
         self.assertEqual(row["pnl_usdt"], "-10.2")
 
+    def test_non_usdt_linear_quote_is_not_mislabeled_usdt_entry_notional(self):
+        from terminal.diary.ticker_finrez import attach_verified_entry_notional_returns
+        episode, origins = _scoped_episode("te_" + "f" * 24, "ETHUSDC", [
+            (AllocationRole.OPEN, Origin.ROBOT),
+            (AllocationRole.CLOSE, Origin.ROBOT),
+        ])
+        snapshot = self._source(episode, origins, ("100", "101"), (
+            OrderSide.BUY, OrderSide.SELL,
+        ))
+        report = project_paper_ticker_pnl(
+            snapshot, account_id="paper", owner="ROBOT", period="ALL", now_ms=_ms(9, 12),
+        )
+        result = attach_verified_entry_notional_returns(snapshot, report)
+        self.assertEqual(result["closed_episodes"], report["closed_episodes"])
+        self.assertNotIn("pnl_pct", result["closed_episodes"][0])
+
     def test_incomplete_wrong_side_or_wrong_snapshot_never_fabricates_percentage(self):
         from dataclasses import replace
         from terminal.diary.ticker_finrez import attach_verified_entry_notional_returns
