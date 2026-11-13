@@ -73,6 +73,49 @@ def test_review_roundtrip_keeps_source_immutable_and_returns_timestamp_coordinat
     assert len(list(tmp_path.rglob("*.json"))) == 1
 
 
+def test_pattern_review_is_append_only_and_does_not_change_scanner_geometry(tmp_path):
+    source = _source()
+    unchanged = deepcopy(source)
+    combined = {**_payload(source), "corrected_pattern": "Triangle"}
+    saved = record_review(combined, source, directory=tmp_path)
+    assert saved["submission"]["label"] == "GEOMETRY_CORRECTED"
+    assert saved["submission"]["corrected_pattern"] == "Triangle"
+    assert saved["source_boundaries"] == source["boundaries"]
+    assert record_review(combined, source, directory=tmp_path) == saved
+
+    pattern_only = _payload(source, label="PATTERN_CORRECTED",
+                            token="test-unique-idempotency-00002")
+    pattern_only["corrected_pattern"] = "Wedge"
+    saved_pattern = record_review(pattern_only, source, directory=tmp_path)
+    assert saved_pattern["submission"]["corrected_boundaries"] == []
+    assert saved_pattern["submission"]["corrected_pattern"] == "Wedge"
+    assert latest_review(source["signal_id"], snapshot=source, directory=tmp_path) == saved_pattern
+    assert source == unchanged
+    assert len(list(tmp_path.rglob("*.json"))) == 2
+
+
+@pytest.mark.parametrize("changes", [
+    {"corrected_pattern": ""},
+    {"corrected_pattern": "arbitrary robot strategy"},
+    {"corrected_pattern": 42},
+])
+def test_rejects_invalid_review_pattern(tmp_path, changes):
+    source = _source()
+    with pytest.raises(GeometryFeedbackError, match="invalid_corrected_pattern"):
+        record_review({**_payload(source), **changes}, source, directory=tmp_path)
+    assert not list(tmp_path.rglob("*.json"))
+
+
+def test_pattern_only_review_needs_label_and_pattern_consistency(tmp_path):
+    source = _source()
+    with pytest.raises(GeometryFeedbackError, match="missing_corrected_pattern"):
+        record_review(_payload(source, label="PATTERN_CORRECTED"), source, directory=tmp_path)
+    with pytest.raises(GeometryFeedbackError, match="unexpected_corrected_pattern"):
+        record_review({**_payload(source, label="CONFIRMED"), "corrected_pattern": "Wedge"},
+                      source, directory=tmp_path)
+    assert not list(tmp_path.rglob("*.json"))
+
+
 def test_new_review_syncs_published_directory_before_ack(tmp_path, monkeypatch):
     import os
     import stat
