@@ -104,10 +104,11 @@ class WedgeBacktestResult:
                  "l2_partial_depth_unproven_count": self.l2_partial_depth_unproven_count,
                  "l2_episodes": list(self.l2_episodes),
                  "execution_certainty": (
-                     "CONDITIONAL_L2_DEPTH_OR_DEFERRED_STOP"
-                     if (self.l2_unproven_entry_depth_count or self.l2_deferred_stop_count
-                         or self.l2_partial_take_fills or self.l2_be_stop_amendments
+                     "CONDITIONAL_L2_PARTIAL_BE_MODEL"
+                     if (self.l2_partial_take_fills or self.l2_be_stop_amendments
                          or self.l2_partial_depth_unproven_count)
+                     else "CONDITIONAL_L2_DEPTH_OR_DEFERRED_STOP"
+                     if (self.l2_unproven_entry_depth_count or self.l2_deferred_stop_count)
                      else "CONDITIONAL_MODEL_NO_REAL_FILL_PROOF"
                  )}
                if self.l2_source_sha256 is not None else {}),
