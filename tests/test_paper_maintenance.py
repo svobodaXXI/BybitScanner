@@ -918,15 +918,18 @@ def test_known_paused_drain_is_sealed_waits_for_flat_and_resumes_once(monkeypatc
     assert maintenance._known_drain_receipt(
         transactions, target, old, phase="continuation-invoked", uid=os.geteuid()
     )
-    assert maintenance._confirmed_stop_receipt(
-        transactions, target, old, uid=os.geteuid()
+    assert maintenance._known_drain_receipt(
+        transactions, target, old, phase="completed", uid=os.geteuid()
     )
-
+    # Completion is independent of the failed original canonical STOP;
+    # an interrupted immutable installer may reattest stopped state from
+    # the sealed continuation proof without any Robot/Backend STOP replay.
+    assert not (transactions / (".stop-confirmed-" + target)).exists()
     again = maintenance.deploy_staged_editor_only(target, **kwargs)
-    assert again == "BLOCKED: known_natural_drain_continuation_already_invoked; no retry"
+    assert again == "READY: EDITOR_ONLY"
     assert actions.count("canonical-stop") == 1
     assert actions.count("remaining-phases-only") == 1
-    assert actions.count("install") == 1
+    assert actions.count("install") == 2
 
 
 def test_known_drain_receipt_invalid_shape_cannot_resume(monkeypatch, tmp_path):
