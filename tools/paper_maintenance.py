@@ -661,7 +661,7 @@ def _write_unsealed_paused_receipt(
             or not journal.is_dir() or journal.is_symlink()
             or journal.stat().st_uid != uid or journal.stat().st_mode & 0o077
             or _trusted_file(journal / (".stop-invoked-" + prior), uid)
-                != b"STOP_INVOKED; not install authorization\n"):
+                != b"STOP_INVOKED; not install authorization\\n"):
         raise ValueError("unsealed_paused_journal_untrusted")
     fd = os.open(journal / ".release.lock", os.O_RDWR | os.O_NOFOLLOW)
     with os.fdopen(fd, "rb") as lock:
@@ -743,7 +743,7 @@ def _unsealed_paused_successor_proven(
                     journal, old, prior, successor, "completed", uid,
                 )
                 or _trusted_file(journal / (".stop-invoked-" + prior), uid)
-                    != b"STOP_INVOKED; not install authorization\n"):
+                    != b"STOP_INVOKED; not install authorization\\n"):
             return False
         transaction = journal / successor
         if (not transaction.is_dir() or transaction.is_symlink()
