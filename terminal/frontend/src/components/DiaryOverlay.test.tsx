@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { DiaryOverlay } from "./DiaryOverlay";
+import { DiaryOverlay, displayTradePnl } from "./DiaryOverlay";
 
 const detail = {
   identity: {
@@ -362,7 +362,7 @@ const finrezResponse = {
   ok: true,
   account_id: "paper",
   owner: "ROBOT" as const,
-  period: "TODAY" as const,
+  period: "DAY" as const,
   period_start_ms: 1_793_000_000_000,
   as_of_ms: 1_793_050_000_000,
   source_revision: 3,
@@ -405,16 +405,191 @@ describe("Closed deals / exact episode index", () => {
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
     const row = await screen.findByRole("button", { name: /BTCUSDT/ });
     expect(screen.getByRole("button", { name: /XRPUSDT/ })).toHaveTextContent("Робот + ручное управление");
-    expect(row).toHaveTextContent("-4.8 USDT");
+    expect(row).toHaveTextContent("-4,80 USDT");
     fireEvent.click(row);
     expect(screen.getByText("robot-episode-42")).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("не воспроизведение");
-    expect(screen.queryByRole("button", { name: /Открыть в Симуляторе/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Открыть сделку в Симуляторе/ })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /К сделкам/ }));
     expect(await screen.findByRole("button", { name: /BTCUSDT/ })).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=TODAY",
+      "/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=DAY",
     );
+  });
+
+  it("copies selected episode ID with explicit unavailable notice on another device", async () => {
+    const copy = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { userAgent: "Android", clipboard: { writeText: copy } });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ...finrezResponse, closed_episodes: [robotDeal],
+    }), { status: 200 })));
+    render(<DiaryOverlay accountKey="paper:deals" initialSection="DEALS"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: /BTCUSDT/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Открыть в Симуляторе" }));
+    await waitFor(() => expect(copy).toHaveBeenCalledWith(robotDeal.trade_episode_id));
+    expect(await screen.findByText(/Автоматический запуск этой сделки недоступен/)).toHaveTextContent(
+      "Идентификатор скопирован.",
+    );
+  });
+
+  it("copies real episode ID directly without protocol launch or bridge request", async () => {
+    const episodeId = "te_" + "f".repeat(24);
+    const copy = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { userAgent: "Android", clipboard: { writeText: copy } });
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ...finrezResponse,
+      closed_episodes: [{ ...robotDeal, trade_episode_id: episodeId }],
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<DiaryOverlay accountKey="paper:deals" initialSection="DEALS"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: /BTCUSDT/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Скопировать ID" }));
+    await waitFor(() => expect(copy).toHaveBeenCalledWith(episodeId));
+    expect(await screen.findByText(/ID сделки скопирован:/)).toHaveTextContent(episodeId);
+    expect(fetchMock.mock.calls.filter(([url]) =>
+      String(url).includes("/simulator-bridge/"))).toHaveLength(0);
+  });
+
+  it("uses only typed Windows URI locator, with no PAPER data in launch URL", async () => {
+    const episodeId = "te_" + "a".repeat(24);
+    const copy = vi.fn().mockResolvedValue(undefined);
+    const launches: string[] = [];
+    vi.stubGlobal("navigator", {
+      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+      clipboard: { writeText: copy },
+    });
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(function (this: HTMLAnchorElement) {
+        launches.push(this.getAttribute("href") || "");
+      });
+    try {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+        ...finrezResponse,
+        closed_episodes: [{ ...robotDeal, trade_episode_id: episodeId }],
+      }), { status: 200 })));
+      render(<DiaryOverlay accountKey="paper:deals" initialSection="DEALS"
+        statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+      fireEvent.click(await screen.findByRole("button", { name: /BTCUSDT/ }));
+      fireEvent.click(screen.getByRole("button", { name: "Открыть в Симуляторе" }));
+      await waitFor(() => expect(launches).toEqual([
+        "bybitscanner-simulator://open?episode=" + episodeId,
+      ]));
+      expect(copy).toHaveBeenCalledWith(episodeId);
+      expect(await screen.findByText(/Запрос открытия утилиты отправлен Windows/)).toHaveTextContent(
+        "Результат пока не подтверждён.",
+      );
+    } finally {
+      anchorClick.mockRestore();
+    }
+  });
+
+  it("pairs an existing VPS device slot through a confirmed Windows link only", async () => {
+    const token = "A".repeat(64);
+    const copies = vi.fn().mockResolvedValue(undefined);
+    const linkClicks: string[] = [];
+    vi.stubGlobal("navigator", {
+      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+      clipboard: { writeText: copies },
+    });
+    const spy = vi.spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(function (this: HTMLAnchorElement) {
+        linkClicks.push(this.href);
+      });
+    try {
+      const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+        if (url.endsWith("/simulator-bridge/pair")) return new Response(JSON.stringify({
+          ok: true, device_id: "owner-pc", token,
+        }), { status: 200 });
+        return new Response(JSON.stringify({
+          ...finrezResponse, closed_episodes: [robotDeal],
+        }), { status: 200 });
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      render(<DiaryOverlay accountKey="paper:deals" initialSection="DEALS"
+        statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+      fireEvent.click(await screen.findByRole("button", { name: /BTCUSDT/ }));
+      fireEvent.click(screen.getByRole("button", { name: "Связать ПК" }));
+      expect(await screen.findByRole("button", { name: "Подтвердить подключение" }))
+        .toBeInTheDocument();
+      expect(linkClicks).toHaveLength(0); // browser must not auto-open on async request
+      expect(fetchMock).toHaveBeenCalledWith("/api/diary/simulator-bridge/pair", {
+        method: "POST", credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ device_id: "owner-pc" }),
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Подтвердить подключение" }));
+      expect(linkClicks).toEqual([
+        "bybitscanner-simulator://pair?device_id=owner-pc&token=" + token,
+      ]);
+      expect(screen.getByText(/Запрос сопряжения передан Windows/))
+        .toHaveTextContent("Успешное подключение пока не подтверждено.");
+      expect(screen.queryByRole("button", { name: "Подтвердить подключение" }))
+        .not.toBeInTheDocument();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("on phone requests paired adapter and reports acknowledged local utility opening", async () => {
+    const episodeId = "te_" + "c".repeat(24);
+    const requestId = "d".repeat(32);
+    const copy = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { userAgent: "Android", clipboard: { writeText: copy } });
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+      if (url.endsWith("/simulator-bridge/request")) return new Response(JSON.stringify({
+        ok: true, state: "QUEUED", request_id: requestId,
+      }), { status: 200 });
+      if (url.endsWith("/simulator-bridge/status")) return new Response(JSON.stringify({
+        ok: true, state: "LAUNCHED", request_id: requestId,
+      }), { status: 200 });
+      return new Response(JSON.stringify({
+        ...finrezResponse, closed_episodes: [{ ...robotDeal, trade_episode_id: episodeId }],
+      }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<DiaryOverlay accountKey="paper:deals" initialSection="DEALS"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: /BTCUSDT/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Открыть в Симуляторе" }));
+    expect(await screen.findByText(/Локальная утилита подтвердила запрос открытия/))
+      .toHaveTextContent("Идентификатор скопирован.");
+    expect(copy).toHaveBeenCalledWith(episodeId);
+    expect(fetchMock).toHaveBeenCalledWith("/api/diary/simulator-bridge/request", {
+      method: "POST", credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ episode_id: episodeId }),
+    });
+    expect(fetchMock).toHaveBeenCalledWith("/api/diary/simulator-bridge/status", {
+      method: "POST", credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ request_id: requestId }),
+    });
+  });
+
+  it("on phone retains copied ID when no paired adapter is connected", async () => {
+    const episodeId = "te_" + "e".repeat(24);
+    const copy = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { userAgent: "Android", clipboard: { writeText: copy } });
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+      if (url.endsWith("/simulator-bridge/request")) return new Response(JSON.stringify({
+        ok: false, error: "no_connected_simulator_adapter",
+      }), { status: 503 });
+      return new Response(JSON.stringify({
+        ...finrezResponse, closed_episodes: [{ ...robotDeal, trade_episode_id: episodeId }],
+      }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<DiaryOverlay accountKey="paper:deals" initialSection="DEALS"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: /BTCUSDT/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Открыть в Симуляторе" }));
+    expect(await screen.findByText(/Нет доступа к локальному Симулятору или адаптеру VPS/))
+      .toHaveTextContent("Идентификатор скопирован.");
+    expect(copy).toHaveBeenCalledWith(episodeId);
+    expect(fetchMock.mock.calls.filter(([url]) =>
+      (url as string).endsWith("/simulator-bridge/status"))).toHaveLength(0);
   });
 
   it("blocks missing episode contract on an older backend instead of inventing deals", async () => {
@@ -487,6 +662,11 @@ describe("Closed deals / exact episode index", () => {
       ));
       await waitFor(() => expect(click).toHaveBeenCalledOnce());
       expect(URLWithBlobs.createObjectURL).toHaveBeenCalledOnce();
+      expect(await screen.findByRole("button", { name: "Скопировать JSON" })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Скопировать JSON" }));
+      expect(await screen.findByRole("textbox", { name: "Проверенный JSON сделки" })).toHaveValue(
+        JSON.stringify(payload, null, 2) + "\n",
+      );
     } finally {
       click.mockRestore();
     }
@@ -566,6 +746,8 @@ describe("Statistics full-width account/close header", () => {
     expect(header.nextElementSibling).toBe(heading);
     expect(heading).toHaveTextContent("Терминал");
     expect(heading).toHaveTextContent("Статистика");
+    expect(heading.children).toHaveLength(2);
+    expect(heading.firstElementChild?.nextElementSibling).toBe(heading.querySelector("h2"));
     expect(heading).not.toHaveTextContent("раздельная статистика");
     expect(accountControl).toHaveClass("account-switch-button");
     expect(accountControl.querySelectorAll(".account-switch-key")).toHaveLength(1);
@@ -580,7 +762,7 @@ describe("Statistics full-width account/close header", () => {
 });
 
 describe("Statistics source headings", () => {
-  it("shows Автопилот above Статистика for the robot scope, without a duplicated account caption", async () => {
+  it("shows Автопилот and Статистика next to each other in the shared compact heading", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(finrezResponse), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const { container } = render(<DiaryOverlay accountKey="paper:robot" initialSection="FINREZ"
@@ -588,36 +770,77 @@ describe("Statistics source headings", () => {
     const heading = container.querySelector(".diary-context-heading")!;
     expect(heading.querySelector("p")).toHaveTextContent("Автопилот");
     expect(heading.querySelector("h2")).toHaveTextContent("Статистика");
+    expect(heading.children).toHaveLength(2);
+    expect(heading.firstElementChild?.nextElementSibling).toBe(heading.querySelector("h2"));
     expect(heading).not.toHaveTextContent("PAPER");
     expect(heading).not.toHaveTextContent("раздельная статистика");
     await screen.findByText("ETHUSDT");
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=TODAY",
+      "/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=DAY",
     );
   });
 });
 
 describe("Finrez first-screen UI", () => {
-  it("shows the ticker ranking with two periods, reuses the Diary modal and defers other sections", async () => {
+  it("shows the ticker ranking with five periods, reuses the Diary modal and defers other sections", async () => {
     const fetchMock = vi.fn().mockImplementation(async (url: string) => new Response(JSON.stringify({
       ...finrezResponse,
-      period: url.includes("period=ALL") ? "ALL" : "TODAY",
+      period: (new URL(url, "http://localhost").searchParams.get("period") ?? "DAY"),
     }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     render(<DiaryOverlay accountKey="paper:1" initialSection="FINREZ"
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
     expect(screen.getByRole("dialog", { name: "Статистика" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Сегодня" })).toHaveAttribute("aria-pressed", "true");
-    expect(await screen.findByText("+7.2 USDT")).toBeInTheDocument();
-    expect(screen.getByText("-2.5 USDT")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "День" })).toHaveAttribute("aria-pressed", "true");
+    expect(await screen.findByText("+7,20 USDT")).toBeInTheDocument();
+    expect(screen.getByText("-2,50 USDT")).toBeInTheDocument();
     expect(screen.getByText("ETHUSDT")).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledWith("/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=TODAY");
+    expect(fetchMock).toHaveBeenCalledWith("/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=DAY");
+    for (const [label, period] of [["Неделя", "WEEK"], ["Месяц", "MONTH"], ["Год", "YEAR"]] as const) {
+      fireEvent.click(screen.getByRole("button", { name: label }));
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+        `/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=${period}`
+      ));
+      expect(screen.getByRole("button", { name: label })).toHaveAttribute("aria-pressed", "true");
+    }
     fireEvent.click(screen.getByRole("button", { name: "Всё время" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=ALL"));
     fireEvent.click(screen.getByRole("button", { name: "Паттерны" }));
     expect(await screen.findByText(/Паттерны — второй этап/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Сделки" }));
     expect(await screen.findByText(/Нет подтверждённых закрытых сделок/)).toBeInTheDocument();
+  });
+
+  it("rounds ticker PnL and opens only that ticker's confirmed episodes on click", async () => {
+    const btc = {
+      trade_episode_id: "te_" + "a".repeat(24), symbol: "BTCUSDT", side: "LONG",
+      opened_at_ms: 1_793_001_000_000, closed_at_ms: 1_793_002_000_000,
+      pnl_usdt: "-2.5012345678", execution_count: 2,
+      cohort: "ROBOT", replay_evidence: "EPISODE_INDEX_ONLY",
+    };
+    const eth = { ...btc, trade_episode_id: "te_" + "b".repeat(24), symbol: "ETHUSDT" };
+    const fetchMock = vi.fn().mockImplementation(async () => new Response(JSON.stringify({
+      ...finrezResponse,
+      tickers: [
+        { symbol: "BTCUSDT", pnl_usdt: "-2.5012345678", trade_count: 1 },
+        { symbol: "ETHUSDT", pnl_usdt: "7.2012345678", trade_count: 1 },
+      ],
+      closed_episodes: [btc, eth],
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<DiaryOverlay accountKey="paper:finrez-filter" initialSection="FINREZ"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    expect(await screen.findByText("+7,20 USDT")).toBeInTheDocument();
+    expect(screen.getByText("-2,50 USDT")).toBeInTheDocument();
+    expect(screen.queryByText(/2\.5012345678/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Показать сделки по BTCUSDT" }));
+    expect(await screen.findByText("Сделки по BTCUSDT")).toBeInTheDocument();
+    expect(screen.getByText("BTCUSDT")).toBeInTheDocument();
+    expect(screen.queryByText("ETHUSDT")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Подробности сделки" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "← Все сделки" }));
+    expect(screen.getByText("ETHUSDT")).toBeInTheDocument();
+    expect(screen.queryByText("Сделки по BTCUSDT")).not.toBeInTheDocument();
   });
 
   it("never shows foreign-account ranking or silently falls back to manual", async () => {
@@ -640,7 +863,7 @@ describe("Finrez first-screen UI", () => {
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
     expect(await screen.findByRole("region", { name: "Ручные закрытия сделок робота" })).toBeInTheDocument();
     expect(screen.getByText("Робот · ручное вмешательство")).toBeInTheDocument();
-    expect(screen.getByText("-4.5 USDT")).toBeInTheDocument();
+    expect(screen.getByText("-4,50 USDT")).toBeInTheDocument();
     expect(screen.getByText("Нет закрытых сделок этого типа за выбранный период")).toBeInTheDocument();
     expect(screen.getByText(/В PnL полностью роботизированных сделок не включён/)).toBeInTheDocument();
   });
@@ -661,7 +884,7 @@ describe("Finrez first-screen UI", () => {
   it("explicitly warns about partial attribution and never calls an unknown result zero", async () => {
     const fetchMock = vi.fn().mockImplementation(async (url: string) => new Response(JSON.stringify({
       ...finrezResponse,
-      period: url.includes("period=ALL") ? "ALL" : "TODAY",
+      period: (new URL(url, "http://localhost").searchParams.get("period") ?? "DAY"),
       tickers: [],
       attribution_coverage: url.includes("period=ALL") ? {
         status: "PARTIAL",
@@ -696,16 +919,16 @@ describe("Finrez first-screen UI", () => {
     const current = render(<DiaryOverlay accountKey="paper:joint-robot" initialSection="FINREZ"
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
     const section = await screen.findByRole("region", { name: "Совместно управляемые сделки" });
-    expect(section).toHaveTextContent("-11.4 USDT");
+    expect(section).toHaveTextContent("-11,40 USDT");
     expect(section).toHaveTextContent("не складывайте его дважды");
     expect(screen.getByText("Нет закрытых сделок этого типа за выбранный период")).toBeInTheDocument();
     current.rerender(<DiaryOverlay accountKey="paper:joint-manual" initialSection="FINREZ"
       statisticsScope={{ accountId: "paper", owner: "MANUAL" }} onClose={() => {}} />);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/api/diary/ticker-finrez?account_id=paper&owner=MANUAL&period=TODAY",
+      "/api/diary/ticker-finrez?account_id=paper&owner=MANUAL&period=DAY",
     ));
-    expect(await screen.findByRole("region", { name: "Совместно управляемые сделки" })).toHaveTextContent("-11.4 USDT");
-    expect(screen.getAllByText("-11.4 USDT")).toHaveLength(1);
+    expect(await screen.findByRole("region", { name: "Совместно управляемые сделки" })).toHaveTextContent("-11,40 USDT");
+    expect(screen.getAllByText("-11,40 USDT")).toHaveLength(1);
   });
 
   it("rejects a missing or invalid shared-management contract", async () => {
@@ -732,4 +955,129 @@ describe("Finrez first-screen UI", () => {
     expect(screen.queryByText("ETHUSDT")).not.toBeInTheDocument();
   });
 
+});
+
+describe("shared statistics trade action standard", () => {
+  it("formats only visible deal PnL to two decimal places", () => {
+    expect(displayTradePnl("-1.81622186")).toBe("-1,82");
+    expect(displayTradePnl("7.2")).toBe("7,20");
+    expect(displayTradePnl("0")).toBe("0,00");
+    expect(displayTradePnl(null)).toBe("—");
+    expect(displayTradePnl("NaN")).toBe("—");
+  });
+
+  it("draws only matched execution prices without inventing candles", async () => {
+    const episodeId = "te_" + "d".repeat(24);
+    const deal = {
+      trade_episode_id: episodeId, symbol: "BTCUSDT", side: "LONG",
+      opened_at_ms: 1_793_001_000_000, closed_at_ms: 1_793_002_000_000,
+      pnl_usdt: "1.2378", execution_count: 2,
+      cohort: "ROBOT", replay_evidence: "EPISODE_INDEX_ONLY",
+    };
+    const facts = {
+      ok: true, schema: "BYBITSCANNER_CLOSED_EPISODE_FACTS_V1",
+      namespace: "PAPER_READ_ONLY", source: "PAPER_EXECUTIONS_ATTRIBUTED",
+      account_id: "paper", owner: "ROBOT", source_revision: 3,
+      trade_episode_id: episodeId, symbol: "BTCUSDT", side: "LONG",
+      cohort: "ROBOT", opened_at_ms: deal.opened_at_ms,
+      closed_at_ms: deal.closed_at_ms, pnl_usdt: deal.pnl_usdt,
+      replay_evidence: "EXECUTION_FACTS_ONLY_NO_DECISIONS_OR_CANDLES",
+      execution_allocations: [
+        { execution_id: "fill-a", execution_price: "101.259",
+          occurred_at_ms: 1_793_001_010_000 },
+        { execution_id: "fill-b", execution_price: "101.985",
+          occurred_at_ms: 1_793_001_950_000 },
+      ],
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+      new Response(JSON.stringify(String(input).includes("episode-facts") ? facts :
+        { ...finrezResponse, closed_episodes: [deal] }), { status: 200 }));
+    render(<DiaryOverlay accountKey="paper:chart" initialSection="DEALS"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    const magnifier = await screen.findByRole("button", { name: "Подробности сделки" });
+    fireEvent.click(magnifier);
+    expect(await screen.findByRole("img", {
+      name: "Фактические цены исполнений сделки по времени",
+    })).toBeInTheDocument();
+    expect(screen.getByText("График цен исполнений · не свечной график")).toBeInTheDocument();
+    expect(screen.getByText(/Это не воспроизведение/)).toBeInTheDocument();
+  });
+
+  it("filmstrip opens local Simulator with exact PAPER ID, without requiring candle history", async () => {
+    const episodeId = "te_" + "c".repeat(24);
+    const clicked: string[] = [];
+    const copy = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", {
+      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+      clipboard: { writeText: copy },
+    });
+    const a = vi.spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(function (this: HTMLAnchorElement) {
+        clicked.push(this.getAttribute("href") || "");
+      });
+    try {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+        ...finrezResponse,
+        closed_episodes: [{
+          trade_episode_id: episodeId, symbol: "BTCUSDT", side: "LONG",
+          opened_at_ms: 1_793_001_000_000, closed_at_ms: 1_793_002_000_000,
+          pnl_usdt: "-2.501234567", execution_count: 2,
+          cohort: "ROBOT", replay_evidence: "EPISODE_INDEX_ONLY",
+        }],
+      }), { status: 200 })));
+      render(<DiaryOverlay accountKey="paper:film" initialSection="DEALS"
+        statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+      const film = await screen.findByRole("button", { name: "Открыть сделку в Симуляторе" });
+      expect(film).toBeEnabled();
+      fireEvent.click(film);
+      expect(clicked).toEqual(["bybitscanner-simulator://open?episode=" + episodeId]);
+      expect(screen.getByRole("status")).toHaveTextContent("Свечи и решения не переданы");
+    } finally {
+      a.mockRestore();
+    }
+  });
+
+  it("shares the two-button layout with other account scopes without changing raw PnL", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      ...tradesResponse, active_account_id: "bybit-main", environment: "LIVE",
+      trades: [{ ...tradesResponse.trades[0], environment: "LIVE", pnl: "0.125001" }],
+    }), { status: 200 }));
+    render(<DiaryOverlay accountKey="bybit-main" initialSection="TRADES"
+      statisticsScope={{ accountId: "bybit-main", owner: "MANUAL" }} onClose={() => {}} />);
+    const row = await screen.findByRole("button", { name: /BTCUSDT/ });
+    expect(row).toHaveTextContent("PnL 0,13");
+    const magnifier = screen.getByRole("button", { name: "Подробности сделки" });
+    expect(magnifier).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Открыть сделку в Симуляторе" })).toBeDisabled();
+    fireEvent.click(magnifier);
+    expect(screen.getByText("Эпизод сделки")).toBeInTheDocument();
+  });
+
+  it("keeps two icon action slots on every closed deal without faking full replay", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        ...finrezResponse,
+        closed_episodes: [
+          { trade_episode_id: "episode-shared", symbol: "XRPUSDT", side: "SHORT",
+            opened_at_ms: 1_793_001_500_000, closed_at_ms: 1_793_003_000_000,
+            pnl_usdt: "-1.81622186", execution_count: 7,
+            cohort: "JOINT_MANAGEMENT", replay_evidence: "EPISODE_INDEX_ONLY" },
+          { trade_episode_id: "episode-robot", symbol: "BTCUSDT", side: "LONG",
+            opened_at_ms: 1_793_001_000_000, closed_at_ms: 1_793_002_000_000,
+            pnl_usdt: "-4.8", execution_count: 2,
+            cohort: "ROBOT", replay_evidence: "EPISODE_INDEX_ONLY" },
+        ],
+      }), { status: 200 }),
+    );
+    render(<DiaryOverlay accountKey="paper" onClose={() => {}} initialSection="DEALS"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} />);
+    expect((await screen.findAllByRole("button", { name: "Подробности сделки" })).length).toBe(2);
+    const replay = screen.getAllByRole("button", { name: "Открыть сделку в Симуляторе" });
+    expect(replay).toHaveLength(2);
+    replay.forEach((button) => {
+      expect(button).toBeDisabled();
+      expect(button).toHaveAttribute("title", expect.stringContaining("нужен подтверждённый PAPER episode"));
+    });
+    expect(screen.getByText(/PnL -1,82 USDT/)).toHaveAttribute("title", "-1.81622186");
+  });
 });

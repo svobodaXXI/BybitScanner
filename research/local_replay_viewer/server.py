@@ -41,6 +41,8 @@ MAX_RESPONSE_BYTES = 2_000_000
 # All SIMULATION files are under this fixed local viewer directory. Neither
 # browser nor HTTP input may supply arbitrary filesystem paths.
 SIM_DATA = HERE / "simulator-v2-data"
+# Local owner-imported facts; never shared with VPS or trading runtime.
+PAPER_EPISODES = HERE / "paper-episode-facts"
 SIM_LOCK = threading.Lock()
 MAX_SIM_REQUEST_BYTES = 4_096
 MAX_SIM_CONFIG_BYTES = 12_000
@@ -325,6 +327,28 @@ def handler_factory(static_dir: Path = STATIC_DIR,
                 self._error(403, "Local viewer only")
                 return
             url = urlsplit(self.path)
+            if url.path == "/local-replay/paper-episode":
+                from research.local_replay_viewer.paper_episode_local_store import load_episode
+                if (self.headers.get("Sec-Fetch-Site") == "cross-site"
+                    or self.headers.get("Origin") not in (
+                        None, "", f"http://127.0.0.1:{self.server.server_address[1]}",
+                        f"http://localhost:{self.server.server_address[1]}",
+                    )):
+                    self._error(403, "Local owner archive only")
+                    return
+                try:
+                    params = parse_qs(url.query, strict_parsing=True)
+                    if set(params) != {"trade_episode_id"} or len(params["trade_episode_id"]) != 1:
+                        raise ValueError("invalid_episode_lookup")
+                    raw = load_episode(PAPER_EPISODES, params["trade_episode_id"][0])
+                except (ValueError, OSError):
+                    self._error(422, "Invalid local episode evidence")
+                    return
+                if raw is None:
+                    self._error(404, "NOT_SYNCED_LOCAL")
+                    return
+                self._send(200, raw, "application/json; charset=utf-8")
+                return
             if url.path == "/local-replay/simulation/status":
                 if url.query or self.headers.get("Sec-Fetch-Site") == "cross-site":
                     self._error(403, "Local SIMULATION only")
@@ -426,6 +450,35 @@ def handler_factory(static_dir: Path = STATIC_DIR,
                 self._error(403, "Local Wedge SIMULATION only")
                 return
             path = urlsplit(self.path).path
+            if path == "/local-replay/paper-episode/import":
+                from research.local_replay_viewer.paper_episode_local_store import (
+                    MAX_BYTES, LocalEpisodeConflict, store_episode,
+                )
+                address = f"http://127.0.0.1:{self.server.server_address[1]}"
+                local = f"http://localhost:{self.server.server_address[1]}"
+                if (self.headers.get("Origin") not in (address, local)
+                    or self.headers.get("Sec-Fetch-Site") == "cross-site"
+                    or self.headers.get("X-Local-Paper-Import") != "explicit-file"
+                    or self.headers.get("Content-Type") != "application/json"
+                    or urlsplit(self.path).query):
+                    self._error(403, "Explicit same-origin PAPER import only")
+                    return
+                try:
+                    size = int(self.headers.get("Content-Length", "0"))
+                    if not 2 <= size <= MAX_BYTES:
+                        self._error(413, "PAPER facts exceed local import limit")
+                        return
+                    episode_id = store_episode(PAPER_EPISODES, self.rfile.read(size))
+                except LocalEpisodeConflict:
+                    self._error(409, "Existing local episode conflicts with import")
+                    return
+                except (OSError, ValueError):
+                    self._error(422, "Invalid PAPER episode import")
+                    return
+                self._send(200, json.dumps({
+                    "ok": True, "trade_episode_id": episode_id, "stored_locally": True,
+                }).encode("utf-8"), "application/json")
+                return
             if path not in (
                 "/local-replay/simulation/wedge",
                 "/local-replay/simulation/wedge-stream",

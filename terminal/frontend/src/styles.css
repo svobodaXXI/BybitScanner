@@ -305,6 +305,20 @@ button {
   font-weight: 700;
   font-size: 0.85rem;
 }
+.editor-correct-pattern-label {
+  color: #aebac7;
+  font-size: 0.7rem;
+}
+.editor-bottom-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-self: stretch;
+  gap: 0.35rem;
+  margin-top: auto;
+  margin-right: -2.5rem;
+  padding-top: 0.3rem;
+}
 
 .drawing-tools-panel {
   grid-column: 1;

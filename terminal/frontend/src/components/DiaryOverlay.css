@@ -124,15 +124,18 @@
 }
 
 .diary-context-heading {
-  display: grid;
-  gap: 0.12rem;
-  padding: 0.55rem 0.7rem 0.5rem;
+  display: flex;
+  align-items: baseline;
+  gap: 0.55rem;
+  min-width: 0;
+  padding: 0.35rem 0.7rem;
   border-bottom: 1px solid #27313b;
 }
 
 .diary-context-heading p,
 .diary-context-heading h2 {
   margin: 0;
+  white-space: nowrap;
 }
 
 .diary-context-heading p {
@@ -423,6 +426,27 @@
   font-size: 0.8rem;
   font-variant-numeric: tabular-nums;
 }
+.diary-finrez-row-action {
+  width: 100%;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.diary-finrez-row-action:hover,
+.diary-finrez-row-action:focus-visible {
+  border-color: #6896be;
+  background: #1a2632;
+}
+.diary-finrez-filter {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+  font-size: 0.8rem;
+}
 .diary-finrez-row strong {
   overflow-wrap: anywhere;
 }
@@ -456,4 +480,63 @@
   background: #241e19;
   font-size: 0.72rem;
   line-height: 1.45;
+}
+
+/* Two stable icon slots across all account scopes; no precision loss in stored PnL. */
+.diary-trade-entry {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  gap: 0.35rem;
+  min-width: 0;
+}
+.diary-trade-entry > .diary-trade-row {
+  min-width: 0;
+}
+.diary-trade-actions {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.3rem;
+}
+.diary-trade-actions .diary-trade-icon {
+  display: grid;
+  place-items: center;
+  width: 2.4rem;
+  height: 2.4rem;
+  min-width: 2.4rem;
+  border: 1px solid #394653;
+  border-radius: 0.35rem;
+  background: #171d24;
+  color: #d7e0e8;
+  cursor: pointer;
+}
+.diary-trade-icon svg {
+  width: 1.16rem;
+  height: 1.16rem;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.diary-trade-icon:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.diary-trade-icon:not(:disabled):hover,
+.diary-trade-icon:not(:disabled):focus-visible {
+  border-color: #859bb1;
+}
+
+.diary-execution-price-chart {
+  display: block;
+  width: 100%;
+  max-width: 34rem;
+  height: auto;
+  margin: 0.35rem 0;
+  color: #e0b45b;
+  background: #10151b;
+  border: 1px solid #27313b;
+  border-radius: 0.3rem;
 }

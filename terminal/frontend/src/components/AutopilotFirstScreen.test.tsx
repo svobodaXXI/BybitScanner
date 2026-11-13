@@ -39,6 +39,7 @@ function paperState(symbol: string, stop: string | null, take: string | null) {
 }
 
 const healthyRoutes: Routes = {
+  "/api/robot/state": { ok: true, mode: "ROBOT_RUNNING", recovery_status: "READY" },
   "/api/robot/autopilot": {
     ok: true,
     mode: "PAPER_AUTO",
@@ -118,7 +119,7 @@ afterEach(() => {
 });
 
 describe("Autopilot compact first screen", () => {
-  it("shows only the day result and trade count, without unrelated status labels", async () => {
+  it("shows the daily trade history separately from canonical Robot and autotrading status", async () => {
     mockFetch(healthyRoutes);
     render(<AutopilotFirstScreen now={() => NOW} />);
     expect(await screen.findByText("+2.50 USDT")).toBeInTheDocument();
@@ -126,7 +127,8 @@ describe("Autopilot compact first screen", () => {
     expect(screen.getByText("Сделок за день")).toBeInTheDocument();
     expect(screen.getByText("1")).toBeInTheDocument();
     expect(screen.queryByText("Блок серии STOP")).not.toBeInTheDocument();
-    expect(screen.queryByText("PAPER_AUTO")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Текущее состояние Робота")).toHaveTextContent("Робот: Запущен / READY");
+    expect(screen.getByLabelText("Текущее состояние Робота")).toHaveTextContent("Автовходы: PAPER_AUTO");
     expect(screen.queryByText("Что робот сейчас делает")).not.toBeInTheDocument();
   });
 
@@ -161,11 +163,26 @@ describe("Autopilot compact first screen", () => {
     expect(provenance).toHaveTextContent("5м");
     expect(provenance).toHaveTextContent("№2");
     expect(provenance).toHaveTextContent("candidate-lsk");
-    const root = screen.getByRole("region", { name: "Автопилот: первый экран" });
+    const root = screen.getByRole("region", { name: "Робот: первый экран" });
     const summary = screen.getByLabelText("Сводка дня");
     expect(root.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_CONTAINED_BY).toBeTruthy();
     expect(summary.compareDocumentPosition(provenance) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
     expect(await screen.findByText("+2.50 USDT")).toBeInTheDocument();
+  });
+
+  it("collapses unselected origin and distinguishes no positions from an unverified selection", async () => {
+    mockFetch({ ...healthyRoutes, "/api/open-positions": { ok: true, account_id: "paper", positions: [] } });
+    render(<AutopilotFirstScreen now={() => NOW} />);
+    expect(await screen.findByText("Нет открытых позиций")).toHaveClass("autopilot-trade-origin-empty");
+    expect(screen.queryByText("Основание открытой сделки")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Происхождение выбранной сделки")).not.toBeInTheDocument();
+  });
+
+  it("does not call a failed position inventory empty", async () => {
+    mockFetch("offline");
+    render(<AutopilotFirstScreen now={() => NOW} />);
+    expect(await screen.findByText("Позиции недоступны")).toHaveClass("autopilot-trade-origin-empty");
+    expect(screen.queryByText("Нет открытых позиций")).not.toBeInTheDocument();
   });
 
   it("does not attribute an unverified position to the Robot", async () => {
@@ -183,6 +200,7 @@ describe("Autopilot compact first screen", () => {
     const onOpenPositions = vi.fn();
     const onStatistics = vi.fn();
     const onTerminal = vi.fn();
+    const onEditor = vi.fn();
     const onRobotControls = vi.fn();
     render(<AutopilotFirstScreen
       now={() => NOW}
@@ -190,14 +208,15 @@ describe("Autopilot compact first screen", () => {
       onOpenPositions={onOpenPositions}
       onStatistics={onStatistics}
       onTerminal={onTerminal}
+      onEditor={onEditor}
       onRobotControls={onRobotControls}
       accountControl={<button type="button" aria-label="Счёт">key</button>}
     />);
     await screen.findByText("+2.50 USDT");
-    const nav = screen.getByRole("navigation", { name: "Панель управления Автопилотом" });
+    const nav = screen.getByRole("navigation", { name: "Панель управления Роботом" });
     const buttons = within(nav).getAllByRole("button");
     expect(buttons.map((button) => button.getAttribute("aria-label"))).toEqual([
-      "Подробности сделки", "Все открытые позиции", "Статистика", "Терминал", "Управление роботом", "Счёт",
+      "Подробности сделки", "Все открытые позиции", "Статистика", "Терминал", "Редактор", "Управление роботом", "Счёт",
     ]);
     expect(buttons[0]).toBeDisabled(); // Multiple open positions: no ambiguous trade selection.
     // Icons are three separate thin strokes/bars, not dense Unicode glyphs.
@@ -206,13 +225,16 @@ describe("Autopilot compact first screen", () => {
     expect(buttons[2].querySelectorAll("svg rect")).toHaveLength(3);
     expect(buttons[2].textContent).toBe("");
     expect(buttons[4].querySelector("svg")).not.toBeNull();
+    expect(buttons[5].querySelector("svg")).not.toBeNull();
     fireEvent.click(buttons[1]);
     fireEvent.click(buttons[2]);
     fireEvent.click(buttons[3]);
     fireEvent.click(buttons[4]);
+    fireEvent.click(buttons[5]);
     expect(onOpenPositions).toHaveBeenCalledOnce();
     expect(onStatistics).toHaveBeenCalledOnce();
     expect(onTerminal).toHaveBeenCalledOnce();
+    expect(onEditor).toHaveBeenCalledOnce();
     expect(onRobotControls).toHaveBeenCalledOnce();
     expect(onTradeDetails).not.toHaveBeenCalled();
   });
@@ -270,10 +292,33 @@ describe("Autopilot compact first screen", () => {
     expect(screen.queryByText("+0.00 USDT")).not.toBeInTheDocument();
   });
 
+  it("does not mistake three closed deals for an active Robot", async () => {
+    mockFetch({
+      ...healthyRoutes,
+      "/api/robot/state": { ok: true, mode: "ROBOT_STOPPED", recovery_status: "ROBOT_STOPPED" },
+      "/api/robot/day-summary": {
+        ok: true, source: "robot_trades", account_id: "paper", day_start_ms: DAY_START,
+        closed_trades: 3, trades_without_pnl: 0, net_pnl_usdt: "1.50",
+      },
+    });
+    render(<AutopilotFirstScreen />);
+    expect(await screen.findByText("3")).toBeInTheDocument();
+    expect(screen.getByLabelText("Текущее состояние Робота")).toHaveTextContent("Робот: Остановлен");
+  });
+
+  it("does not infer Robot READY from a healthy PAPER account", async () => {
+    const routes = { ...healthyRoutes };
+    delete routes["/api/robot/state"];
+    mockFetch(routes);
+    render(<AutopilotFirstScreen />);
+    expect(await screen.findByText("+2.50 USDT")).toBeInTheDocument();
+    expect(screen.getByLabelText("Текущее состояние Робота")).toHaveTextContent("состояние недоступно");
+  });
+
   it("shows backend failures without a fabricated zero result", async () => {
     mockFetch("offline");
     render(<AutopilotFirstScreen now={() => NOW} />);
-    expect(await screen.findByRole("alert")).toHaveTextContent("PAPER backend недоступен");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Данные PAPER недоступны");
     expect(screen.queryByText("+0.00 USDT")).not.toBeInTheDocument();
   });
 
@@ -307,6 +352,7 @@ describe("Autopilot compact first screen", () => {
     const called = (url: string) => fetchMock.mock.calls.filter(([path]) => path === url);
     expect(called("/api/open-positions")).toHaveLength(2);
     expect(called("/api/robot/day-summary")).toHaveLength(1);
+    expect(called("/api/robot/state")).toHaveLength(1);
     expect(called("/api/diary/trades")).toHaveLength(1);
     expect(called("/api/robot/autopilot")).toHaveLength(1);
     expect(fetchMock.mock.calls.every(([,options]) =>

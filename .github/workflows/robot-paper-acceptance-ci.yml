@@ -297,6 +297,8 @@ jobs:
 
       - name: Run account-and-controller scoped Diary HTTP acceptance
         run: python -m pytest -q terminal/diary/test_scoped_statistics_http_route.py tests/test_terminal_mode_account_preference.py
+      - name: Verify paired Simulator HTTP relay contract (no trading commands)
+        run: python -m pytest -q terminal/diary/test_ticker_finrez_http_route.py -k simulator_bridge_http_contract
       - name: Run Robot scoped LIMIT amend acceptance
         run: >-
           python -m pytest -q

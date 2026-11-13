@@ -6,7 +6,7 @@ import "./DiaryOverlay.css";
 export type DiarySection = "FINREZ" | "PATTERNS" | "DEALS" | "TRADES" | "SETUPS" | "STATISTICS" | "MIRROR";
 export type DiaryAccountMenuProps = Pick<ComponentProps<typeof AccountMenu>,
   "workspaceProjection" | "mode" | "selectedAccountId" | "onSelectAccount" | "modeAccountError">;
-type FinrezPeriod = "TODAY" | "ALL";
+type FinrezPeriod = "DAY" | "WEEK" | "MONTH" | "YEAR" | "ALL";
 type DiaryFilter = "ALL" | "OPEN" | "CLOSED" | "ATTENTION";
 type SetupFilter = "ALL" | "ATTENTION";
 
@@ -282,8 +282,297 @@ function matchesTradeFilter(trade: DiaryTrade, filter: DiaryFilter): boolean {
   return true;
 }
 
+
+/** Display-only rounding. Immutable source strings remain untouched. */
+export function displayTradePnl(value: string | null | undefined): string {
+  if (value === null || value === undefined) return "—";
+  const numeric = Number(value);
+  if (!value.trim() || !Number.isFinite(numeric)) return "—";
+  return new Intl.NumberFormat("ru-RU", {
+    minimumFractionDigits: 2, maximumFractionDigits: 2,
+  }).format(numeric);
+}
+
+/** The filmstrip carries only a typed ID, never a claimed full replay. */
+function requestSimulatorLocator(episodeId: string, onNotice: (message: string) => void) {
+  if (!/^te_[0-9a-f]{24}$/.test(episodeId)) {
+    onNotice("Нет подтверждённого ID формата te_… для локального Симулятора.");
+    return;
+  }
+  try {
+    if (/\bWindows\b/i.test(navigator.userAgent)) {
+      const link = document.createElement("a");
+      link.href = "bybitscanner-simulator://open?episode=" + episodeId;
+      link.rel = "noopener noreferrer";
+      link.target = "_blank";
+      document.body.appendChild(link);
+      try { link.click(); } finally { link.remove(); }
+      onNotice("Windows получила запрос открыть Симулятор по ID " + episodeId
+        + ". Свечи и решения не переданы; результат запуска не подтверждён.");
+    } else {
+      const clipboard = navigator.clipboard;
+      if (typeof clipboard?.writeText !== "function") {
+        onNotice("Скопируйте ID вручную для Симулятора: " + episodeId);
+      } else {
+        void clipboard.writeText(episodeId).then(
+          () => onNotice("ID сделки скопирован для Симулятора: " + episodeId),
+          () => onNotice("Скопируйте ID вручную для Симулятора: " + episodeId),
+        );
+      }
+    }
+  } catch {
+    onNotice("Не удалось передать ID автоматически. Скопируйте: " + episodeId);
+  }
+}
+
+/** Same action placement and icons for every statistics account/owner scope. */
+function TradeActionButtons({ onDetails, onReplay }: {
+  onDetails: () => void;
+  onReplay?: () => void;
+}) {
+  return (
+    <div className="diary-trade-actions" role="group" aria-label="Действия со сделкой">
+      <button type="button" className="diary-trade-icon" aria-label="Подробности сделки"
+        title="Подробности сделки" onClick={onDetails}>
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="10.6" cy="10.6" r="6.6" /><path d="m15.5 15.5 5.2 5.2" />
+        </svg>
+      </button>
+      <button type="button" className="diary-trade-icon"
+        aria-label="Открыть сделку в Симуляторе" title={onReplay
+          ? "Открыть локальный Симулятор по ID без передачи свечей и решений"
+          : "Для открытия по ID нужен подтверждённый PAPER episode te_…"}
+        disabled={!onReplay} onClick={onReplay}>
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="3.5" y="3" width="17" height="18" rx="1.5" />
+          <path d="M8 3v18M16 3v18M3.5 8h4.5M3.5 15h4.5M16 8h4.5M16 15h4.5" />
+        </svg>
+      </button>
+    </div>
+  );
+}
+
+
+type TradeExecutionPoint = { at: number; price: number };
+
+function TradeExecutionPriceChart({ points }: { points: readonly TradeExecutionPoint[] }) {
+  if (points.length < 1) return (
+    <p className="diary-finrez-basis">Свечной график пока недоступен: нужен проверенный архив исторических свечей.</p>
+  );
+  const ordered = [...points].sort((a, b) => a.at - b.at);
+  const first = ordered[0].at, last = ordered[ordered.length - 1].at;
+  const prices = ordered.map((point) => point.price);
+  const min = Math.min(...prices), max = Math.max(...prices);
+  const x = (at: number) => 18 + (at - first) / Math.max(1, last - first) * 284;
+  const y = (price: number) => 105 - (price - min) / Math.max(0.00000001, max - min) * 88;
+  return (
+    <section className="diary-detail-section">
+      <h3>График цен исполнений · не свечной график</h3>
+      <svg className="diary-execution-price-chart" viewBox="0 0 320 122" role="img"
+        aria-label="Фактические цены исполнений сделки по времени">
+        <path d={ordered.map((point, i) => `${i ? "L" : "M"} ${x(point.at)} ${y(point.price)}`).join(" ")}
+          fill="none" stroke="currentColor" strokeWidth="1.6" />
+        {ordered.map((point, i) => <circle key={i} cx={x(point.at)} cy={y(point.price)} r="3.3"
+          fill="currentColor">
+          <title>{point.price} · {formatDate(point.at)}</title>
+        </circle>)}
+      </svg>
+      <small>Показаны только подтверждённые исполнения, без подстановки рыночных свечей.</small>
+    </section>
+  );
+}
+
 function Value({ value }: { value: string | null | undefined }) {
   return <span>{value ?? "—"}</span>;
+}
+
+/** Owner click routes only a typed ID: local Windows link or paired VPS relay.
+ * Neither path transfers PAPER facts or implies a complete historical replay.
+ */
+function SimulatorLaunchAction({ episodeId, allowLocalLaunch }: {
+  episodeId: string; allowLocalLaunch: boolean;
+}) {
+  const [notice, setNotice] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [pairingBusy, setPairingBusy] = useState(false);
+  const [pairingUrl, setPairingUrl] = useState<string | null>(null);
+  const [pairingNotice, setPairingNotice] = useState("");
+
+  function copyEpisodeId() {
+    // Copy only the visible identifier. No network request or protocol launch.
+    try {
+      if (typeof navigator.clipboard?.writeText !== "function") {
+        setNotice("Копирование недоступно. Выделите ID вручную: " + episodeId);
+        return;
+      }
+      void navigator.clipboard.writeText(episodeId).then(
+        () => setNotice("ID сделки скопирован: " + episodeId),
+        () => setNotice("Копирование недоступно. Выделите ID вручную: " + episodeId),
+      );
+    } catch {
+      setNotice("Копирование недоступно. Выделите ID вручную: " + episodeId);
+    }
+  }
+
+  async function preparePairing(deviceId: "owner-pc" | "owner-laptop") {
+    if (pairingBusy || !allowLocalLaunch) return;
+    setPairingBusy(true); setPairingUrl(null); setPairingNotice("");
+    try {
+      // Owner-authenticated HTTPS request, never an unauthenticated device
+      // endpoint. Existing provisioned device slot; no new enrollment state.
+      const response = await fetch("/api/diary/simulator-bridge/pair", {
+        method: "POST", credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ device_id: deviceId }),
+      });
+      if (!response.ok) throw new Error("pairing_unavailable");
+      const raw: unknown = await response.json();
+      const pair = raw as Record<string, unknown>;
+      if (!raw || typeof raw !== "object" || pair.ok !== true
+          || pair.device_id !== deviceId || typeof pair.token !== "string"
+          || !/^[A-Za-z0-9_-]{48,256}$/.test(pair.token))
+        throw new Error("pairing_invalid_response");
+      setPairingUrl("bybitscanner-simulator://pair?device_id="
+        + encodeURIComponent(deviceId) + "&token=" + encodeURIComponent(pair.token));
+      setPairingNotice("Ключ подготовлен. Нажмите «Подтвердить подключение» на этом компьютере.");
+    } catch {
+      setPairingNotice("Подключение пока недоступно. Обычный запуск Симулятора и копирование ID работают.");
+    } finally {
+      setPairingBusy(false);
+    }
+  }
+
+  function openPairingLink() {
+    if (!pairingUrl) return;
+    // Native protocol must open synchronously after this owner click. The
+    // local app verifies the device key against its pre-pinned HTTPS origin.
+    try {
+      const link = document.createElement("a");
+      link.href = pairingUrl;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      document.body.appendChild(link);
+      try { link.click(); } finally { link.remove(); }
+      setPairingNotice("Запрос сопряжения передан Windows. Успешное подключение пока не подтверждено.");
+    } catch {
+      setPairingNotice("Не удалось открыть локальный адаптер. Копирование ID остаётся доступным.");
+    } finally {
+      setPairingUrl(null);
+    }
+  }
+
+  async function requestLaunch() {
+    if (busy) return;
+    setBusy(true);
+    // Clipboard permission belongs to the initial owner click, not an HTTP
+    // response. Even when unavailable, display the exact ID for manual copy.
+    let copied: Promise<boolean>;
+    try {
+      copied = typeof navigator.clipboard?.writeText === "function"
+        ? navigator.clipboard.writeText(episodeId).then(() => true, () => false)
+        : Promise.resolve(false);
+    } catch {
+      copied = Promise.resolve(false);
+    }
+    const allowed = allowLocalLaunch && /^te_[0-9a-f]{24}$/.test(episodeId);
+    const onWindows = /\bWindows\b/i.test(navigator.userAgent);
+    // Launch custom Windows URI synchronously in the actual click handler.
+    // Awaiting clipboard permission first can lose browser user activation.
+    let windowsError = false;
+    if (allowed && onWindows) {
+      try {
+        const link = document.createElement("a");
+        link.href = "bybitscanner-simulator://open?episode=" + episodeId;
+        link.rel = "noopener noreferrer";
+        link.target = "_blank";
+        document.body.appendChild(link);
+        try { link.click(); } finally { link.remove(); }
+      } catch {
+        windowsError = true;
+      }
+    }
+    const suffix = (await copied)
+      ? " Идентификатор скопирован."
+      : " Автоматическое копирование ID недоступно.";
+    try {
+      if (allowed && onWindows) {
+        setNotice((windowsError
+          ? "Windows не смогла принять запрос открытия локальной утилиты."
+          : "Запрос открытия утилиты отправлен Windows. Результат пока не подтверждён.") + suffix);
+      } else if (allowed) {
+        // Same-origin HTTPS owner UI. Nginx controls owner access; the relay
+        // independently checks Origin. The paired PC supplies a separate
+        // scoped token when it contacts the VPS (never given to this page).
+        const response = await fetch("/api/diary/simulator-bridge/request", {
+          method: "POST", credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ episode_id: episodeId }),
+        });
+        if (!response.ok) throw new Error("simulator_bridge_unavailable");
+        const result: unknown = await response.json();
+        const receipt = result as Record<string, unknown>;
+        if (!result || typeof result !== "object" || receipt.ok !== true
+          || receipt.state !== "QUEUED" || typeof receipt.request_id !== "string"
+          || !/^[0-9a-f]{32}$/.test(receipt.request_id))
+          throw new Error("invalid_simulator_bridge_receipt");
+        setNotice("Запрос передан подключённому устройству. Проверяю подтверждение." + suffix);
+        let state = "QUEUED";
+        for (let attempt = 0; attempt < 8; attempt++) {
+          // Check once immediately: an already connected adapter may have
+          // acknowledged the job. Only subsequent checks need a delay.
+          if (attempt > 0)
+            await new Promise<void>((resolve) => window.setTimeout(resolve, 1000));
+          const check = await fetch("/api/diary/simulator-bridge/status", {
+            method: "POST", credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ request_id: receipt.request_id }),
+          });
+          if (!check.ok) throw new Error("simulator_bridge_status_unavailable");
+          const raw: unknown = await check.json();
+          const status = raw as Record<string, unknown>;
+          if (!raw || typeof raw !== "object" || status.ok !== true
+            || status.request_id !== receipt.request_id
+            || !["QUEUED", "DELIVERED", "LAUNCHED", "FAILED", "EXPIRED"].includes(String(status.state)))
+            throw new Error("invalid_simulator_bridge_status");
+          state = String(status.state);
+          if (state === "LAUNCHED" || state === "FAILED" || state === "EXPIRED") break;
+        }
+        if (state === "LAUNCHED")
+          setNotice("Локальная утилита подтвердила запрос открытия. Полная история ещё не передана." + suffix);
+        else
+          setNotice("Нет подтверждения открытия Симулятора на ПК или ноутбуке." + suffix);
+      } else {
+        setNotice("Автоматический запуск этой сделки недоступен." + suffix);
+      }
+    } catch {
+      setNotice("Нет доступа к локальному Симулятору или адаптеру VPS." + suffix);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="diary-simulator-launch">
+      <button className="diary-detail-back" type="button" disabled={busy}
+        onClick={() => void requestLaunch()}>
+        {busy ? "Проверяю Симулятор…" : "Открыть в Симуляторе"}
+      </button>
+      <button className="diary-detail-back" type="button" onClick={copyEpisodeId}>
+        Скопировать ID
+      </button>
+      {notice ? <p className="diary-finrez-coverage" role="status">{notice} ID: {episodeId}</p> : null}
+      {allowLocalLaunch && /\bWindows\b/i.test(navigator.userAgent) ? (
+        <div className="diary-simulator-pairing">
+          <button type="button" className="diary-detail-back" disabled={pairingBusy}
+            onClick={() => void preparePairing("owner-pc")}>Связать ПК</button>
+          <button type="button" className="diary-detail-back" disabled={pairingBusy}
+            onClick={() => void preparePairing("owner-laptop")}>Связать ноутбук</button>
+          {pairingUrl ? <button type="button" className="diary-detail-back"
+            onClick={openPairingLink}>Подтвердить подключение</button> : null}
+          {pairingNotice ? <p className="diary-finrez-coverage" role="status">{pairingNotice}</p> : null}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function TradeDetailsView({ trade, onBack }: { trade: DiaryTrade; onBack: () => void }) {
@@ -292,6 +581,8 @@ function TradeDetailsView({ trade, onBack }: { trade: DiaryTrade; onBack: () => 
     <div className="diary-detail">
       <button className="diary-detail-back" onClick={onBack} type="button">← Сделки</button>
 
+      <SimulatorLaunchAction episodeId={trade.trade_episode_id}
+        allowLocalLaunch={trade.environment === "PAPER"} />
       <div className="diary-detail-title">
         <strong>{trade.symbol}</strong>
         <span className={`diary-trade-side ${trade.side.toLowerCase()}`}>{sideLabel(trade.side)}</span>
@@ -531,17 +822,78 @@ const dealLabels: Record<ClosedEpisodeLocator["cohort"], string> = {
   JOINT_MANAGEMENT: "Робот + ручное управление",
 };
 
-function ClosedDealsView({ report }: { report: FinrezResponse }) {
+function ClosedDealsView({ report, symbolFilter, onClearSymbolFilter }: {
+  report: FinrezResponse; symbolFilter: string | null; onClearSymbolFilter: () => void;
+}) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const deals = report.closed_episodes ?? [];
+  const deals = useMemo(() => (report.closed_episodes ?? []).filter((deal) =>
+    symbolFilter === null || deal.symbol === symbolFilter,
+  ), [report.closed_episodes, symbolFilter]);
   const selected = deals.find((deal) => deal.trade_episode_id === selectedId);
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState("");
+  const [verifiedExport, setVerifiedExport] = useState<{ episodeId: string; json: string } | null>(null);
+  const [copyNotice, setCopyNotice] = useState("");
+  const [showExportText, setShowExportText] = useState(false);
+  const [filmNotice, setFilmNotice] = useState("");
+
+  const [executionPoints, setExecutionPoints] = useState<TradeExecutionPoint[]>([]);
+  useEffect(() => {
+    const deal = deals.find((entry) => entry.trade_episode_id === selectedId);
+    setExecutionPoints([]);
+    if (!deal) return;
+    let active = true;
+    void fetch(marketApiRoutes.diaryEpisodeFacts(
+      report.account_id, report.owner, deal.trade_episode_id, report.source_revision,
+    ), { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) return null;
+        const value: unknown = await response.json();
+        if (!value || typeof value !== "object") return null;
+        const facts = value as Record<string, unknown>;
+        if (facts.ok !== true || facts.schema !== "BYBITSCANNER_CLOSED_EPISODE_FACTS_V1"
+          || facts.namespace !== "PAPER_READ_ONLY"
+          || facts.source !== "PAPER_EXECUTIONS_ATTRIBUTED"
+          || facts.account_id !== report.account_id || facts.owner !== report.owner
+          || facts.trade_episode_id !== deal.trade_episode_id
+          || facts.source_revision !== report.source_revision
+          || facts.symbol !== deal.symbol || facts.side !== deal.side
+          || facts.cohort !== deal.cohort
+          || facts.opened_at_ms !== deal.opened_at_ms
+          || facts.closed_at_ms !== deal.closed_at_ms
+          || facts.pnl_usdt !== deal.pnl_usdt
+          || facts.replay_evidence !== "EXECUTION_FACTS_ONLY_NO_DECISIONS_OR_CANDLES"
+          || !Array.isArray(facts.execution_allocations)
+          || facts.execution_allocations.length !== deal.execution_count
+          || facts.execution_allocations.length > 5000) return null;
+        const points: TradeExecutionPoint[] = [];
+        for (const row of facts.execution_allocations) {
+          if (!row || typeof row !== "object") return null;
+          const entry = row as Record<string, unknown>;
+          const price = Number(entry.execution_price);
+          const at = entry.occurred_at_ms;
+          if (typeof entry.execution_id !== "string" || !entry.execution_id ||
+              typeof entry.execution_price !== "string" ||
+              !Number.isFinite(price) || price <= 0 ||
+              typeof at !== "number" || !Number.isSafeInteger(at) ||
+              at < deal.opened_at_ms || at > deal.closed_at_ms) return null;
+          points.push({ price, at });
+        }
+        return points;
+      })
+      .then((points) => { if (active && points) setExecutionPoints(points); })
+      .catch(() => { /* No synthetic market data on archive errors. */ });
+    return () => { active = false; };
+  }, [selectedId, report.account_id, report.owner, report.source_revision, deals]);
+
 
   async function downloadFacts(deal: ClosedEpisodeLocator) {
     if (downloading) return;
     setDownloading(true);
     setDownloadError("");
+    setVerifiedExport(null);
+    setCopyNotice("");
+    setShowExportText(false);
     try {
       const response = await fetch(marketApiRoutes.diaryEpisodeFacts(
         report.account_id, report.owner, deal.trade_episode_id, report.source_revision,
@@ -568,7 +920,9 @@ function ClosedDealsView({ report }: { report: FinrezResponse }) {
           || typeof item.execution_price !== "string"
         )) throw new Error("История сделки не совпала с выбранным эпизодом.");
 
-      const blob = new Blob([JSON.stringify(facts, null, 2) + "\n"], { type: "application/json" });
+      const json = JSON.stringify(facts, null, 2) + "\n";
+      setVerifiedExport({ episodeId: deal.trade_episode_id, json });
+      const blob = new Blob([json], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       try {
         const anchor = document.createElement("a");
@@ -603,14 +957,38 @@ function ClosedDealsView({ report }: { report: FinrezResponse }) {
             <div><dt>Открыта</dt><dd>{formatDate(selected.opened_at_ms)}</dd></div>
             <div><dt>Закрыта</dt><dd>{formatDate(selected.closed_at_ms)}</dd></div>
             <div><dt>Исполнений</dt><dd>{selected.execution_count}</dd></div>
-            <div><dt>PnL после комиссий</dt><dd title={selected.pnl_usdt}>{selected.pnl_usdt} USDT</dd></div>
+            <div><dt>PnL после комиссий</dt><dd title={selected.pnl_usdt}>{displayTradePnl(selected.pnl_usdt)} USDT</dd></div>
           </dl>
         </section>
+        <TradeExecutionPriceChart points={executionPoints} />
+        <SimulatorLaunchAction episodeId={selected.trade_episode_id}
+          allowLocalLaunch={report.account_id === "paper"} />
         <button className="diary-detail-back" type="button" disabled={downloading}
           onClick={() => void downloadFacts(selected)}>
           {downloading ? "Выгружаю факты…" : "Скачать JSON исполнений"}
         </button>
         {downloadError ? <p className="diary-finrez-coverage" role="alert">{downloadError}</p> : null}
+        {verifiedExport?.episodeId === selected.trade_episode_id ? (
+          <div className="diary-detail-section">
+            <p>Если Telegram не сохранил файл, скопируйте проверенный JSON сделки.</p>
+            <button className="diary-detail-back" type="button" onClick={() => {
+              setCopyNotice("");
+              void (async () => {
+                try {
+                  if (!navigator.clipboard?.writeText) throw new Error("clipboard unavailable");
+                  await navigator.clipboard.writeText(verifiedExport.json);
+                  setCopyNotice("JSON скопирован в буфер обмена.");
+                } catch {
+                  setShowExportText(true);
+                  setCopyNotice("Копирование недоступно. Выделите JSON ниже и скопируйте вручную.");
+                }
+              })();
+            }}>Скопировать JSON</button>
+            {copyNotice ? <p role="status">{copyNotice}</p> : null}
+            {showExportText ? <textarea readOnly aria-label="Проверенный JSON сделки"
+              value={verifiedExport.json} rows={8} style={{ width: "100%" }} /> : null}
+          </div>
+        ) : null}
         <p className="diary-finrez-basis" role="status">
           Это не воспроизведение. JSON содержит только реальные зарегистрированные исполнения. Свечи, решения робота
           и полное воспроизведение в локальном Симуляторе пока не подключены.
@@ -620,6 +998,12 @@ function ClosedDealsView({ report }: { report: FinrezResponse }) {
   }
   return (
     <div className="diary-detail" aria-label="Закрытые сделки по эпизодам">
+      {symbolFilter !== null ? (
+        <div className="diary-finrez-filter">
+          <button type="button" className="diary-detail-back" onClick={onClearSymbolFilter}>← Все сделки</button>
+          <span>Сделки по {symbolFilter}</span>
+        </div>
+      ) : null}
       {report.attribution_coverage.status === "PARTIAL" ? (
         <p className="diary-finrez-coverage" role="status">
           История неполная: исключено {report.attribution_coverage.excluded_unattributed_episode_count} эпизодов
@@ -629,8 +1013,9 @@ function ClosedDealsView({ report }: { report: FinrezResponse }) {
       {deals.length === 0 ? <p className="diary-state">Нет подтверждённых закрытых сделок за выбранный период</p> : (
         <div className="diary-trades-list">
           {deals.map((deal) => (
-            <button className={`diary-trade-row ${deal.side.toLowerCase()}`}
-              type="button" key={deal.trade_episode_id} onClick={() => setSelectedId(deal.trade_episode_id)}>
+            <div className={`diary-trade-entry ${deal.side.toLowerCase()}`} key={deal.trade_episode_id}>
+              <button className={`diary-trade-row ${deal.side.toLowerCase()}`}
+                type="button" onClick={() => setSelectedId(deal.trade_episode_id)}>
               <div className="diary-trade-heading">
                 <strong>{deal.symbol}</strong><span>{sideLabel(deal.side)}</span><span>{dealLabels[deal.cohort]}</span>
               </div>
@@ -639,21 +1024,29 @@ function ClosedDealsView({ report }: { report: FinrezResponse }) {
               </div>
               <div className="diary-trade-metrics">
                 <span className={Number(deal.pnl_usdt) > 0 ? "profit" : Number(deal.pnl_usdt) < 0 ? "loss" : ""}
-                  title={deal.pnl_usdt}>PnL {deal.pnl_usdt} USDT</span>
+                  title={deal.pnl_usdt}>PnL {displayTradePnl(deal.pnl_usdt)} USDT</span>
                 <span>Исполнений: {deal.execution_count}</span>
               </div>
-            </button>
+              </button>
+              <TradeActionButtons onDetails={() => setSelectedId(deal.trade_episode_id)}
+                onReplay={/^te_[0-9a-f]{24}$/.test(deal.trade_episode_id) && report.account_id === "paper"
+                  ? () => requestSimulatorLocator(deal.trade_episode_id, setFilmNotice) : undefined} />
+            </div>
           ))}
         </div>
       )}
+      {filmNotice ? <p className="diary-finrez-coverage" role="status">{filmNotice}</p> : null}
+      {downloadError ? <p className="diary-finrez-coverage" role="alert">{downloadError}</p> : null}
       <p className="diary-finrez-basis">
-        Пока доступен только идентификатор сделки; историческое воспроизведение в локальном Симуляторе ещё не подключено.
+        Киноплёнка передаёт в локальный Симулятор только ID сделки. История свечей и решения робота автоматически не загружаются. Фактические исполнения доступны через JSON в карточке сделки.
       </p>
     </div>
   );
 }
 
-function FinrezView({ report }: { report: FinrezResponse }) {
+function FinrezView({ report, onSelectTicker }: {
+  report: FinrezResponse; onSelectTicker: (symbol: string) => void;
+}) {
   return (
     <div className="diary-finrez" aria-label="Финансовый результат по тикерам">
       <p className="diary-finrez-basis">
@@ -677,12 +1070,14 @@ function FinrezView({ report }: { report: FinrezResponse }) {
       ) : (
         <div className="diary-finrez-list">
           {report.tickers.map((ticker) => (
-            <div className="diary-finrez-row" key={ticker.symbol}>
+            <button type="button" className="diary-finrez-row diary-finrez-row-action"
+                key={ticker.symbol} aria-label={`Показать сделки по ${ticker.symbol}`}
+                title="Показать отдельные сделки по тикеру" onClick={() => onSelectTicker(ticker.symbol)}>
               <strong>{ticker.symbol}</strong>
               <span className={Number(ticker.pnl_usdt) > 0 ? "profit" : Number(ticker.pnl_usdt) < 0 ? "loss" : ""}>
-                {Number(ticker.pnl_usdt) > 0 ? "+" : ""}{ticker.pnl_usdt} USDT
+                {Number(ticker.pnl_usdt) > 0 ? "+" : ""}{displayTradePnl(ticker.pnl_usdt)} USDT
               </span>
-            </div>
+            </button>
           ))}
         </div>
       )}
@@ -695,12 +1090,14 @@ function FinrezView({ report }: { report: FinrezResponse }) {
           </p>
           <div className="diary-finrez-list">
             {report.manual_interventions.map((ticker) => (
-              <div className="diary-finrez-row" key={ticker.symbol}>
+              <button type="button" className="diary-finrez-row diary-finrez-row-action"
+                key={ticker.symbol} aria-label={`Показать сделки по ${ticker.symbol}`}
+                title="Показать отдельные сделки по тикеру" onClick={() => onSelectTicker(ticker.symbol)}>
                 <strong>{ticker.symbol}</strong>
                 <span className={Number(ticker.pnl_usdt) > 0 ? "profit" : Number(ticker.pnl_usdt) < 0 ? "loss" : ""}>
-                  {Number(ticker.pnl_usdt) > 0 ? "+" : ""}{ticker.pnl_usdt} USDT
+                  {Number(ticker.pnl_usdt) > 0 ? "+" : ""}{displayTradePnl(ticker.pnl_usdt)} USDT
                 </span>
-              </div>
+              </button>
             ))}
           </div>
         </section>
@@ -714,12 +1111,14 @@ function FinrezView({ report }: { report: FinrezResponse }) {
           </p>
           <div className="diary-finrez-list">
             {report.joint_management.map((ticker) => (
-              <div className="diary-finrez-row" key={ticker.symbol}>
+              <button type="button" className="diary-finrez-row diary-finrez-row-action"
+                key={ticker.symbol} aria-label={`Показать сделки по ${ticker.symbol}`}
+                title="Показать отдельные сделки по тикеру" onClick={() => onSelectTicker(ticker.symbol)}>
                 <strong>{ticker.symbol}</strong>
                 <span className={Number(ticker.pnl_usdt) > 0 ? "profit" : Number(ticker.pnl_usdt) < 0 ? "loss" : ""}>
-                  {Number(ticker.pnl_usdt) > 0 ? "+" : ""}{ticker.pnl_usdt} USDT
+                  {Number(ticker.pnl_usdt) > 0 ? "+" : ""}{displayTradePnl(ticker.pnl_usdt)} USDT
                 </span>
-              </div>
+              </button>
             ))}
           </div>
         </section>
@@ -750,7 +1149,8 @@ export function DiaryOverlay({
   const [setups, setSetups] = useState<DiarySetup[]>([]);
   const [statistics, setStatistics] = useState<DiaryStatistics | null>(null);
   const [finrez, setFinrez] = useState<FinrezResponse | null>(null);
-  const [finrezPeriod, setFinrezPeriod] = useState<FinrezPeriod>("TODAY");
+  const [finrezPeriod, setFinrezPeriod] = useState<FinrezPeriod>("DAY");
+  const [finrezSymbolFilter, setFinrezSymbolFilter] = useState<string | null>(null);
   const [mirrorLevels, setMirrorLevels] = useState<MirrorLevelRow[]>([]);
   const [tradeFilter, setTradeFilter] = useState<DiaryFilter>("ALL");
   const [setupFilter, setSetupFilter] = useState<SetupFilter>("ALL");
@@ -759,6 +1159,7 @@ export function DiaryOverlay({
   const [accountId, setAccountId] = useState("");
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [selectedTradeId, setSelectedTradeId] = useState<string | null>(null);
+  const [tradeFilmNotice, setTradeFilmNotice] = useState("");
   const [requestedTradeMissing, setRequestedTradeMissing] = useState(false);
   const initialTradeRequest = useRef<string | null>(initialTradeEpisodeId);
   const requestSequence = useRef(0);
@@ -946,14 +1347,19 @@ export function DiaryOverlay({
         <div className="diary-navigation">
           {(section === "FINREZ" || section === "PATTERNS" || section === "DEALS") ? (
             <nav className="diary-period-nav" aria-label="Период статистики">
-              <button aria-pressed={finrezPeriod === "TODAY"} type="button" onClick={() => setFinrezPeriod("TODAY")}>Сегодня</button>
-              <button aria-pressed={finrezPeriod === "ALL"} type="button" onClick={() => setFinrezPeriod("ALL")}>Всё время</button>
+              {([
+                ["DAY", "День"], ["WEEK", "Неделя"],
+                ["MONTH", "Месяц"], ["YEAR", "Год"], ["ALL", "Всё время"],
+              ] as const).map(([period, label]) => (
+                <button key={period} aria-pressed={finrezPeriod === period} type="button"
+                  onClick={() => { setFinrezSymbolFilter(null); setFinrezPeriod(period); }}>{label}</button>
+              ))}
             </nav>
           ) : null}
           <nav className="diary-primary-nav" aria-label="Разделы статистики">
-            <button aria-current={section === "FINREZ" || section === "STATISTICS" ? "page" : undefined} onClick={() => { setSelectedTradeId(null); setSection("FINREZ"); }} type="button">Финрез</button>
+            <button aria-current={section === "FINREZ" || section === "STATISTICS" ? "page" : undefined} onClick={() => { setSelectedTradeId(null); setFinrezSymbolFilter(null); setSection("FINREZ"); }} type="button">Финрез</button>
             <button aria-current={section === "PATTERNS" || section === "SETUPS" ? "page" : undefined} onClick={() => { setSelectedTradeId(null); setSection("PATTERNS"); }} type="button">Паттерны</button>
-            <button aria-current={section === "DEALS" || section === "TRADES" ? "page" : undefined} onClick={() => { setSelectedTradeId(null); setSection("DEALS"); }} type="button">Сделки</button>
+            <button aria-current={section === "DEALS" || section === "TRADES" ? "page" : undefined} onClick={() => { setSelectedTradeId(null); setFinrezSymbolFilter(null); setSection("DEALS"); }} type="button">Сделки</button>
           </nav>
           {!selectedTrade && (section === "TRADES" || section === "SETUPS") ? (
             <div className="diary-filter-bar" aria-label={section === "TRADES" ? "Фильтры сделок" : "Фильтры сетапов"}>
@@ -978,20 +1384,26 @@ export function DiaryOverlay({
             </div>
           ) : null}
 
-          {!loading && !loadError && !selectedTrade && section === "FINREZ" && finrez ? <FinrezView report={finrez} /> : null}
+          {!loading && !loadError && !selectedTrade && section === "FINREZ" && finrez ? <FinrezView report={finrez}
+            onSelectTicker={(symbol) => { setFinrezSymbolFilter(symbol); setSection("DEALS"); }} /> : null}
           {!loading && !loadError && !selectedTrade && section === "PATTERNS" ? <p className="diary-state">Паттерны — второй этап после визуальной приёмки «Финреза»</p> : null}
           {!loading && !loadError && !selectedTrade && section === "DEALS" && finrez ? (
-            <ClosedDealsView key={`${finrez.account_id}:${finrez.owner}:${finrez.period}:${finrez.source_revision}`} report={finrez} />
+            <ClosedDealsView key={`${finrez.account_id}:${finrez.owner}:${finrez.period}:${finrez.source_revision}:${finrezSymbolFilter ?? "ALL"}`}
+              report={finrez} symbolFilter={finrezSymbolFilter} onClearSymbolFilter={() => setFinrezSymbolFilter(null)} />
           ) : null}
           {!loading && !loadError && selectedTrade ? <TradeDetailsView trade={selectedTrade} onBack={() => { setRequestedTradeMissing(false); setSelectedTradeId(null); }} /> : null}
           {!loading && !loadError && requestedTradeMissing && section === "TRADES" ? <p className="diary-state">Сделка недоступна в текущем дневнике</p> : null}
           {!loading && !loadError && !requestedTradeMissing && !selectedTrade && section === "TRADES" && visibleTrades.length === 0 ? <p className="diary-state">Нет сделок в этом фильтре</p> : null}
           {!loading && !loadError && !selectedTrade && section === "SETUPS" && visibleSetups.length === 0 ? <p className="diary-state">Нет сетапов в этом фильтре</p> : null}
 
+          {tradeFilmNotice && section === "TRADES" && !selectedTrade
+            ? <p className="diary-finrez-coverage" role="status">{tradeFilmNotice}</p> : null}
+
           {!loading && !loadError && !requestedTradeMissing && !selectedTrade && section === "TRADES" && visibleTrades.length > 0 ? (
             <div className="diary-trades-list">
               {visibleTrades.map((trade) => (
-                <button className={`diary-trade-row ${trade.side.toLowerCase()}`} key={trade.trade_episode_id} onClick={() => setSelectedTradeId(trade.trade_episode_id)} type="button">
+                <div className={`diary-trade-entry ${trade.side.toLowerCase()}`} key={trade.trade_episode_id}>
+                <button className={`diary-trade-row ${trade.side.toLowerCase()}`} onClick={() => setSelectedTradeId(trade.trade_episode_id)} type="button">
                   <div className="diary-trade-heading">
                     <strong>{trade.symbol}</strong>
                     <span className="diary-trade-side">{sideLabel(trade.side)}</span>
@@ -1007,10 +1419,14 @@ export function DiaryOverlay({
                   <div className="diary-trade-metrics">
                     <span>Вход {trade.average_entry || "—"}</span>
                     <span>{trade.closed_at_ms === null ? `Открыто ${trade.open_quantity}` : `Выход ${trade.exit_price ?? "—"}`}</span>
-                    <span className={trade.pnl !== null && Number(trade.pnl) > 0 ? "profit" : trade.pnl !== null && Number(trade.pnl) < 0 ? "loss" : ""}>PnL {trade.pnl ?? "—"}</span>
+                    <span className={trade.pnl !== null && Number(trade.pnl) > 0 ? "profit" : trade.pnl !== null && Number(trade.pnl) < 0 ? "loss" : ""} title={trade.pnl ?? undefined}>PnL {displayTradePnl(trade.pnl)}</span>
                   </div>
                   {trade.controller_origin ? <small>Источник: {trade.controller_origin}</small> : null}
                 </button>
+                <TradeActionButtons onDetails={() => setSelectedTradeId(trade.trade_episode_id)}
+                  onReplay={trade.environment === "PAPER" && /^te_[0-9a-f]{24}$/.test(trade.trade_episode_id)
+                    ? () => requestSimulatorLocator(trade.trade_episode_id, setTradeFilmNotice) : undefined} />
+                </div>
               ))}
             </div>
           ) : null}

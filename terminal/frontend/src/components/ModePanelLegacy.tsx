@@ -761,12 +761,16 @@ export function ModePanel({
           <button
             key={candidate}
             className="workspace-nav-button"
-            aria-label={candidate === "TERMINAL" ? "Терминал" : candidate === "AUTOPILOT" ? "Автопилот" : "Редактор"}
-            title={candidate === "TERMINAL" ? "Терминал" : candidate === "AUTOPILOT" ? "Автопилот" : "Редактор"}
+            aria-label={candidate === "TERMINAL" ? "Терминал" : candidate === "AUTOPILOT" ? "Робот" : "Редактор"}
+            title={candidate === "TERMINAL" ? "Терминал" : candidate === "AUTOPILOT" ? "Робот" : "Редактор"}
             onClick={() => onModeChange(candidate)}
             type="button"
           >
-            <span aria-hidden="true" className="workspace-nav-icon">{candidate === "TERMINAL" ? "$" : candidate === "AUTOPILOT" ? "◉" : "✎"}</span>
+            <span aria-hidden="true" className="workspace-nav-icon">{candidate === "TERMINAL" ? "$" : candidate === "AUTOPILOT" ? (
+              <svg className="workspace-nav-symbol" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="4.5" y="7" width="15" height="13" rx="3" /><path d="M12 7V3.5M10.5 3.5h3M4.5 12H2.5M21.5 12h-2"/><circle cx="9" cy="12.5" r="1"/><circle cx="15" cy="12.5" r="1"/><path d="M9 17h6"/>
+              </svg>
+            ) : "✎"}</span>
           </button>
         ))}
       </nav>
@@ -977,8 +981,8 @@ export function ModePanel({
             <button
               className="paper-autopilot-button"
               type="button"
-              aria-label="Автопилот"
-              title="Автопилот"
+              aria-label="Робот"
+              title="Робот"
               onClick={() => onModeChange("AUTOPILOT")}
             >
               <svg className="paper-autopilot-wheel-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

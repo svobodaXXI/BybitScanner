@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DrawingObject } from "../chart/drawingModel";
-import { buildEditorGeometryReview, buildGeometryReviewDraft, compareEditorRayChanges, isValidCachedEditorDraft, matchesStoredGeometryReview, serializeReviewDrawings } from "./geometryReviewDraft";
+import { EDITOR_REVIEW_PATTERNS, buildEditorGeometryReview, buildGeometryReviewDraft, compareEditorRayChanges, isEditorReviewPattern, isValidCachedEditorDraft, matchesStoredGeometryReview, serializeReviewDrawings } from "./geometryReviewDraft";
 
 const candles = [
   { time: "2026-10-19T00:00:00.000Z", open: 10, high: 12, low: 9, close: 11 },
@@ -99,6 +99,32 @@ describe("Editor two-pair review evidence", () => {
     expect(result.corrected_boundaries).toEqual([]);
   });
 
+  it("keeps source geometry while storing an independently selected correct pattern", () => {
+    expect(EDITOR_REVIEW_PATTERNS.some((item) => item.value === "Rising Wedge")).toBe(true);
+    expect(isEditorReviewPattern("Triangle")).toBe(true);
+    expect(isEditorReviewPattern("untrusted-new-strategy")).toBe(false);
+    const geometryAndPattern = buildEditorGeometryReview({
+      ...review, correctedPattern: "Triangle",
+    });
+    expect(geometryAndPattern.label).toBe("GEOMETRY_CORRECTED");
+    expect(geometryAndPattern.corrected_pattern).toBe("Triangle");
+    expect(geometryAndPattern.corrected_boundaries).toHaveLength(1);
+    const patternOnly = buildEditorGeometryReview({
+      ...review, label: "PATTERN_CORRECTED", correctedPattern: "Wedge",
+      editableDrawings: [{ ...editable, anchors: original.anchors }],
+    });
+    expect(patternOnly.label).toBe("PATTERN_CORRECTED");
+    expect(patternOnly.corrected_pattern).toBe("Wedge");
+    expect(patternOnly.corrected_boundaries).toEqual([]);
+    expect(() => buildEditorGeometryReview({
+      ...review, label: "PATTERN_CORRECTED", correctedPattern: "Wedge",
+    })).toThrow(/Линии изменены/);
+    expect(() => buildEditorGeometryReview({
+      ...review, label: "PATTERN_CORRECTED", correctedPattern: undefined,
+      editableDrawings: [{ ...editable, anchors: original.anchors }],
+    })).toThrow(/Паттерн/);
+  });
+
   it("rejects a Confirmed verdict after editing Scanner rays", () => {
     expect(() => buildEditorGeometryReview({
       ...review, label: "CONFIRMED", editableDrawings: [editable],
@@ -184,6 +210,12 @@ describe("Stored geometry review receipt", () => {
   };
   it("accepts exact saved UTC anchors in the store's canonical boundary format", () => {
     expect(matchesStoredGeometryReview(ownerDraft, stored)).toBe(true);
+  });
+  it("requires exact owner-selected pattern in confirmed server receipts", () => {
+    const correction = { ...ownerDraft, corrected_pattern: "Triangle" as const };
+    expect(matchesStoredGeometryReview(correction, { ...stored, corrected_pattern: "Triangle" })).toBe(true);
+    expect(matchesStoredGeometryReview(correction, stored)).toBe(false);
+    expect(matchesStoredGeometryReview(correction, { ...stored, corrected_pattern: "Wedge" })).toBe(false);
   });
   it("rejects substituted price/time, missing boundary, note or review label", () => {
     for (const corrupted of [
