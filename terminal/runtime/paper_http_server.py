@@ -70,6 +70,7 @@ from terminal.diary.scoped_statistics_reporter import load_paper_source_snapshot
 from terminal.diary.campaign_lineage import CampaignLineageUnproven, project_selected_paper_campaign
 from terminal.diary.ticker_finrez import (
     EpisodeFactsNotFound, EpisodeFactsSourceChanged,
+    attach_verified_entry_notional_returns, attach_verified_episode_patterns,
     project_paper_closed_episode_facts, project_paper_ticker_pnl,
 )
 from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
@@ -3359,6 +3360,11 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 projection = project_paper_ticker_pnl(
                     snapshot, account_id="paper", owner=params["owner"][0],
                     period=params["period"][0], now_ms=now_ms,
+                )
+                projection = attach_verified_entry_notional_returns(snapshot, projection)
+                projection = attach_verified_episode_patterns(
+                    snapshot, projection,
+                    d2_path=getattr(self.server, "diary_setup_store_path", None),
                 )
             except (StatisticsScopeError, ValueError):
                 self._json_response(503, {"ok": False, "error": "finrez_evidence_unavailable"})

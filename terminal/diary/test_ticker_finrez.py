@@ -414,6 +414,124 @@ class FinrezMixedControllerTests(unittest.TestCase):
         })
 
 
+
+class EntryNotionalReturnTests(unittest.TestCase):
+    """No leverage/margin assumptions; source-confirmed *entry* gross notional only."""
+
+    def _source(self, episode, origins, prices: tuple[str, ...], sides: tuple[OrderSide, ...]):
+        self.assertEqual(len(prices), len(episode.allocations))
+        self.assertEqual(len(sides), len(episode.allocations))
+        executions = tuple(
+            Execution(
+                dedup_key=item.execution_key, order_id=OrderId("price-" + str(index)),
+                symbol=episode.position_key.symbol, side=sides[index],
+                price=Price(Decimal(prices[index])), quantity=Quantity(item.quantity),
+                fee=item.fee, exchange_timestamp_ms=item.occurred_at_ms,
+            )
+            for index, item in enumerate(episode.allocations)
+        )
+        return PaperSourceSnapshot(11, (episode,), origins, executions=executions)
+
+    def test_multiple_entries_and_partial_reductions_use_only_entry_notional(self):
+        from terminal.diary.ticker_finrez import attach_verified_entry_notional_returns
+        episode, origins = _scoped_episode("te_" + "a" * 24, "BTCUSDT", [
+            (AllocationRole.OPEN, Origin.ROBOT),
+            (AllocationRole.INCREASE, Origin.ROBOT),
+            (AllocationRole.REDUCE, Origin.ROBOT),
+            (AllocationRole.CLOSE, Origin.ROBOT),
+        ])
+        snapshot = self._source(episode, origins, ("100", "120", "999", "1000"), (
+            OrderSide.BUY, OrderSide.BUY, OrderSide.SELL, OrderSide.SELL,
+        ))
+        original = project_paper_ticker_pnl(
+            snapshot, account_id="paper", owner="ROBOT", period="ALL", now_ms=_ms(9, 12),
+        )
+        result = attach_verified_entry_notional_returns(snapshot, original)
+        row, = result["closed_episodes"]
+        self.assertEqual(row["entry_notional_usdt"], "220")
+        self.assertEqual(row["pnl_pct_basis"], "KNOWN_COST_PNL_OVER_EXECUTED_ENTRY_NOTIONAL")
+        self.assertEqual(
+            Decimal(row["pnl_pct"]), Decimal("4.6") / Decimal("220") * 100,
+        )
+        self.assertEqual(result["tickers"], original["tickers"])
+        self.assertEqual(result["attribution_coverage"], original["attribution_coverage"])
+        self.assertEqual(result["source_revision"], original["source_revision"])
+        self.assertNotIn("pnl_pct", original["closed_episodes"][0])
+        self.assertEqual(len(snapshot.executions), 4)
+
+    def test_short_loss_with_known_fees_uses_short_entry_price_not_exit_turnover(self):
+        from dataclasses import replace
+        from terminal.diary.ticker_finrez import attach_verified_entry_notional_returns
+        episode, origins = _scoped_episode("te_" + "b" * 24, "ETHUSDT", [
+            (AllocationRole.OPEN, Origin.ROBOT),
+            (AllocationRole.CLOSE, Origin.ROBOT),
+        ])
+        episode = replace(
+            episode, side=PositionSide.SHORT, realized_price_pnl=Decimal("-10"),
+        )
+        snapshot = self._source(episode, origins, ("200", "1000"), (
+            OrderSide.SELL, OrderSide.BUY,
+        ))
+        report = project_paper_ticker_pnl(
+            snapshot, account_id="paper", owner="ROBOT", period="ALL", now_ms=_ms(9, 12),
+        )
+        result = attach_verified_entry_notional_returns(snapshot, report)
+        row, = result["closed_episodes"]
+        self.assertEqual(row["entry_notional_usdt"], "200")
+        self.assertEqual(Decimal(row["pnl_pct"]), Decimal("-5.1"))
+        self.assertEqual(row["pnl_usdt"], "-10.2")
+
+    def test_non_usdt_linear_quote_is_not_mislabeled_usdt_entry_notional(self):
+        from terminal.diary.ticker_finrez import attach_verified_entry_notional_returns
+        episode, origins = _scoped_episode("te_" + "f" * 24, "ETHUSDC", [
+            (AllocationRole.OPEN, Origin.ROBOT),
+            (AllocationRole.CLOSE, Origin.ROBOT),
+        ])
+        snapshot = self._source(episode, origins, ("100", "101"), (
+            OrderSide.BUY, OrderSide.SELL,
+        ))
+        report = project_paper_ticker_pnl(
+            snapshot, account_id="paper", owner="ROBOT", period="ALL", now_ms=_ms(9, 12),
+        )
+        result = attach_verified_entry_notional_returns(snapshot, report)
+        self.assertEqual(result["closed_episodes"], report["closed_episodes"])
+        self.assertNotIn("pnl_pct", result["closed_episodes"][0])
+
+    def test_incomplete_wrong_side_or_wrong_snapshot_never_fabricates_percentage(self):
+        from dataclasses import replace
+        from terminal.diary.ticker_finrez import attach_verified_entry_notional_returns
+        episode, origins = _scoped_episode("te_" + "c" * 24, "BTCUSDT", [
+            (AllocationRole.OPEN, Origin.ROBOT), (AllocationRole.CLOSE, Origin.ROBOT),
+        ])
+        source = self._source(episode, origins, ("100", "105"), (
+            OrderSide.BUY, OrderSide.SELL,
+        ))
+        report = project_paper_ticker_pnl(
+            source, account_id="paper", owner="ROBOT", period="ALL", now_ms=_ms(9, 12),
+        )
+        self.assertIs(attach_verified_entry_notional_returns(
+            PaperSourceSnapshot(11, (episode,), origins), report,
+        ), report)
+        self.assertIs(attach_verified_entry_notional_returns(
+            replace(source, source_revision=12), report,
+        ), report)
+        for invalid in (
+            replace(source, executions=source.executions[:1]),
+            replace(source, executions=(
+                replace(source.executions[0], side=OrderSide.SELL), source.executions[1],
+            )),
+            replace(source, executions=(
+                replace(source.executions[0], quantity=Quantity(Decimal("0.5"))),
+                source.executions[1],
+            )),
+        ):
+            result = attach_verified_entry_notional_returns(invalid, report)
+            self.assertEqual(result["closed_episodes"], report["closed_episodes"])
+            self.assertNotIn("pnl_pct", result["closed_episodes"][0])
+            self.assertEqual(result["tickers"], report["tickers"])
+
+
+
 class ClosedEpisodeFactsTests(unittest.TestCase):
     def _snapshot(self):
         identity = "te_" + "a" * 24
@@ -921,6 +1039,123 @@ def test_simulator_bridge_ingress_exposes_only_token_scoped_device_calls():
     forbidden = legacy.split("location ^~ /api/diary/simulator-bridge/ {", 1)
     assert len(forbidden) == 2
     assert "return 404;" in forbidden[1].split("\n    }", 1)[0]
+
+
+
+class FinrezExactPatternIndexTests(unittest.TestCase):
+    def test_enriches_only_proven_episode_id_without_changing_any_financial_report(self):
+        from unittest.mock import patch
+        from terminal.diary.ticker_finrez import attach_verified_episode_patterns
+
+        first, first_origins = _scoped_episode("te_" + "a" * 24, "BTCUSDT", [
+            (AllocationRole.OPEN, Origin.ROBOT), (AllocationRole.CLOSE, Origin.ROBOT),
+        ])
+        second, second_origins = _scoped_episode("te_" + "b" * 24, "BTCUSDT", [
+            (AllocationRole.OPEN, Origin.ROBOT), (AllocationRole.CLOSE, Origin.ROBOT),
+        ])
+        snapshot = PaperSourceSnapshot(5, (first, second), {**first_origins, **second_origins})
+        report = project_paper_ticker_pnl(
+            snapshot, account_id="paper", owner="ROBOT", period="ALL",
+            now_ms=_ms(9, 12),
+        )
+        first_id = first.trade_episode_id.value
+        context = {
+            "status": "EXACT_D2_LINK", "source": "TRADING_DIARY_D2",
+            "setup": {"pattern": "Falling Wedge", "symbol": "BTCUSDT"},
+        }
+        with patch("terminal.diary.episode_context.project_episode_d2_contexts_read_only",
+                   return_value={first_id: context}) as batch:
+            enriched = attach_verified_episode_patterns(
+                snapshot, report, d2_path="/read-only/d2.sqlite3",
+            )
+        self.assertEqual(batch.call_count, 1)
+        self.assertEqual(batch.call_args.kwargs["episodes"], (
+            (first_id, "BTCUSDT", "LONG", "ROBOT", first.opened_at_ms),
+            (second.trade_episode_id.value, "BTCUSDT", "LONG", "ROBOT", second.opened_at_ms),
+        ))
+        self.assertEqual(enriched["tickers"], report["tickers"])
+        self.assertEqual(enriched["attribution_coverage"], report["attribution_coverage"])
+        self.assertEqual(enriched["source_revision"], report["source_revision"])
+        labeled = {row["trade_episode_id"]: row for row in enriched["closed_episodes"]}
+        self.assertEqual(labeled[first_id]["setup_context"], context)
+        self.assertEqual(labeled[first_id]["opening_controller"], "ROBOT")
+        self.assertNotIn("setup_context", labeled[second.trade_episode_id.value])
+        self.assertNotIn("setup_context", report["closed_episodes"][0])
+
+    def test_missing_d2_and_cross_episode_identity_never_generate_a_label(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from terminal.diary.episode_context import project_episode_d2_contexts_read_only
+        from terminal.diary.ticker_finrez import attach_verified_episode_patterns
+
+        first, origins = _scoped_episode("te_" + "c" * 24, "ETHUSDT", [
+            (AllocationRole.OPEN, Origin.TERMINAL_MANUAL),
+            (AllocationRole.CLOSE, Origin.TERMINAL_MANUAL),
+        ])
+        snapshot = PaperSourceSnapshot(3, (first,), origins)
+        report = project_paper_ticker_pnl(
+            snapshot, account_id="paper", owner="MANUAL", period="ALL",
+            now_ms=_ms(9, 12),
+        )
+        with TemporaryDirectory() as directory:
+            missing = Path(directory) / "absent-d2.sqlite3"
+            self.assertEqual(project_episode_d2_contexts_read_only(
+                missing, episodes=((first.trade_episode_id.value, "ETHUSDT", "LONG",
+                                    "MANUAL", first.opened_at_ms),),
+            ), {})
+            self.assertFalse(missing.exists())
+            self.assertEqual(
+                attach_verified_episode_patterns(snapshot, report, d2_path=str(missing)),
+                report,
+            )
+        contradictory = {
+            **report, "closed_episodes": [
+                {**report["closed_episodes"][0], "symbol": "BTCUSDT"},
+            ],
+        }
+        self.assertIs(
+            attach_verified_episode_patterns(snapshot, contradictory, d2_path=None),
+            contradictory,
+        )
+
+    def test_bulk_d2_reader_uses_single_read_snapshot_and_skips_future_setup(self):
+        import sqlite3
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from unittest.mock import patch
+        from terminal.diary.episode_context import project_episode_d2_contexts_read_only
+
+        with TemporaryDirectory() as directory:
+            db = Path(directory) / "diary.sqlite3"
+            with sqlite3.connect(db) as conn:
+                conn.execute("PRAGMA user_version = 1")
+            original = db.read_bytes()
+            requests = (
+                ("te_" + "d" * 24, "BTCUSDT", "LONG", "ROBOT", 100),
+                ("te_" + "e" * 24, "ETHUSDT", "SHORT", "MANUAL", 100),
+            )
+            def context(store, *, trade_episode_id, account_id, symbol, side,
+                        opening_controller):
+                self.assertEqual(account_id, "paper")
+                self.assertEqual(trade_episode_id, requests[0][0] if symbol == "BTCUSDT"
+                                 else requests[1][0])
+                return {
+                    "status": "EXACT_D2_LINK",
+                    "source": "TRADING_DIARY_D2",
+                    "consistency": "INDEPENDENT_READ_SNAPSHOT_NOT_ATOMIC_WITH_PAPER",
+                    "decision_scope": "D2_OBSERVATIONS_NOT_ROBOT_RUNTIME_LOG",
+                    "setup": {"created_at_ms": 50 if symbol == "BTCUSDT" else 101},
+                }
+
+            with patch("terminal.diary.episode_context._read_exact_d2_context",
+                       side_effect=context) as reader:
+                index = project_episode_d2_contexts_read_only(db, episodes=requests)
+            self.assertEqual(reader.call_count, 2)
+            self.assertEqual(set(index), {requests[0][0]})
+            self.assertEqual(db.read_bytes(), original)
+            self.assertEqual(project_episode_d2_contexts_read_only(
+                db, episodes=(requests[0], requests[0]),
+            ), {})
 
 
 if __name__ == "__main__":
