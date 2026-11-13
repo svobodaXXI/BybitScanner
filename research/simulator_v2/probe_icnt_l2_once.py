@@ -35,7 +35,8 @@ def digest(path: Path) -> str:
     return h.hexdigest()
 
 
-def run(l2: Path, bundle: Path, output_dir: Path, repo: Path, code_sha: str) -> dict:
+def run(l2: Path, bundle: Path, output_dir: Path, repo: Path, code_sha: str,
+        *, compare_partials: bool = False) -> dict:
     if (not repo.is_dir() or not (repo / "AGENTS.md").is_file()
             or repo.is_symlink() or l2.is_symlink() or bundle.is_symlink()):
         raise ValueError("pinned local repository and original non-symlink archives required")
@@ -77,6 +78,7 @@ def run(l2: Path, bundle: Path, output_dir: Path, repo: Path, code_sha: str) -> 
     from research.simulator_v2.wedge_observer import WedgeScannerConfig
     from research.simulator_v2.wedge_risk_preflight import SimWedgeRiskSettings
     from research.simulator_v2.wedge_robot_observer import SimWedgeRobotConfig
+    from research.simulator_v2.virtual_exchange import L2PartialTakePolicy
 
     proof = import_local_trade_range(
         archive_dir=source_dir, cache_dir=cache_dir, symbol=SYMBOL,
@@ -96,32 +98,78 @@ def run(l2: Path, bundle: Path, output_dir: Path, repo: Path, code_sha: str) -> 
         max_notional_usdt=Decimal("1000"), max_risk_usdt=Decimal("50"),
         entry_fee_rate=Decimal("0.0006"), exit_fee_rate=Decimal("0.0006"),
     )
-    result = run_cached_wedge_trade_range(
-        cache_dir=cache_dir, symbol=SYMBOL, proofs=proof,
-        latest_closed_boundary_ms=DAY_END_MS,
-        simulation_run_id="icnt_l2_probe_20261110_0800_0815",
-        initial_balance=Decimal("1000"),
-        start_ms=START_MS, end_inclusive_ms=END_INCLUSIVE_MS,
-        scanner_config=scanner, robot_config=robot, risk_settings=risk,
-        taker_fee_rate=Decimal("0.0006"), maker_fee_rate=Decimal("0.0002"),
-        flow_archive_dir=source_dir, oi_mode="OFF", impulse_mode=True,
-        l2_archive_path=l2, l2_archive_sha256=L2_SHA, l2_depth=200,
-        capture_replay=False,
-    )
-    if result.execution_model != "SIMULATION_HISTORICAL_TAKER_L2_EVENT_TIME_NOT_REAL_BYBIT_FILLS":
-        raise ValueError("L2-only execution provenance not proven")
+    policy_specs = [("BASE", None)]
+    if compare_partials:
+        policy_specs.extend((
+            (f"{int(fraction * 100)}", L2PartialTakePolicy(
+                potential_fraction=fraction,
+                quantity_fraction=Decimal("0.25"),
+                quantity_step=risk.quantity_step,
+                tick_size=risk.tick_size,
+            ))
+            for fraction in (Decimal("0.25"), Decimal("0.50"), Decimal("0.75"))
+        ))
+    results = []
+    for label, policy in policy_specs:
+        try:
+            result = run_cached_wedge_trade_range(
+                cache_dir=cache_dir, symbol=SYMBOL, proofs=proof,
+                latest_closed_boundary_ms=DAY_END_MS,
+                simulation_run_id=f"icnt_l2_20261110_0800_0815_{label.lower()}",
+                initial_balance=Decimal("1000"),
+                start_ms=START_MS, end_inclusive_ms=END_INCLUSIVE_MS,
+                scanner_config=scanner, robot_config=robot, risk_settings=risk,
+                taker_fee_rate=Decimal("0.0006"), maker_fee_rate=Decimal("0.0002"),
+                flow_archive_dir=source_dir, oi_mode="OFF", impulse_mode=True,
+                l2_archive_path=l2, l2_archive_sha256=L2_SHA, l2_depth=200,
+                l2_partial_take_policy=policy,
+                capture_replay=False,
+            )
+            if result.execution_model != "SIMULATION_HISTORICAL_TAKER_L2_EVENT_TIME_NOT_REAL_BYBIT_FILLS":
+                raise ValueError("L2-only execution provenance not proven")
+            if label == "BASE" and (
+                result.report.realized_net_pnl != Decimal("-2.15403408000")
+                or len(result.l2_episodes) != 4
+                or result.report.final_position_quantity != 0
+            ):
+                raise ValueError("baseline regression against owner-verified ICNT L2 run")
+            results.append({
+                "threshold_percent": label, "state": "CONDITIONAL_VIRTUAL_L2",
+                "result": result.to_payload(),
+            })
+        except Exception as exc:
+            if label == "BASE":
+                raise
+            results.append({
+                "threshold_percent": label, "state": "BLOCKED",
+                "reason": f"{type(exc).__name__}:{exc}",
+                "no_fallback": True, "counterfactual_pnl_usdt": None,
+            })
+    if compare_partials:
+        return {
+            "state": "VIRTUAL_L2_PARTIAL_BE_COMPARISON_CONDITIONAL",
+            "scenario": "SIMULATION_ONLY_THREE_FROZEN_THRESHOLDS",
+            "code_sha": code_sha,
+            "l2_sha256": L2_SHA, "trade_gzip_sha256": TRADE_SHA,
+            "start_ms": START_MS, "end_inclusive_ms": END_INCLUSIVE_MS,
+            "partial_share": "0.25",
+            "baseline_realized_net_pnl_usdt": "-2.15403408000",
+            "not_real_exchange_execution": True,
+            "scenarios": results,
+        }
+    result = results[0]["result"]
     return {
         "state": (
             "VIRTUAL_L2_PROBE_CONDITIONAL"
-            if result.l2_unproven_entry_depth_count or result.l2_deferred_stop_count
+            if result["l2_unproven_entry_depth_count"] or result["l2_deferred_stop_count"]
             else "VIRTUAL_L2_PROBE_COMPLETED"
         ),
         "scenario": "ONE_BOUNDED_LOCAL_SIMULATION_NOT_REAL_BYBIT_EXECUTIONS",
         "code_sha": code_sha,
         "l2_sha256": L2_SHA, "trade_gzip_sha256": TRADE_SHA,
         "start_ms": START_MS, "end_inclusive_ms": END_INCLUSIVE_MS,
-        "execution_model": result.execution_model,
-        "result": result.to_payload(),
+        "execution_model": result["execution_model"],
+        "result": result,
     }
 
 
@@ -132,6 +180,8 @@ def main() -> None:
     p.add_argument("--trades", required=True, type=Path)
     p.add_argument("--output", required=True, type=Path)
     p.add_argument("--code-sha", required=True)
+    p.add_argument("--compare-partials", action="store_true",
+                   help="SIMULATION-only 25/50/75 percent potential thresholds")
     args = p.parse_args()
     if not args.output.is_dir() or args.output.is_symlink():
         raise SystemExit("BLOCKED: new dedicated existing output directory required")
@@ -139,7 +189,10 @@ def main() -> None:
     if target.exists():
         raise SystemExit("BLOCKED: refusing to overwrite output")
     try:
-        receipt = run(args.l2, args.trades, args.output, args.repo, args.code_sha)
+        receipt = run(
+            args.l2, args.trades, args.output, args.repo, args.code_sha,
+            compare_partials=args.compare_partials,
+        )
     except Exception as exc:
         receipt = {
             "state": "BLOCKED",
@@ -155,6 +208,24 @@ def main() -> None:
     print("STATUS=" + receipt["state"])
     if receipt["state"] == "BLOCKED":
         print("BLOCKER=" + receipt["reason_type"] + ":" + receipt["reason"])
+    elif args.compare_partials:
+        for scenario in receipt["scenarios"]:
+            label = scenario["threshold_percent"]
+            if scenario["state"] == "BLOCKED":
+                print(f"SCENARIO_{label}=BLOCKED {scenario['reason']}")
+                continue
+            result = scenario["result"]
+            print(
+                f"SCENARIO_{label}=CONDITIONAL "
+                f"net_usdt={result['realized_net_pnl']} "
+                f"fills={result['virtual_fills']} "
+                f"partial={result['l2_partial_take_fills']} "
+                f"be_stop={result['l2_be_stop_amendments']} "
+                f"entry_depth_unknown={result['l2_unproven_entry_depth_count']} "
+                f"partial_depth_unknown={result['l2_partial_depth_unproven_count']} "
+                f"position={result['final_position_quantity']}"
+            )
+        print("REAL_EXCHANGE_PARITY=UNPROVEN")
     else:
         result = receipt["result"]
         rows = result.get("l2_episodes", [])
