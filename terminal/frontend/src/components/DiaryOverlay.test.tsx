@@ -464,6 +464,7 @@ describe("Closed deals / exact episode index", () => {
     fireEvent.click(screen.getByRole("button", { name: "Открыть сделки" }));
     expect(screen.getByRole("searchbox", { name: "Поиск по паттерну" })).toHaveValue("");
     expect(screen.getByRole("button", { name: "Убыточные" })).toHaveAttribute("aria-pressed", "false");
+    await screen.findByRole("button", { name: /ETHUSDT/ });
     expect(orderedSymbols()).toEqual(["ETHUSDT"]);
     expect(screen.getByRole("button", { name: /ETHUSDT/ })).toHaveTextContent("PnL +3,10 USDT");
   });
@@ -988,7 +989,7 @@ describe("Finrez first-screen UI", () => {
       name: "Показать все сделки по паттерну Falling Wedge",
     })[0]);
     expect(screen.getByRole("button", { name: "Убыточные" })).toHaveAttribute("aria-pressed", "false");
-    expect(screen.getAllByText("Паттерн: Falling Wedge")).toHaveLength(3);
+    expect(await screen.findAllByText("Паттерн: Falling Wedge")).toHaveLength(3);
   });
 
   it("never shows an unknown pattern as a zero result and respects ticker filtering", async () => {
