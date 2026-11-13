@@ -12,6 +12,7 @@ import { visibleExecutionMarkers, visibleStopAmendMarkers, TELEGRAM_BUY_COLOR, T
 import { parseLocalReplayUpload } from "./l2ReplayUpload";
 import { l2Prehistory, l2Posthistory, l2PresentationEvents } from "./l2ChartContext";
 import { chartWilderDmi } from "./replayChartDmi";
+import { selectedL2MarketContext } from "./l2PeriodContext";
 import {
   matchPaperFactsToMarket, parsePaperEpisodeFacts, revealedPaperMarkers,
   type PaperEpisodeFacts, type PaperOverlay,
@@ -1087,6 +1088,51 @@ export function ReplayPage() {
     setError(null);
     try {
       const window = validateInclusiveWindow(selectedStart, selectedEnd);
+      // Imported L2 report: extend ONLY the view over the selected UTC range.
+      // Public Bybit provides historical M5 but does not furnish the original
+      // historical L2 book here. Never replace the imported Robot/L2 ledger
+      // with a MARKET_ONLY document or falsely claim new virtual executions.
+      if (document.execution_clock === "ORIGINAL_EVENT_TIME_NOT_OHLC_M1") {
+        if (document.symbol !== selectedSymbol.trim().toUpperCase())
+          throw new Error("Тикер периода не совпадает с импортированным L2-отчётом");
+        if (window.minutes > 90 * 1440)
+          throw new Error("Для M5-подгрузки допускается не более 90 дней");
+        const dayMs = 86_400_000;
+        const firstDay = Math.floor(window.startMs / dayMs) * dayMs;
+        const lastDay = Math.ceil(window.endExclusiveMs / dayMs) * dayMs;
+        if (lastDay > Date.now())
+          throw new Error("Нельзя подгружать будущие или незакрытые свечи");
+        const pieces: ReplayDocument[] = [];
+        for (let from = firstDay; from < lastDay; from += 7 * dayMs) {
+          const to = Math.min(from + 7 * dayMs, lastDay);
+          const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+          const query = new URLSearchParams({
+            symbol: document.symbol, start: day(from), end: day(to),
+          });
+          const response = await fetch("/local-replay/history?" + query, {
+            method: "GET", cache: "no-store", signal: controller.signal,
+          });
+          if (!response.ok)
+            throw new Error("Исторические M5 Bybit недоступны: HTTP " + response.status +
+              ". L2 и исходные сделки сохранены.");
+          const raw = await response.text();
+          if (raw.length > 24 * 1024 * 1024)
+            throw new Error("Превышен безопасный размер фрагмента M5");
+          pieces.push(parseReplayDocument(JSON.parse(raw) as unknown));
+        }
+        const expanded = selectedL2MarketContext(
+          document, pieces, window.startMs, window.endExclusiveMs);
+        if (historyRequest.current !== controller || controller.signal.aborted) return;
+        setPlaying(false);
+        setCursor(0);
+        setL2ContextFor(document);
+        setL2Context(expanded.before);
+        setL2After(expanded.after);
+        setL2ContextStatus("Bybit M5: " + expanded.covered +
+          " закрытых свечей · только график. Исторические taker-сделки/L2-стакан " +
+          "для добавленных дат НЕ загружены; четыре исходные сделки и P&L неизменны.");
+        return;
+      }
       // The legacy read-only public market loader accepts full UTC days,
       // maximum 7; it cannot silently turn a minute interval into whole days.
       if (window.startMs % 86_400_000 || window.endExclusiveMs % 86_400_000 ||
