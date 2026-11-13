@@ -778,7 +778,7 @@ try {
   await page.getByRole("button", { name: "Шаг вперёд" }).click();
   await page.waitForFunction(() =>
     document.querySelector(".replay-execution-overlay")?.dataset.visibleFills === "8");
-  assert.match(await page.locator(".replay-meta").innerText(), /ICNTUSDT/);
+  assert.equal((await page.locator(".replay-chart-symbol").innerText()).trim(), "ICNT");
   assert.match(await page.getByRole("status").filter({ hasText: "SIMULATION L2" }).innerText(),
     /не доказаны/);
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-paper-fills"), "0");
