@@ -26,6 +26,7 @@ export function RunSetupPanel({
   onSimulationAppend, onSimulationFailed, onSimulationBusy, playRequestId, showReport,
   onPublicHistoryRequest, publicHistoryLoading, onStrategySelectionChange,
   onEpisodeLookup, importedCoordinates, importedL2, importControls,
+  onSelectedWindowChange, periodLoadNotice,
 }: {
   symbol: string;
   onArchiveSymbol: (archiveSymbol: string) => boolean;
@@ -44,6 +45,8 @@ export function RunSetupPanel({
   importedCoordinates: { symbol: string; start_utc: string; end_utc_inclusive: string; revision: number } | null;
   importedL2: boolean;
   importControls: ReactNode;
+  onSelectedWindowChange: (symbol: string, start: string, end: string) => void;
+  periodLoadNotice: string;
 }) {
   const [selection, setSelection] = useState<RunSelection>(onlyWedges);
   const [start, setStart] = useState(INITIAL_START);
@@ -72,6 +75,8 @@ export function RunSetupPanel({
       return { window: null, error: error instanceof Error ? error.message : "Некорректный период" };
     }
   }, [start, end]);
+  useEffect(() => { onSelectedWindowChange(symbol, start, end); },
+    [symbol, start, end, onSelectedWindowChange]);
   const active = ALL_SELECTABLE.filter(id => selection.selected.includes(id));
   const mirrorSelected = MIRROR_OPTIONS.filter(x => selection.selected.includes(x.id)).length;
   const wedgesOnly = runnableWedgeSelection(selection);
@@ -361,6 +366,7 @@ export function RunSetupPanel({
               {publicHistoryLoading ? "Подгружаю период…" : "Подгрузить период с Bybit"}
             </button>
           </div>
+          {periodLoadNotice && <p role="status" aria-label="Покрытие выбранного периода" className="replay-run-summary">{periodLoadNotice}</p>}
         </fieldset>
       </div>
       <div className="replay-run-account">
