@@ -598,6 +598,31 @@ def _confirmed_stop_receipt(
 
 
 
+def _owner_stop_only_target(installed_sha: str, process_id: str) -> str:
+    """Unique intent per exact installed release and observed process lifetime."""
+    return hashlib.sha256(
+        ("PAPER_OWNER_STOP_ONLY:" + installed_sha + ":" + process_id).encode("utf-8")
+    ).hexdigest()[:40]
+
+
+def _owner_stop_only_confirmed(
+    journal_root: Path, stop_id: str, *, uid: int,
+) -> bool:
+    """A standalone STOP is historical only after both successful receipts."""
+    from tools.vps_gitless_release_activate import _trusted_file
+    try:
+        receipt = _trusted_file(
+            journal_root / (".owner-stop-only-ready-" + stop_id), uid,
+        ).decode("ascii")
+        old, recorded = receipt.removesuffix("\n").split(":")
+        if (len(old) != 40 or any(c not in "0123456789abcdef" for c in old)
+                or recorded != stop_id or receipt != old + ":" + stop_id + "\n"):
+            return False
+        return _confirmed_stop_receipt(journal_root, stop_id, old, uid=uid)
+    except (OSError, ValueError, UnicodeError):
+        return False
+
+
 def _proven_prior_exceptional_completion(
     journal_root: Path, prior: str, *, root: Path, uid: int,
 ) -> bool:
@@ -611,6 +636,8 @@ def _proven_prior_exceptional_completion(
     # A confirmed STOP may be retired only by a separately sealed, one-shot
     # recovery of the exact previous EDITOR_ONLY release. Original STOP
     # receipts remain untouched and are validated by the recovery proof.
+    if _owner_stop_only_confirmed(journal_root, prior, uid=uid):
+        return True
     from tools.paper_abandoned_stop_recovery import proven_abandoned_stop
     if proven_abandoned_stop(journal_root, prior, root=root, uid=uid, require_installed=False):
         return True
@@ -2211,16 +2238,18 @@ class _MaintenanceParser(argparse.ArgumentParser):
 def _stop_exact_installed_paper_once(
     approved_sha: str, *, env_file: Path | None, trusted_uid: int = 0,
 ) -> str:
-    """One canonical STOP of the *installed* release, never an update retry.
+    """One canonical STOP, durably fenced before any irreversible transition.
 
-    An uncompleted prior release STOP is a global fence. The lock is shared
-    with the immutable release coordinator; no second STOP is issued on an
-    unknown prior outcome. No private STOP shortcut or forced liquidation.
+    The intent is tied to the exact installed release and current Backend
+    process lifetime, so a second authorized start can later have its own
+    STOP without replaying any unknown previous attempt.
     """
+    from tools.runtime_intent import expected_database_identity, http_get
     from tools.vps_gitless_release_activate import (
-        TRANSACTIONS, _trusted_file,
+        TRANSACTIONS, _sync_directory, _trusted_file,
     )
     from tools.vps_release_identity import ReleaseIdentityBlocked, verify_release
+
     try:
         if (len(approved_sha) != 40
                 or any(ch not in "0123456789abcdef" for ch in approved_sha)
@@ -2232,42 +2261,59 @@ def _stop_exact_installed_paper_once(
                 or TRANSACTIONS.stat().st_uid != trusted_uid
                 or TRANSACTIONS.stat().st_mode & 0o077):
             return "BLOCKED: installed_STOP_release_journal_unproven"
-        descriptor = os.open(
-            TRANSACTIONS / ".release.lock", os.O_RDONLY | os.O_NOFOLLOW,
+
+        env = _environment(env_file)
+        identity = expected_database_identity(REPO, env)
+        reply = http_get("http://127.0.0.1:8765/api/health", 3)
+        health = reply.json()
+        if (reply.status != 200 or not isinstance(health, dict)
+                or health.get("ok") is not True
+                or health.get("component") != "paper_backend"
+                or health.get("mode") != "paper"
+                or health.get("paper_live_safe") is not True
+                or health.get("build_sha") != approved_sha
+                or health.get("database_identity") != identity
+                or not isinstance(health.get("process_instance_id"), str)
+                or not health["process_instance_id"]):
+            return "BLOCKED: installed_STOP_exact_running_owner_unproven"
+        stop_id = _owner_stop_only_target(
+            approved_sha, health["process_instance_id"],
         )
-        with os.fdopen(descriptor, "rb") as lock:
-            meta = os.fstat(lock.fileno())
-            if (not stat.S_ISREG(meta.st_mode) or meta.st_uid != trusted_uid
-                    or meta.st_mode & 0o077):
-                return "BLOCKED: installed_STOP_release_lock_unproven"
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            for marker in TRANSACTIONS.glob(".stop-invoked-*"):
-                previous = marker.name.removeprefix(".stop-invoked-")
-                if (len(previous) != 40
-                        or any(ch not in "0123456789abcdef" for ch in previous)
-                        or _trusted_file(marker, trusted_uid)
-                        != b"STOP_INVOKED; not install authorization\\n"):
-                    return "BLOCKED: installed_STOP_prior_intent_untrusted"
-                ready = TRANSACTIONS / previous / "editor-ready"
-                if ready.exists() or ready.is_symlink():
-                    if _trusted_file(ready, trusted_uid) == previous.encode("ascii"):
-                        continue
-                    return "BLOCKED: installed_STOP_prior_completion_untrusted"
-                if _proven_prior_exceptional_completion(
-                    TRANSACTIONS, previous, root=REPO, uid=trusted_uid,
-                ):
-                    continue
-                return "BLOCKED: installed_STOP_prior_outcome_unproven; no_replay"
-            result = RuntimeShutdown(
-                root=REPO, env=_environment(env_file),
-            ).run(SCOPE_ALL)
-            if result.ok is True and result.runtime_stopped is True:
-                return "READY: canonical PAPER STOP proven; no update or restart"
+        # Existing release transaction owns the lock and global STOP fence.
+        # This helper seals a unique STOP_INVOKED before invoking any callback.
+        if not _record_one_shot_stop_intent(
+            TRANSACTIONS, stop_id, uid=trusted_uid, root=REPO,
+        ):
+            return "BLOCKED: installed_STOP_prior_outcome_unproven; no_replay"
+        try:
+            result = RuntimeShutdown(root=REPO, env=env).run(SCOPE_ALL)
+        except Exception as exc:
+            return ("BLOCKED: installed_STOP_outcome_unknown:"
+                    + type(exc).__name__ + "; no_retry")
+        if result.ok is not True or result.runtime_stopped is not True:
             reason = str(getattr(result, "message", "unknown"))
             return ("BLOCKED: canonical_PAPER_STOP_unproven: "
                     + " ".join(reason.split())[:240] + "; no retry")
-    except (ReleaseIdentityBlocked, OSError, ValueError, BlockingIOError):
-        return "BLOCKED: installed_STOP_preflight_or_lock_unproven; no STOP retry"
+
+        # Record only a successful canonical STOP. Never forge this receipt
+        # from an absent listener or a guessed outcome after disconnect.
+        _confirmed_stop_receipt(
+            TRANSACTIONS, stop_id, approved_sha, uid=trusted_uid, record=True,
+        )
+        seal = TRANSACTIONS / (".owner-stop-only-ready-" + stop_id)
+        payload = (approved_sha + ":" + stop_id + "\n").encode("ascii")
+        fd = os.open(
+            seal, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600,
+        )
+        with os.fdopen(fd, "wb") as out:
+            out.write(payload)
+            out.flush()
+            os.fsync(out.fileno())
+        _sync_directory(TRANSACTIONS)
+        return "READY: canonical PAPER STOP confirmed; no update or restart"
+    except (ReleaseIdentityBlocked, OSError, ValueError, TypeError, sqlite3.Error):
+        return "BLOCKED: installed_STOP_preflight_or_receipt_unproven; no STOP retry"
+
 
 
 def main(argv=None) -> int:
