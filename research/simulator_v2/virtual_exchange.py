@@ -644,6 +644,86 @@ class VirtualExchange:
             ))
         return receipt
 
+    def on_historical_trade_batch(
+        self, trades: tuple[TakerPrint, ...],
+    ) -> VirtualFill | None:
+        """Treat same-millisecond public executions as an unordered group.
+
+        Bybit archive rows can share exact exchange timestamps. Trade IDs and
+        CSV row order do NOT establish the sequence of those fills. Commit
+        only an outcome which is independent of the group's internal order;
+        otherwise fail closed without mutating the account.
+        """
+        if (not isinstance(trades, tuple) or not 0 < len(trades) <= 2000
+                or any(not isinstance(t, TakerPrint) for t in trades)):
+            raise ValueError("bounded original taker-print batch required")
+        stamp = trades[0].event_ms
+        if (any(t.event_ms != stamp or t.symbol != self.account.symbol
+                for t in trades)
+                or len({t.trade_id for t in trades}) != len(trades)):
+            raise ValueError("mixed or duplicate same-millisecond taker prints")
+        if len(trades) == 1:
+            return self.on_historical_trade(trades[0])
+        self._require_l2_event(stamp, kind="TRADE")
+        if self._l2_book is None or stamp < self._l2_book.available_at_ms:
+            raise ValueError("book state unavailable at historical trade time")
+        if self._robot_limits or self._robot_markets or self._robot_stop is not None:
+            raise ValueError("native multi-order matching not implemented for L2")
+        qualifying: list[TakerPrint] = []
+        if self._active_protection is not None:
+            plan = self._active_protection
+            is_long = plan.entry.side == "BUY"
+            stops = [
+                t for t in trades if
+                (t.price <= plan.stop_price if is_long else t.price >= plan.stop_price)
+            ]
+            takes = [
+                t for t in trades if
+                (t.side == "Buy" and t.price > plan.take_price) if is_long else
+                (t.side == "Sell" and t.price < plan.take_price)
+            ]
+            if stops and takes:
+                raise ValueError("same-millisecond STOP/TAKE order is unproven")
+            qualifying = stops or takes
+            # For a STOP, select the most adverse observed trade. The virtual
+            # book still determines executable price (or blocks stale depth).
+            if stops:
+                qualifying = [
+                    min(stops, key=lambda t: t.price) if is_long
+                    else max(stops, key=lambda t: t.price)
+                ]
+        elif self._pending is not None:
+            request, submitted_at = self._pending
+            if not isinstance(request, LimitRequest):
+                raise ValueError("historical L2 requires protected LIMIT")
+            if stamp > submitted_at:
+                qualifying = [
+                    t for t in trades
+                    if ((request.side == "BUY" and t.side == "Sell"
+                         and t.price < request.limit_price)
+                        or (request.side == "SELL" and t.side == "Buy"
+                            and t.price > request.limit_price))
+                ]
+            if qualifying:
+                if self._pending_protection is None:
+                    raise ValueError("unprotected L2 LIMIT entry is forbidden")
+                plan = self._pending_protection
+                is_long = request.side == "BUY"
+                if any(
+                    ((t.price <= plan.stop_price or t.price >= plan.take_price)
+                     if is_long else
+                     (t.price >= plan.stop_price or t.price <= plan.take_price))
+                    for t in trades
+                ):
+                    raise ValueError("same-millisecond entry/exit order is unproven")
+        if qualifying:
+            return self.on_historical_trade(qualifying[0])
+        # No price in this unordered batch can change the virtual account.
+        # The batch is nevertheless consumed as one timestamped event.
+        self._l2_event_at_ms = stamp
+        self._l2_event_kind = "TRADE"
+        return None
+
     def on_historical_trade(self, trade: TakerPrint) -> VirtualFill | None:
         """Trade-through of resting LIMIT, or trade-triggered protected exit.
 
