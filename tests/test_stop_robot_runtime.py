@@ -804,7 +804,7 @@ class FullShutdownTests(unittest.TestCase):
         runtime = FakeRuntime(robot=PAUSED)
         runtime.scanner_mode = "SCANNER_STOPPED"
         runtime.robot_ownership_open = False
-        runtime.backend_health["build_sha"] = "b" * 40
+        runtime.backend_health.update({"build_sha": "b" * 40, "paper_live_safe": True})
         result = runtime.orchestrator().continue_known_natural_drain("b" * 40)
         self.assertTrue(result.ok, result.message)
         self.assertTrue(result.runtime_stopped)
@@ -824,7 +824,7 @@ class FullShutdownTests(unittest.TestCase):
                 runtime = FakeRuntime(robot=state)
                 runtime.scanner_mode = "SCANNER_STOPPED"
                 runtime.robot_ownership_open = ownership_open
-                runtime.backend_health["build_sha"] = "b" * 40
+                runtime.backend_health.update({"build_sha": "b" * 40, "paper_live_safe": True})
                 if protected:
                     runtime.protection.update({
                         "covered_symbols": ["XUSDT"],
@@ -837,7 +837,7 @@ class FullShutdownTests(unittest.TestCase):
                 self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
 
     def test_known_drain_continuation_requires_frozen_ingress_and_identity(self):
-        for drift in ("scanner", "autopilot", "backend", "build_sha"):
+        for drift in ("scanner", "autopilot", "backend", "build_sha", "live"):
             with self.subTest(drift=drift):
                 runtime = FakeRuntime(robot=PAUSED)
                 runtime.scanner_mode = "SCANNER_STOPPED"
@@ -848,7 +848,10 @@ class FullShutdownTests(unittest.TestCase):
                     runtime.autopilot_mode = "PAPER_AUTO"
                 elif drift == "backend":
                     runtime.backend_health["database_identity"] = "foreign"
-                runtime.backend_health["build_sha"] = "c" * 40 if drift == "build_sha" else "b" * 40
+                runtime.backend_health.update({
+                    "build_sha": "c" * 40 if drift == "build_sha" else "b" * 40,
+                    "paper_live_safe": drift != "live",
+                })
                 result = runtime.orchestrator().continue_known_natural_drain("b" * 40)
                 self.assertFalse(result.ok)
                 self.assertFalse(result.runtime_stopped)
