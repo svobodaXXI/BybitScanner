@@ -59,9 +59,10 @@ class HistoricalBybitOrderBook:
     """One-symbol top-N book, strictly advanced by complete original WS messages.
 
     Depth 50/200/1000 only: Bybit depth-1 snapshots cannot reconstruct L2.
-    The standard WS update ID is monotone, but unlike the full-depth feed,
-    consecutive IDs are not assumed; gaps in source recording still need
-    independent provenance and must never be silently called verified.
+    Require consecutive update IDs for deltas within the captured session,
+    as a conservative simulation safety gate. Cross sequence (seq) is only
+    monotone, not required to be consecutive. A snapshot can resynchronize
+    the local book; source origin and completeness remain independent proofs.
     """
 
     def __init__(self, *, symbol: str, depth: int = 50) -> None:
