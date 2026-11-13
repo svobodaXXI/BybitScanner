@@ -11,6 +11,7 @@ import {
 import { visibleExecutionMarkers, visibleStopAmendMarkers, TELEGRAM_BUY_COLOR, TELEGRAM_SELL_COLOR } from "./executionMarkers";
 import { parseLocalReplayUpload } from "./l2ReplayUpload";
 import { l2Prehistory, l2Posthistory, l2PresentationEvents } from "./l2ChartContext";
+import { chartWilderDmi } from "./replayChartDmi";
 import {
   matchPaperFactsToMarket, parsePaperEpisodeFacts, revealedPaperMarkers,
   type PaperEpisodeFacts, type PaperOverlay,
@@ -100,17 +101,25 @@ function ReplayChart({ document, cursor, prehistory, paperOverlay, paperFacts, s
     () => visibleEarlyGeometryTimeline(earlyTimeline, shown.lastTimeMs),
     [earlyTimeline, shown.lastTimeMs],
   );
-  const observedDmi = useMemo(() => visibleDmi(document, shown.candles.length), [document, shown.candles.length]);
-  // Only the final 5m DMI reading of each completed H1 is plotted on the H1 axis.
+  const sourceDmi = useMemo(() =>
+    visibleDmi(document, shown.candles.length), [document, shown.candles.length]);
+  // The local L2 receipt contains at most three completed source M5 bars;
+  // pre/post M5 context is strictly chart-only. Recalculate its display DMI
+  // from closed contiguous public/source candles, never from future prices.
+  const l2ChartDmi = useMemo(() => {
+    if (document.execution_clock !== "ORIGINAL_EVENT_TIME_NOT_OHLC_M1" ||
+        chartM5.length < 28) return [];
+    try { return chartWilderDmi(chartM5); }
+    catch { return []; } // Missing/unverified M5 must not create indicator values.
+  }, [document.execution_clock, chartM5]);
+  const observedDmi = l2ChartDmi.length ? l2ChartDmi : sourceDmi;
   const indicatorSamples = timeframe === "1h"
     ? displayCandles.map(hour => {
-      const index = shown.candles.findIndex(bar => bar.end_ms === hour.end_ms);
-      return index >= 0 ? observedDmi[index] : undefined;
+      const point = observedDmi.find(p => p.time_ms === hour.end_ms);
+      return point;
     })
-    : displayCandles.map(bar => {
-      const index = shown.candles.findIndex(original => original.start_ms === bar.start_ms);
-      return index >= 0 ? observedDmi[index] : undefined;
-    });
+    : displayCandles.map(bar =>
+      observedDmi.find(p => p.time_ms === bar.end_ms));
   const observedTouches = useMemo(() =>
     showTrendGeometry ? visibleObservations(document, shown.lastTimeMs) : [],
     [document, shown.lastTimeMs, showTrendGeometry]);
@@ -1302,12 +1311,12 @@ export function ReplayPage() {
             <strong className="replay-chart-symbol" aria-label="Тикер графика">
               {document.symbol?.replace(/USDT$/, "") || "—"}
             </strong>
-            <button type="button" disabled title="Нет проверенной минутной истории в потоке графика">M1</button>
-            <button type="button" disabled title="Нет исходной ленты сделок для 15-секундного графика">15с</button>
-            <button type="button" aria-pressed={timeframe === "5m"}
-              onClick={() => setTimeframe("5m")}>M5</button>
             <button type="button" aria-pressed={timeframe === "1h"}
               onClick={() => setTimeframe("1h")}>H1</button>
+            <button type="button" aria-pressed={timeframe === "5m"}
+              onClick={() => setTimeframe("5m")}>M5</button>
+            <button type="button" disabled title="Нет проверенной минутной истории в потоке графика">M1</button>
+            <button type="button" disabled title="Нет исходной ленты сделок для 15-секундного графика">15S</button>
             <div className="replay-playback-controls" role="group" aria-label="Управление воспроизведением">
         <button type="button" className="replay-player-button" title="В начало"
           aria-label="В начало" disabled={simulationGraphPending}
