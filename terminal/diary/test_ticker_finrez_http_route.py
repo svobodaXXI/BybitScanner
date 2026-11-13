@@ -288,6 +288,96 @@ def test_campaign_lineage_route_requires_exact_scope_and_refuses_unproven_histor
         thread.join(timeout=2)
 
 
+
+def test_wedge_lineage_api_requires_exact_scope_and_revision(tmp_path: Path, monkeypatch):
+    from terminal.diary.wedge_lineage import WedgeLineageUnproven
+
+    source = tmp_path / "missing-paper.sqlite3"
+    episode = "te_" + "b" * 24
+    calls = []
+
+    def read(path, *, include_wedge_evidence=False):
+        assert path == source and include_wedge_evidence is True
+        calls.append("read")
+        return object()
+
+    def project(snapshot, *, account_id, owner, trade_episode_id, source_revision):
+        calls.append(("project", source_revision))
+        assert account_id == "paper" and owner == "ROBOT"
+        assert trade_episode_id == episode
+        if source_revision != 8:
+            raise WedgeLineageUnproven("wedge_paper_robot_revision_required")
+        return {
+            "schema": "BYBITSCANNER_PAPER_WEDGE_LINEAGE_V1",
+            "namespace": "PAPER_READ_ONLY",
+            "trade_episode_id": trade_episode_id,
+            "source_revision": source_revision,
+            "candidate_id": "candidate-123",
+            "signal_pattern": "Falling Wedge",
+        }
+
+    monkeypatch.setattr(paper_http_server, "load_paper_source_snapshot", read)
+    monkeypatch.setattr(paper_http_server, "project_selected_paper_wedge", project)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+    server.diary_source_db_path = source
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        root = f"http://127.0.0.1:{server.server_address[1]}/api/diary/wedge-lineage"
+        valid = f"?account_id=paper&owner=ROBOT&trade_episode_id={episode}"
+        for query, error, status_code in [
+            ("", "wedge_lineage_scope_required", 400),
+            (valid + "&source_revision=0", "wedge_lineage_identity_invalid", 400),
+            (valid + "&source_revision=01", "wedge_lineage_identity_invalid", 400),
+            (valid + "&source_revision=8&source_revision=9", "wedge_lineage_scope_required", 400),
+            (valid.replace("owner=ROBOT", "owner=MANUAL") + "&source_revision=8",
+             "wedge_lineage_scope_unavailable", 404),
+            (valid.replace("account_id=paper", "account_id=main") + "&source_revision=8",
+             "wedge_lineage_scope_unavailable", 404),
+        ]:
+            status, result = _get(root + query)
+            assert (status, result["error"]) == (status_code, error)
+        assert calls == []
+        status, document = _get(root + valid + "&source_revision=8")
+        assert status == 200 and document["ok"]
+        assert document["candidate_id"] == "candidate-123"
+        assert document["signal_pattern"] == "Falling Wedge"
+        status, document = _get(root + valid + "&source_revision=7")
+        assert (status, document["error"]) == (409, "wedge_lineage_unproven")
+        assert calls == ["read", ("project", 8), "read", ("project", 7)]
+        assert not source.exists()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def test_wedge_lineage_api_missing_exact_candidate_is_unproven(tmp_path: Path, monkeypatch):
+    from terminal.diary.wedge_lineage import WedgeLineageUnproven
+    source = tmp_path / "missing.sqlite3"
+    episode = "te_" + "c" * 24
+    def reader(path, *, include_wedge_evidence=False):
+        assert include_wedge_evidence is True
+        return object()
+    def projector(snapshot, **kwargs):
+        raise WedgeLineageUnproven("wedge_candidate_order_ambiguous")
+    monkeypatch.setattr(paper_http_server, "load_paper_source_snapshot", reader)
+    monkeypatch.setattr(paper_http_server, "project_selected_paper_wedge", projector)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+    server.diary_source_db_path = source
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        url = (f"http://127.0.0.1:{server.server_address[1]}/api/diary/wedge-lineage"
+               f"?account_id=paper&owner=ROBOT&trade_episode_id={episode}&source_revision=8")
+        status, result = _get(url)
+        assert (status, result["error"]) == (409, "wedge_lineage_unproven")
+        assert not source.exists()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
 def test_simulator_bridge_http_contract_has_no_trading_runtime_dependency():
     """Exercise real handler, not just relay helpers, with a loopback test server."""
     import json
