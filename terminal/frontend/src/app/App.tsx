@@ -26,7 +26,7 @@ import { TelegramMiniAppBridge } from "../telegram/TelegramMiniAppBridge";
 import { parseSignalWorkspaceLink } from "../geometryFeedback/signalDeepLink";
 import { appendRetrospectiveCandles, projectVerifiedSignalOverlay, projectSignalGeometry, restoreSavedSignalCorrection, type RetrospectiveOhlc } from "../geometryFeedback/signalChartBridge";
 import type { OwnerChartDraft, OwnerSignalDraft } from "../geometryFeedback/ownerSignalDraft";
-import { matchesStoredGeometryReview, type GeometryReviewDraft, type TimestampDrawing } from "../geometryFeedback/geometryReviewDraft";
+import { isEditorReviewPattern, matchesStoredGeometryReview, type GeometryReviewDraft, type TimestampDrawing } from "../geometryFeedback/geometryReviewDraft";
 import type { Candle } from "../contracts/marketData";
 import type { PaperOpenPosition } from "../contracts/trading";
 import type { RobotTradeMarker } from "../chart/robotTradeMarkers";
@@ -126,6 +126,7 @@ export function App() {
     barsSha256: string;
     savedReviewId: string | null;
     savedReviewLabel: GeometryReviewDraft["label"] | null;
+    savedCorrectedPattern: GeometryReviewDraft["corrected_pattern"] | null;
     savedReviewNote: string | null;
   } | null>(null);
   const [frozenGeometryStatus, setFrozenGeometryStatus] = useState<"loading" | "unavailable" | "ready">("loading");
@@ -173,6 +174,7 @@ export function App() {
             context_bars_sha256?: string;
             signal_id?: string; snapshot_revision?: string; bars_sha256?: string;
             label?: GeometryReviewDraft["label"]; note?: string;
+            corrected_pattern?: string;
             corrected_boundaries?: Array<{
               boundary_id: string; kind: TimestampDrawing["type"]; anchors: TimestampDrawing["anchors"];
             }>;
@@ -185,7 +187,11 @@ export function App() {
           || savedReview.submission?.signal_id !== link.signalId
           || savedReview.submission?.snapshot_revision !== payload.snapshot_revision
           || savedReview.submission?.bars_sha256 !== payload.bars_sha256
-          || !["CONFIRMED", "GEOMETRY_CORRECTED", "FALSE_POSITIVE", "UNCERTAIN"].includes(savedReviewLabel ?? "")
+          || !["CONFIRMED", "GEOMETRY_CORRECTED", "PATTERN_CORRECTED", "FALSE_POSITIVE", "UNCERTAIN"].includes(savedReviewLabel ?? "")
+          || (savedReview.submission?.corrected_pattern !== undefined
+            && !isEditorReviewPattern(savedReview.submission.corrected_pattern))
+          || (savedReviewLabel === "PATTERN_CORRECTED"
+            && !isEditorReviewPattern(savedReview.submission?.corrected_pattern))
           || typeof savedReview.submission?.note !== "string"
           || savedReview.submission.note.length > 1024
         )) throw new Error("Saved review does not match source signal");
@@ -226,6 +232,8 @@ export function App() {
             snapshotRevision: payload.snapshot_revision, barsSha256: payload.bars_sha256,
             savedReviewId: typeof savedReview?.review_id === "string" ? savedReview.review_id : null,
             savedReviewLabel,
+            savedCorrectedPattern: isEditorReviewPattern(savedReview?.submission?.corrected_pattern)
+              ? savedReview!.submission!.corrected_pattern : null,
             savedReviewNote: savedReview?.submission?.note ?? null,
           });
           setFrozenGeometryStatus("ready");
@@ -1611,6 +1619,7 @@ export function App() {
           barsSha256={mode === "EDITOR" ? frozenSignal?.barsSha256 ?? null : null}
           savedReviewId={mode === "EDITOR" ? frozenSignal?.savedReviewId ?? null : null}
           savedReviewLabel={mode === "EDITOR" ? frozenSignal?.savedReviewLabel ?? null : null}
+          savedCorrectedPattern={mode === "EDITOR" ? frozenSignal?.savedCorrectedPattern ?? null : null}
           savedReviewNote={mode === "EDITOR" ? frozenSignal?.savedReviewNote ?? null : null}
           onSubmitOwnerSignal={mode === "EDITOR" && frozenSignal ? async (
             proposal: OwnerSignalDraft,
