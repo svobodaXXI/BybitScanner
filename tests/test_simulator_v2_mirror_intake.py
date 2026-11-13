@@ -285,9 +285,44 @@ class NativeMirrorSimulatorIntakeTests(unittest.TestCase):
                     robot.mirror_confirmation_events,
                     ((MINUTE, ("level-a@1@60000", "level-b@1@60000")),),
                 )
+                reviews = robot.mirror_admission_reviews
+                self.assertEqual(len(reviews), 1)
+                self.assertEqual(reviews[0]["closed_m1_time_ms"], MINUTE)
+                self.assertEqual(
+                    [row["entry_id"] for row in reviews[0]["candidates"]],
+                    ["level-a@1@60000", "level-b@1@60000"],
+                )
+                self.assertTrue(all(
+                    row["native_decision"] == "DEFERRED"
+                    and row["execution_gate"] == "NATIVE_NOT_ATTACHED"
+                    for row in reviews[0]["candidates"]
+                ))
                 self.assertFalse(robot._source_candidate_ids)
                 self.assertFalse(session.exchange.robot_limits)
                 self.assertTrue(robot.can_admit)
+
+    def test_native_per_level_admission_preview_does_not_create_orders(self):
+        session = self.session("mirror_preview_original_robot_gates")
+        state, entry_id = native_scanner_state()
+        with self.robot(session) as robot:
+            self.populate(session, robot)
+            mirror_scanner.save_state(state, root=robot._mirror_root)
+            self.assertEqual(robot._source_candidate_ids, [])
+            self.assertEqual(session.exchange.robot_limits, ())
+            checked = robot._preview_native_mirror_admission(state, entry_id)
+            self.assertEqual(checked["decision"], "ATTACHED", checked)
+            self.assertEqual(checked["reason"], "entry_gate_allowed")
+            self.assertEqual(robot._source_candidate_ids, [])
+            self.assertEqual(session.exchange.robot_limits, ())
+            self.assertFalse(robot._store.load_robot_candidates_by_status(
+                robot.account_id, ("APPROVED", "OPEN"),
+            ))
+            # Revocation of exact source is never promoted to risk acceptance.
+            revoked = deepcopy(state)
+            revoked["standalone_entries"][0]["terms"]["level_pattern"] = "HORN"
+            blocked = robot._preview_native_mirror_admission(revoked, entry_id)
+            self.assertEqual(blocked["decision"], "BLOCKED")
+            self.assertEqual(blocked["reason"], "mirror_source_revoked")
 
     def test_experimental_gate_requires_explicit_auto_mode(self):
         session = self.session("mirror_one_fill_invalid_options")
