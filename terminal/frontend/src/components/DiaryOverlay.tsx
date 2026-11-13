@@ -1050,7 +1050,7 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, onClearSymbolFil
             <div><dt>Открыта</dt><dd>{formatDate(selected.opened_at_ms)}</dd></div>
             <div><dt>Закрыта</dt><dd>{formatDate(selected.closed_at_ms)}</dd></div>
             <div><dt>Исполнений</dt><dd>{selected.execution_count}</dd></div>
-            <div><dt>PnL после комиссий</dt><dd title={selected.pnl_usdt}>{displayTradePnl(selected.pnl_usdt)} USDT</dd></div>
+            <div><dt>PnL после комиссий</dt><dd title={selected.pnl_usdt}>{formatFinrezPnl(selected.pnl_usdt)}</dd></div>
             <div><dt>PnL % от номинала входа</dt><dd title={ENTRY_RETURN_EXPLANATION}>
               {verifiedEntryNotionalReturn(selected) ?? "—"}
             </dd></div>
@@ -1148,7 +1148,7 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, onClearSymbolFil
               </div>
               <div className="diary-trade-metrics">
                 <span className={Number(deal.pnl_usdt) > 0 ? "profit" : Number(deal.pnl_usdt) < 0 ? "loss" : ""}
-                  title={deal.pnl_usdt}>PnL {displayTradePnl(deal.pnl_usdt)} USDT</span>
+                  title={deal.pnl_usdt}>PnL {formatFinrezPnl(deal.pnl_usdt)}</span>
                 <span title={verifiedEntryNotionalReturn(deal)
                     ? ENTRY_RETURN_EXPLANATION
                     : "Процент недоступен без подтверждённой базы расчёта"}>
