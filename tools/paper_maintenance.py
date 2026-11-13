@@ -2100,8 +2100,18 @@ def _prepare_approved_editor_stage(
             raise ValueError("untrusted_release_git_origin")
         git("fetch", "--no-tags", "--quiet", "origin",
             "refs/heads/stable/adfb50b-forward")
-        if git("rev-parse", "--verify", "FETCH_HEAD") != target:
-            raise ValueError("stable_head_changed_before_staging")
+        stable_head = git("rev-parse", "--verify", "FETCH_HEAD")
+        if (len(stable_head) != 40
+                or any(ch not in "0123456789abcdef" for ch in stable_head)):
+            raise ValueError("stable_head_identity_unproven")
+        # Owner authorizes the exact SHA, not a moving branch tip. Permit
+        # a pinned previous stable commit when later unrelated PRs advance
+        # the branch. Git itself must prove ancestry of the *fetched* stable
+        # head before preparing any stage or touching PAPER runtime.
+        try:
+            git("merge-base", "--is-ancestor", target, stable_head)
+        except ValueError as exc:
+            raise ValueError("approved_target_not_on_current_stable") from exc
         git("worktree", "add", "--detach", str(stage), target)
     if (not stage.is_dir() or stage.is_symlink()
             or stage.stat().st_uid != trusted_uid
