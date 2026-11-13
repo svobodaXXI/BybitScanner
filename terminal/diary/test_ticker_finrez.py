@@ -340,7 +340,7 @@ class FinrezMixedControllerTests(unittest.TestCase):
                     }
                     for owner, report in reports.items():
                         self.assertEqual(report["tickers"], [])
-                        self.assertEqual(report["manual_interventions"], []
+                        self.assertEqual(report["manual_interventions"], [])
                         self.assertEqual(report["joint_management"], [{
                             "symbol": "BTCUSDT",
                             "pnl_usdt": str(Decimal("5") - Decimal("0.1") * len(roles)),
