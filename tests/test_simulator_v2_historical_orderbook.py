@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from zipfile import ZipFile, ZIP_DEFLATED, ZIP_STORED
 
 from research.simulator_v2.historical_orderbook import (
     HistoricalBybitOrderBook, iter_pinned_orderbook,
@@ -94,6 +95,52 @@ class HistoricalBookTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "no at-or-before-window"):
                 list(iter_pinned_orderbook(
                     path, symbol="ICNTUSDT", depth=50, sha256=proof,
+                    start_ms=1000, end_exclusive_ms=1100,
+                ))
+
+    def test_pinned_original_data_zip_streams_without_extraction(self):
+        with TemporaryDirectory() as td:
+            path = Path(td) / "2026-11-10_ICNTUSDT_ob50.data.zip"
+            payload = "".join(json.dumps(item) + "\n" for item in (
+                frame(at=1000),
+                frame(typ="delta", at=1020, u=11, seq=21, bids=[], asks=[]),
+                frame(typ="delta", at=1200, u=12, seq=22, bids=[], asks=[]),
+            )).encode()
+            with ZipFile(path, "w", compression=ZIP_DEFLATED) as archive:
+                archive.writestr("2026-11-10_ICNTUSDT_ob50.data", payload)
+            proof = hashlib.sha256(path.read_bytes()).hexdigest()
+            states = list(iter_pinned_orderbook(
+                path, symbol="ICNTUSDT", depth=50, sha256=proof,
+                start_ms=1000, end_exclusive_ms=1100,
+            ))
+            self.assertEqual([s.available_at_ms for s in states], [1000, 1020])
+            self.assertEqual(
+                [p.name for p in Path(td).iterdir()],
+                ["2026-11-10_ICNTUSDT_ob50.data.zip"],
+            )
+
+    def test_data_zip_rejects_multiple_members_and_bad_crc(self):
+        with TemporaryDirectory() as td:
+            path = Path(td) / "orderbook.data.zip"
+            payload = (json.dumps(frame(at=1000)) + "\n").encode()
+            with ZipFile(path, "w", compression=ZIP_STORED) as archive:
+                archive.writestr("first.data", payload)
+                archive.writestr("second.data", payload)
+            proof = hashlib.sha256(path.read_bytes()).hexdigest()
+            with self.assertRaisesRegex(ValueError, "exactly one"):
+                list(iter_pinned_orderbook(
+                    path, symbol="ICNTUSDT", depth=50, sha256=proof,
+                    start_ms=1000, end_exclusive_ms=1100,
+                ))
+            with ZipFile(path, "w", compression=ZIP_STORED) as archive:
+                archive.writestr("original.data", payload)
+            raw = path.read_bytes()
+            self.assertEqual(raw.count(b'"snapshot"'), 1)
+            path.write_bytes(raw.replace(b'"snapshot"', b'"snapsh0t"'))
+            bad_proof = hashlib.sha256(path.read_bytes()).hexdigest()
+            with self.assertRaisesRegex(ValueError, "CRC mismatch"):
+                list(iter_pinned_orderbook(
+                    path, symbol="ICNTUSDT", depth=50, sha256=bad_proof,
                     start_ms=1000, end_exclusive_ms=1100,
                 ))
 
