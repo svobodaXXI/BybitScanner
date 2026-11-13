@@ -862,11 +862,13 @@ def test_known_paused_drain_is_sealed_waits_for_flat_and_resumes_once(monkeypatc
     class Owner:
         def __init__(self, **kwargs):
             actions.append("observe")
-        def require_known_natural_drain_ready(self):
+        def require_known_natural_drain_ready(self, expected_build_sha):
+            assert expected_build_sha == old
             actions.append("read-only-gate")
             if not closed:
                 raise SafeStopError("three protected positions remain")
-        def continue_known_natural_drain(self):
+        def continue_known_natural_drain(self, expected_build_sha):
+            assert expected_build_sha == old
             actions.append("remaining-phases-only")
             return ShutdownResult("all", True, "Runtime STOPPED", runtime_stopped=True)
 
