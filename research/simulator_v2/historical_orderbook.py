@@ -99,6 +99,8 @@ class HistoricalBybitOrderBook:
             raise ValueError("L2 delta without initial snapshot")
         if not snapshot and (u <= self._last_u or seq <= self._last_seq):
             raise ValueError("L2 delta reversed, repeated or reset without snapshot")
+        if not snapshot and u != self._last_u + 1:
+            raise ValueError("L2 delta update ID gap; historical book state unproven")
         if snapshot and self._last_seq is not None and seq < self._last_seq and u != 1:
             raise ValueError("L2 snapshot reversed without declared exchange reset")
         bids = {} if snapshot else self._bids.copy()
