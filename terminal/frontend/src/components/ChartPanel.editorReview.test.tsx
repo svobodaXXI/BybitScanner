@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { ChartPanel } from "./ChartPanel";
 
@@ -33,7 +33,7 @@ vi.mock("lightweight-charts", () => ({
   }),
 }));
 
-it("keeps correction form left and all three quick actions bottom-right", () => {
+it("keeps correction form left and all three quick actions bottom-right", async () => {
   const onShowCurrentEditorChart = vi.fn();
   const onExtendEditorHistory = vi.fn().mockResolvedValue(undefined);
   const view = render(<ChartPanel
@@ -66,6 +66,7 @@ it("keeps correction form left and all three quick actions bottom-right", () => 
   expect(within(left as HTMLElement).queryByRole("button", { name: "Показать следующие свечи" })).not.toBeInTheDocument();
   fireEvent.click(within(bottom as HTMLElement).getByRole("button", { name: "Показать следующие свечи" }));
   expect(onExtendEditorHistory).toHaveBeenCalledOnce();
+  await waitFor(() => expect(within(bottom as HTMLElement).getByRole("button", { name: "Показать следующие свечи" })).toBeEnabled());
   fireEvent.click(screen.getByRole("button", { name: "Актуальный график" }));
   expect(onShowCurrentEditorChart).toHaveBeenCalledOnce();
   fireEvent.click(screen.getByRole("button", { name: "Создать новый сигнал" }));
