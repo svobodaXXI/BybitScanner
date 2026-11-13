@@ -16,6 +16,9 @@ from research.simulator_v2.virtual_exchange import OrderEvent
 _FLAGS = {
     "DEPTH_UNPROVEN": "ENTRY_DEPTH_UNPROVEN",
     "STOP_TRIGGER_DEFERRED": "STOP_SETTLED_FROM_LATER_BOOK",
+    "PARTIAL_TAKE_FILLED": "L2_PARTIAL_TAKE_SIMULATED",
+    "STOP_AMENDED_BE": "BE_STOP_AMENDED_AFTER_PARTIAL",
+    "PARTIAL_DEPTH_UNPROVEN": "PARTIAL_DEPTH_UNPROVEN",
 }
 
 
@@ -23,6 +26,7 @@ def _receipt_kind(fill_id: str) -> tuple[str, str]:
     for suffix, kind in (
         ("_stop_fill", "STOP"),
         ("_take_fill", "TAKE"),
+        ("_partial_fill", "PARTIAL"),
         ("_fill", "ENTRY"),
     ):
         if fill_id.endswith(suffix) and len(fill_id) > len(suffix):
@@ -57,6 +61,7 @@ def episode_rows(
             first_stop_trigger.setdefault(event.order_id, event.virtual_time_ms)
 
     entries: dict[str, VirtualFill] = {}
+    partials: dict[str, VirtualFill] = {}
     exits: dict[str, tuple[VirtualFill, str]] = {}
     ordered: list[str] = []
     for fill in fills:
@@ -70,11 +75,22 @@ def episode_rows(
             ordered.append(order_id)
             continue
         entry = entries.get(order_id)
-        if (entry is None or order_id in exits or fill.quantity != entry.quantity
-                or fill.side == entry.side
-                or fill.virtual_time_ms < entry.virtual_time_ms):
+        if entry is None or order_id in exits or fill.side == entry.side:
             raise ValueError("unpaired or inconsistent historical L2 exit")
-        exits[order_id] = (fill, kind)
+        if kind == "PARTIAL":
+            if (order_id in partials or not 0 < fill.quantity < entry.quantity
+                    or fill.virtual_time_ms <= entry.virtual_time_ms):
+                raise ValueError("invalid or duplicated partial L2 virtual fill")
+            partials[order_id] = fill
+        else:
+            partial = partials.get(order_id)
+            residual = entry.quantity - (partial.quantity if partial else 0)
+            if (fill.quantity != residual
+                    or fill.virtual_time_ms < (
+                        partial.virtual_time_ms if partial else entry.virtual_time_ms
+                    )):
+                raise ValueError("unpaired or inconsistent historical L2 exit")
+            exits[order_id] = (fill, kind)
 
     rows: list[dict[str, object]] = []
     for order_id in ordered:
@@ -88,7 +104,12 @@ def episode_rows(
         ):
             raise ValueError("virtual episode mismatches original shared Robot plan")
         outcome = exits.get(order_id)
+        partial = partials.get(order_id)
         flags = sorted(annotations.get(order_id, ()))
+        if partial is not None and "L2_PARTIAL_TAKE_SIMULATED" not in flags:
+            raise ValueError("partial receipt lacks original event evidence")
+        if "BE_STOP_AMENDED_AFTER_PARTIAL" in flags and partial is None:
+            raise ValueError("BE mutation without a proven virtual partial receipt")
         reason = outcome[1] if outcome is not None else "OPEN"
         if "STOP_SETTLED_FROM_LATER_BOOK" in flags and reason != "STOP":
             raise ValueError("deferred STOP missing its matched STOP exit")
@@ -101,12 +122,16 @@ def episode_rows(
             fill, _ = outcome
             exit_ms, exit_price = fill.virtual_time_ms, str(fill.price)
             exit_fee = str(fill.fee)
+            direction = Decimal(1) if entry.side == "BUY" else Decimal(-1)
             gross_pnl: Decimal = (
-                (fill.price - entry.price) * entry.quantity
-                if entry.side == "BUY" else
-                (entry.price - fill.price) * entry.quantity
+                (fill.price - entry.price) * fill.quantity * direction
+                + ((partial.price - entry.price) * partial.quantity * direction
+                   if partial is not None else Decimal(0))
             )
-            gross, net = str(gross_pnl), str(gross_pnl - entry.fee - fill.fee)
+            gross, net = str(gross_pnl), str(
+                gross_pnl - entry.fee - fill.fee
+                - (partial.fee if partial is not None else Decimal(0))
+            )
             exit_fill_id = fill.fill_id
             delay = fill.virtual_time_ms - trigger if trigger is not None else None
             if delay is not None and not 0 < delay <= 250:
@@ -118,6 +143,10 @@ def episode_rows(
             "entry_price": str(entry.price),
             "entry_fee": str(entry.fee),
             "quantity": str(entry.quantity),
+            "partial_quantity": str(partial.quantity) if partial is not None else None,
+            "partial_price": str(partial.price) if partial is not None else None,
+            "partial_ms": partial.virtual_time_ms if partial is not None else None,
+            "partial_fee": str(partial.fee) if partial is not None else None,
             "signal_ms": plan.signal.known_at_ms if plan is not None else None,
             "planned_stop_price": str(plan.stop_price) if plan is not None else None,
             "planned_take_price": str(plan.take_price) if plan is not None else None,
