@@ -303,7 +303,7 @@ export function RunSetupPanel({
             <div className="replay-run-import-controls" role="group" aria-label="Импорт и отчёты прогона">
               {importControls}
             </div>
-            {coordinateError && <p role="alert" className="replay-run-error">{coordinateError}</p>
+            {coordinateError && <p role="alert" className="replay-run-error">{coordinateError}</p>}
           </div>
           <label>Начало · дата и время
             <input aria-label="Начало прогона UTC" type="datetime-local" step={60}
