@@ -628,6 +628,9 @@ export function ReplayPage() {
     return currentSymbol.current === archiveSymbol;
   }, []);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [importedCoordinates, setImportedCoordinates] = useState<{
+    symbol: string; start_utc: string; end_utc_inclusive: string; revision: number;
+  } | null>(null);
   const [l2Context, setL2Context] = useState<ReplayCandle[]>([]);
   const [l2After, setL2After] = useState<ReplayCandle[]>([]);
   const [l2ContextFor, setL2ContextFor] = useState<ReplayDocument | null>(null);
@@ -960,6 +963,25 @@ export function ReplayPage() {
       if (file.size > 24 * 1024 * 1024) throw new Error("Файл больше 24 МБ");
       const data: unknown = JSON.parse(await file.text());
       const parsed = parseLocalReplayUpload(data);
+      const source = data && typeof data === "object" ? data as Record<string, unknown> : {};
+      const firstClose = parsed.events.find(e => e.kind === "CANDLE_CLOSED")?.candle;
+      const initialMs = source.start_ms;
+      const terminalMs = source.end_inclusive_ms;
+      const startMs = typeof initialMs === "number" && Number.isSafeInteger(initialMs) &&
+        initialMs % 60_000 === 0 ? initialMs : firstClose?.start_ms;
+      const endMs = typeof terminalMs === "number" && Number.isSafeInteger(terminalMs) &&
+        terminalMs % 60_000 === 0 ? terminalMs :
+        parsed.events.at(-1)?.time_ms;
+      if (parsed.symbol && startMs !== undefined && endMs !== undefined &&
+          endMs >= startMs) {
+        onPasteSymbol(parsed.symbol);
+        setImportedCoordinates(previous => ({
+          symbol: parsed.symbol!, start_utc: new Date(startMs).toISOString().slice(0, 16),
+          end_utc_inclusive: new Date(Math.floor(endMs / 60_000) * 60_000)
+            .toISOString().slice(0, 16),
+          revision: (previous?.revision ?? 0) + 1,
+        }));
+      }
       setDocument(parsed);
       setSimulationGraphPending(false);
       // Import always reflects the source's actual ticker: no stale symbol
@@ -1115,24 +1137,8 @@ export function ReplayPage() {
     }
   }
 
-  return (
-    <main className="replay-shell">
-      <header className="replay-header">
-        <div>
-          <h1>Машина времени</h1>
-        </div>
-      </header>
-
-      <RunSetupPanel symbol={symbol} onArchiveSymbol={acceptArchiveSymbol}
-        onPasteSymbol={onPasteSymbol} onSimulationStart={onSimulationStart}
-        onSimulationReady={onSimulationReady} onSimulationAppend={onSimulationAppend}
-        onSimulationFailed={onSimulationFailed} onSimulationBusy={setRunLoading}
-        playRequestId={playRequestId} showReport={!simulationGraphPending && !runLoading && cursor >= total}
-        onPublicHistoryRequest={(ticker, from, to, choices) => void loadLocalHistory(ticker, from, to, choices)}
-        publicHistoryLoading={historyLoading}
-        onStrategySelectionChange={setSelectedStrategies}
-        onEpisodeLookup={lookupLocalEpisode} />
-      <section className="replay-controls" aria-label="Управление воспроизведением">
+  const importControls = (
+    <>
         <label className="replay-file">
           Загрузить JSON прогона
           <input ref={fileInput} type="file" accept=".json,application/json" disabled={runLoading}
@@ -1171,7 +1177,28 @@ export function ReplayPage() {
           window.setTimeout(() => URL.revokeObjectURL(url), 0);
         }}>Журнал JSON ({simulationGraphPending ? 0 : simulationActionJournal(document).actions.length})</button>
 
-      </section>
+    </>
+  );
+
+  return (
+    <main className="replay-shell">
+      <header className="replay-header">
+        <div>
+          <h1>Машина времени</h1>
+        </div>
+      </header>
+
+      <RunSetupPanel symbol={symbol} importedCoordinates={importedCoordinates}
+        importControls={importControls} onArchiveSymbol={acceptArchiveSymbol}
+        onPasteSymbol={onPasteSymbol} onSimulationStart={onSimulationStart}
+        onSimulationReady={onSimulationReady} onSimulationAppend={onSimulationAppend}
+        onSimulationFailed={onSimulationFailed} onSimulationBusy={setRunLoading}
+        playRequestId={playRequestId} showReport={!simulationGraphPending && !runLoading && cursor >= total}
+        onPublicHistoryRequest={(ticker, from, to, choices) => void loadLocalHistory(ticker, from, to, choices)}
+        publicHistoryLoading={historyLoading}
+        onStrategySelectionChange={setSelectedStrategies}
+        onEpisodeLookup={lookupLocalEpisode} />
+
 
       {localEpisodeMessage && <p role="status" className="replay-note">{localEpisodeMessage}</p>}
       {error && <p role="alert" className="replay-error">{error}</p>}
