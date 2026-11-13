@@ -184,8 +184,8 @@ def attach_verified_wedge_signals(
 ) -> dict[str, object]:
     """Optional exact-ID Robot Wedge label, separate from D2 and financials."""
     if (report.get("account_id") != "paper" or report.get("owner") != "ROBOT"
-            or report.get("source_revision") != snapshot.source_revision
-            or snapshot.wedge_evidence is None):
+            or report.get("source_revision") != getattr(snapshot, "source_revision", None)
+            or getattr(snapshot, "wedge_evidence", None) is None):
         return report
     rows = report.get("closed_episodes")
     if not isinstance(rows, list):
