@@ -23,6 +23,7 @@ from robot_entry_flow_evidence import (
     plan_impulse_protected_entry,
 )
 from research.simulator_v2.cache import _checksum, _rows
+from research.simulator_v2.historical_orderbook import iter_pinned_orderbook
 from research.simulator_v2.history import HistoryChunk, MINUTE_MS
 from research.simulator_v2.report import ReplayReport, run_verified_chunks
 from research.simulator_v2.session import VirtualReplaySession
@@ -58,6 +59,8 @@ class WedgeBacktestResult:
     paper_oi_rejected_retests: int = 0
     paper_oi_mode: str = "OFF"
     paper_oi_sha256: str | None = None
+    execution_model: str = "SIMULATION_OHLC_STOP_FIRST_NOT_REAL_BYBIT_FILLS"
+    l2_source_sha256: str | None = None
     impulse_signals: int = 0
     impulse_risk_rejections: int = 0
     namespace: str = "SIMULATION"
@@ -83,7 +86,9 @@ class WedgeBacktestResult:
                 proof.to_payload(symbol=self.report.symbol)
                 for proof in self.archive_proofs
             ],
-            "execution_model": "SIMULATION_OHLC_STOP_FIRST_NOT_REAL_BYBIT_FILLS",
+            "execution_model": self.execution_model,
+            **({"l2_source_sha256": self.l2_source_sha256}
+               if self.l2_source_sha256 is not None else {}),
             **({"paper_flow_entry": {
                 "permitted_retests": self.paper_flow_permitted_retests,
                 "rejected_retests": self.paper_flow_rejected_retests,
@@ -261,6 +266,7 @@ def run_verified_impulse_chunks(
     visual_recorder: WedgeVisualReplay | None = None,
     impulse_plans: dict[str, ImpulseProtectedPlan] | None = None,
     on_eligible_impulse_signal: Callable[[ImpulseSignal], None] | None = None,
+    on_before_m1: Callable[[VirtualReplaySession, Candle], None] | None = None,
 ) -> WedgeBacktestResult:
     """Pure Scanner impulse + shared Robot risk → original protected venue.
 
@@ -339,11 +345,19 @@ def run_verified_impulse_chunks(
         if visual_recorder is not None:
             visual_recorder.record(active, candle)
 
-    report = run_verified_chunks(session, chunks, on_committed_m1=on_close)
+    report = run_verified_chunks(
+        session, chunks, on_committed_m1=on_close, on_before_m1=on_before_m1,
+    )
     if report.last_closed_ms != end_exclusive or report.first_open_ms > start_ms:
         raise ValueError("verified historical impulse trade window was not complete")
     return WedgeBacktestResult(
-        report=replace(report,scenario_type="IMPULSE_FLOW_SHARED_ROBOT_PROTECTED_VIRTUAL_SIMULATION"),
+        report=replace(
+            report, scenario_type=(
+                "IMPULSE_FLOW_HISTORICAL_L2_TAKER_VIRTUAL_SIMULATION"
+                if on_before_m1 is not None
+                else "IMPULSE_FLOW_SHARED_ROBOT_PROTECTED_VIRTUAL_SIMULATION"
+            ),
+        ),
         requested_start_ms=start_ms, requested_end_inclusive_ms=end_inclusive_ms,
         market_warmup_start_ms=report.first_open_ms,
         scanner_wedge_observations=0, robot_retests_in_period=0,
@@ -377,6 +391,9 @@ def run_cached_wedge_trade_range(
     oi_history_path: Path | None = None,
     impulse_mode: bool = False,
     on_eligible_impulse_signal: Callable[[ImpulseSignal], None] | None = None,
+    l2_archive_path: Path | None = None,
+    l2_archive_sha256: str | None = None,
+    l2_depth: int = 50,
 ) -> WedgeBacktestResult:
     """Offline Bybit public-trade M1 with an exact inclusive minute cutoff.
 
@@ -394,6 +411,13 @@ def run_cached_wedge_trade_range(
         raise ValueError("selected minute window lies outside pinned trade days")
     if end_exclusive > latest_closed_boundary_ms:
         raise ValueError("selected end includes an unclosed M1")
+    l2_mode = l2_archive_path is not None
+    if l2_mode and (not impulse_mode or flow_archive_dir is None
+                    or not isinstance(l2_archive_sha256, str)):
+        raise ValueError("L2 requires pinned book and taker trade tapes in impulse mode")
+    if not l2_mode and l2_archive_sha256 is not None:
+        raise ValueError("L2 SHA without explicit historical L2 archive")
+
     # Load no more than the Scanner's explicit M5 lookback plus a closed-day
     # buffer. Do not force the requested end to equal the full manifest end.
     # The subset gets its OWN checksum-derived source ID; unselected days
@@ -436,6 +460,7 @@ def run_cached_wedge_trade_range(
         wedge_scanner_config=None if impulse_mode else scanner_config,
         wedge_robot_config=None if impulse_mode else robot_config,
         wedge_risk_settings=None if impulse_mode else risk_settings,
+        execution_mode="HISTORICAL_L2" if l2_mode else "OHLC_M1",
     )
     impulse_plans: dict[str, ImpulseProtectedPlan] = {}
     recorder = WedgeVisualReplay(
@@ -475,6 +500,39 @@ def run_cached_wedge_trade_range(
                 tape[minute.start_ms], source_id=source_id,
             )
 
+    on_before_m1 = None
+    if l2_mode:
+        # Original L2 is a separately verified source; trade archives
+        # cannot reconstruct bids/asks or resting order priority.
+        orderbooks = iter_pinned_orderbook(
+            l2_archive_path, symbol=symbol, depth=l2_depth,
+            sha256=l2_archive_sha256, start_ms=start_ms,
+            end_exclusive_ms=end_exclusive,
+        )
+        next_book = next(orderbooks, None)
+
+        def on_before_m1(active: VirtualReplaySession, minute: Candle) -> None:
+            nonlocal next_book
+            if minute.start_ms < start_ms:
+                return
+            events: list[tuple[int, str, object]] = []
+            while next_book is not None and next_book.available_at_ms < minute.end_ms:
+                if next_book.available_at_ms >= minute.start_ms:
+                    events.append((next_book.available_at_ms, "BOOK", next_book))
+                next_book = next(orderbooks, None)
+            for trade in tape[minute.start_ms]:
+                if not minute.start_ms <= trade.event_ms < minute.end_ms:
+                    raise ValueError("taker event belongs to a foreign virtual M1")
+                events.append((trade.event_ms, "TRADE", trade))
+            events.sort(key=lambda e: e[0])
+            # Equal cross-channel ms is intentionally ambiguous; no invented
+            # ordering between book.ts and trade.T from independent archives.
+            for _, kind, data in events:
+                if kind == "BOOK":
+                    active.exchange.on_historical_book(data)
+                else:
+                    active.exchange.on_historical_trade(data)
+
     if impulse_mode:
         result = run_verified_impulse_chunks(
             session, cut_to_selected_end(),
@@ -482,6 +540,7 @@ def run_cached_wedge_trade_range(
             risk_settings=risk_settings, flow_on_close=flow_callback,
             visual_recorder=recorder, impulse_plans=impulse_plans,
             on_eligible_impulse_signal=on_eligible_impulse_signal,
+            on_before_m1=on_before_m1,
             oi_mode=oi_mode, oi_at_entry=oi_at_entry,
             oi_source_sha256=oi_sha256,
         )
@@ -496,4 +555,11 @@ def run_cached_wedge_trade_range(
     replay = recorder.document(
         source_id=result.report.source_id, expected_fills=result.report.virtual_fills,
     ) if recorder is not None else None
-    return replace(result, archive_proofs=selected_proofs, replay_document=replay)
+    return replace(
+        result, archive_proofs=selected_proofs, replay_document=replay,
+        execution_model=(
+            "SIMULATION_HISTORICAL_TAKER_L2_EVENT_TIME_NOT_REAL_BYBIT_FILLS"
+            if l2_mode else result.execution_model
+        ),
+        l2_source_sha256=l2_archive_sha256 if l2_mode else None,
+    )
