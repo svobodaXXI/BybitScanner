@@ -25,8 +25,8 @@ def test_finrez_route_reuses_attributed_paper_diary_source(tmp_path: Path, monke
     calls = []
     snapshot = object()
 
-    def read_source(path):
-        calls.append(("source", path))
+    def read_source(path, *, include_wedge_evidence=False):
+        calls.append(("source", path, include_wedge_evidence))
         return snapshot
 
     def project(source, *, account_id, owner, period, now_ms):
@@ -59,7 +59,7 @@ def test_finrez_route_reuses_attributed_paper_diary_source(tmp_path: Path, monke
             assert payload["tickers"][0]["pnl_usdt"] == "2.5"
             assert payload["manual_interventions"] == []
 
-        assert calls[0] == ("source", source_path)
+        assert calls[0] == ("source", source_path, True)
         assert calls[1] == ("project", snapshot, "paper", "ROBOT", "TODAY")
         for query in (
             "", "?account_id=paper&owner=ROBOT",
@@ -77,6 +77,59 @@ def test_finrez_route_reuses_attributed_paper_diary_source(tmp_path: Path, monke
         server.server_close()
         thread.join(timeout=2)
 
+
+
+def test_finrez_verified_signal_separate_from_setup_context(tmp_path: Path, monkeypatch):
+    source = tmp_path / "paper.sqlite3"
+    calls = []
+    def read(path, *, include_wedge_evidence=False):
+        calls.append(include_wedge_evidence)
+        return object()
+    def project(s, *, account_id, owner, period, now_ms):
+        return {
+            "account_id": account_id, "owner": owner, "period": period,
+            "source_revision": 5, "tickers": [{"symbol": "BTCUSDT", "pnl_usdt": "2"}],
+            "closed_episodes": [{
+                "trade_episode_id": "te_" + "a" * 24, "pnl_usdt": "2",
+                "cohort": owner, "setup_context": {"status": "NO_EXACT_EPISODE_LINK"},
+            }],
+        }
+    def attach(s, report):
+        if report["owner"] != "ROBOT":
+            return report
+        rows = [{**row, "verified_signal": {
+            "trade_episode_id": row["trade_episode_id"], "source_revision": 5,
+            "candidate_id": "candidate", "pattern": "Falling Wedge",
+            "source_timeframe": "M5", "status": "PROVEN",
+            "provenance": "DURABLE_ROBOT_TRADE_METADATA_NOT_ORIGINAL_GEOMETRY",
+        }} for row in report["closed_episodes"]]
+        return {**report, "closed_episodes": rows}
+    monkeypatch.setattr(paper_http_server, "load_paper_source_snapshot", read)
+    monkeypatch.setattr(paper_http_server, "project_paper_ticker_pnl", project)
+    monkeypatch.setattr(paper_http_server, "attach_verified_entry_notional_returns", lambda s, r: r)
+    monkeypatch.setattr(paper_http_server, "attach_verified_episode_patterns", lambda s, r, **k: r)
+    monkeypatch.setattr(paper_http_server, "attach_verified_wedge_signals", attach)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+    server.diary_source_db_path = source
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        root = f"http://127.0.0.1:{server.server_address[1]}/api/diary/ticker-finrez"
+        q = "?account_id=paper&owner=ROBOT&period=ALL"
+        status, result = _get(root + q)
+        assert status == 200 and result["ok"]
+        row = result["closed_episodes"][0]
+        assert row["verified_signal"]["pattern"] == "Falling Wedge"
+        assert row["setup_context"] == {"status": "NO_EXACT_EPISODE_LINK"}
+        assert result["tickers"][0]["pnl_usdt"] == "2"
+        status, result = _get(root + q.replace("owner=ROBOT", "owner=MANUAL"))
+        assert status == 200
+        assert "verified_signal" not in result["closed_episodes"][0]
+        assert calls == [True, False]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
 
 def test_finrez_route_does_not_fabricate_zero_when_paper_source_is_missing(tmp_path: Path):
     server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)

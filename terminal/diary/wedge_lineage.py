@@ -177,3 +177,53 @@ def project_selected_paper_wedge(
         payload, sort_keys=True, separators=(",", ":"),
     ).encode("utf-8")).hexdigest()
     return payload
+
+
+def attach_verified_wedge_signals(
+    snapshot: PaperSourceSnapshot, report: dict[str, object],
+) -> dict[str, object]:
+    """Optional exact-ID Robot Wedge label, separate from D2 and financials."""
+    if (report.get("account_id") != "paper" or report.get("owner") != "ROBOT"
+            or report.get("source_revision") != snapshot.source_revision
+            or snapshot.wedge_evidence is None):
+        return report
+    rows = report.get("closed_episodes")
+    if not isinstance(rows, list):
+        return report
+    enriched = []
+    for row in rows:
+        if (not isinstance(row, dict) or row.get("cohort") != "ROBOT"
+                or not isinstance(row.get("trade_episode_id"), str)):
+            enriched.append(row)
+            continue
+        try:
+            proof = project_selected_paper_wedge(
+                snapshot, account_id="paper", owner="ROBOT",
+                trade_episode_id=row["trade_episode_id"],
+                source_revision=snapshot.source_revision,
+            )
+        except WedgeLineageUnproven:
+            enriched.append(row)
+            continue
+        matches = [episode for episode in snapshot.episodes
+                   if episode.trade_episode_id.value == row["trade_episode_id"]]
+        if (len(matches) != 1
+                or matches[0].position_key.symbol.value != row.get("symbol")
+                or matches[0].side.value.upper() != row.get("side")
+                or matches[0].opened_at_ms != row.get("opened_at_ms")
+                or matches[0].closed_at_ms != row.get("closed_at_ms")
+                or str(matches[0].realized_price_pnl - matches[0].execution_fees) != row.get("pnl_usdt")
+                or len(matches[0].allocations) != row.get("execution_count")):
+            enriched.append(row)
+            continue
+        enriched.append({**row, "verified_signal": {
+            "trade_episode_id": proof["trade_episode_id"],
+            "source_revision": proof["source_revision"],
+            "candidate_id": proof["candidate_id"],
+            "pattern": proof["signal_pattern"],
+            "source_timeframe": proof["source_timeframe"],
+            "provenance": proof["signal_provenance"],
+            "evidence_scope": "EXACT_WEDGE_CANDIDATE_ENTRY_ORDER_EXECUTION_EPISODE",
+            "status": "PROVEN",
+        }})
+    return {**report, "closed_episodes": enriched}

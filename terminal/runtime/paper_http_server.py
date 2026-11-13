@@ -68,6 +68,7 @@ from terminal.diary.scoped_statistics_archive import (
 )
 from terminal.diary.scoped_statistics_reporter import load_paper_source_snapshot
 from terminal.diary.campaign_lineage import CampaignLineageUnproven, project_selected_paper_campaign
+from terminal.diary.wedge_lineage import attach_verified_wedge_signals
 from terminal.diary.ticker_finrez import (
     EpisodeFactsNotFound, EpisodeFactsSourceChanged,
     attach_verified_entry_notional_returns, attach_verified_episode_patterns,
@@ -3356,7 +3357,10 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 return
             try:
                 now_ms = int(time.time() * 1000)
-                snapshot = load_paper_source_snapshot(self.server.diary_source_db_path)
+                snapshot = load_paper_source_snapshot(
+                    self.server.diary_source_db_path,
+                    include_wedge_evidence=params["owner"][0] == "ROBOT",
+                )
                 projection = project_paper_ticker_pnl(
                     snapshot, account_id="paper", owner=params["owner"][0],
                     period=params["period"][0], now_ms=now_ms,
@@ -3366,6 +3370,7 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                     snapshot, projection,
                     d2_path=getattr(self.server, "diary_setup_store_path", None),
                 )
+                projection = attach_verified_wedge_signals(snapshot, projection)
             except (StatisticsScopeError, ValueError):
                 self._json_response(503, {"ok": False, "error": "finrez_evidence_unavailable"})
                 return

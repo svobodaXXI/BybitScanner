@@ -84,3 +84,36 @@ def test_rejects_wrong_exit_revision_and_pattern():
     evidence["obligations"] = (dict(evidence["obligations"][0], exec_id="other"),)
     with pytest.raises(WedgeLineageUnproven):
         project_selected_paper_wedge(replace(snapshot, wedge_evidence=evidence), **kwargs)
+
+
+def test_proven_wedge_finrez_enrichment_and_unproven_is_absent():
+    from terminal.diary.wedge_lineage import attach_verified_wedge_signals
+    snapshot, kwargs = case()
+    row = {
+        "trade_episode_id": kwargs["trade_episode_id"], "symbol": "BTCUSDT",
+        "side": "LONG", "opened_at_ms": 1200, "closed_at_ms": 1300,
+        "pnl_usdt": "1.8", "execution_count": 2, "cohort": "ROBOT",
+        "setup_context": {"status": "NO_EXACT_EPISODE_LINK"},
+    }
+    report = {"account_id": "paper", "owner": "ROBOT",
+              "source_revision": 5, "closed_episodes": [row],
+              "tickers": [{"symbol": "BTCUSDT", "pnl_usdt": "1.8"}]}
+    result = attach_verified_wedge_signals(snapshot, report)
+    signal = result["closed_episodes"][0]["verified_signal"]
+    assert signal["trade_episode_id"] == kwargs["trade_episode_id"]
+    assert signal["source_revision"] == 5
+    assert signal["candidate_id"] == "candidate-2"
+    assert signal["pattern"] == "Falling Wedge"
+    assert signal["source_timeframe"] == "5m"
+    assert signal["status"] == "PROVEN"
+    assert {k: v for k, v in result["closed_episodes"][0].items()
+            if k != "verified_signal"} == row
+    assert result["tickers"] == report["tickers"]
+    for source, item in (
+        (replace(snapshot, wedge_evidence=None), report),
+        (snapshot, {**report, "owner": "MANUAL"}),
+        (snapshot, {**report, "closed_episodes": [{**row, "cohort": "JOINT_MANAGEMENT"}]}),
+        (snapshot, {**report, "closed_episodes": [{**row, "pnl_usdt": "999"}]}),
+    ):
+        assert "verified_signal" not in attach_verified_wedge_signals(
+            source, item)["closed_episodes"][0]

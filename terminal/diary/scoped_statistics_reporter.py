@@ -79,10 +79,16 @@ def load_paper_source_snapshot(
                                         winning_leg,exec_id,order_id
                                    FROM paper_protection_obligations WHERE trading_account_id=?""",
             }
-            wedge_evidence = {
-                name: tuple(dict(row) for row in conn.execute(sql, ("paper",)).fetchall())
-                for name, sql in wedge_queries.items()
-            }
+            try:
+                wedge_evidence = {
+                    name: tuple(dict(row) for row in conn.execute(sql, ("paper",)).fetchall())
+                    for name, sql in wedge_queries.items()
+                }
+            except sqlite3.OperationalError as exc:
+                # Optional tables may be absent in old PAPER snapshots.
+                if "no such table" not in str(exc):
+                    raise
+                wedge_evidence = None
         campaign_evidence = None
         if include_campaign_evidence:
             # Optional read-only projection. Missing tables mean UNKNOWN lineage,
