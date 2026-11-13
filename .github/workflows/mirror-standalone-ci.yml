@@ -30,6 +30,7 @@ on:
       - "tests/test_mirror_standalone_paper_e2e.py"
       - "research/simulator_v2/robot_sandbox.py"
       - "tests/test_simulator_v2_box_lifecycle.py"
+      - "tests/test_simulator_v2_mirror_intake.py"
       - ".github/workflows/mirror-standalone-ci.yml"
   workflow_dispatch:
 
@@ -103,5 +104,10 @@ jobs:
         run: python -m pytest -q tests/test_mirror_scanner_integration.py -k "extremum or wick_sweep or persisted_standalone_handoff"
       - name: Verify local native MIRROR LIMIT port and existing Box lifecycle
         run: python -m unittest -v tests.test_simulator_v2_box_lifecycle
+      - name: Verify all-or-none MIRROR account risk review does not place orders
+        run: >-
+          python -m unittest -v
+          tests.test_simulator_v2_mirror_intake.NativeMirrorSimulatorIntakeTests.test_simultaneous_mirror_uses_all_or_none_account_risk_review
+          tests.test_simulator_v2_mirror_intake.NativeMirrorSimulatorIntakeTests.test_shared_mirror_risk_review_rejects_ambiguous_exposure
       - name: Full synthetic MIRROR standalone PAPER E2E and regression suite
         run: python -m unittest -v tests.test_pattern_freshness tests.test_mirror_standalone_paper_e2e
