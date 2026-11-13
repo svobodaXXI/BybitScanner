@@ -454,10 +454,8 @@ def run_cached_wedge_trade_range(
         raise ValueError("L2 SHA without explicit historical L2 archive")
     if l2_partial_take_policy is not None and (not l2_mode or not impulse_mode):
         raise ValueError("partial TAKE/BE research requires original impulse HISTORICAL_L2")
-    if l2_mode and capture_replay:
-        # WedgeVisualReplay currently records only M1-stage events, not the
-        # new intraminute L2 execution journal. Do not publish false footage.
-        raise ValueError("L2 intraminute visual replay is not yet supported")
+    if l2_mode and capture_replay and on_replay_events is not None and not callable(on_replay_events):
+        raise ValueError("historical L2 replay callback must be callable")
 
 
     # Load no more than the Scanner's explicit M5 lookback plus a closed-day
@@ -511,6 +509,7 @@ def run_cached_wedge_trade_range(
         start_ms=start_ms, end_ms=end_exclusive,
         on_events=on_replay_events,
         impulse_plans=impulse_plans if impulse_mode else None,
+        historical_l2=l2_mode,
     ) if capture_replay else None
     if oi_mode not in OI_MODES or (
         (oi_mode != "OFF" and (flow_archive_dir is None or oi_history_path is None))
