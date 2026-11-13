@@ -346,6 +346,14 @@ def _complete_stop_intent(journal_root: Path, target: str, *, uid: int) -> None:
         _trusted_file(marker, uid)
     elif _proven_stopped_backend_handoff_to(journal_root, target, uid=uid):
         pass  # A distinct, sealed one-shot handoff; no canonical STOP receipt.
+    elif any(
+        _unsealed_paused_successor_proven(
+            journal_root, marker.name.removeprefix(".stop-invoked-"),
+            root=REPO, uid=uid, target=target, require_ready=False,
+        )
+        for marker in journal_root.glob(".stop-invoked-*")
+    ):
+        pass  # Separate proven continuation, never old STOP success.
     else:
         # An exceptional prior-target handoff can install the pinned release
         # without a same-target ordinary STOP marker. Only its *own* protected
@@ -623,6 +631,137 @@ def _owner_stop_only_confirmed(
         return False
 
 
+def _unsealed_paused_receipt_path(journal: Path, prior: str, phase: str) -> Path:
+    return journal / (".unsealed-paused-" + phase + "-" + prior)
+
+
+def _unsealed_paused_payload(old: str, prior: str, target: str) -> bytes:
+    return ("UNSEALED_PAUSED_CONTINUATION:" + old + ":" + prior + ":"
+            + target + "\n").encode("ascii")
+
+
+def _unsealed_paused_receipt(
+    journal: Path, old: str, prior: str, target: str, phase: str, uid: int,
+) -> bool:
+    from tools.vps_gitless_release_activate import _trusted_file
+    path = _unsealed_paused_receipt_path(journal, prior, phase)
+    if not path.exists() and not path.is_symlink():
+        return False
+    if _trusted_file(path, uid) != _unsealed_paused_payload(old, prior, target):
+        raise ValueError("unsealed_paused_receipt_mismatch")
+    return True
+
+
+def _write_unsealed_paused_receipt(
+    journal: Path, old: str, prior: str, target: str, phase: str, uid: int,
+) -> None:
+    """Seal an observed continuation at most once, not the old STOP outcome."""
+    from tools.vps_gitless_release_activate import _sync_directory, _trusted_file
+    if (phase not in ("invoked", "completed")
+            or not journal.is_dir() or journal.is_symlink()
+            or journal.stat().st_uid != uid or journal.stat().st_mode & 0o077
+            or _trusted_file(journal / (".stop-invoked-" + prior), uid)
+                != b"STOP_INVOKED; not install authorization\n"):
+        raise ValueError("unsealed_paused_journal_untrusted")
+    fd = os.open(journal / ".release.lock", os.O_RDWR | os.O_NOFOLLOW)
+    with os.fdopen(fd, "rb") as lock:
+        meta = os.fstat(lock.fileno())
+        if (not stat.S_ISREG(meta.st_mode) or meta.st_uid != uid
+                or meta.st_mode & 0o077):
+            raise ValueError("unsealed_paused_release_lock_untrusted")
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if phase == "completed":
+            if not _unsealed_paused_receipt(journal, old, prior, target, "invoked", uid):
+                raise ValueError("unsealed_paused_invocation_missing")
+        # O_EXCL ensures another invocation or uncertain result cannot retry.
+        out = _unsealed_paused_receipt_path(journal, prior, phase)
+        descriptor = os.open(
+            out, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600,
+        )
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(_unsealed_paused_payload(old, prior, target))
+            stream.flush()
+            os.fsync(stream.fileno())
+        _sync_directory(journal)
+
+
+def _legacy_paused_backend_predates_stop(marker: Path) -> bool:
+    """Prove the *same running* protected Backend existed before STOP intent.
+
+    A restart after the unknown attempt, an unowned socket, or uncertain clock
+    provenance cannot justify completing the old partial shutdown.
+    """
+    from tools.flat_paper_recovery_transition import (
+        _service_pid, _process_start_token, _has_exact_local_listener,
+    )
+    try:
+        pid = _service_pid()
+        start_ticks = _process_start_token(pid)
+        if not _has_exact_local_listener(pid):
+            return False
+        boot = next(
+            int(line.split()[1]) for line in Path("/proc/stat").read_text().splitlines()
+            if line.startswith("btime ")
+        )
+        hz = os.sysconf("SC_CLK_TCK")
+        if hz <= 0 or not start_ticks.isdecimal():
+            return False
+        born_ns = boot * 1_000_000_000 + int(start_ticks) * 1_000_000_000 // hz
+        intent_time = marker.stat().st_mtime_ns
+        # A conservative margin rejects ambiguous clock/mtime boundaries.
+        if born_ns + 10_000_000_000 >= intent_time:
+            return False
+        return (_service_pid() == pid
+                and _process_start_token(pid) == start_ticks
+                and _has_exact_local_listener(pid))
+    except (OSError, ValueError, TypeError, StopIteration):
+        return False
+
+
+def _unsealed_paused_successor_proven(
+    journal: Path, prior: str, *, root: Path, uid: int,
+    target: str | None = None, require_ready: bool,
+) -> bool:
+    """Do not retire an unknown prior STOP until a separate phase is sealed."""
+    from tools.vps_gitless_release_activate import _manifest, _trusted_file
+    from tools.vps_release_identity import verify_release
+    try:
+        if len(prior) != 40 or any(ch not in "0123456789abcdef" for ch in prior):
+            return False
+        raw = _trusted_file(_unsealed_paused_receipt_path(journal, prior, "invoked"), uid)
+        parts = raw.decode("ascii").removesuffix("\n").split(":")
+        if len(parts) != 4 or parts[0] != "UNSEALED_PAUSED_CONTINUATION":
+            return False
+        _, old, original, successor = parts
+        if (original != prior or any(
+                len(v) != 40 or any(ch not in "0123456789abcdef" for ch in v)
+                for v in (old, successor))
+                or old == successor or successor == prior
+                or raw != _unsealed_paused_payload(old, prior, successor)
+                or (target is not None and successor != target)
+                or not _unsealed_paused_receipt(
+                    journal, old, prior, successor, "completed", uid,
+                )
+                or _trusted_file(journal / (".stop-invoked-" + prior), uid)
+                    != b"STOP_INVOKED; not install authorization\n"):
+            return False
+        transaction = journal / successor
+        if (not transaction.is_dir() or transaction.is_symlink()
+                or transaction.stat().st_uid != uid
+                or transaction.stat().st_mode & 0o077):
+            return False
+        installed = _manifest(_trusted_file(transaction / "old.json", uid))
+        approved = _manifest(_trusted_file(transaction / "target.json", uid))
+        _trusted_file(transaction / "units.json", uid)
+        if installed["build_sha"] != old or approved["build_sha"] != successor:
+            return False
+        if require_ready:
+            return _trusted_file(transaction / "editor-ready", uid) == successor.encode("ascii")
+        return verify_release(root) == successor
+    except (OSError, ValueError, UnicodeError, KeyError, TypeError):
+        return False
+
+
 def _proven_prior_exceptional_completion(
     journal_root: Path, prior: str, *, root: Path, uid: int,
 ) -> bool:
@@ -637,6 +776,10 @@ def _proven_prior_exceptional_completion(
     # recovery of the exact previous EDITOR_ONLY release. Original STOP
     # receipts remain untouched and are validated by the recovery proof.
     if _owner_stop_only_confirmed(journal_root, prior, uid=uid):
+        return True
+    if _unsealed_paused_successor_proven(
+        journal_root, prior, root=root, uid=uid, require_ready=True,
+    ):
         return True
     from tools.paper_abandoned_stop_recovery import proven_abandoned_stop
     if proven_abandoned_stop(journal_root, prior, root=root, uid=uid, require_installed=False):
