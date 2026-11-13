@@ -396,6 +396,35 @@ describe("Closed deals / exact episode index", () => {
     cohort: "JOINT_MANAGEMENT", replay_evidence: "EPISODE_INDEX_ONLY",
   };
 
+  it("keeps micro-losses visible on both closed deal rows and their details", async () => {
+    const smallLoss = {
+      ...robotDeal, trade_episode_id: "te_" + "a".repeat(24),
+      symbol: "BTCUSDT", pnl_usdt: "-0.0026140884",
+    };
+    const tinyLoss = {
+      ...robotDeal, trade_episode_id: "te_" + "b".repeat(24),
+      symbol: "XRPUSDT", pnl_usdt: "-0.0000000004",
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ...finrezResponse, closed_episodes: [smallLoss, tinyLoss],
+    }), { status: 200 })));
+    render(<DiaryOverlay accountKey="paper:micro-deal-pnl" initialSection="DEALS"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+
+    const row = await screen.findByRole("button", { name: /BTCUSDT/ });
+    expect(row).toHaveTextContent("PnL -0,002614 USDT");
+    expect(screen.getByTitle("-0.0026140884")).toBeInTheDocument();
+    const tinyRow = screen.getByRole("button", { name: /XRPUSDT/ });
+    expect(tinyRow).toHaveTextContent("PnL -<0,000001 USDT");
+    expect(screen.getByTitle("-0.0000000004")).toBeInTheDocument();
+
+    fireEvent.click(row);
+    expect(screen.getByText("-0,002614 USDT")).toHaveAttribute("title", "-0.0026140884");
+    fireEvent.click(screen.getByRole("button", { name: /К сделкам/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /XRPUSDT/ }));
+    expect(screen.getByText("-<0,000001 USDT")).toHaveAttribute("title", "-0.0000000004");
+  });
+
   it("displays exact robot episode identifiers and keeps shared PnL labelled separately", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       ...finrezResponse, closed_episodes: [sharedDeal, robotDeal],
@@ -1490,6 +1519,6 @@ describe("shared statistics trade action standard", () => {
       expect(button).toBeDisabled();
       expect(button).toHaveAttribute("title", expect.stringContaining("нужен подтверждённый PAPER episode"));
     });
-    expect(screen.getByText(/PnL -1,82 USDT/)).toHaveAttribute("title", "-1.81622186");
+    expect(screen.getByText(/PnL -1,8162 USDT/)).toHaveAttribute("title", "-1.81622186");
   });
 });
