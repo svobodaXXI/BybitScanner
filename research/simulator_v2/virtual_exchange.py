@@ -24,6 +24,8 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from research.historical_market_replay import Candle
+from robot_entry_flow_evidence import TakerPrint
+from research.simulator_v2.historical_orderbook import BookState
 from research.simulator_v2.timeline import MINUTE_MS
 from research.simulator_v2.virtual_account import VirtualAccount, VirtualFill, IDENTITY
 
@@ -150,7 +152,10 @@ class VirtualExchange:
         self, *, account: VirtualAccount,
         taker_fee_rate: Decimal = Decimal("0.0006"),
         maker_fee_rate: Decimal = Decimal("0.0002"),
+        execution_mode: str = "OHLC_M1",
     ) -> None:
+        if execution_mode not in ("OHLC_M1", "HISTORICAL_L2"):
+            raise ValueError("explicit OHLC_M1 or HISTORICAL_L2 virtual execution required")
         if not isinstance(account, VirtualAccount):
             raise TypeError("a dedicated SIMULATION VirtualAccount is required")
         if (
@@ -173,6 +178,10 @@ class VirtualExchange:
         self._events: list[OrderEvent] = []
         self._pending_protection: ProtectedLimitRequest | None = None
         self._active_protection: ProtectedLimitRequest | None = None
+        self.execution_mode = execution_mode
+        self._l2_book: BookState | None = None
+        self._l2_event_at_ms: int | None = None
+        self._l2_event_kind: str | None = None
         self._last_minute_fills: tuple[VirtualFill, ...] = ()
         self._last_minute_order_events: tuple[OrderEvent, ...] = ()
         self._robot_limits: dict[str, tuple[RobotLimitRequest, int]] = {}
@@ -530,6 +539,200 @@ class VirtualExchange:
             fee=price * request.entry.quantity * self.taker_fee_rate,
         )
 
+    def _require_l2_event(self, at_ms: int, *, kind: str) -> None:
+        if self.execution_mode != "HISTORICAL_L2":
+            raise ValueError("historical L2 events require explicit HISTORICAL_L2 mode")
+        if type(at_ms) is not int or at_ms < 0:
+            raise ValueError("invalid historical event time")
+        if self._last_close_ms is not None and at_ms < self._last_close_ms:
+            raise ValueError("historical event precedes committed virtual M1")
+        if self._l2_event_at_ms is not None and at_ms < self._l2_event_at_ms:
+            raise ValueError("historical market event time reversed")
+        if (self._l2_event_at_ms == at_ms and self._l2_event_kind != kind):
+            raise ValueError("cross-channel trade/book order ambiguous at same millisecond")
+        if (kind == "TRADE" and self._l2_event_at_ms == at_ms):
+            raise ValueError("same-millisecond taker print order is unproven")
+
+    def _l2_sweep(
+        self, *, side: str, quantity: Decimal, limit_price: Decimal | None,
+    ) -> Decimal | None:
+        """Full-size book execution only. No unknown partial fills or depth reuse."""
+        book = self._l2_book
+        if book is None:
+            raise ValueError("no historical L2 snapshot for virtual execution")
+        levels = book.asks if side == "BUY" else book.bids
+        remaining = quantity
+        cost = Decimal(0)
+        for price, available in levels:
+            if (limit_price is not None and
+                    ((side == "BUY" and price > limit_price)
+                     or (side == "SELL" and price < limit_price))):
+                break
+            used = min(remaining, available)
+            cost += used * price
+            remaining -= used
+            if remaining == 0:
+                return cost / quantity
+        if limit_price is not None and (
+            (side == "BUY" and book.best_ask[0] > limit_price)
+            or (side == "SELL" and book.best_bid[0] < limit_price)
+        ):
+            return None
+        raise ValueError("historical L2 does not prove sufficient executable depth")
+
+    def _l2_receipt(
+        self, order_id: str, *, event_at_ms: int, side: str,
+        quantity: Decimal, price: Decimal, fee_rate: Decimal, suffix: str,
+    ) -> VirtualFill:
+        return VirtualFill(
+            self.account.simulation_run_id, self.account.symbol,
+            order_id + suffix, event_at_ms, side, quantity, price,
+            price * quantity * fee_rate,
+        )
+
+    def on_historical_book(self, book: BookState) -> VirtualFill | None:
+        """Marketable protected LIMIT only after authenticated, time-ordered L2.
+
+        This does not claim resting queue priority. Book events never fill a
+        passive LIMIT merely because the best bid/ask touches its price.
+        """
+        if not isinstance(book, BookState) or book.symbol != self.account.symbol:
+            raise ValueError("original same-symbol L2 book state required")
+        self._require_l2_event(book.available_at_ms, kind="BOOK")
+        if self._robot_limits or self._robot_markets or self._robot_stop is not None:
+            raise ValueError("native multi-order matching not implemented for L2")
+        if self._pending is not None and not isinstance(self._pending[0], LimitRequest):
+            raise ValueError("historical L2 does not support OHLC MARKET fill")
+        receipt = None
+        next_pending = self._pending
+        next_pending_protection = self._pending_protection
+        next_protection = self._active_protection
+        if next_pending is not None:
+            request, submitted_at_ms = next_pending
+            if book.available_at_ms > submitted_at_ms:
+                previous = self._l2_book
+                self._l2_book = book
+                try:
+                    price = self._l2_sweep(
+                        side=request.side, quantity=request.quantity,
+                        limit_price=request.limit_price,
+                    )
+                finally:
+                    self._l2_book = previous
+                if price is not None:
+                    receipt = self._l2_receipt(
+                        request.order_id, event_at_ms=book.available_at_ms,
+                        side=request.side, quantity=request.quantity,
+                        price=price, fee_rate=self.taker_fee_rate, suffix="_fill",
+                    )
+                    self.account.append(receipt)
+                    if next_pending_protection is None:
+                        raise ValueError("unprotected L2 LIMIT entry is forbidden")
+                    next_protection = next_pending_protection
+                    next_pending = None
+                    next_pending_protection = None
+        self._l2_book = book
+        self._l2_event_at_ms = book.available_at_ms
+        self._l2_event_kind = "BOOK"
+        self._pending = next_pending
+        self._pending_protection = next_pending_protection
+        self._active_protection = next_protection
+        if receipt is not None:
+            self._events.append(OrderEvent(
+                receipt.fill_id.removesuffix("_fill"), "FILLED",
+                book.available_at_ms, order_type="LIMIT",
+            ))
+        return receipt
+
+    def on_historical_trade(self, trade: TakerPrint) -> VirtualFill | None:
+        """Trade-through of resting LIMIT, or trade-triggered protected exit.
+
+        No trade/bar HIGH/LOW touch can fill a resting LIMIT; price must be
+        strictly through, on the actual aggressive side, after submission.
+        STOP is a trade-price trigger and fills by fresh opposite book depth.
+        TAKE is conservative maker trade-through; no OHLC STOP-first shortcut.
+        """
+        if not isinstance(trade, TakerPrint) or trade.symbol != self.account.symbol:
+            raise ValueError("original same-symbol taker execution required")
+        self._require_l2_event(trade.event_ms, kind="TRADE")
+        if self._l2_book is None or trade.event_ms < self._l2_book.available_at_ms:
+            raise ValueError("book state unavailable at historical trade time")
+        if self._robot_limits or self._robot_markets or self._robot_stop is not None:
+            raise ValueError("native multi-order matching not implemented for L2")
+        receipt = None
+        event = None
+        next_pending = self._pending
+        next_pending_protection = self._pending_protection
+        next_protection = self._active_protection
+        if next_protection is not None:
+            plan = next_protection
+            is_long = plan.entry.side == "BUY"
+            stop_hit = trade.price <= plan.stop_price if is_long else trade.price >= plan.stop_price
+            take_through = (
+                (trade.side == "Buy" and trade.price > plan.take_price) if is_long
+                else (trade.side == "Sell" and trade.price < plan.take_price)
+            )
+            if stop_hit:
+                if trade.event_ms - self._l2_book.available_at_ms > 250:
+                    raise ValueError("stale L2 book cannot prove STOP executable price")
+                side = "SELL" if is_long else "BUY"
+                price = self._l2_sweep(
+                    side=side, quantity=plan.entry.quantity, limit_price=None,
+                )
+                fee_rate = self.taker_fee_rate
+                reason = "STOP"
+            elif take_through:
+                side = "SELL" if is_long else "BUY"
+                price = plan.take_price
+                fee_rate = self.maker_fee_rate
+                reason = "TAKE"
+            else:
+                price = None
+            if price is not None:
+                receipt = self._l2_receipt(
+                    plan.entry.order_id, event_at_ms=trade.event_ms,
+                    side=side, quantity=plan.entry.quantity, price=price,
+                    fee_rate=fee_rate, suffix="_" + reason.lower() + "_fill",
+                )
+                event = OrderEvent(
+                    plan.entry.order_id, reason + "_FILLED", trade.event_ms,
+                    order_type=reason,
+                )
+                self.account.append(receipt)
+                next_protection = None
+        elif next_pending is not None:
+            request, submitted_at_ms = next_pending
+            if not isinstance(request, LimitRequest):
+                raise ValueError("historical L2 requires protected LIMIT")
+            if (trade.event_ms > submitted_at_ms and
+                    ((request.side == "BUY" and trade.side == "Sell"
+                      and trade.price < request.limit_price)
+                     or (request.side == "SELL" and trade.side == "Buy"
+                         and trade.price > request.limit_price))):
+                if next_pending_protection is None:
+                    raise ValueError("unprotected L2 LIMIT entry is forbidden")
+                receipt = self._l2_receipt(
+                    request.order_id, event_at_ms=trade.event_ms,
+                    side=request.side, quantity=request.quantity,
+                    price=request.limit_price, fee_rate=self.maker_fee_rate,
+                    suffix="_fill",
+                )
+                event = OrderEvent(
+                    request.order_id, "FILLED", trade.event_ms, order_type="LIMIT",
+                )
+                self.account.append(receipt)
+                next_protection = next_pending_protection
+                next_pending_protection = None
+                next_pending = None
+        self._l2_event_at_ms = trade.event_ms
+        self._l2_event_kind = "TRADE"
+        self._pending = next_pending
+        self._pending_protection = next_pending_protection
+        self._active_protection = next_protection
+        if event is not None:
+            self._events.append(event)
+        return receipt
+
     def on_closed_minute(self, minute: Candle) -> VirtualFill | None:
         """Atomically match a closed M1 without reading future minutes.
 
@@ -542,6 +745,17 @@ class VirtualExchange:
             raise ValueError("M1 candle must use UTC minute boundaries")
         if self._last_close_ms is not None and minute.start_ms != self._last_close_ms:
             raise ValueError("M1 gap, overlap or duplicate at virtual exchange")
+
+        if self.execution_mode == "HISTORICAL_L2":
+            # M1 drives only chart/Scanner time; fills already happened at
+            # original trade/book event timestamps. Never call OHLC matching.
+            if (self._l2_event_at_ms is not None
+                    and self._l2_event_at_ms >= minute.end_ms):
+                raise ValueError("historical L2 event exceeds current M1 close")
+            self._last_close_ms = minute.end_ms
+            self._last_minute_fills = ()
+            self._last_minute_order_events = ()
+            return None
 
         receipts: list[VirtualFill] = []
         new_events: list[OrderEvent] = []
