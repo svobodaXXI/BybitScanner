@@ -7,7 +7,7 @@ import { visibleExecutionMarkers, visibleStopAmendMarkers } from "./executionMar
 const t = Date.UTC(2026, 10, 10, 8, 0);
 const id = "l2_local_import";
 const trade_id = `SIMULATION:${id}:IMPULSE_${t + 60_000}`;
-const event = (kind: string, seq: number, at: number, rest: Record<string, unknown> = {}) =>
+const event = (kind: string, seq: number, at: number, rest: Record<string, unknown> = {}): Record<string, unknown> =>
   ({ source: "SIMULATION", simulation_run_id: id, sequence: seq,
     kind, time_ms: at, ...rest });
 const original = () => ({
