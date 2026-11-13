@@ -98,6 +98,11 @@ class L2VisualEventTimeTests(unittest.TestCase):
         self.assertEqual([e["time_ms"] for e in events],
                          [M+10, M+20, M+30, M+50])
         self.assertEqual(events[1]["quantity"], "25")
+        self.assertEqual(D(str(events[2]["stop"])),
+                         session.exchange.events[
+                             next(i for i, e in enumerate(session.exchange.events)
+                                  if e.kind == "STOP_AMENDED_BE")
+                         ].stop_price)
         self.assertEqual(events[-1]["quantity"], "75")
         self.assertEqual(events[-1]["reason"], "STOP")
         self.assertEqual(D(events[-1]["net_usdt"]),
