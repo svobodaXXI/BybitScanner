@@ -705,7 +705,8 @@ class VirtualExchange:
     def _l2_current_stop(self, plan: ProtectedLimitRequest) -> Decimal:
         return self._l2_be_stop if self._l2_be_stop is not None else plan.stop_price
 
-    def _l2_arm_partial(self, entry: VirtualFill, plan: ProtectedLimitRequest) -> None:
+    def _l2_arm_partial(self, entry: VirtualFill, plan: ProtectedLimitRequest,
+                        *, dry_run: bool = False) -> None:
         policy = self._l2_partial_policy
         if policy is None:
             return
@@ -724,6 +725,8 @@ class VirtualExchange:
         if not ((entry.price < target < plan.take_price) if is_long
                 else (plan.take_price < target < entry.price)):
             raise ValueError("partial threshold must remain inside original target")
+        if dry_run:
+            return
         self._l2_partial_entry = entry
         self._l2_partial_qty = quantity
         self._l2_partial_target = target
@@ -962,6 +965,7 @@ class VirtualExchange:
                     )
                     if next_pending_protection is None:
                         raise ValueError("unprotected L2 LIMIT entry is forbidden")
+                    self._l2_arm_partial(receipt, next_pending_protection, dry_run=True)
                     self.account.append(receipt)
                     self._l2_arm_partial(receipt, next_pending_protection)
                     next_protection = next_pending_protection
@@ -1166,6 +1170,7 @@ class VirtualExchange:
                 event = OrderEvent(
                     request.order_id, "FILLED", trade.event_ms, order_type="LIMIT",
                 )
+                self._l2_arm_partial(receipt, next_pending_protection, dry_run=True)
                 self.account.append(receipt)
                 self._l2_arm_partial(receipt, next_pending_protection)
                 next_protection = next_pending_protection
