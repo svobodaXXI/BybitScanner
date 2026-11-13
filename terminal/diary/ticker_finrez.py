@@ -207,6 +207,101 @@ def _classified_finrez_episodes(
     )
 
 
+def attach_verified_entry_notional_returns(
+    snapshot: PaperSourceSnapshot, report: dict[str, object],
+) -> dict[str, object]:
+    """Optional *unlevered entry-notional* return on provenance-checked fills.
+
+    This is NOT exchange ROI on initial margin, leveraged return, net equity,
+    or all-cost net PnL: funding/external costs are not in the known-cost
+    numerator. The denominator is the sum of actual OPEN/INCREASE allocated
+    quantities times their immutable execution prices, never exit turnover,
+    account equity, leverage or a guessed average entry.
+    """
+    rows = report.get("closed_episodes")
+    if (report.get("account_id") != "paper"
+            or report.get("source_revision") != snapshot.source_revision
+            or not isinstance(rows, list) or not rows or not snapshot.executions):
+        return report
+    by_id = {e.trade_episode_id.value: e for e in snapshot.episodes}
+    fills = {execution.dedup_key: execution for execution in snapshot.executions}
+    if (len(by_id) != len(snapshot.episodes)
+            or len(fills) != len(snapshot.executions)
+            or any(x.dedup_key.trading_account_id.value != "paper" for x in snapshot.executions)):
+        return report
+
+    enriched: list[dict[str, object]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            return report
+        episode = by_id.get(row.get("trade_episode_id"))
+        if (episode is None or not episode.is_closed or episode.closed_at_ms is None
+                or episode.position_key.trading_account_id.value != "paper"
+                or episode.position_key.symbol.value != row.get("symbol")
+                or episode.side.value.upper() != row.get("side")
+                or episode.opened_at_ms != row.get("opened_at_ms")
+                or episode.closed_at_ms != row.get("closed_at_ms")
+                or str(episode.realized_price_pnl - episode.execution_fees) != row.get("pnl_usdt")
+                or len(episode.allocations) != row.get("execution_count")):
+            return report
+
+        entry_notional = Decimal("0")
+        fees = Decimal("0")
+        proven = True
+        if (not episode.allocations
+                or episode.allocations[0].role not in {AllocationRole.OPEN, AllocationRole.REVERSAL_OPEN}
+                or episode.allocations[-1].role is not AllocationRole.CLOSE):
+            enriched.append(row)
+            continue
+        for index, allocation in enumerate(episode.allocations):
+            fill = fills.get(allocation.execution_key)
+            is_entry = allocation.role in {
+                AllocationRole.OPEN, AllocationRole.REVERSAL_OPEN, AllocationRole.INCREASE,
+            }
+            if (allocation.execution_key.trading_account_id.value != "paper"
+                    or allocation.trade_episode_id != episode.trade_episode_id
+                    or fill is None or fill.dedup_key.category != episode.position_key.category
+                    or fill.symbol != episode.position_key.symbol
+                    or fill.exchange_timestamp_ms != allocation.occurred_at_ms
+                    or fill.quantity.value < allocation.quantity
+                    or fill.price.value <= 0
+                    or (index != 0 and allocation.role in {
+                        AllocationRole.OPEN, AllocationRole.REVERSAL_OPEN,
+                    })
+                    or (index == 0 and not is_entry)
+                    or (index < len(episode.allocations) - 1
+                        and allocation.role is AllocationRole.CLOSE)
+                    or (is_entry and fill.side.value != (
+                        "Buy" if episode.side.value.upper() == "LONG" else "Sell"
+                    ))
+                    or (not is_entry and fill.side.value != (
+                        "Sell" if episode.side.value.upper() == "LONG" else "Buy"
+                    ))):
+                proven = False
+                break
+            fees += allocation.fee
+            if is_entry:
+                entry_notional += fill.price.value * allocation.quantity
+        if not proven or fees != episode.execution_fees or not entry_notional.is_finite() or entry_notional <= 0:
+            enriched.append(row)
+            continue
+
+        # Decimal preserves the exact numerator/denominator. UI rounds only
+        # the visible percentage; raw PnL and allocations are unchanged.
+        net_known_cost_pnl = episode.realized_price_pnl - episode.execution_fees
+        pct = (net_known_cost_pnl / entry_notional) * Decimal("100")
+        if not pct.is_finite():
+            enriched.append(row)
+            continue
+        enriched.append({
+            **row,
+            "pnl_pct": str(pct),
+            "pnl_pct_basis": "KNOWN_COST_PNL_OVER_EXECUTED_ENTRY_NOTIONAL",
+            "entry_notional_usdt": str(entry_notional),
+        })
+    return {**report, "closed_episodes": enriched}
+
+
 def attach_verified_episode_patterns(
     snapshot: PaperSourceSnapshot, report: dict[str, object], *,
     d2_path: str | None,
