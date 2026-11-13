@@ -311,7 +311,7 @@ class NativeMirrorSimulatorIntakeTests(unittest.TestCase):
             self.assertEqual(session.exchange.robot_limits, ())
             checked = robot._preview_native_mirror_admission(state, entry_id)
             self.assertEqual(checked["decision"], "ATTACHED", checked)
-            self.assertEqual(checked["reason"], "entry_gate_allowed")
+            self.assertEqual(checked["reason"], "within_campaign_budget")
             self.assertEqual(robot._source_candidate_ids, [])
             self.assertEqual(session.exchange.robot_limits, ())
             self.assertFalse(robot._store.load_robot_candidates_by_status(
