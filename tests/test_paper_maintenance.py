@@ -53,6 +53,122 @@ def fake_runner(calls, *, fail=None):
 
 
 
+def test_exact_root_owned_git_stage_is_verified_before_monolith_bootstrap(
+    tmp_path, monkeypatch,
+):
+    import subprocess
+    from tools import paper_maintenance as maintenance
+    from tools import vps_release_identity as identity
+
+    parent = tmp_path / "protected"
+    parent.mkdir(mode=0o700)
+    transport = parent / "transport"
+    transport.mkdir()
+    def git(*args):
+        return subprocess.run(
+            ["git", *args], cwd=transport, check=True, capture_output=True,
+            text=True, timeout=15,
+        ).stdout.strip()
+
+    git("init", "-q")
+    git("config", "user.name", "test")
+    git("config", "user.email", "test@example.invalid")
+    git("remote", "add", "origin", "https://github.com/svobodaXXI/BybitScanner.git")
+    tracked = (
+        "tools/__init__.py",
+        "tools/paper_maintenance.py",
+        "tools/vps_release_identity.py",
+        "tools/vps_gitless_release_activate.py",
+        "tools/stop_robot_runtime.py",
+        "terminal/runtime/paper_http_server.py",
+    )
+    for path in tracked:
+        file = transport / path
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text("# verified test source\n")
+    git("add", ".")
+    git("commit", "-qm", "verified target")
+    target = git("rev-parse", "HEAD")
+    stage = parent / ("bybitscanner-stage-git-" + target)
+    git("worktree", "add", "--detach", str(stage), target)
+    installed = tmp_path / "installed"
+    installed.mkdir()
+    monkeypatch.setattr(maintenance, "REPO", installed)
+    monkeypatch.setattr(identity, "verify_release", lambda _root: "a" * 40)
+    modules = (
+        ("__main__", SimpleNamespace(__file__=str(stage / "tools/paper_maintenance.py"))),
+        ("tools", SimpleNamespace(__file__=str(stage / "tools/__init__.py"),
+                                   __path__=[str(stage / "tools")])),
+        ("tools.vps_release_identity",
+         SimpleNamespace(__file__=str(stage / "tools/vps_release_identity.py"))),
+    )
+    options = {"parent": parent, "trusted_uid": os.geteuid()}
+    assert maintenance._verified_staged_module_bootstrap(
+        target, stage, modules, **options,
+    )
+    # The approved stage alone is not sufficient: mixed or untracked modules
+    # and a mutated tracked checkout cannot bootstrap runtime actions.
+    assert not maintenance._verified_staged_module_bootstrap(
+        target, stage, modules + (
+            ("tools.untracked",
+             SimpleNamespace(__file__=str(stage / "tools/untracked.py"))),
+        ), **options,
+    )
+    assert not maintenance._verified_staged_module_bootstrap(
+        target, stage, (("__main__", SimpleNamespace(
+            __file__=str(installed / "tools/paper_maintenance.py"))),),
+        **options,
+    )
+    git("remote", "set-url", "origin", "https://example.invalid/untrusted")
+    assert not maintenance._verified_staged_module_bootstrap(
+        target, stage, modules, **options,
+    )
+    git("remote", "set-url", "origin", "https://github.com/svobodaXXI/BybitScanner.git")
+    (stage / "tools/paper_maintenance.py").write_text("# changed post-checkout\n")
+    assert not maintenance._verified_staged_module_bootstrap(
+        target, stage, modules, **options,
+    )
+
+
+def test_verified_stage_module_bootstrap_rejects_writable_parent(
+    tmp_path, monkeypatch,
+):
+    from tools import paper_maintenance as maintenance
+
+    parent = tmp_path / "staging"
+    parent.mkdir(mode=0o777)
+    parent.chmod(0o777)
+    target = "a" * 40
+    stage = parent / ("bybitscanner-stage-git-" + target)
+    stage.mkdir()
+    assert not maintenance._verified_staged_module_bootstrap(
+        target, stage, (), parent=parent, trusted_uid=os.geteuid(),
+    )
+
+
+def test_verified_stage_can_dispatch_gitless_update_without_wrong_root(
+    monkeypatch, tmp_path, capsys,
+):
+    from tools import paper_maintenance as maintenance
+
+    installed = tmp_path / "installed"
+    installed.mkdir()
+    target = "a" * 40
+    stage = tmp_path / ("bybitscanner-stage-git-" + target)
+    called = []
+    monkeypatch.setattr(maintenance, "REPO", installed)
+    monkeypatch.setattr(maintenance, "_verified_staged_module_bootstrap",
+                        lambda *_a, **_kw: True)
+    monkeypatch.setattr(maintenance, "deploy_staged_editor_only",
+                        lambda *_a, **_kw: (called.append("deploy"),
+                                           "READY: EDITOR_ONLY")[1])
+    assert maintenance.main([
+        target, "--staged-gitless-editor-only", str(stage),
+    ]) == 0
+    assert called == ["deploy"]
+    assert "READY: EDITOR_ONLY" in capsys.readouterr().out
+
+
 def test_wrong_staging_module_root_refuses_before_any_gitless_action(
     monkeypatch, tmp_path, capsys,
 ):
