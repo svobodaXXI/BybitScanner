@@ -67,6 +67,20 @@ class HistoricalBookTests(unittest.TestCase):
             typ="delta", at=1060, u=2, seq=26, bids=[], asks=[],
         )).update_id, 2)
 
+    def test_missing_update_id_blocks_book_without_mutating_prior_state(self):
+        book = HistoricalBybitOrderBook(symbol="ICNTUSDT")
+        initial = book.apply(frame())
+        with self.assertRaisesRegex(ValueError, "update ID gap"):
+            book.apply(frame(
+                typ="delta", at=1020, u=12, seq=21,
+                bids=[["0.2901", "2"]], asks=[],
+            ))
+        after = book.apply(frame(
+            typ="delta", at=1030, u=11, seq=22, bids=[], asks=[],
+        ))
+        self.assertEqual(after.best_bid, initial.best_bid)
+        self.assertEqual(after.update_id, 11)
+
     def test_pinned_jsonl_needs_snapshot_at_or_before_start(self):
         with TemporaryDirectory() as td:
             path = Path(td) / "orderbook.jsonl"
