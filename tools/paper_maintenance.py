@@ -2264,6 +2264,81 @@ def _recover_active_ingress_overflow(
         return "BLOCKED: active_PAPER_recovery_preflight_or_transition_unproven; no_replay"
 
 
+def _verified_staged_module_bootstrap(
+    target: str, stage: Path, modules: tuple, *,
+    parent: Path = Path("/var/lib"), trusted_uid: int = 0,
+) -> bool:
+    """Allow target code before switch ONLY from an exact root-owned Git worktree.
+
+    The installed release remains the runtime owner. This proves the executable
+    source and all loaded project modules, not the outcome of a prior STOP.
+    """
+    from tools.vps_release_identity import (
+        ReleaseIdentityBlocked, create_manifest, verify_release,
+    )
+
+    try:
+        if (os.geteuid() != trusted_uid or len(target) != 40
+                or any(ch not in "0123456789abcdef" for ch in target)
+                or stage != parent / ("bybitscanner-stage-git-" + target)
+                or not parent.is_dir() or parent.is_symlink()
+                or not stage.is_dir() or stage.is_symlink()):
+            return False
+        for path in (parent, stage, stage / ".git"):
+            meta = path.lstat()
+            if (stat.S_ISLNK(meta.st_mode) or meta.st_uid != trusted_uid
+                    or meta.st_mode & 0o022):
+                return False
+        # This route is for the exact prepared Git worktree, not an arbitrary
+        # copied checkout or a synthetic .git directory.
+        if not (stage / ".git").is_file():
+            return False
+        installed = verify_release(REPO)
+        if installed == target:
+            return False
+        verified = create_manifest(stage, target)
+        tracked = verified["blobs"]
+        if not {"tools/paper_maintenance.py", "tools/vps_release_identity.py",
+                "tools/vps_gitless_release_activate.py",
+                "tools/stop_robot_runtime.py"}.issubset(tracked):
+            return False
+        result = subprocess.run(
+            ["git", "-C", str(stage), "remote", "get-url", "origin"],
+            capture_output=True, text=True, timeout=15, check=False,
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+        )
+        if (result.returncode or result.stdout.strip() not in (
+                "https://github.com/svobodaXXI/BybitScanner",
+                "https://github.com/svobodaXXI/BybitScanner.git",
+                "git@github.com:svobodaXXI/BybitScanner.git",
+                "ssh://git@github.com/svobodaXXI/BybitScanner.git",
+        )):
+            return False
+        for name, module in modules:
+            path = getattr(module, "__file__", None)
+            if path is None:
+                # Namespace packages must also be confined to this checkout.
+                if (name not in ("tools", "terminal")
+                        or tuple(Path(p).resolve() for p in
+                                 getattr(module, "__path__", ()))
+                            != (stage / name,)):
+                    return False
+                continue
+            origin = Path(path).resolve()
+            relative = origin.relative_to(stage).as_posix()
+            if relative not in tracked:
+                return False
+            if name in ("tools", "terminal") and hasattr(module, "__path__"):
+                if tuple(Path(p).resolve() for p in module.__path__) != (
+                    stage / name,
+                ):
+                    return False
+        return True
+    except (OSError, ValueError, KeyError, TypeError, AttributeError,
+            subprocess.SubprocessError, ReleaseIdentityBlocked):
+        return False
+
+
 def _prepare_approved_editor_stage(
     target: str, *, root: Path = REPO, parent: Path = Path("/var/lib"),
     runner=subprocess.run, trusted_uid: int = 0,
@@ -2734,14 +2809,25 @@ def main(argv=None) -> int:
     ):
         parser.error("confirmed STOP continuation requires only exact Gitless staging")
     if args.staged_gitless_editor_only and REPO.is_dir():
-        # Fail before preflight/STOP if Python imported tools from the target
-        # staging checkout instead of the installed Gitless release.
+        # Source must be consistently loaded from the installed release OR
+        # from the exact root-owned/stable target worktree. The latter allows
+        # new recovery code to run before the old Gitless release is switched,
+        # without importing mixed code or modifying the running Backend.
         from tools import vps_gitless_release_activate, vps_release_identity
-        modules = (sys.modules[__name__], vps_gitless_release_activate,
-                   vps_release_identity)
+        project_modules = tuple(
+            (name, mod) for name, mod in sys.modules.items()
+            if (name in ("tools", "terminal")
+                or name.startswith(("tools.", "terminal.")))
+        )
+        modules = ((sys.modules[__name__], vps_gitless_release_activate,
+                    vps_release_identity))
         if any(Path(mod.__file__).resolve().parents[1] != REPO for mod in modules):
-            print("BLOCKED: wrong_Gitless_module_root; invoke installed /opt/BybitScanner")
-            return 2
+            if not _verified_staged_module_bootstrap(
+                args.sha, args.staged_gitless_editor_only,
+                (("__main__", sys.modules[__name__]),) + project_modules,
+            ):
+                print("BLOCKED: wrong_Gitless_module_root; unverified target stage")
+                return 2
     # A sealed build staged with the Gitless release belongs to the same
     # owner-approved monolith operation; it needs no second frontend command.
     if args.staged_gitless_editor_only is not None and args.frontend_bundle is None:
