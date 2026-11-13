@@ -175,6 +175,8 @@ class WedgeVisualReplay:
             session.account.simulation_run_id != self.run_id
         ):
             raise ValueError("visual replay changed SIMULATION identity")
+        if (session.exchange.execution_mode == "HISTORICAL_L2") != self._historical_l2:
+            raise ValueError("legacy M1 visual cannot mislabel L2 event-time fills")
         robot = session.wedge_robot
         if robot is None and self._impulse_plans is None:
             raise ValueError("visual replay requires committed Wedge or impulse Robot")
