@@ -104,7 +104,10 @@ def _classified_finrez_episodes(
     Unknown origin is excluded as explicitly incomplete coverage rather than
     guessed. A proven robot OPEN with manual INCREASE(s) and robot CLOSE
     is a shared-management economic episode, never attributed to either
-    controller's autonomous totals. Other known mixed episodes stay blocked.
+    controller's autonomous totals. Other fully proven mixed episodes with
+    a valid OPEN/INCREASE/REDUCE/CLOSE lifecycle also belong to joint management.
+    Incomplete origin, invalid lifecycle, or cross-account evidence stays blocked
+    or explicitly excluded; per-controller realized PnL is never invented.
     """
     robot: list[TradeEpisode] = []
     manual: list[TradeEpisode] = []
@@ -176,6 +179,23 @@ def _classified_finrez_episodes(
             and all(
                 controller == "ROBOT" or allocation.role is AllocationRole.INCREASE
                 for controller, allocation in zip(attributed, episode.allocations)
+            )
+        ):
+            joint.append(episode)
+        elif (
+            # Fully attributable mixed owners may have a MANUAL OPEN followed
+            # by a ROBOT increase/close, or alternating manual/robot adds,
+            # reductions and final CLOSE. The net realized PnL is economic
+            # for the entire episode, NOT separable by execution controller.
+            # This is read-only classification; source allocations stay intact.
+            episode.is_closed
+            and owners == {"ROBOT", "MANUAL"}
+            and len(episode.allocations) >= 2
+            and episode.allocations[0].role in {AllocationRole.OPEN, AllocationRole.REVERSAL_OPEN}
+            and episode.allocations[-1].role is AllocationRole.CLOSE
+            and all(
+                allocation.role in {AllocationRole.INCREASE, AllocationRole.REDUCE}
+                for allocation in episode.allocations[1:-1]
             )
         ):
             joint.append(episode)
