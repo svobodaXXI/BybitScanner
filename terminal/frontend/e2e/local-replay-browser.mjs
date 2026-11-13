@@ -441,7 +441,7 @@ try {
     if (query.get("symbol") === "ICNTUSDT") {
       assert.equal(query.has("strategies"), false);
       const first = Date.UTC(2026, 10, 10, 8, 0);
-      const events = Array.from({ length: 300 }, (_, i) => {
+      const events = Array.from({ length: 301 }, (_, i) => {
         const start_ms = first - 86_400_000 + i * 300_000;
         return {
           source: "SIMULATION", simulation_run_id: "browser_public_context",
