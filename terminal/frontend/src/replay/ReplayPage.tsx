@@ -899,7 +899,7 @@ export function ReplayPage() {
         setL2Context(candles);
         setL2ContextStatus("Публичная M5-предыстория: " + candles.length +
           " закрытых свечей · только для графика, L2/P&L неизменны");
-      } catch (error) {
+      } catch {
         if (!controller.signal.aborted) setL2ContextStatus(
           "Публичная предыстория недоступна; исходный L2-отчёт не изменён");
       }
