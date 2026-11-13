@@ -9,6 +9,7 @@ import {
   type ReplayDocument, type ReplayEvent, type PublicScannerObservation,
 } from "./replayModel";
 import { visibleExecutionMarkers, visibleStopAmendMarkers, TELEGRAM_BUY_COLOR, TELEGRAM_SELL_COLOR } from "./executionMarkers";
+import { parseLocalReplayUpload } from "./l2ReplayUpload";
 import {
   matchPaperFactsToMarket, parsePaperEpisodeFacts, revealedPaperMarkers,
   type PaperEpisodeFacts, type PaperOverlay,
@@ -886,12 +887,12 @@ export function ReplayPage() {
     try {
       if (file.size > 24 * 1024 * 1024) throw new Error("Файл больше 24 МБ");
       const data: unknown = JSON.parse(await file.text());
-      const parsed = parseReplayDocument(data);
+      const parsed = parseLocalReplayUpload(data);
       setDocument(parsed);
       setSimulationGraphPending(false);
-      // Manual import also replaces the market selection, never leave stale
-      // BTC/date controls beside an imported GRASSUSDT archive.
-      if (parsed.mode === "MARKET_ONLY") syncImportedMarketSelection(parsed);
+      // Import always reflects the source's actual ticker: no stale symbol
+      // when opening an owner-selected offline L2 receipt.
+      if (parsed.symbol) syncImportedMarketSelection(parsed);
       setDrawings([]); setSelectedDrawing(null); setDrawingTool("crosshair");
       setCursor(0);
       setFileLabel(file.name);
