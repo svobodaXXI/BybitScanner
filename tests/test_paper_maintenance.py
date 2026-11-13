@@ -844,6 +844,189 @@ def test_staged_gitless_editor_rejected_stop_never_installs(monkeypatch, tmp_pat
 
 
 
+def test_known_paused_drain_is_sealed_waits_for_flat_and_resumes_once(monkeypatch, tmp_path):
+    import tools.paper_maintenance as maintenance
+    import tools.vps_release_identity as release
+    from tools.stop_robot_runtime import ShutdownResult, SafeStopError
+
+    target, old = "a" * 40, "b" * 40
+    root, stage, transactions = (
+        tmp_path / "installed", tmp_path / "stage", tmp_path / "transactions"
+    )
+    root.mkdir()
+    stage.mkdir()
+    monkeypatch.setattr(release, "verify_release", lambda *_a, **_k: old)
+    actions = []
+    closed = False
+
+    class Owner:
+        def __init__(self, **kwargs):
+            actions.append("observe")
+        def require_known_natural_drain_ready(self, expected_build_sha):
+            assert expected_build_sha == old
+            actions.append("read-only-gate")
+            if not closed:
+                raise SafeStopError("three protected positions remain")
+        def continue_known_natural_drain(self, expected_build_sha):
+            assert expected_build_sha == old
+            actions.append("remaining-phases-only")
+            return ShutdownResult("all", True, "Runtime STOPPED", runtime_stopped=True)
+
+    monkeypatch.setattr(maintenance, "RuntimeShutdown", Owner)
+    original = ShutdownResult(
+        "all", False, maintenance._NATURAL_DRAIN_REFUSAL,
+        ("autopilot:off", "scanner:stop", "robot:pause"),
+    )
+    def original_stop(_scope):
+        actions.append("canonical-stop")
+        return original
+    def installer(*_a, **kw):
+        actions.append("install")
+        assert kw["stopped_proof"].runtime_stopped is True
+        return "INSTALLED_STOPPED: exact"
+
+    kwargs = dict(
+        stage=stage, root=root, transactions=transactions,
+        trusted_uid=os.geteuid(),
+        preflight=lambda *_a, **_kw: actions.append("preflight"),
+        stop=original_stop,
+        installer=installer,
+        resume=lambda *_a, **_kw: "READY: EDITOR_ONLY",
+    )
+    first = maintenance.deploy_staged_editor_only(target, **kwargs)
+    assert first.startswith("BLOCKED: canonical_safe_stop_unproven:")
+    assert maintenance._known_drain_receipt(
+        transactions, target, old, phase="deferred", uid=os.geteuid()
+    )
+    assert not (transactions / (".stop-confirmed-" + target)).exists()
+    assert actions.count("canonical-stop") == 1
+    assert "install" not in actions
+
+    waiting = maintenance.deploy_staged_editor_only(target, **kwargs)
+    assert waiting.startswith("BLOCKED: known_natural_drain_not_quiescent")
+    assert actions.count("canonical-stop") == 1
+    assert not maintenance._known_drain_receipt(
+        transactions, target, old, phase="continuation-invoked", uid=os.geteuid()
+    )
+
+    closed = True
+    ready = maintenance.deploy_staged_editor_only(target, **kwargs)
+    assert ready == "READY: EDITOR_ONLY"
+    assert actions.count("canonical-stop") == 1
+    assert actions.count("remaining-phases-only") == 1
+    assert actions.count("install") == 1
+    assert maintenance._known_drain_receipt(
+        transactions, target, old, phase="continuation-invoked", uid=os.geteuid()
+    )
+    assert maintenance._known_drain_receipt(
+        transactions, target, old, phase="completed", uid=os.geteuid()
+    )
+    # Completion is independent of the failed original canonical STOP;
+    # an interrupted immutable installer may reattest stopped state from
+    # the sealed continuation proof without any Robot/Backend STOP replay.
+    assert not (transactions / (".stop-confirmed-" + target)).exists()
+    again = maintenance.deploy_staged_editor_only(target, **kwargs)
+    assert again == "READY: EDITOR_ONLY"
+    assert actions.count("canonical-stop") == 1
+    assert actions.count("remaining-phases-only") == 1
+    assert actions.count("install") == 2
+
+
+def test_known_drain_continuation_unknown_outcome_is_never_retried(monkeypatch, tmp_path):
+    import tools.paper_maintenance as maintenance
+    import tools.vps_release_identity as release
+    from tools.stop_robot_runtime import ShutdownResult
+
+    target, old = "a" * 40, "b" * 40
+    root, stage, journal = (
+        tmp_path / "installed", tmp_path / "stage", tmp_path / "journal"
+    )
+    root.mkdir()
+    stage.mkdir()
+    monkeypatch.setattr(release, "verify_release", lambda *_a, **_kw: old)
+    called = []
+
+    class Owner:
+        def __init__(self, **_kwargs):
+            pass
+        def require_known_natural_drain_ready(self, expected_build_sha):
+            assert expected_build_sha == old
+        def continue_known_natural_drain(self, expected_build_sha):
+            assert expected_build_sha == old
+            called.append("continuation")
+            raise OSError("response lost after possible Backend shutdown")
+
+    monkeypatch.setattr(maintenance, "RuntimeShutdown", Owner)
+    def stop(_scope):
+        called.append("canonical")
+        return ShutdownResult(
+            "all", False, maintenance._NATURAL_DRAIN_REFUSAL,
+            ("scanner:stop", "robot:pause"),
+        )
+    options = dict(
+        stage=stage, root=root, transactions=journal,
+        trusted_uid=os.geteuid(), preflight=lambda *_a, **_kw: None,
+        stop=stop, installer=lambda *_a, **_kw: pytest.fail("never install"),
+        resume=lambda *_a, **_kw: pytest.fail("never resume"),
+    )
+    assert maintenance.deploy_staged_editor_only(
+        target, **options
+    ).startswith("BLOCKED: canonical_safe_stop_unproven:")
+    first = maintenance.deploy_staged_editor_only(target, **options)
+    assert first.startswith("BLOCKED: known_natural_drain_continuation_unknown")
+    assert maintenance._known_drain_receipt(
+        journal, target, old, phase="continuation-invoked", uid=os.geteuid()
+    )
+    assert not maintenance._known_drain_receipt(
+        journal, target, old, phase="completed", uid=os.geteuid()
+    )
+    second = maintenance.deploy_staged_editor_only(target, **options)
+    assert second == "BLOCKED: known_natural_drain_continuation_already_invoked; no retry"
+    assert called == ["canonical", "continuation"]
+
+
+def test_known_drain_receipt_invalid_shape_cannot_resume(monkeypatch, tmp_path):
+    import tools.paper_maintenance as maintenance
+    import tools.vps_release_identity as release
+    from tools.stop_robot_runtime import ShutdownResult
+
+    target, old = "a" * 40, "b" * 40
+    root, stage, transactions = (
+        tmp_path / "installed", tmp_path / "stage", tmp_path / "transactions"
+    )
+    root.mkdir()
+    stage.mkdir()
+    monkeypatch.setattr(release, "verify_release", lambda *_a, **_kw: old)
+    steps = []
+
+    result = maintenance.deploy_staged_editor_only(
+        target, stage=stage, root=root, transactions=transactions,
+        trusted_uid=os.geteuid(),
+        preflight=lambda *_a, **_kw: None,
+        stop=lambda _scope: ShutdownResult(
+            "all", False, maintenance._NATURAL_DRAIN_REFUSAL,
+            ("backend:shutdown",),
+        ),
+        installer=lambda *_a, **_kw: pytest.fail("no install"),
+    )
+    assert result.startswith("BLOCKED: canonical_safe_stop_unproven")
+    assert not maintenance._known_drain_receipt(
+        transactions, target, old, phase="deferred", uid=os.geteuid()
+    )
+
+    marker = maintenance._known_drain_path(transactions, target, "deferred")
+    marker.symlink_to(tmp_path / "untrusted")
+    result = maintenance.deploy_staged_editor_only(
+        target, stage=stage, root=root, transactions=transactions,
+        trusted_uid=os.geteuid(),
+        preflight=lambda *_a, **_kw: None,
+        stop=lambda _scope: pytest.fail("no STOP replay"),
+        installer=lambda *_a, **_kw: pytest.fail("no install"),
+    )
+    assert result.startswith("BLOCKED:")
+    assert not (transactions / (".stop-confirmed-" + target)).exists()
+
+
 def test_staged_gitless_unknown_stop_never_replayed_without_install_journal(monkeypatch, tmp_path):
     from tools.paper_maintenance import deploy_staged_editor_only
     import tools.vps_release_identity as release
