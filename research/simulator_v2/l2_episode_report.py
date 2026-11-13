@@ -1,0 +1,124 @@
+"""Explain original event-time SIMULATION L2 fills episode by episode.
+
+Pure presentation of immutable virtual fills and recorded order events:
+no price inference, exchange-order assertion, ledger mutation, or IO.
+"""
+from __future__ import annotations
+
+from decimal import Decimal
+
+from research.simulator_v2.virtual_account import VirtualFill
+from research.simulator_v2.virtual_exchange import OrderEvent
+
+_FLAGS = {
+    "DEPTH_UNPROVEN": "ENTRY_DEPTH_UNPROVEN",
+    "STOP_TRIGGER_DEFERRED": "STOP_SETTLED_FROM_LATER_BOOK",
+}
+
+
+def _receipt_kind(fill_id: str) -> tuple[str, str]:
+    for suffix, kind in (
+        ("_stop_fill", "STOP"),
+        ("_take_fill", "TAKE"),
+        ("_fill", "ENTRY"),
+    ):
+        if fill_id.endswith(suffix) and len(fill_id) > len(suffix):
+            return fill_id[:-len(suffix)], kind
+    raise ValueError("unknown historical L2 fill identity")
+
+
+def episode_rows(
+    fills: tuple[VirtualFill, ...], events: tuple[OrderEvent, ...],
+) -> tuple[dict[str, object], ...]:
+    """Return virtual episodes; never label model fills as exchange executions.
+
+    Closed rows carry exact net PnL calculated from the immutable account
+    receipt prices/fees. An open episode has net PnL=None (no fabricated exit).
+    Flags are per originating order ID, not a guessed market timestamp range.
+    """
+    if not isinstance(fills, tuple) or not isinstance(events, tuple):
+        raise TypeError("immutable virtual receipts and events are required")
+    if len(fills) > 20_000 or len(events) > 50_000:
+        raise ValueError("bounded virtual episode audit required")
+    annotations: dict[str, set[str]] = {}
+    first_stop_trigger: dict[str, int] = {}
+    for event in events:
+        if not isinstance(event, OrderEvent):
+            raise ValueError("original virtual order events required")
+        flag = _FLAGS.get(event.kind)
+        if flag is not None:
+            annotations.setdefault(event.order_id, set()).add(flag)
+        if event.kind == "STOP_TRIGGER_DEFERRED":
+            first_stop_trigger.setdefault(event.order_id, event.virtual_time_ms)
+
+    entries: dict[str, VirtualFill] = {}
+    exits: dict[str, tuple[VirtualFill, str]] = {}
+    ordered: list[str] = []
+    for fill in fills:
+        if not isinstance(fill, VirtualFill):
+            raise ValueError("original virtual fills required")
+        order_id, kind = _receipt_kind(fill.fill_id)
+        if kind == "ENTRY":
+            if order_id in entries:
+                raise ValueError("duplicate L2 episode entry")
+            entries[order_id] = fill
+            ordered.append(order_id)
+            continue
+        entry = entries.get(order_id)
+        if (entry is None or order_id in exits or fill.quantity != entry.quantity
+                or fill.side == entry.side
+                or fill.virtual_time_ms < entry.virtual_time_ms):
+            raise ValueError("unpaired or inconsistent historical L2 exit")
+        exits[order_id] = (fill, kind)
+
+    rows: list[dict[str, object]] = []
+    for order_id in ordered:
+        entry = entries[order_id]
+        outcome = exits.get(order_id)
+        flags = sorted(annotations.get(order_id, ()))
+        reason = outcome[1] if outcome is not None else "OPEN"
+        if "STOP_SETTLED_FROM_LATER_BOOK" in flags and reason != "STOP":
+            raise ValueError("deferred STOP missing its matched STOP exit")
+        trigger = first_stop_trigger.get(order_id)
+        if outcome is None:
+            exit_ms = exit_price = exit_fee = gross = net = None
+            exit_fill_id = None
+            delay = None
+        else:
+            fill, _ = outcome
+            exit_ms, exit_price = fill.virtual_time_ms, str(fill.price)
+            exit_fee = str(fill.fee)
+            gross_pnl: Decimal = (
+                (fill.price - entry.price) * entry.quantity
+                if entry.side == "BUY" else
+                (entry.price - fill.price) * entry.quantity
+            )
+            gross, net = str(gross_pnl), str(gross_pnl - entry.fee - fill.fee)
+            exit_fill_id = fill.fill_id
+            delay = fill.virtual_time_ms - trigger if trigger is not None else None
+            if delay is not None and not 0 < delay <= 250:
+                raise ValueError("STOP settlement exceeds 250ms original model gate")
+        rows.append({
+            "order_id": order_id,
+            "direction": "LONG" if entry.side == "BUY" else "SHORT",
+            "entry_ms": entry.virtual_time_ms,
+            "entry_price": str(entry.price),
+            "entry_fee": str(entry.fee),
+            "quantity": str(entry.quantity),
+            "exit_reason": reason,
+            "exit_ms": exit_ms,
+            "exit_price": exit_price,
+            "exit_fee": exit_fee,
+            "gross_pnl_usdt": gross,
+            "net_pnl_usdt": net,
+            "stop_trigger_ms": trigger,
+            "deferred_stop_ms": delay,
+            "evidence_flags": flags,
+            "model_certainty": (
+                "CONDITIONAL_MODEL" if flags or outcome is None
+                else "MODEL_ONLY_NOT_REAL_EXCHANGE_FILL"
+            ),
+            "entry_fill_id": entry.fill_id,
+            "exit_fill_id": exit_fill_id,
+        })
+    return tuple(rows)
