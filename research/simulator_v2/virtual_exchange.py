@@ -678,9 +678,10 @@ class VirtualExchange:
                 (t.price <= plan.stop_price if is_long else t.price >= plan.stop_price)
             ]
             takes = [
-                t for t in trades if
-                (t.side == "Buy" and t.price > plan.take_price) if is_long else
-                (t.side == "Sell" and t.price < plan.take_price)
+                t for t in trades if (
+                    (t.side == "Buy" and t.price > plan.take_price) if is_long else
+                    (t.side == "Sell" and t.price < plan.take_price)
+                )
             ]
             if stops and takes:
                 raise ValueError("same-millisecond STOP/TAKE order is unproven")
