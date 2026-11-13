@@ -2179,9 +2179,74 @@ class _MaintenanceParser(argparse.ArgumentParser):
         self.exit(2, "BLOCKED: paper_maintenance_cli: " + message.replace("\n", " ")[:240] + "\n")
 
 
+
+def _stop_exact_installed_paper_once(
+    approved_sha: str, *, env_file: Path | None,
+) -> str:
+    """One canonical STOP of the *installed* release, never an update retry.
+
+    An uncompleted prior release STOP is a global fence. The lock is shared
+    with the immutable release coordinator; no second STOP is issued on an
+    unknown prior outcome. No private STOP shortcut or forced liquidation.
+    """
+    from tools.vps_gitless_release_activate import (
+        TRANSACTIONS, _trusted_file,
+    )
+    from tools.vps_release_identity import ReleaseIdentityBlocked, verify_release
+    try:
+        if (len(approved_sha) != 40
+                or any(ch not in "0123456789abcdef" for ch in approved_sha)
+                or os.geteuid() != 0):
+            return "BLOCKED: installed_STOP_requires_exact_SHA_and_root"
+        if verify_release(REPO) != approved_sha:
+            return "BLOCKED: installed_STOP_release_mismatch"
+        if (not TRANSACTIONS.is_dir() or TRANSACTIONS.is_symlink()
+                or TRANSACTIONS.stat().st_uid != 0
+                or TRANSACTIONS.stat().st_mode & 0o077):
+            return "BLOCKED: installed_STOP_release_journal_unproven"
+        descriptor = os.open(
+            TRANSACTIONS / ".release.lock", os.O_RDONLY | os.O_NOFOLLOW,
+        )
+        with os.fdopen(descriptor, "rb") as lock:
+            meta = os.fstat(lock.fileno())
+            if (not stat.S_ISREG(meta.st_mode) or meta.st_uid != 0
+                    or meta.st_mode & 0o077):
+                return "BLOCKED: installed_STOP_release_lock_unproven"
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            for marker in TRANSACTIONS.glob(".stop-invoked-*"):
+                previous = marker.name.removeprefix(".stop-invoked-")
+                if (len(previous) != 40
+                        or any(ch not in "0123456789abcdef" for ch in previous)
+                        or _trusted_file(marker, 0)
+                        != b"STOP_INVOKED; not install authorization\\n"):
+                    return "BLOCKED: installed_STOP_prior_intent_untrusted"
+                ready = TRANSACTIONS / previous / "editor-ready"
+                if ready.exists() or ready.is_symlink():
+                    if _trusted_file(ready, 0) == previous.encode("ascii"):
+                        continue
+                    return "BLOCKED: installed_STOP_prior_completion_untrusted"
+                if _proven_prior_exceptional_completion(
+                    TRANSACTIONS, previous, root=REPO, uid=0,
+                ):
+                    continue
+                return "BLOCKED: installed_STOP_prior_outcome_unproven; no_replay"
+            result = RuntimeShutdown(
+                root=REPO, env=_environment(env_file),
+            ).run(SCOPE_ALL)
+            if result.ok is True and result.runtime_stopped is True:
+                return "READY: canonical PAPER STOP proven; no update or restart"
+            reason = str(getattr(result, "message", "unknown"))
+            return ("BLOCKED: canonical_PAPER_STOP_unproven: "
+                    + " ".join(reason.split())[:240] + "; no retry")
+    except (ReleaseIdentityBlocked, OSError, ValueError, BlockingIOError):
+        return "BLOCKED: installed_STOP_preflight_or_lock_unproven; no STOP retry"
+
+
 def main(argv=None) -> int:
     parser = _MaintenanceParser(description="Fail-closed one-action PAPER maintenance")
     parser.add_argument("sha")
+    parser.add_argument("--action", choices=("stop", "start", "update", "update-and-start"),
+                        help="single owner action: canonical STOP, PAPER START, or exact stable UPDATE")
     parser.add_argument("--env-file", type=Path, default=Path("/etc/bybitscanner/paper.env"))
     parser.add_argument("--wait-seconds", type=float, default=0)
     parser.add_argument("--resume-installed-editor-only", action="store_true",
@@ -2209,9 +2274,29 @@ def main(argv=None) -> int:
     parser.add_argument("--expected-old-backend", metavar="SHA",
                         help="exact installed Backend observed at the failed STOP")
     args = parser.parse_args(argv)
+    if args.action is not None:
+        if (args.wait_seconds or args.resume_installed_editor_only
+                or args.update_editor_only_from_stable or args.staged_gitless_editor_only
+                or args.continue_confirmed_stop_only or args.start_paper_after_editor
+                or args.publish_frontend_only or args.frontend_bundle
+                or args.frontend_current_index_sha256 or args.dual_orphan_handoff_20261103
+                or args.proven_one_flat_orphan_handoff or args.resume_one_flat_from_prior_stop
+                or args.expected_old_backend):
+            parser.error("one action cannot combine with legacy lifecycle flags")
+        if args.action == "stop":
+            status = _stop_exact_installed_paper_once(args.sha, env_file=args.env_file)
+            print(status)
+            return 0 if status.startswith("READY:") else 2
+        owner_flags = (
+            ["--update-editor-only-from-stable"] if args.action.startswith("update")
+            else ["--resume-installed-editor-only"]
+        )
+        if args.action in ("start", "update-and-start"):
+            owner_flags.append("--start-paper-after-editor")
+        return main([args.sha, "--env-file", str(args.env_file), *owner_flags])
     if args.update_editor_only_from_stable:
         if (args.staged_gitless_editor_only or args.resume_installed_editor_only
-                or args.start_paper_after_editor or args.publish_frontend_only
+                or args.publish_frontend_only
                 or args.frontend_bundle or args.frontend_current_index_sha256
                 or args.dual_orphan_handoff_20261103
                 or args.proven_one_flat_orphan_handoff
@@ -2241,7 +2326,8 @@ def main(argv=None) -> int:
         frontend_flags = (["--frontend-bundle", str(bundle)]
                           if bundle is not None else [])
         return main([args.sha, "--env-file", str(args.env_file),
-                     *mode, *frontend_flags])
+                     *mode, *frontend_flags,
+                     *(["--start-paper-after-editor"] if args.start_paper_after_editor else [])])
     if args.continue_confirmed_stop_only and (
         not args.staged_gitless_editor_only or args.resume_installed_editor_only
         or args.start_paper_after_editor or args.publish_frontend_only
