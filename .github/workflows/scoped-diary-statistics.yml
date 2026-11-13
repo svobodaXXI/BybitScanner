@@ -35,7 +35,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install isolated test runner
-        run: python -m pip install pytest==8.4.2
+        run: python -m pip install pytest==8.4.2 requests
       - name: Validate code syntax
         run: python -m py_compile terminal/diary/scoped_statistics_archive.py terminal/diary/test_scoped_statistics_archive.py terminal/diary/scope_evidence.py terminal/diary/test_scope_evidence.py terminal/diary/scoped_statistics_reporter.py terminal/diary/test_scoped_statistics_reporter.py terminal/diary/wedge_lineage.py terminal/diary/test_wedge_lineage.py terminal/diary/test_scoped_statistics_http_route.py terminal/diary/ticker_finrez.py terminal/diary/test_ticker_finrez.py terminal/diary/test_ticker_finrez_http_route.py
       - name: Verify account/owner isolation and durable replay gates
