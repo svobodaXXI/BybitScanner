@@ -1447,10 +1447,19 @@ export function ReplayPage() {
           <PlayerIcon name="beginning" />
         </button>
         <button type="button" className="replay-player-button"
-          title={playbackComplete ? "Прогон завершён" : playing ? "Пауза" : "Пуск"}
-          aria-label={playbackComplete ? "Прогон завершён" : playing ? "Пауза" : "Пуск"}
-          disabled={(simulationGraphPending && (runLoading || !preparedRun)) || playbackComplete}
+          title={playbackComplete && !missingForPlay ? "Прогон завершён" : playing ? "Пауза" : "Пуск"}
+          aria-label={playbackComplete && !missingForPlay ? "Прогон завершён" : playing ? "Пауза" : "Пуск"}
+          disabled={(simulationGraphPending && (runLoading || !preparedRun)) || (playbackComplete && !missingForPlay)}
           onClick={() => {
+            if (missingForPlay) {
+              setPlaying(false);
+              setPlayMissingNotice("Данные для выбранного периода не подгружены: " +
+                selectedCoverage!.covered + "/" + selectedCoverage!.required +
+                " закрытых M5. Подгрузите недостающие данные с Bybit. " +
+                "Исходные L2-сделки сохранены.");
+              return;
+            }
+            setPlayMissingNotice("");
             if (simulationGraphPending) { setPlayRequestId(id => id + 1); return; }
             setPlaying(s => !s);
           }}>
@@ -1477,6 +1486,7 @@ export function ReplayPage() {
           <input type="range" min="1" max="60" value={rate} onChange={(e) => setRate(Number(e.target.value))} />
         </label>
             </div>
+            {playMissingNotice && <p role="alert" className="replay-playback-missing">{playMissingNotice}</p>}
           </div>
           <div className="replay-drawing-tools" role="group" aria-label="Инструменты рисования">
             {REPLAY_DRAWING_TOOLS.map(({ tool, label }) => (
