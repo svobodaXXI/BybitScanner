@@ -63,6 +63,7 @@ class WedgeBacktestResult:
     execution_model: str = "SIMULATION_OHLC_STOP_FIRST_NOT_REAL_BYBIT_FILLS"
     l2_source_sha256: str | None = None
     l2_unproven_entry_depth_count: int = 0
+    l2_deferred_stop_count: int = 0
     impulse_signals: int = 0
     impulse_risk_rejections: int = 0
     namespace: str = "SIMULATION"
@@ -91,8 +92,10 @@ class WedgeBacktestResult:
             "execution_model": self.execution_model,
             **({"l2_source_sha256": self.l2_source_sha256,
                  "l2_unproven_entry_depth_count": self.l2_unproven_entry_depth_count,
+                 "l2_deferred_stop_count": self.l2_deferred_stop_count,
                  "execution_certainty": (
-                     "PARTIAL_EXECUTION_UNPROVEN" if self.l2_unproven_entry_depth_count
+                     "CONDITIONAL_L2_DEPTH_OR_DEFERRED_STOP"
+                     if self.l2_unproven_entry_depth_count or self.l2_deferred_stop_count
                      else "CONDITIONAL_MODEL_NO_REAL_FILL_PROOF"
                  )}
                if self.l2_source_sha256 is not None else {}),
@@ -357,6 +360,8 @@ def run_verified_impulse_chunks(
     )
     if report.last_closed_ms != end_exclusive or report.first_open_ms > start_ms:
         raise ValueError("verified historical impulse trade window was not complete")
+    if session.exchange.l2_stop_pending:
+        raise ValueError("unresolved triggered STOP at selected L2 history end")
     return WedgeBacktestResult(
         report=replace(
             report, scenario_type=(
@@ -373,6 +378,7 @@ def run_verified_impulse_chunks(
         take_exits=sum(e.kind == "TAKE_FILLED" for e in session.exchange.events),
         pending_protection=session.exchange.active_protection is not None,
         l2_unproven_entry_depth_count=session.exchange.l2_unproven_entry_depth_count,
+        l2_deferred_stop_count=session.exchange.l2_deferred_stop_count,
         paper_flow_gate_enabled=True,
         paper_flow_rejected_retests=rejected,
         paper_flow_permitted_retests=permitted,
