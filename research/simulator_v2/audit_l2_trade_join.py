@@ -19,9 +19,11 @@ from typing import BinaryIO, Iterator
 from zipfile import ZipFile, BadZipFile, ZIP_DEFLATED, ZIP_STORED
 import argparse
 
-from research.simulator_v2.audit_l2_archive import (
-    DAY_BEGIN_MS, DAY_END_MS, SYMBOL, DEPTH,
-)
+# Standalone and offline: can be fetched as one immutable Python file to a PC.
+DAY_BEGIN_MS = 1794268800000
+DAY_END_MS = 1794355200000
+SYMBOL = "ICNTUSDT"
+DEPTH = 200
 
 L2_MAX_BYTES = 512_000_000
 TRADES_MAX_BYTES = 150_000_000
