@@ -52,6 +52,89 @@ TERMS = BoxSimulationRiskTerms(
 )
 
 
+def audit_simultaneous_mirror_evidence(
+    state: dict, conflicts: tuple[tuple[int, tuple[str, ...]], ...],
+) -> dict[str, object]:
+    """Post-replay proof from frozen native Scanner source, never a trade rank.
+
+    Do not use this diagnostic for Robot admission. A missing exact entry
+    or level remains unproven; never synthesize a level or a candidate.
+    """
+    entries = {
+        entry["entry_id"]: entry.get("terms")
+        for entry in state.get("standalone_entries", ())
+        if isinstance(entry, dict) and isinstance(entry.get("entry_id"), str)
+    }
+    levels = {
+        level["level_id"]: level
+        for level in state.get("registry", {}).get("levels", ())
+        if isinstance(level, dict) and isinstance(level.get("level_id"), str)
+    }
+    frequency: dict[str, int] = {}
+    minutes: list[dict[str, object]] = []
+    missing: set[str] = set()
+    seen: dict[str, dict[str, object]] = {}
+    for close_ms, entry_ids in conflicts:
+        evidence = []
+        for entry_id in entry_ids:
+            level_id = entry_id.split("@", 1)[0]
+            frequency[level_id] = frequency.get(level_id, 0) + 1
+            terms = entries.get(entry_id)
+            level = levels.get(level_id)
+            if (not isinstance(terms, dict) or not isinstance(level, dict)
+                    or not isinstance(terms.get("confirmation"), dict)
+                    or terms["confirmation"].get("close_time_ms") != close_ms
+                    or terms.get("level_id") != level_id
+                    or level.get("level_id") != level_id
+                    or level.get("confirmed_at_ms", close_ms + 1) > close_ms
+                    or terms.get("level_breakout_close_ms", close_ms + 1) > close_ms):
+                missing.add(entry_id)
+                continue
+            boundary = level.get("boundary") or {}
+            row = {
+                "entry_id": entry_id, "level_id": level_id,
+                "level_source": terms.get("level_source"),
+                "level_pattern": terms.get("level_pattern"),
+                "level_side": terms.get("level_side"),
+                "boundary_price": boundary.get("anchor_price"),
+                "boundary_slope_per_ms": boundary.get("slope_per_ms"),
+                "level_confirmed_at_ms": level.get("confirmed_at_ms"),
+                "breakout_close_ms": terms.get("level_breakout_close_ms"),
+                "breakout_direction": terms.get("level_breakout_direction"),
+                "trade_direction": terms.get("direction"),
+                "reference": terms.get("reference"),
+                "stop": terms.get("stop"),
+                "target": terms.get("target"),
+                "confirmation_kind": terms["confirmation"].get("kind"),
+            }
+            seen.setdefault(level_id, {k: v for k, v in row.items() if k != "entry_id"})
+            evidence.append(row)
+        same_side = len({p["level_side"] for p in evidence}) == 1 if evidence else None
+        same_breakout = (len({
+            (p["breakout_close_ms"], p["breakout_direction"])
+            for p in evidence
+        }) == 1) if evidence else None
+        minutes.append({
+            "closed_m1_time_ms": close_ms,
+            "candidate_count": len(entry_ids),
+            "proven_count": len(evidence),
+            "same_side": same_side if len(evidence) == len(entry_ids) else None,
+            "same_breakout": same_breakout if len(evidence) == len(entry_ids) else None,
+            "level_ids": [x["level_id"] for x in evidence],
+        })
+    return {
+        "ambiguous_minutes": len(conflicts),
+        "level_occurrences": dict(sorted(frequency.items())),
+        "source_level_proofs": [seen[key] for key in sorted(seen)],
+        "group_evidence": minutes,
+        "unproven_entries": sorted(missing),
+        "same_breakout_minutes": sum(x["same_breakout"] is True for x in minutes),
+        "distinct_breakout_minutes": sum(x["same_breakout"] is False for x in minutes),
+        "mixed_side_minutes": sum(x["same_side"] is False for x in minutes),
+        "no_priority_rule_inferred": True,
+    }
+
+
 def run_real_trade_day(
     archive: Path, *, one_filled_trade_per_campaign: bool = False,
     utc_day: date = DAY,
@@ -245,6 +328,9 @@ def run_real_trade_day(
                 for ts, ids in robot.mirror_ambiguous_research_events
             ],
             "research_skipped_ambiguous_minutes": len(robot.mirror_ambiguous_research_events),
+            "research_ambiguity_source_audit": audit_simultaneous_mirror_evidence(
+                state, robot.mirror_ambiguous_research_events,
+            ),
             "virtual_fills": len(session.account.fills),
             "trades_with_attested_entry": len(trades),
             "trades_closed": len(closed_trades),
