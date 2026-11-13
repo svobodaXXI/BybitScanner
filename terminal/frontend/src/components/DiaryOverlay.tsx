@@ -903,7 +903,7 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, onClearSymbolFil
   const selected = deals.find((deal) => deal.trade_episode_id === selectedId);
   const selectedSetup = selected ? setupFor(selected.trade_episode_id) : null;
   useEffect(() => {
-    const deal = deals.find((entry) => entry.trade_episode_id === selectedId);
+    const deal = report.closed_episodes?.find((entry) => entry.trade_episode_id === selectedId);
     setExecutionPoints([]);
     if (!deal) return;
     let active = true;
@@ -954,7 +954,7 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, onClearSymbolFil
       })
       .catch(() => { /* No synthetic market data on archive errors. */ });
     return () => { active = false; };
-  }, [selectedId, report.account_id, report.owner, report.source_revision, deals]);
+  }, [selectedId, report.account_id, report.owner, report.source_revision, report.closed_episodes]);
 
 
   async function downloadFacts(deal: ClosedEpisodeLocator) {
