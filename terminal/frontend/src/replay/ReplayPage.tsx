@@ -621,6 +621,7 @@ export function ReplayPage() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [l2Context, setL2Context] = useState<ReplayCandle[]>([]);
   const [l2After, setL2After] = useState<ReplayCandle[]>([]);
+  const [l2ContextFor, setL2ContextFor] = useState<ReplayDocument | null>(null);
   const [l2ContextStatus, setL2ContextStatus] = useState("");
   const historyRequest = useRef<AbortController | null>(null);
   const bundledRequest = useRef<AbortController | null>(null);
@@ -657,8 +658,9 @@ export function ReplayPage() {
   }, [runLoading]);
   // Do not mutate the original L2 document. Only the viewport/playback receives
   // a combined, read-only clock of source events and public post-range M5 closes.
+  const activeL2After = l2ContextFor === document ? l2After : [];
   const displayEvents = useMemo(
-    () => l2PresentationEvents(document, l2After), [document, l2After]);
+    () => l2PresentationEvents(document, activeL2After), [document, activeL2After]);
   const displayDocument = useMemo(
     () => displayEvents === document.events ? document :
       { ...document, events: displayEvents }, [document, displayEvents]);
@@ -877,6 +879,7 @@ export function ReplayPage() {
   // Public context is VISUAL ONLY and strictly precedes the first L2 M5.
   // It never enters document.events, the playback clock or accounting.
   useEffect(() => {
+    setL2ContextFor(null);
     setL2Context([]);
     setL2After([]);
     setL2ContextStatus("");
@@ -908,6 +911,7 @@ export function ReplayPage() {
         if (controller.signal.aborted) return;
         setL2Context(candles);
         setL2After(after);
+        setL2ContextFor(document);
         setL2ContextStatus("Публичная M5: " + candles.length +
           " до и " + after.length + " после исследуемого окна · только график; L2/P&L неизменны");
       } catch {
@@ -1370,7 +1374,7 @@ export function ReplayPage() {
                 {runLoading ? `Проверяю первые M1: ${runWaitingSeconds} с. Затем свечи появятся постепенно.` :
                   "График нового прогона появится после нажатия ▶"}
               </div>
-            : <ReplayChart document={displayDocument} cursor={cursor} prehistory={l2Context} paperOverlay={paperOverlay}
+            : <ReplayChart document={displayDocument} cursor={cursor} prehistory={l2ContextFor === document ? l2Context : []} paperOverlay={paperOverlay}
                 paperFacts={paperFacts} selectedStrategies={selectedStrategies.selected}
                 showTrendGeometry={showTrendGeometry}
                 showDebug={showDebug} timeframe={timeframe}
