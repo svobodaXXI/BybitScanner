@@ -1232,7 +1232,7 @@ function sumVerifiedPnl(values: string[]): string | null {
   });
   if (parts.some((part) => part === null)) return null;
   const parsed = parts as Array<{ coefficient: bigint; scale: number }>;
-  const scale = Math.max(0, ...parsed.map((part) => part.scale));
+  const scale = parsed.reduce((max, part) => Math.max(max, part.scale), 0);
   const total = parsed.reduce((sum, part) =>
     sum + part.coefficient * 10n ** BigInt(scale - part.scale), 0n);
   const digits = (total < 0n ? -total : total).toString().padStart(scale + 1, "0");
@@ -1294,7 +1294,7 @@ function PatternsView({ report, symbolFilter, onSelectPattern }: {
               return <div className="diary-finrez-row" key={JSON.stringify([row.pattern, row.cohort])}>
                 <div className="diary-pattern-label">
                   <strong title={row.pattern}>{row.pattern}</strong>
-                  <small>{dealLabels[row.cohort]} · {row.deals.length} сделок · {wins} прибыльных · {losses} убыточных</small>
+                  <small>{dealLabels[row.cohort]} · сделок: {row.deals.length} · прибыльных: {wins} · убыточных: {losses}</small>
                 </div>
                 <span title={pnl === null ? "Точная сумма недоступна" : pnl + " USDT"}
                   className={numeric > 0 ? "profit" : numeric < 0 ? "loss" : ""}>
