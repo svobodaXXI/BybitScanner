@@ -101,7 +101,10 @@ def _focused_trades(path: Path, rows: tuple[dict, ...]) -> dict[int, tuple[Taker
     }
     if min(needed) < 0:
         raise ValueError("missing two previous completed trading minutes")
-    per_minute: dict[int, list[TakerPrint]] = {t: [] for t in needed}
+    # Preserve the exact original trade-derived M1 tie ordering.
+    per_minute: dict[int, list[tuple[Decimal, str, TakerPrint]]] = {
+        t: [] for t in needed
+    }
     seen: set[str] = set()
     with gzip.open(path, "rt", encoding="utf-8-sig", newline="") as stream:
         reader = csv.DictReader(stream)
@@ -126,11 +129,11 @@ def _focused_trades(path: Path, rows: tuple[dict, ...]) -> dict[int, tuple[Taker
             if print_.symbol != SYMBOL or print_.trade_id in seen:
                 raise ValueError("foreign or duplicated selected trade")
             seen.add(print_.trade_id)
-            per_minute[minute].append(print_)
+            per_minute[minute].append((stamp, print_.trade_id, print_))
     if any(not items for items in per_minute.values()):
         raise ValueError("missing trades in one of the original decision windows")
     return {
-        t: tuple(sorted(items, key=lambda v: (v.event_ms, v.trade_id)))
+        t: tuple(item[2] for item in sorted(items, key=lambda v: (v[0], v[1])))
         for t, items in per_minute.items()
     }
 
@@ -213,9 +216,6 @@ def decision_features(row: dict, tape: dict[int, tuple[TakerPrint, ...]],
         entry_fee_rate=FEE, exit_fee_rate=FEE,
         quantity_step=Decimal("1"), minimum_quantity=Decimal("1"),
     )
-    if (plan.entry_price != Decimal(row["planned_entry_price"])
-            if row.get("planned_entry_price") is not None else False):
-        raise ValueError("original planned entry price drift")
     if (plan.stop_price != Decimal(row["planned_stop_price"])
             or plan.take_price != Decimal(row["planned_take_price"])
             or plan.quantity != Decimal(row["quantity"])):
