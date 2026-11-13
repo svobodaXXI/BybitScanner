@@ -3680,7 +3680,7 @@ def test_editor_update_cli_rejects_competing_mode_before_staging(monkeypatch):
                         lambda *_: pytest.fail("must not stage conflicting options"))
     with pytest.raises(SystemExit) as exc:
         maintenance.main(["a" * 40, "--update-editor-only-from-stable",
-                          "--start-paper-after-editor"])
+                          "--resume-installed-editor-only"])
     assert exc.value.code == 2
 
 
