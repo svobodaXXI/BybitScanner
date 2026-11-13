@@ -18,7 +18,7 @@ from typing import Callable, Iterable
 
 from research.historical_market_replay import Candle
 from robot_entry_flow_evidence import (
-    FlowTransition, OI_MODES, OpenInterestChange, ImpulseProtectedPlan,
+    FlowTransition, ImpulseSignal, OI_MODES, OpenInterestChange, ImpulseProtectedPlan,
     open_interest_asof, permits_paper_entry, recognize_impulse_signal,
     plan_impulse_protected_entry,
 )
@@ -260,6 +260,7 @@ def run_verified_impulse_chunks(
     oi_source_sha256: str | None = None,
     visual_recorder: WedgeVisualReplay | None = None,
     impulse_plans: dict[str, ImpulseProtectedPlan] | None = None,
+    on_eligible_impulse_signal: Callable[[ImpulseSignal], None] | None = None,
 ) -> WedgeBacktestResult:
     """Pure Scanner impulse + shared Robot risk → original protected venue.
 
@@ -274,6 +275,8 @@ def run_verified_impulse_chunks(
         raise ValueError("real taker flow callback and valid OI mode required")
     if oi_mode != "OFF" and oi_at_entry is None:
         raise ValueError("active OI filter requires original 5m OI")
+    if on_eligible_impulse_signal is not None and not callable(on_eligible_impulse_signal):
+        raise TypeError("diagnostic signal callback must be callable")
     if (risk_settings.entry_fee_rate < session.exchange.taker_fee_rate
             or risk_settings.exit_fee_rate < session.exchange.taker_fee_rate):
         raise ValueError("impulse risk fee assumptions must cover virtual venue taker fees")
@@ -292,6 +295,11 @@ def run_verified_impulse_chunks(
         # Last closed minute cannot submit a new order beyond this range.
         if signal is not None and candle.end_ms < end_exclusive:
             detected += 1
+            # Read-only diagnostic consumers see exactly the same eligible
+            # signal-time window as the Robot. The terminal close is observed
+            # by the flow detector but cannot submit a next-M1 entry.
+            if on_eligible_impulse_signal is not None:
+                on_eligible_impulse_signal(signal)
             if (active.exchange.pending is not None
                     or active.exchange.active_protection is not None
                     or active.account.snapshot(
@@ -368,6 +376,7 @@ def run_cached_wedge_trade_range(
     oi_mode: str = "OFF",
     oi_history_path: Path | None = None,
     impulse_mode: bool = False,
+    on_eligible_impulse_signal: Callable[[ImpulseSignal], None] | None = None,
 ) -> WedgeBacktestResult:
     """Offline Bybit public-trade M1 with an exact inclusive minute cutoff.
 
@@ -472,6 +481,7 @@ def run_cached_wedge_trade_range(
             start_ms=start_ms, end_inclusive_ms=end_inclusive_ms,
             risk_settings=risk_settings, flow_on_close=flow_callback,
             visual_recorder=recorder, impulse_plans=impulse_plans,
+            on_eligible_impulse_signal=on_eligible_impulse_signal,
             oi_mode=oi_mode, oi_at_entry=oi_at_entry,
             oi_source_sha256=oi_sha256,
         )
