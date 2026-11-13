@@ -828,6 +828,85 @@ describe("Finrez first-screen UI", () => {
     expect(await screen.findByText("Паттерн: Falling Wedge")).toBeInTheDocument();
   });
 
+  it("groups exact D2 patterns separately by management cohort and opens filtered deals", async () => {
+    const linked = (id: string, pattern: string, pnl_usdt: string,
+      cohort: "ROBOT" | "JOINT_MANAGEMENT" = "ROBOT", origin = "ROBOT") => ({
+      trade_episode_id: "te_" + id.repeat(24), symbol: "BTCUSDT", side: "LONG",
+      opened_at_ms: 1_793_001_000_000, closed_at_ms: 1_793_002_000_000,
+      pnl_usdt, execution_count: 2, cohort, replay_evidence: "EPISODE_INDEX_ONLY",
+      opening_controller: "ROBOT",
+      setup_context: {
+        status: "EXACT_D2_LINK", source: "TRADING_DIARY_D2",
+        consistency: "INDEPENDENT_READ_SNAPSHOT_NOT_ATOMIC_WITH_PAPER",
+        decision_scope: "D2_OBSERVATIONS_NOT_ROBOT_RUNTIME_LOG",
+        setup: {
+          setup_id: "candidate-" + id, symbol: "BTCUSDT", direction: "LONG",
+          origin, pattern, timeframe: "5", strategy_version: "v1",
+          created_at_ms: 1_793_000_000_000,
+        },
+      },
+    });
+    const deals = [
+      linked("a", "Falling Wedge", "-2.5012345678"),
+      linked("b", "Falling Wedge", "1.1"),
+      linked("c", "Falling Wedge", "20.2", "JOINT_MANAGEMENT"),
+      linked("d", "Triangle Compression", "3"),
+      linked("e", "Falling Wedge", "-999", "ROBOT", "TERMINAL_MANUAL"),
+    ];
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => new Response(JSON.stringify({
+      ...finrezResponse,
+      period: (new URL(url, "http://localhost").searchParams.get("period") ?? "DAY"),
+      closed_episodes: deals,
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<DiaryOverlay accountKey="paper:patterns" initialSection="PATTERNS"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    const region = await screen.findByRole("region", { name: "Паттерны по подтверждённым сделкам" });
+    expect(region).toHaveTextContent("Паттерн подтверждён для 4 из 5");
+    expect(region).toHaveTextContent("Робот · 2 сделок · 1 прибыльных · 1 убыточных");
+    expect(screen.getByTitle("-1.4012345678 USDT")).toHaveTextContent("-1,4012 USDT");
+    expect(screen.getByTitle("20.2 USDT")).toHaveTextContent("+20,20 USDT");
+    expect(screen.queryByTitle("-999 USDT")).not.toBeInTheDocument();
+    const openWedge = screen.getAllByRole("button", { name: "Показать все сделки по паттерну Falling Wedge" });
+    expect(openWedge).toHaveLength(2);
+    fireEvent.click(openWedge[0]);
+    expect(screen.getByRole("searchbox", { name: "Поиск по паттерну" })).toHaveValue("Falling Wedge");
+    expect(await screen.findAllByText("Паттерн: Falling Wedge")).toHaveLength(3);
+    expect(screen.queryByText("Паттерн: Triangle Compression")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Неделя" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=WEEK",
+    ));
+    expect(screen.getByRole("searchbox", { name: "Поиск по паттерну" })).toHaveValue("Falling Wedge");
+  });
+
+  it("never shows an unknown pattern as a zero result and respects ticker filtering", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ...finrezResponse,
+      closed_episodes: [{
+        trade_episode_id: "te_" + "f".repeat(24), symbol: "BTCUSDT", side: "SHORT",
+        opened_at_ms: 1_793_001_000_000, closed_at_ms: 1_793_002_000_000,
+        pnl_usdt: "-50.001", execution_count: 2, cohort: "ROBOT",
+        replay_evidence: "EPISODE_INDEX_ONLY",
+      }],
+      attribution_coverage: {
+        status: "PARTIAL", excluded_unattributed_episode_count: 1,
+        excluded_unattributed_execution_count: 2,
+      },
+    }), { status: 200 })));
+    render(<DiaryOverlay accountKey="paper:unverified-patterns" initialSection="PATTERNS"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    const region = await screen.findByRole("region", { name: "Паттерны по подтверждённым сделкам" });
+    expect(region).toHaveTextContent("Паттерн подтверждён для 0 из 1");
+    expect(region).toHaveTextContent("неполное покрытие атрибуции");
+    expect(region).toHaveTextContent("Нет сделок с подтверждённым паттерном");
+    expect(region).not.toHaveTextContent("0 USDT");
+    fireEvent.change(screen.getByRole("searchbox", { name: "Поиск по тикеру" }), {
+      target: { value: "ETH" },
+    });
+    expect(region).toHaveTextContent("Паттерн подтверждён для 0 из 0");
+  });
+
   it("shows the ticker ranking with five periods, reuses the Diary modal and defers other sections", async () => {
     const fetchMock = vi.fn().mockImplementation(async (url: string) => new Response(JSON.stringify({
       ...finrezResponse,
@@ -852,7 +931,7 @@ describe("Finrez first-screen UI", () => {
     fireEvent.click(screen.getByRole("button", { name: "Всё время" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=ALL"));
     fireEvent.click(screen.getByRole("button", { name: "Паттерны" }));
-    expect(await screen.findByText(/Паттерны — второй этап/)).toBeInTheDocument();
+    expect(await screen.findByText(/Нет сделок с подтверждённым паттерном/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Сделки" }));
     expect(await screen.findByText(/Нет подтверждённых закрытых сделок/)).toBeInTheDocument();
   });
