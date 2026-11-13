@@ -1234,7 +1234,7 @@ export function ReplayPage() {
         </div>
       </header>
 
-      <RunSetupPanel symbol={symbol} importedCoordinates={importedCoordinates}
+      <RunSetupPanel symbol={symbol} importedL2={document.execution_clock === "ORIGINAL_EVENT_TIME_NOT_OHLC_M1"} importedCoordinates={importedCoordinates}
         importControls={importControls} onArchiveSymbol={acceptArchiveSymbol}
         onPasteSymbol={onPasteSymbol} onSimulationStart={onSimulationStart}
         onSimulationReady={onSimulationReady} onSimulationAppend={onSimulationAppend}
