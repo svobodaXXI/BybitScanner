@@ -343,7 +343,12 @@ class ConnectedSimulationRobot:
         mirror_risk_limit_usdt: Decimal | None = None,
         mirror_auto_scan: bool = False,
         mirror_one_filled_trade_per_campaign: bool = False,
+        mirror_research_skip_ambiguous: bool = False,
     ) -> None:
+        if type(mirror_research_skip_ambiguous) is not bool:
+            raise TypeError("research-only ambiguous event gate must be boolean")
+        if mirror_research_skip_ambiguous and not mirror_auto_scan:
+            raise ValueError("research-only ambiguity filter requires automatic local replay")
         if type(mirror_one_filled_trade_per_campaign) is not bool:
             raise TypeError("experimental MIRROR one-fill gate requires a boolean")
         if mirror_one_filled_trade_per_campaign and not mirror_auto_scan:
@@ -384,6 +389,8 @@ class ConnectedSimulationRobot:
         self._mirror_one_fill_experiment = mirror_one_filled_trade_per_campaign
         self._mirror_consumed_campaigns: set[tuple[str, int]] = set()
         self._mirror_experiment_suppressed: list[str] = []
+        self._mirror_research_skip_ambiguous = mirror_research_skip_ambiguous
+        self._mirror_ambiguous_research_events: list[tuple[int, tuple[str, ...]]] = []
         self._completed_market_ids: set[str] = set()
         self._temporary = TemporaryDirectory(prefix="bybitscanner-simulation-box-")
         self._store_path = Path(self._temporary.name) / "simulation.sqlite3"
@@ -580,6 +587,10 @@ class ConnectedSimulationRobot:
     @property
     def mirror_experiment_suppressed(self) -> tuple[str, ...]:
         return tuple(self._mirror_experiment_suppressed)
+
+    @property
+    def mirror_ambiguous_research_events(self) -> tuple[tuple[int, tuple[str, ...]], ...]:
+        return tuple(self._mirror_ambiguous_research_events)
 
     def admit_mirror(self, source_state: dict, *, entry_id: str) -> str:
         """Admit one exact native Scanner confirmation to the private Robot.
@@ -922,9 +933,17 @@ class ConnectedSimulationRobot:
                 now_ms=self.virtual_clock_ms(),
             )
             if len(discovered) > 1:
-                raise SimulationExecutionNotConnected(
-                    "simultaneous native MIRROR confirmations have no proven priority"
+                if not self._mirror_research_skip_ambiguous:
+                    raise SimulationExecutionNotConnected(
+                        "simultaneous native MIRROR confirmations have no proven priority"
+                    )
+                # Research-only fail-closed exclusion: no candidate is
+                # chosen, submitted, or retrospectively filled. Both
+                # counterfactual variants exclude exactly the same group.
+                self._mirror_ambiguous_research_events.append(
+                    (self.virtual_clock_ms(), tuple(discovered)),
                 )
+                return
             if discovered and self.can_admit:
                 source_state = mirror_scanner.load_state(
                     self.session.account.symbol, "5", self._mirror_root,
