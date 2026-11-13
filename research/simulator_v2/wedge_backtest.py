@@ -540,7 +540,14 @@ def run_cached_wedge_trade_range(
                 bucket = tuple(same_ms)
                 kinds = {item[1] for item in bucket}
                 if len(kinds) != 1:
-                    raise ValueError("same-ms L2/taker chronology unproven")
+                    # A tie is unsafe ONLY if either channel ordering could
+                    # change a virtual fill. Fail closed on actionable ties;
+                    # preserve inert original trades for the Scanner's M1 flow.
+                    active.exchange.on_historical_same_ms_inert_bucket(
+                        books=tuple(data for _, kind, data in bucket if kind == "BOOK"),
+                        trades=tuple(data for _, kind, data in bucket if kind == "TRADE"),
+                    )
+                    continue
                 if "BOOK" in kinds:
                     for _, _, data in bucket:
                         active.exchange.on_historical_book(data)
