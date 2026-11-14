@@ -943,14 +943,24 @@ try {
   const seek = page.getByRole("slider",{name:"Перемотка воспроизведения"});
   await seek.focus();
   await seek.press("End");
-  await page.waitForFunction(() =>
-    document.querySelector(".replay-execution-overlay")?.dataset.visibleFills === "8");
+  const fineState = async () => page.evaluate(() => ({
+    fills:document.querySelector(".replay-execution-overlay")?.dataset.visibleFills,
+    timeframe:document.querySelector(".replay-chart-shell")?.dataset.chartTimeframe,
+    bars:document.querySelector(".replay-chart-shell")?.dataset.displayedCandles,
+    seek:document.querySelector(".replay-seek")?.value,
+    seekMax:document.querySelector(".replay-seek")?.max,
+    meta:document.querySelector(".replay-meta")?.textContent?.slice(0,350),
+  }));
+  await page.waitForTimeout(500);
+  assert.equal((await fineState()).fills,"8",
+    "M1 visual-marker evidence: "+JSON.stringify(await fineState()));
   assert.match(await page.locator(".replay-meta").innerText(),/4 \/ 4/,
     "M1 displays all original L2 event-time fills, not re-simulated fills");
   await page.getByRole("button",{name:"15S",exact:true}).click();
   assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-chart-timeframe"),"15s");
-  await page.waitForFunction(() =>
-    document.querySelector(".replay-execution-overlay")?.dataset.visibleFills === "8");
+  await page.waitForTimeout(500);
+  assert.equal((await fineState()).fills,"8",
+    "15S visual-marker evidence: "+JSON.stringify(await fineState()));
   assert.match(await page.locator(".replay-meta").innerText(),/4 \/ 4/,
     "15S displays the SAME frozen original L2 event-time entries and exits");
   assert.equal(fineUploads,1,"Switching M1 to 15S must not re-upload source trades");
