@@ -1651,6 +1651,35 @@ describe("Verified Wedge lineage in Statistics", () => {
     expect(screen.queryByText("Версия стратегии")).not.toBeInTheDocument();
   });
 
+  it("requests an immutable original chart only for exact Robot Wedge lineage", async () => {
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+      if (url.startsWith("/api/workspace/signal-geometry")
+          || url.startsWith("/api/diary/episode-facts"))
+        return new Response("", { status: 404 });
+      return new Response(JSON.stringify(mockReport([deal])), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const view = render(<DiaryOverlay accountKey="paper:source-chart" initialSection="DEALS"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: /BTCUSDT/ }));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) =>
+      String(url) === "/api/workspace/signal-geometry?signal_id=candidate-42")).toBe(true));
+    expect(screen.getByText("Свечной график · исходный сигнал Робота")).toBeInTheDocument();
+    view.unmount();
+
+    fetchMock.mockClear();
+    const unproven = { ...deal, verified_signal: { ...verified, source_revision: 99 } };
+    fetchMock.mockImplementation(async (url: string) =>
+      new Response(JSON.stringify(mockReport([unproven])), { status: 200 }));
+    render(<DiaryOverlay accountKey="paper:source-chart-unproven" initialSection="DEALS"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: /BTCUSDT/ }));
+    expect(await screen.findByText(/нет доказанной связи сделки с исходным сигналом/))
+      .toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([url]) =>
+      String(url).startsWith("/api/workspace/signal-geometry"))).toBe(false);
+  });
+
   it("rejects mismatched or unproven Wedge metadata, preserving actual PnL", async () => {
     const changes = [
       { source_revision: 4 }, { trade_episode_id: "te_" + "b".repeat(24) },
