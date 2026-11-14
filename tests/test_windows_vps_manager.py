@@ -9,7 +9,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from tools.windows_vps_manager import ACTIONS, VPSManager, parse_args, ssh_command
+from tools.windows_vps_manager import (ACTIONS, VPSManager, control_ssh_command,
+                                       preferred_route, parse_args, ssh_command)
 
 
 class TestWindowsVpsManager(unittest.TestCase):
@@ -160,6 +161,62 @@ class TestWindowsVpsManager(unittest.TestCase):
             with self.subTest(hostname=hostname, user=user):
                 with self.assertRaises(ValueError):
                     ssh_command(hostname, user, "Состояние")
+
+
+    def test_owner_controls_share_validated_ssh_route_with_read_only_manager(self):
+        request = "1" * 32
+        cmd = control_ssh_command("bybitscanner-vps", "", "", "update",
+                                  sha="a" * 40, request_id=request,
+                                  origin="win-OWNER-PC")
+        self.assertEqual(cmd[-2], "bybitscanner-vps")
+        self.assertIn("BatchMode=yes", cmd)
+        self.assertIn("StrictHostKeyChecking=yes", cmd)
+        self.assertIn("tools.vps_owner_control submit update", cmd[-1])
+        self.assertIn("--request-id " + request, cmd[-1])
+        self.assertIn("win-OWNER-PC", cmd[-1])
+        start = control_ssh_command("bybitscanner-vps", "", "", "start",
+                                    sha="installed", request_id=request)
+        self.assertIn("submit start installed", start[-1])
+        self.assertIn("tools.vps_owner_control status " + request,
+                      control_ssh_command("bybitscanner-vps", "", "", "status",
+                                          request_id=request)[-1])
+
+    def test_owner_control_blocks_injection_and_unapproved_target(self):
+        for name, args in (
+            ("missing_sha", dict(operation="update", sha="", request_id="1"*32)),
+            ("bad_sha", dict(operation="update", sha="x"*40, request_id="1"*32)),
+            ("bad_request", dict(operation="stop", sha="installed", request_id="bad")),
+            ("bad_mode", dict(operation="reset", sha="a"*40, request_id="1"*32)),
+            ("bad_origin", dict(operation="start", sha="installed", request_id="1"*32,
+                                origin="win; echo bad")),
+        ):
+            with self.subTest(name=name):
+                with self.assertRaises(ValueError):
+                    control_ssh_command("bybitscanner-vps", "", "", **args)
+
+    def test_gui_unknown_submit_checks_status_without_resubmitting(self):
+        fake = SimpleNamespace(events=queue.Queue(), host=Mock(), user=Mock(), key=Mock())
+        fake.host.get.return_value = "bybitscanner-vps"
+        fake.user.get.return_value = ""
+        fake.key.get.return_value = ""
+        request = "1" * 32
+        submit = subprocess.CompletedProcess(["ssh"], 255, stdout="", stderr="lost")
+        status = subprocess.CompletedProcess(["ssh"], 3, stdout=(
+            "REQUEST_ID=" + request + "\nSTATUS=RUNNING\n"), stderr="")
+        with patch("tools.windows_vps_manager.subprocess.run", side_effect=[submit, status]) as run:
+            VPSManager.worker_control(fake, ["ssh", "submit"], "update", request)
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(fake.events.get_nowait()[0], "submitted")
+
+    def test_existing_alias_detected_without_rewriting_ssh_config(self):
+        with tempfile.TemporaryDirectory() as temp:
+            config = Path(temp) / ".ssh"
+            config.mkdir()
+            (config / "config").write_text(
+                "Host bybitscanner-vps\n    HostName 212.193.14.116\n"
+                "    User root\n", encoding="utf-8")
+            with patch("tools.windows_vps_manager.Path.home", return_value=Path(temp)):
+                self.assertEqual(preferred_route(), ("bybitscanner-vps", ""))
 
 
 if __name__ == "__main__":
