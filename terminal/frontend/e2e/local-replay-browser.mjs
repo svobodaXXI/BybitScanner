@@ -714,6 +714,12 @@ try {
   });
   const factNote = page.getByRole("status", { name: "PAPER факты сделки" });
   await factNote.waitFor();
+  const passport = page.getByRole("region", { name: "Паспорт PAPER-сделки" });
+  assert.match(await passport.innerText(), /Паттерн исходного сетапа[\s\S]*Falling Wedge/);
+  assert.match(await passport.innerText(), /5m[\s\S]*v1[\s\S]*breakout_retest/);
+  assert.match(await passport.innerText(), /EXACT_D2_LINK/);
+  assert.match(await passport.innerText(), /PnL -1.0 USDT/);
+  assert.match(await passport.innerText(), /не полный журнал решений Robot/);
   assert.match(await factNote.innerText(), /Кружки на закрытых свечах/);
   assert.match(await factNote.innerText(), /JSON без криптографической подписи/);
   assert.match(await factNote.innerText(), /Falling Wedge · 5m · версия v1/);
@@ -734,6 +740,8 @@ try {
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-original-geometry"), "0");
   await page.waitForFunction(() => !document.querySelector('[aria-label="Наблюдения PAPER D2"]'));
   assert.doesNotMatch(await factNote.innerText(), /Falling Wedge/);
+  assert.match(await passport.innerText(), /Falling Wedge/,
+    "retrospective passport remains available at cursor zero; chart signals do not");
   await page.getByRole("button", { name: "Пуск", exact: true }).click();
   await page.waitForFunction(() =>
     document.querySelector(".replay-execution-overlay")?.dataset.visiblePaperFills === "2");
@@ -742,8 +750,29 @@ try {
   assert.match(await d2Journal.innerText(), /RISK_OK/);
   await page.getByRole("button", { name: "Пауза", exact: true }).click();
   await page.getByRole("button", { name: "Убрать факты PAPER" }).click();
+  await passport.waitFor({state:"detached"});
   await page.waitForFunction(() =>
     document.querySelector(".replay-execution-overlay")?.dataset.visiblePaperFills === "0");
+  // An unrelated episode or absent D2 evidence cannot inherit prior pattern.
+  const noLinkFacts = {
+    ...episodeFacts,
+    trade_episode_id: "te_" + "b".repeat(24),
+    setup_context: {
+      status:"NO_EXACT_EPISODE_LINK", source:"TRADING_DIARY_D2",
+      geometry_status:"NOT_EXPORTED",
+      decision_scope:"D2_OBSERVATIONS_NOT_ROBOT_RUNTIME_LOG",
+    },
+  };
+  await page.getByLabel("Импорт JSON сделки PAPER").setInputFiles({
+    name:"episode-no-link.json",mimeType:"application/json",
+    buffer:Buffer.from(JSON.stringify(noLinkFacts)),
+  });
+  await passport.waitFor();
+  assert.match(await passport.innerText(),/Паттерн не подтверждён/);
+  assert.match(await passport.innerText(),/NO_EXACT_EPISODE_LINK/);
+  assert.doesNotMatch(await passport.innerText(),/Falling Wedge/);
+  await page.getByRole("button", {name:"Убрать факты PAPER"}).click();
+  await passport.waitFor({state:"detached"});
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-original-geometry"), "0");
 
   // Independent browser proof: import the same *nested* receipt structure the
