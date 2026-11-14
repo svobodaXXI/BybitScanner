@@ -18,6 +18,7 @@ const STEPS: Array<{ id: PeriodIncrement; name: string }> = [
   { id: "HOUR", name: "1 час" },
   { id: "DAY", name: "1 день" },
   { id: "WEEK", name: "1 неделя" },
+  { id: "MONTH", name: "1 месяц" },
 ];
 
 /** Local-only Wedge execution via loopback: never production /api or PAPER. */
@@ -339,9 +340,11 @@ export function RunSetupPanel({
               </div>
               <span className="replay-run-step-label">{option.name}</span>
             </div>)}
-            <button type="button" onClick={() => changePeriod("MONTH", 1)}>+1 месяц</button>
-            <button type="button" aria-pressed={preset === "THREE_MONTHS"}
-              onClick={() => choosePreset("THREE_MONTHS")}>3 месяца · 90 дней</button>
+            <button type="button" className="replay-run-inline-history"
+              disabled={publicHistoryLoading || !parsed.window}
+              onClick={() => onPublicHistoryRequest(symbol, start, end, selection.selected)}>
+              {publicHistoryLoading ? "Подгружаю период…" : "Подгрузить период с Bybit"}
+            </button>
           </div>
           {parsed.window && <p className="replay-run-duration" role="status"
             aria-label="Продолжительность прогона" aria-live="polite">
@@ -360,12 +363,6 @@ export function RunSetupPanel({
             <p role="status" className="replay-run-summary">
               {parsed.window?.minutes.toLocaleString("ru-RU")} минут M1 · конечная минута включена
             </p>}
-          <div className="replay-run-public-history">
-            <button type="button" disabled={publicHistoryLoading || !parsed.window}
-              onClick={() => onPublicHistoryRequest(symbol, start, end, selection.selected)}>
-              {publicHistoryLoading ? "Подгружаю период…" : "Подгрузить период с Bybit"}
-            </button>
-          </div>
           {periodLoadNotice && <p role="status" aria-label="Покрытие выбранного периода" className="replay-run-summary">{periodLoadNotice}</p>}
         </fieldset>
       </div>
