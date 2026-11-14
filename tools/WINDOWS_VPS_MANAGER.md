@@ -1,34 +1,66 @@
-# BybitScanner VPS Manager — Windows MVP
+# BybitScanner VPS Manager — общий вход в серверный монолит
 
-Standalone Windows utility in `tools/windows_vps_manager.py`, without embedding into the trading Terminal. Deliberately uses Python's standard-library Tkinter to avoid packaging a second React application or server.
+Три интерфейса одного владельческого механизма: Windows GUI, Windows PowerShell CLI и
+консоль VPS (Termius/VDSina). Все изменяющие действия передаются серверному
+`tools.vps_owner_control`; он запускает **существующий** `tools.paper_maintenance`
+в отдельном transient systemd oneshot unit. Второго координатора торговых действий нет.
 
-## Launch
+## Windows
 
-On Windows with Python 3 + Tkinter and Windows OpenSSH Client installed, double-click `tools/Запустить VPS Manager.cmd`, or launch manually:
+`tools/Запустить VPS Manager.cmd` открывает Tkinter GUI; для CLI применяется
+тот же `tools/windows_vps_manager.py`. Доступны пять прежних read-only диагностик,
+а также отдельные подтверждаемые кнопки **Обновить EDITOR_ONLY**, **Запустить
+PAPER-ядро**, **Остановить PAPER-ядро**, **Обновить и запустить PAPER** и запрос статуса.
 
 ```powershell
-py -3 tools\windows_vps_manager.py
+py -3 tools\windows_vps_manager.py --operation update --sha <approved-40-char-SHA>
+py -3 tools\windows_vps_manager.py --operation start
+py -3 tools\windows_vps_manager.py --operation status --request-id <request-id>
+py -3 tools\windows_vps_manager.py --operation list
 ```
 
-Enter the VPS hostname/IP and the existing **non-root** SSH account. Before connecting, configure a dedicated Ed25519 SSH key outside the repository and verify the server's SSH host-key fingerprint through a trusted provider channel. Do not disable `StrictHostKeyChecking`. OpenSSH configuration, private keys, and known_hosts are never stored by this application.
+Для UPDATE нужен **точный разрешённый SHA**, для START/STOP SHA текущего
+установленного релиза вычисляется на VPS посредством `verify_release`.
+Если в `%USERPROFILE%\.ssh\config` существует `Host bybitscanner-vps`,
+программа автоматически использует этот alias и его host/key/user/port,
+без ручной подстановки IP. Иначе используется только заранее настроенная
+`BYBITSCANNER_VPS_SSH_TARGET=user@host` или явный `--host/--user/--key`.
+Имя Windows-устройства отображается в окне и записывается в описание операции.
+Не угадывать PC/LAPTOP по неизвестному оборудованию: локальные имена различаются.
 
-The existing SSH configuration can specify the key and port under `%USERPROFILE%\.ssh\config`.
+Применяется `BatchMode=yes`, `StrictHostKeyChecking=yes`: программа **не хранит**
+секреты и не расшифровывает закрытые ключи. Для работы без повторной passphrase
+на каждом новом SSH соединении заранее настроенный OS ssh-agent должен иметь
+уже разблокированный ключ. При недоступном агенте авторизация не обходится.
+Никакого автоматического изменения VPN/host key/SSH-конфига.
 
-## Scope
+## VPS / смартфон
 
-Five **read-only** actions: systemd status, backend systemd state and localhost `/api/health` (instead of the pre-start-only `tools.vps_check`), installed source inspection (Git status when `.git` exists, otherwise explicit `GIT_STATUS=UNKNOWN` and backend `build_sha` from localhost health), backend's last 35 journal entries, and an informational update preflight (installed source status, systemd status, localhost PAPER health). The program intentionally has **no** general-purpose remote command field, trade operations, stop/start, service restart, deploy, database writes or LIVE operations. Remote commands are an allowlist executed with `ssh` and SSH host-key verification.
+После установки совместимого серверного релиза из Termius или консоли VDSina:
 
-This MVP reads existing systemd, Git, journal and localhost backend health evidence through SSH, not the Terminal's UI. It does not run the pre-start `tools.vps_check` on an active server. An extension for safe PAPER deployment requires explicit owner authorization, identity/preflight verification, backup/rollback design and a tested stop protocol. A direct ChatGPT-to-VPS control channel is **not** provided by this Windows GUI; it is a local operator utility.
+```sh
+cd /opt/BybitScanner && /opt/BybitScanner/venv/bin/python -m tools.vps_owner_control submit update <approved-40-char-SHA>
+cd /opt/BybitScanner && /opt/BybitScanner/venv/bin/python -m tools.vps_owner_control list
+cd /opt/BybitScanner && /opt/BybitScanner/venv/bin/python -m tools.vps_owner_control status <request-id>
+```
 
-## Current limitations
+SUBMISSION=ACCEPTED означает **только передачу**. Монолит продолжает работу
+на VPS даже после обрыва SSH; результат определяется `STATUS=FINISHED_OK`
+с кодом завершения или `STATUS=FAILED`. Идентификатор запроса связывает
+системный unit, origin и журнал. Повторное обращение с тем же ID не запускает
+операцию заново; после неизвестного ответа проверять только статус. Успешный
+релиз дополнительно требует установленной runtime/HTTPS/UI приёмки.
 
-- Not tested on an actual Windows device or on the owner VPS.
-- The `bybitscanner` account may need read access to `journalctl`; error output is displayed as-is.
-- The VPS host/user are entered per launch. No secrets are requested or stored.
-- No SSH credentials or host fingerprints are provisioned by the application.
+Операции от имени root разрешены **только при явном выборе владельца** и
+применяют штатные STOP/START/UPDATE монолита с его preflight, STOP receipts,
+защитой PAPER DB, admission и STOP/TAKE. Менеджер не включает PAPER_AUTO, LIVE,
+не пишет в SQLite и не делает альтернативных прямых systemctl restart/STOP.
+Без одобренного конкретного релиза, работающего доверенного SSH маршрута или
+подтверждённой quiescence — ожидаемый исход BLOCKED без обхода.
 
-Immutable `/opt/BybitScanner` releases may have no `.git`; that is expected, and the manager reports `GIT_WORKTREE=ABSENT` rather than a Git error. Missing `.git` means local changes cannot be determined, **not** that the release is clean. The update preflight always reports `DEPLOY_PREFLIGHT=NOT_PROVEN` and must never authorize deployment.\n\nThe update preflight is **informational**, not approval to stop or deploy. It does not establish that the backend is attached to the expected PAPER DB, verify open-position protection, or prove shutdown safety. Any failure must block further owner-side decisions until diagnosed.
+## Граница готовности
 
-## Portable Windows build
-
-The pull-request Windows CI builds a single-file `BybitScanner-VPS-Manager.exe` and uploads it as the `BybitScanner-VPS-Manager-Windows` workflow artifact (14-day retention). Download the artifact from the completed GitHub Actions run and extract the zip. Windows OpenSSH Client and previously configured SSH key/host trust are still required. No Python installation is required for the built EXE. Treat downloaded CI binaries as test builds, not signed releases.
+GitHub CI покрывает сборку Windows EXE и изолированные контракты запроса.
+Реальный проход из GUI, PowerShell и Termius до VPS не считается доказанным
+без отдельной приёмки на установленной версии. До разрешённого merge/deploy
+этот интерфейс нельзя использовать для рабочего VPS.
