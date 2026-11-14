@@ -86,11 +86,11 @@ function JournalTime({ timestamp, zone }: { timestamp: number; zone: JournalZone
   </time>;
 }
 
-function ReplayChart({ document, cursor, prehistory, fineBars, paperOverlay, paperFacts, selectedStrategies, showTrendGeometry, showDebug, timeframe, drawings, selectedId,
+function ReplayChart({ document, cursor, prehistory, fineBars, paperOverlay, paperFacts, selectedStrategies, showResearchObservations, showTrendGeometry, showDebug, timeframe, drawings, selectedId,
   drawingTool, onDrawingsChange, onSelectDrawing, onDrawingGesture }: {
   document: ReplayDocument; cursor: number; prehistory: ReplayCandle[]; fineBars: ReplayCandle[]; paperOverlay: PaperOverlay;
   paperFacts: PaperEpisodeFacts | null; selectedStrategies: readonly string[];
-  showTrendGeometry: boolean; showDebug: boolean; timeframe: "5m" | "1h" | FineBarFrame;
+  showResearchObservations: boolean; showTrendGeometry: boolean; showDebug: boolean; timeframe: "5m" | "1h" | FineBarFrame;
   drawings: DrawingObject[]; selectedId: string | null; drawingTool: DrawingTool;
   onDrawingsChange: (next: DrawingObject[]) => void;
   onSelectDrawing: (id: string | null) => void;
@@ -508,8 +508,9 @@ function ReplayChart({ document, cursor, prehistory, fineBars, paperOverlay, pap
         context.lineTo(x + 10, y);
         context.stroke();
       }
-      // PAPER observations are a separate, hollow-ring overlay. These are
-      // original owner-imported execution prices, NOT SIMULATION fill events.
+      // PAPER executions are outlined Buy/Sell TRIANGLES, matching the owner's
+      // existing trade marker shape. Outlines distinguish immutable imported
+      // evidence from filled SIMULATION trade markers without changing either ledger.
       // Only plot a factual fill once its independently closed M5 is revealed.
       let paintedPaper = 0;
       for (const fill of revealedPaperMarkers(paperOverlay, shown.candles)) {
@@ -521,8 +522,18 @@ function ReplayChart({ document, cursor, prehistory, fineBars, paperOverlay, pap
         const y = candleSeries.priceToCoordinate(fill.price);
         if (x === null || y === null || !Number.isFinite(x) || !Number.isFinite(y) ||
             x < 0 || x > priceWidth || y < 0 || y > paneHeight) continue;
+        const half = 7;
         context.beginPath();
-        context.arc(x, y, 5.5, 0, 2 * Math.PI);
+        if (fill.order_side === "Buy") {
+          context.moveTo(x, y - half);
+          context.lineTo(x - half, y + half - 1);
+          context.lineTo(x + half, y + half - 1);
+        } else {
+          context.moveTo(x, y + half);
+          context.lineTo(x - half, y - half + 1);
+          context.lineTo(x + half, y - half + 1);
+        }
+        context.closePath();
         context.fillStyle = "#121923";
         context.fill();
         context.strokeStyle = fill.order_side === "Buy" ? TELEGRAM_BUY_COLOR : TELEGRAM_SELL_COLOR;
@@ -543,7 +554,7 @@ function ReplayChart({ document, cursor, prehistory, fineBars, paperOverlay, pap
       // outlined markers, never ENTRY_SIGNAL/Robot order/fill triangles.
       let paintedScanner = 0;
       const revealedScanner = document.mode === "MARKET_ONLY" &&
-        shown.lastTimeMs !== null
+        showResearchObservations && shown.lastTimeMs !== null
           ? (document.scanner_observations ?? []).filter(item =>
               selectedStrategies.includes(item.strategy) &&
               item.available_at_ms <= shown.lastTimeMs!)
@@ -591,7 +602,7 @@ function ReplayChart({ document, cursor, prehistory, fineBars, paperOverlay, pap
     // Chart recalculates pixel coordinates after updating series/timescale.
     const redrawId = requestAnimationFrame(() => renderExecutions.current());
     return () => cancelAnimationFrame(redrawId);
-  }, [shown, document, cursor, paperOverlay, paperFacts, observedDmi, observedTouches, blueRiskPreviews, priorBreaks, selectedStrategies, showTrendGeometry, showDebug, timeframe, displayCandles, earlyGeometry]);
+  }, [shown, document, cursor, paperOverlay, paperFacts, observedDmi, observedTouches, blueRiskPreviews, priorBreaks, selectedStrategies, showResearchObservations, showTrendGeometry, showDebug, timeframe, displayCandles, earlyGeometry]);
 
   // The editable layer reuses the terminal's drawing tools, but stores its X
   // anchors in absolute UTC M5 slots rather than indices of the selected TF.
@@ -707,6 +718,10 @@ export function ReplayPage() {
   const [fileLabel, setFileLabel] = useState("Тикер и период не выбраны");
   // PAPER evidence is never inserted into document.events or VirtualAccount.
   const [paperFacts, setPaperFacts] = useState<PaperEpisodeFacts | null>(null);
+  // Research observations are not evidence of the original PAPER signal.
+  // Keep ordinary MARKET_ONLY research unchanged; opt in when examining PAPER.
+  const [showResearchWithPaper, setShowResearchWithPaper] = useState(false);
+  const showResearchObservations = paperFacts === null || showResearchWithPaper;
   const [localEpisodeMessage, setLocalEpisodeMessage] = useState("");
   const paperOverlay = useMemo(
     () => matchPaperFactsToMarket(paperFacts, document), [paperFacts, document],
@@ -757,11 +772,11 @@ export function ReplayPage() {
   const missingForPlay = document.execution_clock === "ORIGINAL_EVENT_TIME_NOT_OHLC_M1" &&
     selectedCoverage !== null && !selectedCoverage.complete;
   const scannerObservations = useMemo(() =>
-    document.mode === "MARKET_ONLY" && shown.lastTimeMs !== null
+    document.mode === "MARKET_ONLY" && showResearchObservations && shown.lastTimeMs !== null
       ? (document.scanner_observations ?? []).filter(o =>
           selectedStrategies.selected.includes(o.strategy) &&
           o.available_at_ms <= shown.lastTimeMs!)
-      : [], [document, shown.lastTimeMs, selectedStrategies]);
+      : [], [document, shown.lastTimeMs, selectedStrategies, showResearchObservations]);
   const journal = useMemo(() => (document.demo ? [] : displayEvents.slice(0, cursor))
     .filter(event => event.kind !== "CANDLE_CLOSED" && event.kind !== "CHART_TICK").map(event => {
       const fmt = (value: string) => {
@@ -1110,6 +1125,7 @@ export function ReplayPage() {
     if (!file) return;
     setPlaying(false);
     setPaperFacts(null); // Invalid replacement must not leave previous PAPER marks displayed.
+    setShowResearchWithPaper(false);
     try {
       if (file.size > 4 * 1024 * 1024)
         throw new Error("JSON PAPER больше 4 МБ");
@@ -1156,6 +1172,7 @@ export function ReplayPage() {
   async function lookupLocalEpisode(episodeId: string): Promise<void> {
     setPlaying(false);
     setPaperFacts(null);
+    setShowResearchWithPaper(false);
     setLocalEpisodeMessage("");
     setError(null);
     try {
@@ -1567,7 +1584,7 @@ export function ReplayPage() {
         PAPER · {paperFacts.symbol} · {paperFacts.trade_episode_id}
         {" · "}{paperFacts.execution_allocations.length} фактических исполнений
         {" · "}{paperOverlay.status === "MATCHED"
-          ? "Кружки на закрытых свечах · цена оригинального исполнения"
+          ? "Контурные треугольники на закрытых свечах · цена оригинального исполнения"
           : paperOverlay.reason}
         {" · "}PnL по цене и известным комиссиям: {paperFacts.pnl_usdt} USDT
         {" · "}JSON без криптографической подписи; не виртуальные сделки и не решения Robot.
@@ -1613,13 +1630,22 @@ export function ReplayPage() {
             ? "Клинья выбраны, но оригинальный Scanner ещё не запускался."
             : "Клинья не выбраны и в публичном M5-просмотре не искались."}
       </p>}
+      {document.mode === "MARKET_ONLY" && document.scanner_research && paperFacts && (
+        <label className="replay-research-layer-toggle">
+          <input type="checkbox" checked={showResearchWithPaper}
+            onChange={(e) => setShowResearchWithPaper(e.target.checked)} />
+          Показывать исследовательские сигналы Scanner — не исходный сигнал PAPER
+        </label>
+      )}
       {document.mode === "MARKET_ONLY" && document.scanner_research && <p
         className="replay-note" role="status" aria-label="Результат Scanner M5">
         Локальный Scanner по закрытым M5 · найдено и раскрыто к текущему моменту:
         {" "}{scannerObservations.length} из {document.scanner_observations?.length ?? 0}.
-        {scannerObservations.length === 0
-          ? " Пока нет подтверждённых наблюдений исходных детекторов."
-          : " Ромб — клин; квадрат — Ikigai Box. Розовый — отказ фильтра."}
+        {!showResearchObservations
+          ? " Исследовательские маркеры и записи скрыты во время разбора PAPER."
+          : scannerObservations.length === 0
+            ? " Пока нет подтверждённых наблюдений исходных детекторов."
+            : " Ромб — исследовательский клин; квадрат — Ikigai Box. Розовый — отказ фильтра."}
         {" "}Исследовательский режим, без Robot/PnL и исполнения.
       </p>}
       <details className="replay-diagnostics">
@@ -1781,6 +1807,7 @@ export function ReplayPage() {
             : <ReplayChart document={displayDocument} cursor={cursor} prehistory={l2ContextFor === document ? l2Context : []}
                 fineBars={fineBars ?? []} paperOverlay={paperOverlay}
                 paperFacts={paperFacts} selectedStrategies={selectedStrategies.selected}
+                showResearchObservations={showResearchObservations}
                 showTrendGeometry={showTrendGeometry}
                 showDebug={showDebug} timeframe={timeframe}
                 drawings={drawings} selectedId={selectedDrawing} drawingTool={drawingTool}
@@ -1801,7 +1828,7 @@ export function ReplayPage() {
             {document.mode === "MARKET_ONLY" && document.scanner_research &&
               scannerObservations.map((item: PublicScannerObservation) => (
               <div className="replay-events-item" key={item.strategy + item.signal_id}>
-                <strong>{item.pattern === "Ikigai Box"
+                <strong>Исследование Scanner · {item.pattern === "Ikigai Box"
                   ? "Ikigai Box" : item.pattern === "Falling Wedge" ? "Нисходящий клин" : "Восходящий клин"}</strong>
                 <span>{journalTimeParts(item.available_at_ms, journalZone).seconds}{" "}
                   <span className="replay-journal-ms" title="Миллисекунды">
