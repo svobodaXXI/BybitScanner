@@ -1079,7 +1079,14 @@ export function ReplayPage() {
         {" · "}{paperOverlay.status === "MATCHED"
           ? "Кружки на закрытых свечах · цена оригинального исполнения"
           : paperOverlay.reason}
-        {" · "}PnL по цене и известным комиссиям: {paperFacts.pnl_usdt} USDT
+        {" · "}Gross PnL: {paperFacts.realized_price_pnl_usdt} USDT
+        {" · "}Комиссии всего: {paperFacts.known_execution_fees_usdt} USDT
+        {" · "}Net PnL: {paperFacts.pnl_usdt} USDT
+        {" · "}Комиссии по исполнениям: {paperFacts.execution_allocations.slice(0, 8).map(item =>
+          `${item.allocation_role} (${item.order_side}): ${item.allocated_fee} USDT`).join("; ")}
+        {paperFacts.execution_allocations.length > 8
+          ? `; ещё ${paperFacts.execution_allocations.length - 8} исполнений в исходном JSON` : ""}
+        {" · "}CLOSE не доказывает STOP или TAKE: причина закрытия отсутствует в экспорте.
         {" · "}JSON без криптографической подписи; не виртуальные сделки и не решения Robot.
         {paperSetupContext && (
           paperSetupContext.status !== "EXACT_D2_LINK"
