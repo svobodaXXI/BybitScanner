@@ -86,6 +86,8 @@ describe("PAPER episode facts are display-only, never SIMULATION fills", () => {
     const history = market();
     const original = JSON.stringify(history.events);
     expect(facts.pnl_usdt).toBe("-1.0");
+    expect(facts.realized_price_pnl_usdt).toBe("-0.9");
+    expect(facts.known_execution_fees_usdt).toBe("0.1");
     expect(facts.execution_allocations[0].execution_price).toBe("100.12345678");
     const overlay = matchPaperFactsToMarket(facts, history);
     expect(overlay.status).toBe("MATCHED");
@@ -94,6 +96,7 @@ describe("PAPER episode facts are display-only, never SIMULATION fills", () => {
       t + 2 * 300000, t + 7 * 300000,
     ]);
     expect(overlay.markers.map(item => item.order_side)).toEqual(["Buy", "Sell"]);
+    expect(overlay.markers.map(item => item.allocation_role)).toEqual(["OPEN", "CLOSE"]);
     expect(revealedPaperMarkers(overlay, [
       history.events[0].candle!, history.events[1].candle!,
       history.events[2].candle!,
@@ -242,6 +245,8 @@ describe("PAPER episode facts are display-only, never SIMULATION fills", () => {
     };
     const facts = parsePaperEpisodeFacts(exported);
     expect(facts.pnl_usdt).toBe("0E-8");
+    expect(facts.realized_price_pnl_usdt).toBe("0E-8");
+    expect(facts.known_execution_fees_usdt).toBe("0E-8");
     expect(facts.execution_allocations[0].allocated_fee).toBe("0E-8");
   });
 });
