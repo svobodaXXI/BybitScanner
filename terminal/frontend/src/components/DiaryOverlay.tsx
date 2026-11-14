@@ -424,7 +424,7 @@ function exactD2Setup(facts: Record<string, unknown>, deal: ClosedEpisodeLocator
 /** Only the backend's exact-ID Robot Wedge proof may supply this label.
  * Candidate metadata is not original geometry or a D2 setup/decision.
  */
-function verifiedWedgeSignal(deal: ClosedEpisodeLocator, report: FinrezResponse): VerifiedEpisodePattern | null {
+function verifiedWedgeSignal(deal: ClosedEpisodeLocator, report: FinrezResponse): Extract<VerifiedEpisodePattern, { source: "WEDGE" }> | null {
   if (report.account_id !== "paper" || report.owner !== "ROBOT" || deal.cohort !== "ROBOT"
     || !/^te_[0-9a-f]{24}$/.test(deal.trade_episode_id)) return null;
   const value = deal.verified_signal;
