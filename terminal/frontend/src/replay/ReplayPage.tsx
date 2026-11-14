@@ -14,6 +14,7 @@ import { l2Prehistory, l2Posthistory, l2PresentationEvents } from "./l2ChartCont
 import { chartWilderDmi } from "./replayChartDmi";
 import { selectedL2MarketContext } from "./l2PeriodContext";
 import { L2M5Catalog } from "./l2M5Catalog";
+import { journalTimeParts, type JournalZone } from "./journalTime";
 import { finePresentationEvents, parseFineChart, type FineChart, type FineBarFrame } from "./fineChart";
 import {
   matchPaperFactsToMarket, parsePaperEpisodeFacts, revealedPaperMarkers,
@@ -75,6 +76,16 @@ function PlayerIcon({ name }: { name: keyof typeof PLAYER_PATHS }) {
     <path d={PLAYER_PATHS[name]} />
   </svg>;
 }
+function JournalTime({ timestamp, zone }: { timestamp: number; zone: JournalZone }) {
+  const clock = journalTimeParts(timestamp, zone);
+  return <time dateTime={new Date(timestamp).toISOString()}
+    title={"Исходный timestamp: " + timestamp + " мс UTC"}>
+    {clock.date} · {clock.seconds}{" "}
+    <span className="replay-journal-ms" title="Миллисекунды">({clock.milliseconds})</span>
+    {" "}{zone}
+  </time>;
+}
+
 function ReplayChart({ document, cursor, prehistory, fineBars, paperOverlay, paperFacts, selectedStrategies, showTrendGeometry, showDebug, timeframe, drawings, selectedId,
   drawingTool, onDrawingsChange, onSelectDrawing, onDrawingGesture }: {
   document: ReplayDocument; cursor: number; prehistory: ReplayCandle[]; fineBars: ReplayCandle[]; paperOverlay: PaperOverlay;
@@ -679,6 +690,7 @@ export function ReplayPage() {
   const [rate, setRate] = useState(8);
   const [showDebug, setShowDebug] = useState(false);
   const [timeframe, setTimeframe] = useState<"5m" | "1h" | FineBarFrame>("5m");
+  const [journalZone, setJournalZone] = useState<JournalZone>("MSK");
   const [drawingTool, setDrawingTool] = useState<DrawingTool>("crosshair");
   const [drawings, setDrawings] = useState<DrawingObject[]>([]);
   const [selectedDrawing, setSelectedDrawing] = useState<string | null>(null);
@@ -1723,14 +1735,25 @@ export function ReplayPage() {
                 onDrawingGesture={() => setPlaying(false)} />}
         </section>
         <aside className="replay-events" aria-label="Журнал событий">
-          <h2>Журнал событий</h2>
+          <div className="replay-events-heading">
+            <h2>Журнал событий</h2>
+            <div role="group" aria-label="Часовой пояс журнала">
+              <button type="button" aria-pressed={journalZone === "MSK"}
+                onClick={() => setJournalZone("MSK")}>МСК</button>
+              <button type="button" aria-pressed={journalZone === "UTC"}
+                onClick={() => setJournalZone("UTC")}>UTC</button>
+            </div>
+          </div>
           <div className="replay-events-list" aria-live="off">
             {document.mode === "MARKET_ONLY" && document.scanner_research &&
               scannerObservations.map((item: PublicScannerObservation) => (
               <div className="replay-events-item" key={item.strategy + item.signal_id}>
                 <strong>{item.pattern === "Ikigai Box"
                   ? "Ikigai Box" : item.pattern === "Falling Wedge" ? "Нисходящий клин" : "Восходящий клин"}</strong>
-                <span>{new Date(item.available_at_ms).toLocaleTimeString("ru-RU", { timeZone: "UTC" })} UTC
+                <span>{journalTimeParts(item.available_at_ms, journalZone).seconds}{" "}
+                  <span className="replay-journal-ms" title="Миллисекунды">
+                    ({journalTimeParts(item.available_at_ms, journalZone).milliseconds})
+                  </span>{" "}{journalZone}
                   {" · "}{item.status === "FILTER_APPROVED" ? "фильтр принят"
                     : item.status === "FILTER_REJECTED" ? "фильтр отказал" : "структура подтверждена"}
                   {" · "}{item.reason}
@@ -1743,10 +1766,7 @@ export function ReplayPage() {
                 <strong>Подтверждённые наблюдения D2 · не полный журнал Robot</strong>
                 {paperDecisionObservations.map(event => (
                   <div className="replay-events-item" key={event.decision_event_id}>
-                    <time>{new Date(event.occurred_at_ms).toLocaleString("ru-RU", {
-                      timeZone: "UTC", day: "2-digit", month: "2-digit",
-                      hour: "2-digit", minute: "2-digit",
-                    })} UTC</time>
+                    <JournalTime timestamp={event.occurred_at_ms} zone={journalZone} />
                     <span>{event.kind}: {event.previous_state ?? "—"} → {event.next_state} · {event.reason_code}</span>
                     <span>Источник: {event.controller}</span>
                   </div>
@@ -1754,10 +1774,7 @@ export function ReplayPage() {
               </section>
             )}
             {journal.map(item => <div className="replay-events-item" key={item.sequence}>
-              <time>{new Date(item.time).toLocaleString("ru-RU", {
-                timeZone: "UTC", day: "2-digit", month: "2-digit",
-                hour: "2-digit", minute: "2-digit",
-              })} UTC</time>
+              <JournalTime timestamp={item.time} zone={journalZone} />
               <span>{item.message}</span>
             </div>)}
           </div>
