@@ -23,6 +23,10 @@ FILE_NAME = "paired-device.dpapi"
 CRYPTPROTECT_UI_FORBIDDEN = 0x01
 
 
+def _is_windows() -> bool:
+    return os.name == "nt"
+
+
 class _Blob(ctypes.Structure):
     _fields_ = [
         ("cbData", wintypes.DWORD),
@@ -62,7 +66,7 @@ def parse_pairing_uri(uri: str) -> tuple[str, str, str]:
 
 
 def _storage() -> Path:
-    if os.name != "nt":
+    if not _is_windows():
         raise OSError("windows_pairing_only")
     root = os.environ.get("LOCALAPPDATA", "")
     if not root:
@@ -77,7 +81,7 @@ def _storage() -> Path:
 
 
 def _crypt(raw: bytes, *, decrypt: bool) -> bytes:
-    if os.name != "nt":
+    if not _is_windows():
         raise OSError("windows_dpapi_only")
     memory = ctypes.create_string_buffer(raw, len(raw))
     source = _Blob(len(raw), ctypes.cast(memory, ctypes.POINTER(ctypes.c_ubyte)))
@@ -119,7 +123,7 @@ def _crypt(raw: bytes, *, decrypt: bool) -> bytes:
 
 
 def _confirm(origin: str, device: str) -> bool:
-    if os.name != "nt":
+    if not _is_windows():
         return False
     # Neither the device-only token nor any URL containing it is displayed.
     message = (
@@ -137,7 +141,7 @@ def _confirm(origin: str, device: str) -> bool:
 
 def accept_pairing_url(uri: str, *, confirm=None) -> bool:
     device, token, origin = parse_pairing_uri(uri)
-    if os.name != "nt":
+    if not _is_windows():
         return False
     if not (confirm or _confirm)(origin, device):
         return False
@@ -165,7 +169,7 @@ def accept_pairing_url(uri: str, *, confirm=None) -> bool:
 
 
 def load_pairing() -> dict[str, str] | None:
-    if os.name != "nt":
+    if not _is_windows():
         return None
     location = _storage()
     if location.is_symlink():
