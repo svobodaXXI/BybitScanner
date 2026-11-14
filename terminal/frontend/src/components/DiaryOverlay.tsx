@@ -543,9 +543,21 @@ function SimulatorLaunchAction({ episodeId, allowLocalLaunch, scope }: {
       : " Автоматическое копирование ID недоступно.";
     try {
       if (allowed && onWindows) {
+        let transferred = false;
+        try {
+          await enqueuePairedPaperCase(episodeId, scope);
+          transferred = true;
+        } catch {
+          // The native deep link may still work with already imported facts.
+          // Do not claim VPS delivery when the scoped bridge is unavailable.
+        }
         setNotice((windowsError
           ? "Windows не смогла принять запрос открытия локальной утилиты."
-          : "Запрос открытия утилиты отправлен Windows. Результат пока не подтверждён.") + suffix);
+          : "Запрос открытия утилиты отправлен Windows. Результат пока не подтверждён.")
+          + (transferred
+            ? " Точные факты PAPER переданы в очередь подключённого устройства."
+            : " Автоматическая доставка фактов с VPS не подтверждена.")
+          + suffix);
       } else if (allowed) {
         // Same-origin HTTPS owner UI. Nginx controls owner access; the relay
         // independently checks Origin. The paired PC supplies a separate
