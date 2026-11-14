@@ -1463,6 +1463,41 @@ export function ReplayPage() {
           SIMULATION L2 · события исходной ленты по времени; виртуальные исполнения
           условны, фактическая очередь и исполнения Bybit не доказаны.
         </p>}
+      {paperFacts && <section className="replay-paper-passport"
+        role="region" aria-label="Паспорт PAPER-сделки">
+        <div className="replay-paper-passport-heading">
+          <strong>Паспорт PAPER-сделки · разбор постфактум</strong>
+          <span>{paperFacts.symbol} · {paperFacts.side} · {paperFacts.owner} · PnL {paperFacts.pnl_usdt} USDT</span>
+        </div>
+        {paperSetupContext?.status === "EXACT_D2_LINK" ? (
+          <>
+            <dl>
+              <div><dt>Паттерн исходного сетапа</dt>
+                <dd>{paperSetupContext.setup.pattern}</dd></div>
+              <div><dt>Таймфрейм</dt><dd>{paperSetupContext.setup.timeframe}</dd></div>
+              <div><dt>Версия стратегии</dt><dd>{paperSetupContext.setup.strategy_version}</dd></div>
+              <div><dt>Режим входа</dt><dd>{paperSetupContext.setup.entry_mode}</dd></div>
+              <div><dt>ID сетапа</dt><dd>{paperSetupContext.setup.setup_id}</dd></div>
+              <div><dt>Связь</dt><dd>EXACT_D2_LINK</dd></div>
+            </dl>
+            <p>Коды наблюдений D2: {paperSetupContext.decisions.map(d =>
+              d.reason_code).join(" · ")}. Связь с сетапом доказана по ID;
+              это не полный журнал решений Robot. Паспорт доступен для
+              послеторгового анализа, а график сохраняет временную причинность.</p>
+          </>
+        ) : (
+          <>
+            <strong className="replay-paper-pattern-unproven">Паттерн не подтверждён</strong>
+            <p>Нет доказанной связи эпизода с исходным сетапом D2
+              {paperSetupContext ? " (" + paperSetupContext.status + ")" : " (контекст D2 не экспортирован)"}.
+              Название не определяется по тикеру, свечам или близкому сигналу.</p>
+          </>
+        )}
+        <p>График: {paperOverlay.status === "MATCHED"
+          ? "фактические исполнения сопоставлены с проверенными свечами"
+          : "покрытие истории для этой PAPER-сделки не подтверждено"}.
+          Исходные исполнения и комиссии неизменны; это не новое моделирование.</p>
+      </section>}
       {paperFacts && <p className="replay-note" role="status" aria-label="PAPER факты сделки">
         PAPER · {paperFacts.symbol} · {paperFacts.trade_episode_id}
         {" · "}{paperFacts.execution_allocations.length} фактических исполнений
