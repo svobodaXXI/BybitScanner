@@ -14,6 +14,7 @@ import { l2Prehistory, l2Posthistory, l2PresentationEvents } from "./l2ChartCont
 import { chartWilderDmi } from "./replayChartDmi";
 import { selectedL2MarketContext } from "./l2PeriodContext";
 import { L2M5Catalog } from "./l2M5Catalog";
+import { finePresentationEvents, parseFineChart, type FineChart, type FineBarFrame } from "./fineChart";
 import {
   matchPaperFactsToMarket, parsePaperEpisodeFacts, revealedPaperMarkers,
   type PaperEpisodeFacts, type PaperOverlay,
@@ -74,11 +75,11 @@ function PlayerIcon({ name }: { name: keyof typeof PLAYER_PATHS }) {
     <path d={PLAYER_PATHS[name]} />
   </svg>;
 }
-function ReplayChart({ document, cursor, prehistory, paperOverlay, paperFacts, selectedStrategies, showTrendGeometry, showDebug, timeframe, drawings, selectedId,
+function ReplayChart({ document, cursor, prehistory, fineBars, paperOverlay, paperFacts, selectedStrategies, showTrendGeometry, showDebug, timeframe, drawings, selectedId,
   drawingTool, onDrawingsChange, onSelectDrawing, onDrawingGesture }: {
-  document: ReplayDocument; cursor: number; prehistory: ReplayCandle[]; paperOverlay: PaperOverlay;
+  document: ReplayDocument; cursor: number; prehistory: ReplayCandle[]; fineBars: ReplayCandle[]; paperOverlay: PaperOverlay;
   paperFacts: PaperEpisodeFacts | null; selectedStrategies: readonly string[];
-  showTrendGeometry: boolean; showDebug: boolean; timeframe: "5m" | "1h";
+  showTrendGeometry: boolean; showDebug: boolean; timeframe: "5m" | "1h" | FineBarFrame;
   drawings: DrawingObject[]; selectedId: string | null; drawingTool: DrawingTool;
   onDrawingsChange: (next: DrawingObject[]) => void;
   onSelectDrawing: (id: string | null) => void;
@@ -94,8 +95,13 @@ function ReplayChart({ document, cursor, prehistory, paperOverlay, paperFacts, s
    const indicators = useRef<Record<"PLUS" | "MINUS" | "ADX" | "LEVEL", ISeriesApi<"Line">> | null>(null);
   const shown = useMemo(() => visibleReplay(document.events, cursor), [document, cursor]);
   const chartM5 = useMemo(() => [...prehistory, ...shown.candles], [prehistory, shown.candles]);
+  const sourceFirstMs = document.events.find(e => e.kind === "CANDLE_CLOSED" && e.candle)
+    ?.candle?.start_ms ?? 0;
+  const fineCutoff = shown.lastTimeMs ?? sourceFirstMs;
   const displayCandles = useMemo(() => timeframe === "1h"
-    ? completeHourlyCandles(chartM5) : chartM5, [chartM5, timeframe]);
+    ? completeHourlyCandles(chartM5) : timeframe === "5m"
+      ? chartM5 : fineBars.filter(c => c.end_ms <= fineCutoff),
+    [chartM5, timeframe, fineBars, fineCutoff]);
   // Build a frozen visual-only record once per archive. Each already
   // revealed provisional line persists as drawn; rewinding masks its future.
   const earlyTimeline = useMemo(() => earlyGeometryTimeline(document), [document]);
@@ -193,6 +199,10 @@ function ReplayChart({ document, cursor, prehistory, paperOverlay, paperFacts, s
       api.remove();
     };
   }, []);
+
+  useEffect(() => {
+    chart.current?.timeScale().applyOptions({ timeVisible: true, secondsVisible: timeframe === "15s" });
+  }, [timeframe]);
 
   useEffect(() => {
     const candleSeries = series.current;
@@ -427,7 +437,8 @@ function ReplayChart({ document, cursor, prehistory, paperOverlay, paperFacts, s
         context.stroke();
         paintedBlueRisk++;
       }
-      const fills = visibleExecutionMarkers(document.events.slice(0, cursor), shown.candles);
+      const fills = visibleExecutionMarkers(document.events.slice(0, cursor),
+        timeframe === "1m" || timeframe === "15s" ? displayCandles : shown.candles);
       let rendered = 0;
       for (const fill of fills) {
         const stamp = timeframe === "1h"
@@ -462,7 +473,8 @@ function ReplayChart({ document, cursor, prehistory, paperOverlay, paperFacts, s
       // A short violet tick marks the original amended STOP price only at
       // its known event time. It is NOT a projected/live stop trajectory.
       for (const amend of visibleStopAmendMarkers(
-        document.events.slice(0, cursor), shown.candles,
+        document.events.slice(0, cursor),
+        timeframe === "1m" || timeframe === "15s" ? displayCandles : shown.candles,
       )) {
         const stamp = timeframe === "1h"
           ? Math.floor(amend.candle_start_ms / 3_600_000) * 3_600_000
