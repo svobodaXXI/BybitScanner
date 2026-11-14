@@ -89,6 +89,7 @@ describe("PAPER episode facts are display-only, never SIMULATION fills", () => {
     expect(facts.realized_price_pnl_usdt).toBe("-0.9");
     expect(facts.known_execution_fees_usdt).toBe("0.1");
     expect(facts.execution_allocations[0].execution_price).toBe("100.12345678");
+    expect(facts.execution_allocations.map(item => item.allocated_fee)).toEqual(["0.05", "0.05"]);
     const overlay = matchPaperFactsToMarket(facts, history);
     expect(overlay.status).toBe("MATCHED");
     expect(overlay.markers).toHaveLength(2);

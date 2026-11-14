@@ -1516,7 +1516,7 @@ export function ReplayPage() {
             <dd>{paperFacts.pnl_usdt} USDT</dd></div>
         </dl>
         <dl aria-label="Исходные исполнения PAPER">
-          {paperFacts.execution_allocations.map((fill, index) => (
+          {paperFacts.execution_allocations.slice(0, 8).map((fill, index) => (
             <div key={fill.execution_id + ":" + index}>
               <dt>{fill.allocation_role === "CLOSE"
                 ? "Выход CLOSE · причина STOP/TAKE не подтверждена"
@@ -1527,6 +1527,12 @@ export function ReplayPage() {
               <dd><JournalTime timestamp={fill.occurred_at_ms} zone="MSK" /></dd>
             </div>
           ))}
+          {paperFacts.execution_allocations.length > 8 && (
+            <div>
+              <dt>Остальные исполнения</dt>
+              <dd>Показаны первые 8 из {paperFacts.execution_allocations.length}; полный список — в исходном JSON</dd>
+            </div>
+          )}
         </dl>
         {paperSetupContext?.status === "EXACT_D2_LINK" ? (
           <>
