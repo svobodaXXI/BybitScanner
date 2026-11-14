@@ -1133,7 +1133,9 @@ export function ChartPanel({
                 <input aria-label="Комментарий к новому сигналу"
                   placeholder="Комментарий (необязательно)" maxLength={1024}
                   value={proposalNote} onChange={(event) => { setProposalNote(event.target.value); setProposalStatus(""); }} />
-                <button type="button" disabled={proposalPending || (onSubmitOwnerChart
+                <button type="button"
+                  className={proposalStatus.startsWith("Не удалось сохранить:") ? "editor-owner-signal-save-error" : undefined}
+                  disabled={proposalPending || (onSubmitOwnerChart
                     ? !proposalPattern || !proposalDirection || (proposalPattern === "Wedge" && !proposalWedgeSubtype)
                     : !onSubmitOwnerSignal || !proposalDirection || proposalPattern !== "Wedge")}
                   title={proposalStatus || undefined}
@@ -1143,6 +1145,11 @@ export function ChartPanel({
                     proposalStatus.startsWith("Пример ") ? "Пример сохранён в «Мои сигналы»" :
                     "Сохранить сигнал"}
                 </button>
+                {proposalStatus.startsWith("Не удалось сохранить:") && (
+                  <output role="alert" aria-live="assertive" className="editor-owner-signal-error-detail">
+                    {proposalStatus}
+                  </output>
+                )}
                 {!ownerChartMode && <button type="button" className="editor-return-to-correction"
                   disabled={proposalPending || reviewPending} onClick={switchSignalDrawingMode}>
                   <span aria-hidden="true">←</span> Вернуться к исправлению
