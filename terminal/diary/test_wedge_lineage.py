@@ -117,3 +117,55 @@ def test_proven_wedge_finrez_enrichment_and_unproven_is_absent():
     ):
         assert "verified_signal" not in attach_verified_wedge_signals(
             source, item)["closed_episodes"][0]
+
+
+def test_unrelated_candidates_without_order_proof_do_not_hide_exact_wedge():
+    from terminal.diary.wedge_lineage import attach_verified_wedge_signals
+    snapshot, kwargs = case()
+    valid = snapshot.wedge_evidence["candidates"][0]
+    incomplete = (
+        dict(valid, candidate_id="rejected", symbol="ETHUSDT",
+             robot_state_json='{"decision":"REJECTED"}'),
+        dict(valid, candidate_id="legacy", symbol="ETHUSDT",
+             robot_state_json='{"execution":{}}'),
+        dict(valid, candidate_id="corrupt", symbol="ETHUSDT",
+             robot_state_json="{invalid"),
+    )
+    evidence = dict(snapshot.wedge_evidence, candidates=incomplete + (valid,))
+    updated = replace(snapshot, wedge_evidence=evidence)
+    assert project_selected_paper_wedge(updated, **kwargs)["candidate_id"] == "candidate-2"
+    row = {
+        "trade_episode_id": kwargs["trade_episode_id"], "symbol": "BTCUSDT",
+        "side": "LONG", "opened_at_ms": 1200, "closed_at_ms": 1300,
+        "pnl_usdt": "1.8", "execution_count": 2, "cohort": "ROBOT",
+        "setup_context": {"status": "NO_EXACT_EPISODE_LINK"},
+    }
+    report = {
+        "account_id": "paper", "owner": "ROBOT", "source_revision": 5,
+        "closed_episodes": [row], "tickers": [{"symbol": "BTCUSDT", "pnl_usdt": "1.8"}],
+    }
+    enriched = attach_verified_wedge_signals(updated, report)
+    assert enriched["closed_episodes"][0]["verified_signal"]["candidate_id"] == "candidate-2"
+    assert enriched["closed_episodes"][0]["pnl_usdt"] == row["pnl_usdt"]
+    assert enriched["closed_episodes"][0]["setup_context"] == row["setup_context"]
+
+
+def test_missing_target_entry_identity_remains_unproven_despite_other_candidates():
+    import pytest
+    snapshot, kwargs = case()
+    valid = snapshot.wedge_evidence["candidates"][0]
+    invalid_target = dict(valid, robot_state_json='{"execution":{}}')
+    unrelated = dict(valid, candidate_id="other", robot_state_json='{"execution":{"limit_order_id":"unrelated"}}')
+    evidence = dict(snapshot.wedge_evidence, candidates=(invalid_target, unrelated))
+    with pytest.raises(WedgeLineageUnproven):
+        project_selected_paper_wedge(replace(snapshot, wedge_evidence=evidence), **kwargs)
+
+
+def test_competing_exact_entry_candidate_remains_unproven():
+    import pytest
+    snapshot, kwargs = case()
+    valid = snapshot.wedge_evidence["candidates"][0]
+    other = dict(valid, candidate_id="competing-candidate")
+    evidence = dict(snapshot.wedge_evidence, candidates=(valid, other))
+    with pytest.raises(WedgeLineageUnproven):
+        project_selected_paper_wedge(replace(snapshot, wedge_evidence=evidence), **kwargs)
