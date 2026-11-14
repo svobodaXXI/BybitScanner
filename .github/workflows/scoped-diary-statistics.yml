@@ -16,6 +16,8 @@ on:
       - 'terminal/diary/test_ticker_finrez_http_route.py'
       - 'terminal/diary/test_scoped_statistics_http_route.py'
       - 'terminal/runtime/paper_http_server.py'
+      - 'retrospective_signal_bars.py'
+      - 'tests/test_geometry_feedback_retrospective.py'
       - 'deploy/systemd/bybitscanner-scoped-diary-refresh.service'
       - 'deploy/systemd/bybitscanner-scoped-diary-refresh.timer'
       - 'terminal/diary/statistics_runtime.py'
@@ -40,6 +42,8 @@ jobs:
         run: python -m py_compile terminal/diary/scoped_statistics_archive.py terminal/diary/test_scoped_statistics_archive.py terminal/diary/scope_evidence.py terminal/diary/test_scope_evidence.py terminal/diary/scoped_statistics_reporter.py terminal/diary/test_scoped_statistics_reporter.py terminal/diary/wedge_lineage.py terminal/diary/test_wedge_lineage.py terminal/diary/test_scoped_statistics_http_route.py terminal/diary/ticker_finrez.py terminal/diary/test_ticker_finrez.py terminal/diary/test_ticker_finrez_http_route.py
       - name: Verify account/owner isolation and durable replay gates
         run: python -m pytest -q terminal/diary/test_scoped_statistics_archive.py terminal/diary/test_scope_evidence.py terminal/diary/test_scoped_statistics_reporter.py terminal/diary/test_statistics_endpoint.py terminal/diary/test_wedge_lineage.py terminal/diary/test_ticker_finrez_http_route.py terminal/diary/test_ticker_finrez.py
+      - name: Verify bounded original-trade timeframe evidence
+        run: python -m pytest -q tests/test_geometry_feedback_retrospective.py::test_trade_chart_other_timeframe_is_real_closed_ohlc_and_bounded
       - name: Confirm optional timer never starts trading or modifies PAPER DB
         run: |
           python - <<'PY'

@@ -8,7 +8,8 @@ import pytest
 from geometry_feedback_export import reviewed_example, GeometryExportError
 from geometry_feedback_store import bars_digest, latest_review, record_review, source_revision
 from retrospective_signal_bars import (
-    RetrospectiveBarsError, extension_digest, fetch_closed_extension, validate_extension,
+    RetrospectiveBarsError, extension_digest, fetch_closed_extension,
+    fetch_closed_trade_timeframe, validate_extension,
 )
 from signal_archive import record_original_signal
 from tests.test_geometry_feedback_export import _snapshot
@@ -171,3 +172,62 @@ def test_legacy_correction_stays_source_time_only(tmp_path):
     saved = record_review(payload, snap, directory=tmp_path)
     assert "retrospective_bars" not in saved and "context_as_of_ms" not in saved["submission"]
     assert latest_review(snap["signal_id"], snapshot=snap, directory=tmp_path) == saved
+
+
+def test_trade_chart_other_timeframe_is_real_closed_ohlc_and_bounded():
+    snap = _snapshot("trade-frame:" + "d" * 24)
+    frozen = json.dumps(snap, sort_keys=True)
+    last = snap["bars"][-1]["open_time_ms"]
+    minute = 60_000
+    after = last - 2 * minute
+    current = last + 30 * minute
+    observed = []
+
+    class FakeResponse:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"retCode": 0, "result": {"list": self.rows}}
+
+    class FakeHttp:
+        def __init__(self, *, gap=False):
+            self.gap = gap
+
+        def get(self, url, *, params, timeout):
+            observed.append(params)
+            assert url.endswith("/v5/market/kline")
+            assert params["symbol"] == snap["symbol"]
+            assert params["interval"] == "1"
+            assert params["start"] == after + minute
+            assert params["limit"] == 20 and timeout <= 10
+            rows = [
+                [str(after + n * minute + (minute if self.gap and n == 8 else 0)),
+                 "10", "11", "9", "10"]
+                for n in range(params["limit"], 0, -1)
+            ]
+            return FakeResponse(rows)
+
+    cutoff, bars = fetch_closed_trade_timeframe(
+        snap, interval="1", after_ms=after, session=FakeHttp(), now_ms=current,
+    )
+    assert len(bars) == 20 and bars[0]["open_time_ms"] == after + minute
+    assert cutoff == after + 20 * minute
+    assert json.dumps(snap, sort_keys=True) == frozen
+    assert len(observed) == 1
+    with pytest.raises(RetrospectiveBarsError, match="invalid_retrospective_ohlc"):
+        fetch_closed_trade_timeframe(
+            snap, interval="1", after_ms=after, session=FakeHttp(gap=True),
+            now_ms=current,
+        )
+    with pytest.raises(RetrospectiveBarsError, match="unsupported_trade_timeframe"):
+        fetch_closed_trade_timeframe(snap, interval="3", after_ms=after, now_ms=current)
+    with pytest.raises(RetrospectiveBarsError, match="invalid_retrospective_cutoff"):
+        fetch_closed_trade_timeframe(snap, interval="1", after_ms=after + 1, now_ms=current)
+    with pytest.raises(RetrospectiveBarsError, match="no_new_closed_retrospective_bars"):
+        fetch_closed_trade_timeframe(
+            snap, interval="1", after_ms=current - minute, now_ms=current,
+        )

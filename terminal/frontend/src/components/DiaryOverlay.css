@@ -665,3 +665,50 @@
   border-radius: 0.3rem;
 }
 .diary-original-signal-plot small { color: #aab9c7; }
+
+/* Mobile-first, read-only trade chart. It consumes touch gestures inside its own
+   surface while the Statistics page remains scrollable outside the chart. */
+.diary-interactive-trade-chart {
+  width: 100%;
+  height: clamp(270px, 74vw, 440px);
+  min-width: 0;
+  background: #10151b;
+  border: 1px solid #27313b;
+  border-radius: 0.3rem;
+  touch-action: none;
+}
+.diary-trade-timeframes {
+  display: flex;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  gap: 0.25rem;
+  padding: 0.2rem 0 0.5rem;
+  -webkit-overflow-scrolling: touch;
+}
+.diary-trade-timeframes button,
+.diary-trade-chart-controls button {
+  min-height: 2.6rem;
+  border-radius: 0.35rem;
+  border: 1px solid #394653;
+  color: #e2eaf0;
+  background: #19222c;
+  padding: 0.4rem 0.65rem;
+  cursor: pointer;
+}
+.diary-trade-timeframes button[aria-pressed="true"] {
+  background: #344557;
+  border-color: #8195aa;
+}
+.diary-trade-timeframes button:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+.diary-trade-chart-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  color: #aab9c7;
+}

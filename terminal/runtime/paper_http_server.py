@@ -3600,6 +3600,48 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             })
             return
 
+        if parsed.path == "/api/workspace/signal-geometry/candles":
+            # Opt-in trade chart, separate from immutable source geometry and
+            # PAPER execution evidence. Owner-authenticated, public closed OHLC.
+            import re
+            from signal_archive import load_frozen_signal_geometry
+            from geometry_feedback_store import source_revision
+            from retrospective_signal_bars import (
+                RetrospectiveBarsError, extension_digest, fetch_closed_trade_timeframe,
+            )
+            params = parse_qs(parsed.query, keep_blank_values=True)
+            if (set(params) != {"signal_id", "interval", "after_ms"}
+                    or any(len(v) != 1 for v in params.values())
+                    or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", params["signal_id"][0])
+                    or params["interval"][0] not in {"1", "5", "15", "60", "240", "D"}
+                    or not re.fullmatch(r"[0-9]{1,16}", params["after_ms"][0])):
+                self._json_response(400, {"ok": False, "error": "invalid_trade_candle_request"})
+                return
+            snapshot = load_frozen_signal_geometry(params["signal_id"][0])
+            if snapshot is None:
+                self._json_response(404, {"ok": False, "error": "source_geometry_not_found"})
+                return
+            try:
+                as_of_ms, bars = fetch_closed_trade_timeframe(
+                    snapshot, interval=params["interval"][0],
+                    after_ms=int(params["after_ms"][0]),
+                )
+            except RetrospectiveBarsError as exc:
+                error = str(exc)
+                status = 503 if error in {
+                    "retrospective_history_unavailable", "retrospective_history_incomplete",
+                    "retrospective_history_invalid",
+                } else 409
+                self._json_response(status, {"ok": False, "error": error})
+                return
+            self._json_response(200, {
+                "ok": True, "signal_id": params["signal_id"][0],
+                "source_revision": source_revision(snapshot),
+                "interval": params["interval"][0], "as_of_ms": as_of_ms,
+                "bars_sha256": extension_digest(bars), "bars": bars,
+            })
+            return
+
         if parsed.path == "/api/workspace/signal-geometry/continuation":
             # Explicit owner-initiated historical extension; archival source
             # stays immutable, only fully closed Bybit candles are returned.
