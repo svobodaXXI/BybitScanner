@@ -108,3 +108,14 @@
 /* Import-window warning sits directly under Play/seek, not in the chart. */
 .replay-playback-missing { flex: 0 0 100%; margin: 2px 0 0 12px;
   font-size: 12px; color: #ffc6a5; line-height: 1.4; }
+
+.replay-paper-passport { border: 1px solid #40597c; background: #162234; color: #e8effb; border-radius: 9px; padding: 12px 14px; margin: 12px 0; }
+.replay-paper-passport-heading { display: flex; justify-content: space-between; flex-wrap: wrap; align-items: baseline; gap: 6px 20px; padding-bottom: 8px; border-bottom: 1px solid #33455f; }
+.replay-paper-passport-heading strong { font-size: 15px; }
+.replay-paper-passport-heading span { color: #b7c9e2; font-size: 13px; font-variant-numeric: tabular-nums; }
+.replay-paper-passport dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); gap: 8px 12px; margin: 10px 0; }
+.replay-paper-passport dl div { display: grid; align-content: start; gap: 3px; min-width: 0; }
+.replay-paper-passport dt { color: #9fb5d0; font-size: 12px; }
+.replay-paper-passport dd { margin: 0; overflow-wrap: anywhere; font-weight: 600; }
+.replay-paper-passport p { font-size: 12px; color: #aebed5; margin: 9px 0 0; }
+.replay-paper-pattern-unproven { display: block; font-size: 14px; color: #f5d7a0; margin-top: 10px; }
