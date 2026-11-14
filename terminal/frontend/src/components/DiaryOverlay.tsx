@@ -480,7 +480,8 @@ function SimulatorLaunchAction({ episodeId, allowLocalLaunch, scope }: {
           || !/^[A-Za-z0-9_-]{48,256}$/.test(pair.token))
         throw new Error("pairing_invalid_response");
       setPairingUrl("bybitscanner-simulator://pair?device_id="
-        + encodeURIComponent(deviceId) + "&token=" + encodeURIComponent(pair.token));
+        + encodeURIComponent(deviceId) + "&token=" + encodeURIComponent(pair.token)
+        + "&origin=" + encodeURIComponent(window.location.origin));
       setPairingNotice("Ключ подготовлен. Нажмите «Подтвердить подключение» на этом компьютере.");
     } catch {
       setPairingNotice("Подключение пока недоступно. Обычный запуск Симулятора и копирование ID работают.");
