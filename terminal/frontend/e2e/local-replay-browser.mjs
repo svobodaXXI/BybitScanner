@@ -730,11 +730,11 @@ try {
   assert.match(await d2Journal.innerText(), /не полный журнал Robot/);
   const journalZone = page.getByRole("group", {name:"Часовой пояс журнала"});
   const d2Clock = d2Journal.locator("time").first();
-  assert.match(await d2Clock.innerText(), /\\d{2}:\\d{2}:\\d{2} \\(000\\) МСК/);
+  assert.match(await d2Clock.innerText(), /\d{2}:\d{2}:\d{2} \(000\) МСК/);
   await journalZone.getByRole("button",{name:"UTC"}).click();
-  assert.match(await d2Clock.innerText(), /\\d{2}:\\d{2}:\\d{2} \\(000\\) UTC/);
+  assert.match(await d2Clock.innerText(), /\d{2}:\d{2}:\d{2} \(000\) UTC/);
   await journalZone.getByRole("button",{name:"МСК"}).click();
-  assert.match(await d2Clock.innerText(), /\\d{2}:\\d{2}:\\d{2} \\(000\\) МСК/);
+  assert.match(await d2Clock.innerText(), /\d{2}:\d{2}:\d{2} \(000\) МСК/);
   await page.waitForFunction(() =>
     document.querySelector(".replay-execution-overlay")?.dataset.visiblePaperFills === "2");
   await page.waitForFunction(() =>
