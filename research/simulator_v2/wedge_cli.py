@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from research.simulator_v2.trade_range import TradeDayProof, _ordered_proofs
+from robot_entry_flow_evidence import OI_MODES
 from research.simulator_v2.wedge_backtest import (
     WedgeBacktestResult, run_cached_wedge_trade_range,
 )
@@ -38,6 +39,7 @@ SELECTABLE = {
     "WEDGE_FALLING": "Falling Wedge",
     "WEDGE_RISING": "Rising Wedge",
     "IKIGAI_BOX": "IKIGAI_BOX",
+    "IMPULSE_FLOW": "IMPULSE_FLOW",
 }
 MAX_CONFIG_BYTES = 24_000
 MAX_MANIFEST_BYTES = 125_000
@@ -134,6 +136,8 @@ def run_from_time_machine_config(
     cache_dir: Path, latest_closed_boundary_ms: int,
     capture_replay: bool = False,
     on_replay_events: Callable[[list[dict[str, object]]], None] | None = None,
+    flow_archive_dir: Path | None = None,
+    oi_history_path: Path | None = None,
 ) -> WedgeBacktestResult | BoxBacktestResult:
     """Dispatch one proven native strategy family into the shared exchange."""
     if not isinstance(config, Mapping) or (
@@ -150,6 +154,14 @@ def run_from_time_machine_config(
         not isinstance(x, str) or x not in SELECTABLE for x in selected
     ) or len(set(selected)) != len(selected):
         raise ValueError("only implemented Wedge or Ikigai Box may trade")
+    oi_mode = config.get("oi_mode", "OFF")
+    if not isinstance(oi_mode, str) or oi_mode not in OI_MODES:
+        raise ValueError("invalid OI research filter selection")
+    impulse_selected = "IMPULSE_FLOW" in selected
+    if impulse_selected and len(selected) != 1:
+        raise ValueError("IMPULSE_FLOW trades must have isolated single-symbol strategy owner")
+    if impulse_selected and flow_archive_dir is None:
+        raise ValueError("IMPULSE_FLOW requires pinned original taker execution archive")
     box_selected = "IKIGAI_BOX" in selected
     if box_selected and len(selected) != 1:
         raise ValueError("Box and Wedge cannot share one symbol owner in the same run yet")
@@ -183,7 +195,13 @@ def run_from_time_machine_config(
     end_ms = parse_utc_minute(config.get("end_utc_inclusive"))
     if not isinstance(cache_dir, Path) or cache_dir.is_symlink():
         raise ValueError("dedicated local SIMULATION cache directory required")
+    if flow_archive_dir is not None and (
+        not isinstance(flow_archive_dir, Path) or flow_archive_dir.is_symlink()
+    ):
+        raise ValueError("explicit safe local taker archive directory required")
     if box_selected:
+        if flow_archive_dir is not None or oi_mode != "OFF":
+            raise ValueError("trade-flow and OI entry filters are available only for Wedge")
         return run_cached_box_trade_range(
             cache_dir=cache_dir, symbol=symbol, proofs=proofs,
             latest_closed_boundary_ms=latest_closed_boundary_ms,
@@ -215,13 +233,107 @@ def run_from_time_machine_config(
         initial_balance=_decimal_string(config.get("initial_balance"), "initial_balance"),
         start_ms=start_ms, end_inclusive_ms=end_ms,
         scanner_config=scanner_config,
-        robot_config=SimWedgeRobotConfig(
+        robot_config=(None if impulse_selected else SimWedgeRobotConfig(
             selected_patterns=patterns, tick_size=settings.tick_size,
-        ),
+        )),
         risk_settings=settings,
         capture_replay=capture_replay,
         on_replay_events=on_replay_events,
+        flow_archive_dir=flow_archive_dir,
+        oi_mode=oi_mode,
+        oi_history_path=oi_history_path,
+        impulse_mode=impulse_selected,
     )
+
+
+
+def compare_oi_virtual_runs(
+    *, config: Mapping[str, Any], manifest: Mapping[str, Any],
+    cache_dir: Path, latest_closed_boundary_ms: int,
+    flow_archive_dir: Path, oi_history_path: Path,
+) -> dict[str, object]:
+    """Three sequential virtual Robot runs against EXACTLY the same pinned tape.
+
+    Reuses the original Scanner/Robot, protected LIMIT, STOP/TAKE, fees and
+    exchange. No alternate policy or order executor is added. This function
+    NEVER fetches or repairs historical data and requires both authentic
+    selected raw trades and a source-labeled local 5m OI file.
+    """
+    from research.simulator_v2.virtual_account import IDENTITY
+
+    if (not isinstance(config, Mapping)
+            or not isinstance(config.get("simulation_run_id"), str)
+            or not IDENTITY.fullmatch(config["simulation_run_id"])
+            or len(config["simulation_run_id"]) > 85):
+        raise ValueError("safe base virtual run identity required")
+    if (not isinstance(flow_archive_dir, Path) or flow_archive_dir.is_symlink()
+            or not flow_archive_dir.is_dir()
+            or not isinstance(oi_history_path, Path) or oi_history_path.is_symlink()
+            or not oi_history_path.is_file()):
+        raise ValueError("three-way virtual comparison requires local raw tape and 5m OI")
+    source_key = None
+    common_oi_sha = None
+    cohorts = []
+    for mode in ("OFF", "RISING", "FALLING"):
+        candidate = run_from_time_machine_config(
+            config={
+                **config,
+                "oi_mode": mode,
+                "simulation_run_id": f"{config['simulation_run_id']}_oi_{mode.lower()}",
+            },
+            manifest=manifest, cache_dir=cache_dir,
+            latest_closed_boundary_ms=latest_closed_boundary_ms,
+            flow_archive_dir=flow_archive_dir, oi_history_path=oi_history_path,
+        )
+        if not isinstance(candidate, WedgeBacktestResult):
+            raise ValueError("three-way OI research requires original Wedge Robot")
+        report = candidate.report
+        if not candidate.paper_flow_gate_enabled or report.namespace != "SIMULATION":
+            raise ValueError("comparison requires genuine protected virtual Robot entries")
+        identity = (
+            report.symbol, report.source_id, report.chunk_sha256,
+            report.first_open_ms, report.last_closed_ms, report.initial_balance,
+            candidate.requested_start_ms, candidate.requested_end_inclusive_ms,
+            candidate.archive_proofs,
+        )
+        if source_key is None:
+            source_key = identity
+        elif identity != source_key:
+            raise ValueError("OI cohorts used different source, period or virtual balance")
+        sha = candidate.paper_oi_sha256
+        if mode != "OFF":
+            if not sha or (common_oi_sha is not None and sha != common_oi_sha):
+                raise ValueError("OI cohorts used missing or mismatched OI history")
+            common_oi_sha = sha
+        cohorts.append({
+            "oi_mode": mode,
+            "simulation_run_id": report.simulation_run_id,
+            "virtual_fills": report.virtual_fills,
+            "submitted_protected_limits": candidate.submitted_protected_limits,
+            "stop_exits": candidate.stop_exits, "take_exits": candidate.take_exits,
+            "oi_rejected_retests": candidate.paper_oi_rejected_retests,
+            "flow_rejected_retests": candidate.paper_flow_rejected_retests,
+            "total_fees": str(report.total_fees),
+            "total_net_pnl": str(report.total_net_pnl),
+            "realized_net_pnl": str(report.realized_net_pnl),
+            "unrealized_pnl": str(report.unrealized_pnl),
+            "impulse_signals": candidate.impulse_signals,
+            "impulse_risk_rejections": candidate.impulse_risk_rejections,
+            "return_percent": str(report.return_percent),
+            "max_drawdown_percent": str(report.max_drawdown_percent),
+            "open_position_quantity": str(report.final_position_quantity),
+            "pending_protection": candidate.pending_protection,
+        })
+    return {
+        "namespace": "SIMULATION",
+        "mode": "THREE_WAY_PROTECTED_VIRTUAL_OI_COMPARISON",
+        "symbol": source_key[0], "trade_source_id": source_key[1],
+        "oi_source_sha256": common_oi_sha,
+        "requested_start_ms": source_key[6],
+        "requested_end_inclusive_ms": source_key[7],
+        "cohorts": cohorts,
+        "claim": "RESEARCH_ONLY_NO_PROVEN_PROFITABILITY",
+    }
 
 
 def main() -> None:
@@ -231,19 +343,38 @@ def main() -> None:
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--cache-dir", required=True, type=Path)
+    parser.add_argument("--flow-archive-dir", type=Path, default=None,
+                        help="optional pinned raw Bybit trades for Wedge virtual entries")
+    parser.add_argument("--oi-history-csv", type=Path, default=None,
+                        help="local {SYMBOL}.csv from historical Bybit 5m OI")
+    parser.add_argument("--oi-mode", choices=sorted(OI_MODES), default="OFF")
+    parser.add_argument("--compare-oi", action="store_true",
+                        help="run OFF, RISING and FALLING with the SAME virtual Robot and source")
     args = parser.parse_args()
     from research.simulator_v2.history import last_closed_m1_boundary_ms
     try:
         config = _read_json(args.config, max_bytes=MAX_CONFIG_BYTES)
         manifest = _read_json(args.manifest, max_bytes=MAX_MANIFEST_BYTES)
-        result = run_from_time_machine_config(
-            config=config, manifest=manifest,
-            cache_dir=args.cache_dir,
-            latest_closed_boundary_ms=last_closed_m1_boundary_ms(),
-        )
+        if args.compare_oi:
+            if args.oi_mode != "OFF":
+                raise ValueError("compare-oi selects all three OI modes itself")
+            payload = compare_oi_virtual_runs(
+                config=config, manifest=manifest, cache_dir=args.cache_dir,
+                latest_closed_boundary_ms=last_closed_m1_boundary_ms(),
+                flow_archive_dir=args.flow_archive_dir,
+                oi_history_path=args.oi_history_csv,
+            )
+        else:
+            result = run_from_time_machine_config(
+                config={**config, "oi_mode": args.oi_mode}, manifest=manifest,
+                cache_dir=args.cache_dir,
+                latest_closed_boundary_ms=last_closed_m1_boundary_ms(),
+                flow_archive_dir=args.flow_archive_dir,
+                oi_history_path=args.oi_history_csv,
+            )
+            payload = result.to_payload()
     except (ValueError, FileNotFoundError, TypeError, KeyError) as exc:
         parser.error(f"BLOCKED: {exc}")
-    payload = result.to_payload()
     payload["risk_terms_source"] = config["risk"]["terms_source"]
     payload["risk_terms_status"] = "EXPLICIT_RESEARCH_ASSUMPTIONS_NOT_EXCHANGE_VERIFIED"
     print(json.dumps(payload, sort_keys=True, ensure_ascii=False))

@@ -154,6 +154,33 @@ describe("local one-symbol strategy setup (no trading)", () => {
       onlyWedges(), "BTCUSDT", "2026-10-01T00:00", "2026-10-01T00:00", "0",
     )).toThrow(/депозит/);
   });
+  it("selects isolated impulse-only Robot without mixing Wedge ownership", () => {
+    const impulse = toggleStrategy(onlyWedges(), "IMPULSE_FLOW", true);
+    expect(impulse).toEqual({ mirror: false, selected: ["IMPULSE_FLOW"] });
+    expect(runnableWedgeSelection(impulse)).toBe(true);
+    const request = makeWedgeRunRequest(
+      impulse, "ICNTUSDT", "2026-11-07T11:00", "2026-11-07T11:49", "1000", "FALLING",
+    );
+    expect(request.selected_strategies).toEqual(["IMPULSE_FLOW"]);
+    expect(request.oi_mode).toBe("FALLING");
+    expect(toggleStrategy(impulse, "WEDGE_FALLING", true).selected).toEqual(["WEDGE_FALLING"]);
+  });
+
+  it("adds 5m OI filter only for an explicitly selected virtual-trading cohort", () => {
+    const basic = makeWedgeRunRequest(
+      onlyWedges(), "BTCUSDT", "2026-10-01T00:00", "2026-10-01T01:00", "1000",
+    );
+    expect(basic).not.toHaveProperty("oi_mode");
+    const rising = makeWedgeRunRequest(
+      onlyWedges(), "BTCUSDT", "2026-10-01T00:00", "2026-10-01T01:00", "1000", "RISING",
+    );
+    expect(rising.oi_mode).toBe("RISING");
+    const falling = makeWedgeRunRequest(
+      onlyWedges(), "BTCUSDT", "2026-10-01T00:00", "2026-10-01T01:00", "1000", "FALLING",
+    );
+    expect(falling.oi_mode).toBe("FALLING");
+  });
+
   it("never trusts non-SIMULATION responses or fabricated PnL", () => {
     const status = {
       namespace: "SIMULATION", can_attempt: true,
@@ -186,6 +213,14 @@ describe("local one-symbol strategy setup (no trading)", () => {
       total_fees: "0", return_percent: "0", max_drawdown_percent: "0",
     };
     expect(parseWedgeResult(report).requested_minutes).toBe(2);
+    const impulseReport = {
+      ...report,
+      scenario_type: "IMPULSE_FLOW_SHARED_ROBOT_PROTECTED_VIRTUAL_SIMULATION",
+      impulse_signals: 3,
+    };
+    expect(parseWedgeResult(impulseReport).impulse_signals).toBe(3);
+    expect(() => parseWedgeResult({ ...impulseReport, impulse_signals: -1 })).toThrow();
+
     expect(() => parseWedgeResult({ ...report, namespace: "PAPER" })).toThrow();
     expect(() => parseWedgeResult({ ...report, scenario_type: "EXPLICIT_TEST_ORDERS_NOT_STRATEGY" })).toThrow();
     expect(() => parseWedgeResult({ ...report, virtual_fills: -1 })).toThrow();

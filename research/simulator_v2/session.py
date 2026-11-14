@@ -10,12 +10,13 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+from robot_entry_flow_evidence import CompletedFlowObserver, FlowTransition, TakerPrint, ImpulseProtectedPlan
 from research.historical_market_replay import Candle
 from research.simulator_v2.timeline import (
     IsolatedTimeline, MinuteFrame, SimulationEvent, StageFact, StepBlocked,
 )
 from research.simulator_v2.virtual_account import VirtualAccount, VirtualAccountSnapshot
-from research.simulator_v2.virtual_exchange import MarketRequest, LimitRequest, ProtectedLimitRequest, VirtualExchange
+from research.simulator_v2.virtual_exchange import MarketRequest, LimitRequest, ProtectedLimitRequest, VirtualExchange, L2PartialTakePolicy
 from research.simulator_v2.reused_geometry import ReadOnlyReusedGeometry
 from research.simulator_v2.wedge_observer import ReadOnlyWedgeScanner, WedgeScannerConfig
 from research.simulator_v2.ikigai_observer import ReadOnlyIkigaiScanner, IkigaiScannerConfig
@@ -41,6 +42,8 @@ class VirtualReplaySession:
         ikigai_scanner_config: IkigaiScannerConfig | None = None,
         wedge_robot_config: SimWedgeRobotConfig | None = None,
         wedge_risk_settings: SimWedgeRiskSettings | None = None,
+        execution_mode: str = "OHLC_M1",
+        l2_partial_take_policy: L2PartialTakePolicy | None = None,
     ) -> None:
         if type(enable_reused_geometry) is not bool:
             raise TypeError("explicit boolean for optional research geometry required")
@@ -75,9 +78,12 @@ class VirtualReplaySession:
             initial_balance=initial_balance,
         )
         self._last_committed_minute: Candle | None = None
+        self._entry_flow_observer = CompletedFlowObserver(symbol=symbol, window_ms=60_000)
         self.exchange = VirtualExchange(
             account=self.account, taker_fee_rate=taker_fee_rate,
             maker_fee_rate=maker_fee_rate,
+            execution_mode=execution_mode,
+            l2_partial_take_policy=l2_partial_take_policy,
         )
         self.timeline = IsolatedTimeline(
             simulation_run_id=simulation_run_id, symbol=symbol,
@@ -139,6 +145,31 @@ class VirtualReplaySession:
     def last_committed_minute(self) -> Candle | None:
         """Only the exact closed M1 whose full shared timeline committed."""
         return self._last_committed_minute
+
+    @property
+    def latest_entry_flow(self) -> FlowTransition | None:
+        """Read-only market-flow evidence; never affects virtual admission."""
+        return self._entry_flow_observer.last_transition
+
+    def observe_committed_taker_prints(
+        self, prints: tuple[TakerPrint, ...], *, source_id: str,
+    ) -> FlowTransition | None:
+        """Optional SIMULATION observer of authentic prints for the last CLOSED M1.
+
+        This is an input adapter for the SAME Robot-owned flow evidence module.
+        The caller must prove completeness/provenance of the historical tape;
+        market-only M1 data cannot be re-labelled as taker executions. No
+        virtual orders, protected entry policy or journal are modified.
+        """
+        minute = self._last_committed_minute
+        if (minute is None or self.timeline.paused_stage is not None
+                or self.timeline.virtual_time_ms != self.exchange.virtual_time_ms
+                or self.timeline.virtual_time_ms != minute.end_ms):
+            raise StepBlocked("closed, committed M1 required before flow observation")
+        return self._entry_flow_observer.observe_closed(
+            prints, start_ms=minute.start_ms, end_ms=minute.end_ms,
+            observed_at_ms=minute.end_ms, source_id=source_id,
+        )
 
     def step(self, minute: Candle) -> VirtualAccountSnapshot:
         if self.timeline.virtual_time_ms != self.exchange.virtual_time_ms:
@@ -268,6 +299,41 @@ class VirtualReplaySession:
         )
         self.exchange.submit_protected_limit(
             request, submitted_at_ms=self.virtual_time_ms,
+        )
+
+    def submit_protected_impulse(self, plan: ImpulseProtectedPlan) -> None:
+        """Execute a pure Robot impulse plan through the EXISTING virtual venue.
+
+        Unlike the wedge-retest method, this accepts only the dedicated
+        checked shared Robot signal/plan from the most recent committed M1.
+        It does not create any PAPER or LIVE order authority.
+        """
+        if not isinstance(plan, ImpulseProtectedPlan):
+            raise TypeError("shared Robot protected impulse plan required")
+        if self.timeline.paused_stage is not None or (
+            self.virtual_time_ms is None
+            or self.timeline.virtual_time_ms != self.exchange.virtual_time_ms
+            or plan.signal.known_at_ms != self.virtual_time_ms
+        ):
+            raise StepBlocked("uncommitted or stale impulse plan forbidden")
+        if self._last_committed_minute is None or (
+            self._last_committed_minute.end_ms != self.virtual_time_ms
+        ):
+            raise StepBlocked("impulse must follow a committed closed M1")
+        if self.account.snapshot(
+            as_of_ms=self.virtual_time_ms, mark_price=plan.entry_price,
+        ).position_quantity != 0:
+            raise ValueError("virtual impulse account must be flat")
+        # The shared Robot plan has checked worst-loss and fee-aware minimum
+        # RR. The same venue executes STOP-first, not an alternate matcher.
+        entry = LimitRequest(
+            order_id=f"IMPULSE_{self.virtual_time_ms}",
+            side="BUY" if plan.signal.direction == "LONG" else "SELL",
+            quantity=plan.quantity, limit_price=plan.entry_price,
+        )
+        self.exchange.submit_protected_limit(
+            ProtectedLimitRequest(entry, plan.stop_price, plan.take_price),
+            submitted_at_ms=self.virtual_time_ms,
         )
 
     def amend_limit(self, request: LimitRequest) -> None:

@@ -73,9 +73,9 @@ export type PaperEpisodeFacts = {
   side: "LONG" | "SHORT";
   opened_at_ms: number;
   closed_at_ms: number;
+  pnl_usdt: string;
   realized_price_pnl_usdt: string;
   known_execution_fees_usdt: string;
-  pnl_usdt: string;
   execution_allocations: PaperAllocation[];
   setup_context?: PaperD2Context;
 };
@@ -85,6 +85,7 @@ export type PaperMarker = {
   candle_start_ms: number;
   price: number;
   order_side: "Buy" | "Sell";
+  allocation_role: PaperAllocation["allocation_role"];
   execution_id: string;
 };
 export type PaperOverlay =
@@ -366,8 +367,8 @@ export function parsePaperEpisodeFacts(input: unknown): PaperEpisodeFacts {
     account_id: "paper", owner: f.owner, cohort: f.cohort as PaperEpisodeFacts["cohort"],
     source_revision: f.source_revision as number, trade_episode_id: f.trade_episode_id,
     symbol: f.symbol, side: f.side, opened_at_ms: opened, closed_at_ms: closed,
-    realized_price_pnl_usdt: realized, known_execution_fees_usdt: fees,
-    pnl_usdt: pnl, execution_allocations: allocations,
+    pnl_usdt: pnl, realized_price_pnl_usdt: realized,
+    known_execution_fees_usdt: fees, execution_allocations: allocations,
     ...(f.setup_context !== undefined ? {
       setup_context: parseD2Context(f.setup_context, f.symbol, f.side, first.controller, opened),
     } : {}),
@@ -414,7 +415,7 @@ export function matchPaperFactsToMarket(
     markers.push({
       time_ms: item.occurred_at_ms, candle_start_ms: bar.start_ms,
       price: Number(item.execution_price), order_side: item.order_side,
-      execution_id: item.execution_id,
+      allocation_role: item.allocation_role, execution_id: item.execution_id,
     });
   }
   return { status: "MATCHED", reason: "", markers };

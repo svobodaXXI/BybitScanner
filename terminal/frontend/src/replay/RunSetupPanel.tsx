@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { type ReplayDocument, type ReplayEvent } from "./replayModel";
 import { streamWedge } from "./streamWedge";
 import {
@@ -7,7 +7,7 @@ import {
   parseRunCoordinates, formatRunDuration,
   selectAll, toggleMirror, toggleStrategy, validateInclusiveWindow,
   makeWedgeRunRequest, parseWedgeStatus, runnableWedgeSelection,
-  type PeriodPreset, type PeriodIncrement, type RunSelection, type StrategyId,
+  type PeriodPreset, type PeriodIncrement, type RunSelection, type StrategyId, type OiFilterMode,
   type LocalWedgeResult, type LocalWedgeStatus,
 } from "./runSetup";
 import "./runSetup.css";
@@ -18,6 +18,7 @@ const STEPS: Array<{ id: PeriodIncrement; name: string }> = [
   { id: "HOUR", name: "1 час" },
   { id: "DAY", name: "1 день" },
   { id: "WEEK", name: "1 неделя" },
+  { id: "MONTH", name: "1 месяц" },
 ];
 
 /** Local-only Wedge execution via loopback: never production /api or PAPER. */
@@ -25,7 +26,8 @@ export function RunSetupPanel({
   symbol, onArchiveSymbol, onPasteSymbol, onSimulationStart, onSimulationReady,
   onSimulationAppend, onSimulationFailed, onSimulationBusy, playRequestId, showReport,
   onPublicHistoryRequest, publicHistoryLoading, onStrategySelectionChange,
-  onEpisodeLookup,
+  onEpisodeLookup, importedCoordinates, importedL2, importControls,
+  onSelectedWindowChange, periodLoadNotice,
 }: {
   symbol: string;
   onArchiveSymbol: (archiveSymbol: string) => boolean;
@@ -41,6 +43,11 @@ export function RunSetupPanel({
   publicHistoryLoading: boolean;
   onStrategySelectionChange: (selection: RunSelection) => void;
   onEpisodeLookup: (episodeId: string) => Promise<void>;
+  importedCoordinates: { symbol: string; start_utc: string; end_utc_inclusive: string; revision: number } | null;
+  importedL2: boolean;
+  importControls: ReactNode;
+  onSelectedWindowChange: (symbol: string, start: string, end: string) => void;
+  periodLoadNotice: string;
 }) {
   const [selection, setSelection] = useState<RunSelection>(onlyWedges);
   const [start, setStart] = useState(INITIAL_START);
@@ -48,6 +55,7 @@ export function RunSetupPanel({
   const [preset, setPreset] = useState<PeriodPreset | null>("DAY");
   const [openMirror, setOpenMirror] = useState(true);
   const [balance, setBalance] = useState("1000");
+  const [oiMode, setOiMode] = useState<OiFilterMode>("OFF");
   const [status, setStatus] = useState<LocalWedgeStatus | null>(null);
   const [statusError, setStatusError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -68,6 +76,8 @@ export function RunSetupPanel({
       return { window: null, error: error instanceof Error ? error.message : "Некорректный период" };
     }
   }, [start, end]);
+  useEffect(() => { onSelectedWindowChange(symbol, start, end); },
+    [symbol, start, end, onSelectedWindowChange]);
   const active = ALL_SELECTABLE.filter(id => selection.selected.includes(id));
   const mirrorSelected = MIRROR_OPTIONS.filter(x => selection.selected.includes(x.id)).length;
   const wedgesOnly = runnableWedgeSelection(selection);
@@ -106,6 +116,20 @@ export function RunSetupPanel({
     })();
     return () => controller.abort();
   }, [onArchiveSymbol]);
+
+  // Owner-imported JSON is the source of the coordinate fields, not a new
+  // SIMULATION request. Never invoke Apply here: that would clear L2 fills.
+  useEffect(() => {
+    if (!importedCoordinates) return;
+    datesEdited.current = true;
+    setStart(importedCoordinates.start_utc);
+    setEnd(importedCoordinates.end_utc_inclusive);
+    setCoordinateText(importedCoordinates.symbol + " | " +
+      importedCoordinates.start_utc + " | " + importedCoordinates.end_utc_inclusive);
+    setPreset(null);
+    setPeriodError("");
+    setCoordinateError("");
+  }, [importedCoordinates]);
 
   const runWedges = useCallback(async (request: WedgeRunRequest, seq: number) => {
     if (running.current) return; // No duplicate Scanner/Robot computation.
@@ -149,7 +173,7 @@ export function RunSetupPanel({
   const updateStart = (value: string) => {
     datesEdited.current = true;
     setPeriodError("");
-    setCoordinateText("");
+    setCoordinateText(symbol + " | " + value + " | " + end);
     setStart(value);
     if (preset) {
       try { setEnd(presetEndInclusive(value, preset)); } catch { /* Display validation until input completed. */ }
@@ -158,14 +182,18 @@ export function RunSetupPanel({
   const choosePreset = (next: PeriodPreset) => {
     datesEdited.current = true;
     setPeriodError("");
-    setPreset(next); setCoordinateText("");
-    try { setEnd(presetEndInclusive(start, next)); } catch { /* Invalid start remains visible. */ }
+    setPreset(next);
+    try {
+      const updatedEnd = presetEndInclusive(start, next);
+      setEnd(updatedEnd);
+      setCoordinateText(symbol + " | " + start + " | " + updatedEnd);
+    } catch { /* Invalid start remains visible. */ }
   };
   const changePeriod = (increment: PeriodIncrement, direction: 1 | -1) => {
     try {
       const updatedEnd = adjustInclusiveWindow(start, end, increment, direction);
       datesEdited.current = true;
-      setPreset(null); setCoordinateText("");
+      setPreset(null); setCoordinateText(symbol + " | " + start + " | " + updatedEnd);
       setEnd(updatedEnd);
       setPeriodError("");
     } catch (error) {
@@ -182,8 +210,17 @@ export function RunSetupPanel({
     try {
       const coords = value.trim() ? parseRunCoordinates(value) :
         { symbol, start_utc: start, end_utc_inclusive: end };
+      if (importedL2) {
+        if (coords.symbol !== symbol)
+          throw new Error("Для изменения тикера импортируйте соответствующий L2-отчёт");
+        datesEdited.current = true;
+        setStart(coords.start_utc); setEnd(coords.end_utc_inclusive);
+        setCoordinateText(coords.symbol + " | " + coords.start_utc + " | " + coords.end_utc_inclusive);
+        setPreset(null); setPeriodError(""); setCoordinateError("");
+        return; // Do NOT prepare a new Robot run or clear the original L2.
+      }
       const request = makeWedgeRunRequest(
-        selection, coords.symbol, coords.start_utc, coords.end_utc_inclusive, balance,
+        selection, coords.symbol, coords.start_utc, coords.end_utc_inclusive, balance, oiMode,
       );
       requestController.current?.abort();
       requestController.current = null;
@@ -283,6 +320,9 @@ export function RunSetupPanel({
               <button type="button" onClick={() => void pasteCoordinates()}>Вставить из буфера</button>
               <button type="button" onClick={() => applyCoordinates(coordinateText)}>Применить</button>
             </div>
+            <div className="replay-run-import-controls" role="group" aria-label="Импорт и отчёты прогона">
+              {importControls}
+            </div>
             {coordinateError && <p role="alert" className="replay-run-error">{coordinateError}</p>}
           </div>
           <label>Начало · дата и время
@@ -300,9 +340,11 @@ export function RunSetupPanel({
               </div>
               <span className="replay-run-step-label">{option.name}</span>
             </div>)}
-            <button type="button" onClick={() => changePeriod("MONTH", 1)}>+1 месяц</button>
-            <button type="button" aria-pressed={preset === "THREE_MONTHS"}
-              onClick={() => choosePreset("THREE_MONTHS")}>3 месяца · 90 дней</button>
+            <button type="button" className="replay-run-inline-history"
+              disabled={publicHistoryLoading || !parsed.window}
+              onClick={() => onPublicHistoryRequest(symbol, start, end, selection.selected)}>
+              {publicHistoryLoading ? "Подгружаю период…" : "Подгрузить период с Bybit"}
+            </button>
           </div>
           {parsed.window && <p className="replay-run-duration" role="status"
             aria-label="Продолжительность прогона" aria-live="polite">
@@ -313,19 +355,15 @@ export function RunSetupPanel({
             <input aria-label="Конец прогона UTC" type="datetime-local" step={60}
               value={end} onChange={e => {
                 datesEdited.current = true; setPeriodError(""); setPreset(null);
-                setCoordinateText(""); setEnd(e.target.value);
+                setCoordinateText(symbol + " | " + start + " | " + e.target.value);
+                setEnd(e.target.value);
               }} />
           </label>
           {parsed.error ? <p role="alert" className="replay-run-error">{parsed.error}</p> :
             <p role="status" className="replay-run-summary">
               {parsed.window?.minutes.toLocaleString("ru-RU")} минут M1 · конечная минута включена
             </p>}
-          <div className="replay-run-public-history">
-            <button type="button" disabled={publicHistoryLoading || !parsed.window}
-              onClick={() => onPublicHistoryRequest(symbol, start, end, selection.selected)}>
-              {publicHistoryLoading ? "Загружаю историю…" : "Загрузить Bybit (без сделок)"}
-            </button>
-          </div>
+          {periodLoadNotice && <p role="status" aria-label="Покрытие выбранного периода" className="replay-run-summary">{periodLoadNotice}</p>}
         </fieldset>
       </div>
       <div className="replay-run-account">
@@ -333,7 +371,14 @@ export function RunSetupPanel({
           <input aria-label="Виртуальный депозит" type="text" inputMode="decimal"
             value={balance} onChange={e => setBalance(e.target.value)} />
         </label>
-
+        <label>Открытый интерес (OI · 5 мин)
+          <select aria-label="Фильтр OI" value={oiMode}
+            onChange={e => setOiMode(e.target.value as OiFilterMode)}>
+            <option value="OFF">Без фильтра</option>
+            <option value="RISING">OI растёт</option>
+            <option value="FALLING">OI снижается</option>
+          </select>
+        </label>
       </div>
       <div className="replay-run-footer">
         <span data-selected-strategies={active.join(",")} aria-hidden="true" />
@@ -341,7 +386,7 @@ export function RunSetupPanel({
       </div>
       {!wedgesOnly && active.length > 0 &&
         <p className="replay-run-error" role="status">
-          Отмеченные стратегии сохранены как выбор, но торговый запуск пока поддерживает только два клина.
+          Отмеченные стратегии сохранены, но виртуальная торговля поддерживает клинья или отдельную охоту за импульсом.
         </p>}
       {statusError && <p role="status" className="replay-run-error">{statusError}</p>}
       {status && !status.can_attempt &&
@@ -360,8 +405,9 @@ export function RunSetupPanel({
           нереализованный: {report.unrealized_pnl} USDT</span>
         <span>Суммарный PnL: {report.total_net_pnl} USDT ·
           доходность: {report.return_percent}% · просадка: {report.max_drawdown_percent}%</span>
-        <span>Обнаружено клиньев: {report.scanner_wedge_observations} ·
-          ретестов: {report.robot_retests_in_period} ·
+        <span>{report.scenario_type === "IMPULSE_FLOW_SHARED_ROBOT_PROTECTED_VIRTUAL_SIMULATION"
+          ? <>Обнаружено импульсов: {report.impulse_signals ?? 0} · </>
+          : <>Обнаружено клиньев: {report.scanner_wedge_observations} · ретестов: {report.robot_retests_in_period} · </>}
           LIMIT: {report.submitted_protected_limits} ·
           исполнений: {report.virtual_fills} · STOP: {report.stop_exits} · TAKE: {report.take_exits}</span>
         <small>Модель OHLC, не фактические биржевые исполнения. Параметры риска — локальные исследовательские допущения.</small>

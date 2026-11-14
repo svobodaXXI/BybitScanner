@@ -6,9 +6,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   completeHourlyCandles, nextClosedCandleCursor, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations,
   visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy,
-  type ReplayDocument, type ReplayEvent, type PublicScannerObservation,
+  type ReplayDocument, type ReplayEvent, type ReplayCandle, type PublicScannerObservation,
 } from "./replayModel";
-import { visibleExecutionMarkers, TELEGRAM_BUY_COLOR, TELEGRAM_SELL_COLOR } from "./executionMarkers";
+import { visibleExecutionMarkers, visibleStopAmendMarkers, TELEGRAM_BUY_COLOR, TELEGRAM_SELL_COLOR } from "./executionMarkers";
+import { parseLocalReplayUpload } from "./l2ReplayUpload";
+import { l2Prehistory, l2Posthistory, l2PresentationEvents } from "./l2ChartContext";
+import { chartWilderDmi } from "./replayChartDmi";
+import { selectedL2MarketContext } from "./l2PeriodContext";
+import { L2M5Catalog } from "./l2M5Catalog";
+import { journalTimeParts, type JournalZone } from "./journalTime";
+import { finePresentationEvents, parseFineChart, type FineChart, type FineBarFrame } from "./fineChart";
 import {
   matchPaperFactsToMarket, parsePaperEpisodeFacts, revealedPaperMarkers,
   type PaperEpisodeFacts, type PaperOverlay,
@@ -69,11 +76,21 @@ function PlayerIcon({ name }: { name: keyof typeof PLAYER_PATHS }) {
     <path d={PLAYER_PATHS[name]} />
   </svg>;
 }
-function ReplayChart({ document, cursor, paperOverlay, paperFacts, selectedStrategies, showTrendGeometry, showDebug, timeframe, drawings, selectedId,
+function JournalTime({ timestamp, zone }: { timestamp: number; zone: JournalZone }) {
+  const clock = journalTimeParts(timestamp, zone);
+  return <time dateTime={new Date(timestamp).toISOString()}
+    title={"Исходный timestamp: " + timestamp + " мс UTC"}>
+    {clock.date} · {clock.seconds}{" "}
+    <span className="replay-journal-ms" title="Миллисекунды">({clock.milliseconds})</span>
+    {" "}{zone === "MSK" ? "МСК" : "UTC"}
+  </time>;
+}
+
+function ReplayChart({ document, cursor, prehistory, fineBars, paperOverlay, paperFacts, selectedStrategies, showResearchObservations, showTrendGeometry, showDebug, timeframe, drawings, selectedId,
   drawingTool, onDrawingsChange, onSelectDrawing, onDrawingGesture }: {
-  document: ReplayDocument; cursor: number; paperOverlay: PaperOverlay;
+  document: ReplayDocument; cursor: number; prehistory: ReplayCandle[]; fineBars: ReplayCandle[]; paperOverlay: PaperOverlay;
   paperFacts: PaperEpisodeFacts | null; selectedStrategies: readonly string[];
-  showTrendGeometry: boolean; showDebug: boolean; timeframe: "5m" | "1h";
+  showResearchObservations: boolean; showTrendGeometry: boolean; showDebug: boolean; timeframe: "5m" | "1h" | FineBarFrame;
   drawings: DrawingObject[]; selectedId: string | null; drawingTool: DrawingTool;
   onDrawingsChange: (next: DrawingObject[]) => void;
   onSelectDrawing: (id: string | null) => void;
@@ -88,8 +105,14 @@ function ReplayChart({ document, cursor, paperOverlay, paperFacts, selectedStrat
   const renderExecutions = useRef<() => void>(() => {});
    const indicators = useRef<Record<"PLUS" | "MINUS" | "ADX" | "LEVEL", ISeriesApi<"Line">> | null>(null);
   const shown = useMemo(() => visibleReplay(document.events, cursor), [document, cursor]);
+  const chartM5 = useMemo(() => [...prehistory, ...shown.candles], [prehistory, shown.candles]);
+  const sourceFirstMs = document.events.find(e => e.kind === "CANDLE_CLOSED" && e.candle)
+    ?.candle?.start_ms ?? 0;
+  const fineCutoff = shown.lastTimeMs ?? sourceFirstMs;
   const displayCandles = useMemo(() => timeframe === "1h"
-    ? completeHourlyCandles(shown.candles) : shown.candles, [shown.candles, timeframe]);
+    ? completeHourlyCandles(chartM5) : timeframe === "5m"
+      ? chartM5 : fineBars.filter(c => c.end_ms <= fineCutoff),
+    [chartM5, timeframe, fineBars, fineCutoff]);
   // Build a frozen visual-only record once per archive. Each already
   // revealed provisional line persists as drawn; rewinding masks its future.
   const earlyTimeline = useMemo(() => earlyGeometryTimeline(document), [document]);
@@ -97,14 +120,25 @@ function ReplayChart({ document, cursor, paperOverlay, paperFacts, selectedStrat
     () => visibleEarlyGeometryTimeline(earlyTimeline, shown.lastTimeMs),
     [earlyTimeline, shown.lastTimeMs],
   );
-  const observedDmi = useMemo(() => visibleDmi(document, shown.candles.length), [document, shown.candles.length]);
-  // Only the final 5m DMI reading of each completed H1 is plotted on the H1 axis.
+  const sourceDmi = useMemo(() =>
+    visibleDmi(document, shown.candles.length), [document, shown.candles.length]);
+  // The local L2 receipt contains at most three completed source M5 bars;
+  // pre/post M5 context is strictly chart-only. Recalculate its display DMI
+  // from closed contiguous public/source candles, never from future prices.
+  const l2ChartDmi = useMemo(() => {
+    if (document.execution_clock !== "ORIGINAL_EVENT_TIME_NOT_OHLC_M1" ||
+        chartM5.length < 28) return [];
+    try { return chartWilderDmi(chartM5); }
+    catch { return []; } // Missing/unverified M5 must not create indicator values.
+  }, [document.execution_clock, chartM5]);
+  const observedDmi = l2ChartDmi.length ? l2ChartDmi : sourceDmi;
   const indicatorSamples = timeframe === "1h"
     ? displayCandles.map(hour => {
-      const index = shown.candles.findIndex(bar => bar.end_ms === hour.end_ms);
-      return index >= 0 ? observedDmi[index] : undefined;
+      const point = observedDmi.find(p => p.time_ms === hour.end_ms);
+      return point;
     })
-    : observedDmi;
+    : displayCandles.map(bar =>
+      observedDmi.find(p => p.time_ms === bar.end_ms));
   const observedTouches = useMemo(() =>
     showTrendGeometry ? visibleObservations(document, shown.lastTimeMs) : [],
     [document, shown.lastTimeMs, showTrendGeometry]);
@@ -176,6 +210,16 @@ function ReplayChart({ document, cursor, paperOverlay, paperFacts, selectedStrat
       api.remove();
     };
   }, []);
+
+  useEffect(() => {
+    chart.current?.timeScale().applyOptions({ timeVisible: true, secondsVisible: timeframe === "15s" });
+    // Original fills near the beginning of a 2h detailed window must remain
+    // visible when moving from 120 M1 bars to 480+ 15S bars; otherwise the
+    // overlay correctly culls off-screen fills and appears empty.
+    if (timeframe !== "1m" && timeframe !== "15s") return;
+    const frame = window.requestAnimationFrame(() => chart.current?.timeScale().fitContent());
+    return () => window.cancelAnimationFrame(frame);
+  }, [timeframe]);
 
   useEffect(() => {
     const candleSeries = series.current;
@@ -410,7 +454,8 @@ function ReplayChart({ document, cursor, paperOverlay, paperFacts, selectedStrat
         context.stroke();
         paintedBlueRisk++;
       }
-      const fills = visibleExecutionMarkers(document.events.slice(0, cursor), shown.candles);
+      const fills = visibleExecutionMarkers(document.events.slice(0, cursor),
+        timeframe === "1m" || timeframe === "15s" ? displayCandles : shown.candles);
       let rendered = 0;
       for (const fill of fills) {
         const stamp = timeframe === "1h"
@@ -423,15 +468,16 @@ function ReplayChart({ document, cursor, paperOverlay, paperFacts, selectedStrat
             || x < -7 || x > width + 7 || y < -7 || y > paneHeight + 7) {
           continue; // Never move an off-screen fill to a fictitious price.
         }
+        const half = fill.partial ? 4.5 : 7;
         context.beginPath();
         if (fill.side === "Buy") {
-          context.moveTo(x, y - 7);
-          context.lineTo(x - 7, y + 6);
-          context.lineTo(x + 7, y + 6);
+          context.moveTo(x, y - half);
+          context.lineTo(x - half, y + half - 1);
+          context.lineTo(x + half, y + half - 1);
         } else {
-          context.moveTo(x, y + 7);
-          context.lineTo(x - 7, y - 6);
-          context.lineTo(x + 7, y - 6);
+          context.moveTo(x, y + half);
+          context.lineTo(x - half, y - half + 1);
+          context.lineTo(x + half, y - half + 1);
         }
         context.closePath();
         context.fillStyle = fill.side === "Buy" ? TELEGRAM_BUY_COLOR : TELEGRAM_SELL_COLOR;
@@ -441,8 +487,30 @@ function ReplayChart({ document, cursor, paperOverlay, paperFacts, selectedStrat
         context.stroke();
         rendered += 1;
       }
-      // PAPER observations are a separate, hollow-ring overlay. These are
-      // original owner-imported execution prices, NOT SIMULATION fill events.
+      // A short violet tick marks the original amended STOP price only at
+      // its known event time. It is NOT a projected/live stop trajectory.
+      for (const amend of visibleStopAmendMarkers(
+        document.events.slice(0, cursor),
+        timeframe === "1m" || timeframe === "15s" ? displayCandles : shown.candles,
+      )) {
+        const stamp = timeframe === "1h"
+          ? Math.floor(amend.candle_start_ms / 3_600_000) * 3_600_000
+          : amend.candle_start_ms;
+        if (!displayCandles.some(bar => bar.start_ms === stamp)) continue;
+        const x = api.timeScale().timeToCoordinate((stamp / 1000) as UTCTimestamp);
+        const y = candleSeries.priceToCoordinate(amend.stop);
+        if (x === null || y === null || !Number.isFinite(x) || !Number.isFinite(y) ||
+            x < 0 || x > priceWidth || y < 0 || y > paneHeight) continue;
+        context.beginPath();
+        context.strokeStyle = "#a78bfa";
+        context.lineWidth = 2;
+        context.moveTo(x - 10, y);
+        context.lineTo(x + 10, y);
+        context.stroke();
+      }
+      // PAPER executions are outlined Buy/Sell TRIANGLES, matching the owner's
+      // existing trade marker shape. Outlines distinguish immutable imported
+      // evidence from filled SIMULATION trade markers without changing either ledger.
       // Only plot a factual fill once its independently closed M5 is revealed.
       let paintedPaper = 0;
       for (const fill of revealedPaperMarkers(paperOverlay, shown.candles)) {
@@ -454,20 +522,39 @@ function ReplayChart({ document, cursor, paperOverlay, paperFacts, selectedStrat
         const y = candleSeries.priceToCoordinate(fill.price);
         if (x === null || y === null || !Number.isFinite(x) || !Number.isFinite(y) ||
             x < 0 || x > priceWidth || y < 0 || y > paneHeight) continue;
+        const half = 7;
         context.beginPath();
-        context.arc(x, y, 5.5, 0, 2 * Math.PI);
+        if (fill.order_side === "Buy") {
+          context.moveTo(x, y - half);
+          context.lineTo(x - half, y + half - 1);
+          context.lineTo(x + half, y + half - 1);
+        } else {
+          context.moveTo(x, y + half);
+          context.lineTo(x - half, y - half + 1);
+          context.lineTo(x + half, y - half + 1);
+        }
+        context.closePath();
         context.fillStyle = "#121923";
         context.fill();
         context.strokeStyle = fill.order_side === "Buy" ? TELEGRAM_BUY_COLOR : TELEGRAM_SELL_COLOR;
         context.lineWidth = 2;
         context.stroke();
+        // Original PAPER role only: CLOSE is not proof of STOP or TAKE.
+        const paperRole = fill.allocation_role === "CLOSE" ? "CLOSE"
+          : ["OPEN", "REVERSAL_OPEN"].includes(fill.allocation_role) ? "OPEN"
+          : fill.allocation_role;
+        const labelOnLeft = x > priceWidth - 85;
+        context.font = "11px system-ui, sans-serif";
+        context.textAlign = labelOnLeft ? "right" : "left";
+        context.fillStyle = "#e1e9f5";
+        context.fillText(paperRole, x + (labelOnLeft ? -10 : 10), Math.max(12, y - 8));
         paintedPaper++;
       }
       // Real native Scanner research on public, CLOSED M5 only: small
       // outlined markers, never ENTRY_SIGNAL/Robot order/fill triangles.
       let paintedScanner = 0;
       const revealedScanner = document.mode === "MARKET_ONLY" &&
-        shown.lastTimeMs !== null
+        showResearchObservations && shown.lastTimeMs !== null
           ? (document.scanner_observations ?? []).filter(item =>
               selectedStrategies.includes(item.strategy) &&
               item.available_at_ms <= shown.lastTimeMs!)
@@ -515,7 +602,7 @@ function ReplayChart({ document, cursor, paperOverlay, paperFacts, selectedStrat
     // Chart recalculates pixel coordinates after updating series/timescale.
     const redrawId = requestAnimationFrame(() => renderExecutions.current());
     return () => cancelAnimationFrame(redrawId);
-  }, [shown, document, cursor, paperOverlay, paperFacts, observedDmi, observedTouches, blueRiskPreviews, priorBreaks, selectedStrategies, showTrendGeometry, showDebug, timeframe, displayCandles, earlyGeometry]);
+  }, [shown, document, cursor, paperOverlay, paperFacts, observedDmi, observedTouches, blueRiskPreviews, priorBreaks, selectedStrategies, showResearchObservations, showTrendGeometry, showDebug, timeframe, displayCandles, earlyGeometry]);
 
   // The editable layer reuses the terminal's drawing tools, but stores its X
   // anchors in absolute UTC M5 slots rather than indices of the selected TF.
@@ -592,13 +679,38 @@ export function ReplayPage() {
     return currentSymbol.current === archiveSymbol;
   }, []);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [periodLoadNotice, setPeriodLoadNotice] = useState("");
+  const [playMissingNotice, setPlayMissingNotice] = useState("");
+  const [selectedWindow, setSelectedWindow] = useState({
+    symbol: "BTCUSDT", start: "", end: "",
+  });
+  const onSelectedWindowChange = useCallback(
+    (symbol: string, start: string, end: string) => {
+      setSelectedWindow(previous => previous.symbol === symbol &&
+        previous.start === start && previous.end === end
+        ? previous : { symbol, start, end });
+    }, []);
+  const [importedCoordinates, setImportedCoordinates] = useState<{
+    symbol: string; start_utc: string; end_utc_inclusive: string; revision: number;
+  } | null>(null);
+  const m5Catalog = useRef(new L2M5Catalog());
+  const [m5CatalogRevision, setM5CatalogRevision] = useState(0);
+  const [l2Context, setL2Context] = useState<ReplayCandle[]>([]);
+  const [l2After, setL2After] = useState<ReplayCandle[]>([]);
+  const [l2ContextFor, setL2ContextFor] = useState<ReplayDocument | null>(null);
+  const [l2ContextStatus, setL2ContextStatus] = useState("");
+  const [fineFor, setFineFor] = useState<ReplayDocument | null>(null);
+  const [fineChart, setFineChart] = useState<FineChart | null>(null);
+  const [fineLoading, setFineLoading] = useState(false);
+  const [fineNotice, setFineNotice] = useState("");
   const historyRequest = useRef<AbortController | null>(null);
   const bundledRequest = useRef<AbortController | null>(null);
   const [cursor, setCursor] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [rate, setRate] = useState(8);
   const [showDebug, setShowDebug] = useState(false);
-  const [timeframe, setTimeframe] = useState<"5m" | "1h">("5m");
+  const [timeframe, setTimeframe] = useState<"5m" | "1h" | FineBarFrame>("5m");
+  const [journalZone, setJournalZone] = useState<JournalZone>("MSK");
   const [drawingTool, setDrawingTool] = useState<DrawingTool>("crosshair");
   const [drawings, setDrawings] = useState<DrawingObject[]>([]);
   const [selectedDrawing, setSelectedDrawing] = useState<string | null>(null);
@@ -606,6 +718,10 @@ export function ReplayPage() {
   const [fileLabel, setFileLabel] = useState("Тикер и период не выбраны");
   // PAPER evidence is never inserted into document.events or VirtualAccount.
   const [paperFacts, setPaperFacts] = useState<PaperEpisodeFacts | null>(null);
+  // Research observations are not evidence of the original PAPER signal.
+  // Keep ordinary MARKET_ONLY research unchanged; opt in when examining PAPER.
+  const [showResearchWithPaper, setShowResearchWithPaper] = useState(false);
+  const showResearchObservations = paperFacts === null || showResearchWithPaper;
   const [localEpisodeMessage, setLocalEpisodeMessage] = useState("");
   const paperOverlay = useMemo(
     () => matchPaperFactsToMarket(paperFacts, document), [paperFacts, document],
@@ -625,15 +741,44 @@ export function ReplayPage() {
     );
     return () => window.clearInterval(ticker);
   }, [runLoading]);
-  const shown = useMemo(() => visibleReplay(document.events, cursor), [document, cursor]);
+  // Do not mutate the original L2 document. Only the viewport/playback receives
+  // a combined, read-only clock of source events and public post-range M5 closes.
+  const activeL2After = l2ContextFor === document ? l2After : [];
+  const activeFine = fineFor === document ? fineChart : null;
+  const fineBars = timeframe === "1m" ? activeFine?.m1 :
+    timeframe === "15s" ? activeFine?.s15 : undefined;
+  const displayEvents = useMemo(() => {
+    const base = l2PresentationEvents(document, activeL2After);
+    if (!fineBars) return base;
+    const first = document.events.find(e => e.kind === "CANDLE_CLOSED" && e.candle)
+      ?.candle?.start_ms;
+    return first === undefined ? base : finePresentationEvents(base, fineBars, first);
+  }, [document, activeL2After, fineBars]);
+  const displayDocument = useMemo(
+    () => displayEvents === document.events ? document :
+      { ...document, events: displayEvents }, [document, displayEvents]);
+  const shown = useMemo(() => visibleReplay(displayEvents, cursor), [displayEvents, cursor]);
+  const selectedCoverage = useMemo(() => {
+    if (document.execution_clock !== "ORIGINAL_EVENT_TIME_NOT_OHLC_M1" ||
+        selectedWindow.symbol !== document.symbol) return null;
+    try {
+      const period = validateInclusiveWindow(selectedWindow.start, selectedWindow.end);
+      const local = m5Catalog.current.status(
+        document.symbol!, document, period.startMs, period.endExclusiveMs);
+      return { complete: local.complete, covered: local.covered,
+        required: local.required };
+    } catch { return null; }
+  }, [document, selectedWindow, m5CatalogRevision]);
+  const missingForPlay = document.execution_clock === "ORIGINAL_EVENT_TIME_NOT_OHLC_M1" &&
+    selectedCoverage !== null && !selectedCoverage.complete;
   const scannerObservations = useMemo(() =>
-    document.mode === "MARKET_ONLY" && shown.lastTimeMs !== null
+    document.mode === "MARKET_ONLY" && showResearchObservations && shown.lastTimeMs !== null
       ? (document.scanner_observations ?? []).filter(o =>
           selectedStrategies.selected.includes(o.strategy) &&
           o.available_at_ms <= shown.lastTimeMs!)
-      : [], [document, shown.lastTimeMs, selectedStrategies]);
-  const journal = useMemo(() => (document.demo ? [] : document.events.slice(0, cursor))
-    .filter(event => event.kind !== "CANDLE_CLOSED").map(event => {
+      : [], [document, shown.lastTimeMs, selectedStrategies, showResearchObservations]);
+  const journal = useMemo(() => (document.demo ? [] : displayEvents.slice(0, cursor))
+    .filter(event => event.kind !== "CANDLE_CLOSED" && event.kind !== "CHART_TICK").map(event => {
       const fmt = (value: string) => {
         const number = Number(value);
         return number > 0 ? "+" + number.toFixed(4) : number.toFixed(4);
@@ -647,7 +792,15 @@ export function ReplayPage() {
         case "WEDGE_BREAKOUT": message = "Пробой подтверждён. Ожидается ретест"; break;
         case "WEDGE_RETEST": message = "Ретест подтверждён"; break;
         case "ENTRY_SIGNAL": message = "Выставлен LIMIT после ретеста"; break;
-        case "ENTRY_FILLED": message = "Позиция открыта, вход по ретесту"; break;
+        case "ENTRY_FILLED": message = document.execution_clock
+          ? "Виртуальный L2 вход · " + (event.quantity ?? "—") + " контр."
+          : "Позиция открыта, вход по ретесту"; break;
+        case "PARTIAL_FILLED":
+          message = "Частичная виртуальная фиксация · " +
+            (event.quantity ?? "—") + " контр. (L2)"; break;
+        case "STOP_AMENDED":
+          message = "Виртуальный STOP перенесён: " +
+            (event.stop !== undefined ? event.stop : "—") + " (L2)"; break;
         case "EXIT_FILLED":
           message = "Позиция закрыта (" +
             (event.reason === "STOP" ? "STOP" : event.reason === "TAKE" ? "TAKE" : "выход") +
@@ -657,7 +810,7 @@ export function ReplayPage() {
         default: message = "Событие";
       }
       return { sequence: event.sequence, time: event.time_ms, message };
-    }), [document.events, cursor]);
+    }), [displayEvents, cursor]);
   const paperSetupContext = paperFacts?.setup_context;
   const paperSetupVisible = paperSetupContext?.status === "EXACT_D2_LINK" &&
     paperOverlay.status === "MATCHED" && shown.lastTimeMs !== null &&
@@ -670,22 +823,22 @@ export function ReplayPage() {
       ? paperFacts.setup_context.decisions.filter(e => e.occurred_at_ms <= shown.lastTimeMs!)
       : [], [paperFacts, paperOverlay, shown.lastTimeMs]);
 
-  const total = document.events.length;
+  const total = displayEvents.length;
   const progress = Math.round(100 * cursor / total);
   const playbackComplete = !simulationGraphPending && total > 0 && cursor >= total;
   const seekPoints = useMemo(() => {
     const result = [0];
-    for (let i = 0; i < document.events.length; i++) {
-      const closed = document.events[i];
-      if (closed.kind !== "CANDLE_CLOSED") continue;
+    for (let i = 0; i < displayEvents.length; i++) {
+      const closed = displayEvents[i];
+      if (closed.kind !== "CANDLE_CLOSED" && closed.kind !== "CHART_TICK") continue;
       let next = i + 1;
-      while (next < document.events.length &&
-             document.events[next].time_ms === closed.time_ms) next++;
+      while (next < displayEvents.length &&
+             displayEvents[next].time_ms === closed.time_ms) next++;
       if (next > result[result.length - 1]) result.push(next);
       i = next - 1;
     }
     return result;
-  }, [document.events]);
+  }, [displayEvents]);
   const seekIndex = Math.max(0, seekPoints.indexOf(cursor));
   const priorBreaks = useMemo(
     () => showTrendGeometry ? visiblePriorBreaks(document, shown.lastTimeMs) : [],
@@ -829,11 +982,86 @@ export function ReplayPage() {
     };
   }, []);
 
+  // Public context is VISUAL ONLY and strictly precedes the first L2 M5.
+  // It never enters document.events, the playback clock or accounting.
+  useEffect(() => {
+    setL2ContextFor(null);
+    setL2Context([]);
+    setL2After([]);
+    setL2ContextStatus("");
+    if (document.execution_clock !== "ORIGINAL_EVENT_TIME_NOT_OHLC_M1" ||
+        !document.symbol) return;
+    const first = document.events.find(e => e.kind === "CANDLE_CLOSED" && e.candle)?.candle;
+    if (!first) return;
+    const controller = new AbortController();
+    const start = new Date(first.start_ms - 86_400_000);
+    const end = new Date(first.start_ms + 86_400_000);
+    const day = (value: Date) => value.toISOString().slice(0, 10);
+    const query = new URLSearchParams({
+      symbol: document.symbol,
+      start: day(start),
+      end: day(end),
+    });
+    setL2ContextStatus("Загружаю публичную M5-предысторию (только график)…");
+    void (async () => {
+      try {
+        const response = await fetch("/local-replay/history?" + query, {
+          method: "GET", cache: "no-store", signal: controller.signal,
+        });
+        if (!response.ok) throw new Error("Публичный архив недоступен");
+        const raw = await response.text();
+        if (raw.length > 24 * 1024 * 1024) throw new Error("Слишком большой публичный архив");
+        const history = parseReplayDocument(JSON.parse(raw) as unknown);
+        const candles = l2Prehistory(document, history);
+        const after = l2Posthistory(document, history);
+        if (controller.signal.aborted) return;
+        m5Catalog.current.ingest(history);
+        setM5CatalogRevision(v => v + 1);
+        setL2Context(candles);
+        setL2After(after);
+        setL2ContextFor(document);
+        setL2ContextStatus("Публичная M5: " + candles.length +
+          " до и " + after.length + " после исследуемого окна · только график; L2/P&L неизменны");
+      } catch {
+        if (!controller.signal.aborted) setL2ContextStatus(
+          "Публичная предыстория недоступна; исходный L2-отчёт не изменён");
+      }
+    })();
+    return () => controller.abort();
+  }, [document]);
+
+  // If an owner extends the period into M5 already returned by an earlier
+  // Bybit request, expose the cached portion on the viewer WITHOUT fetching.
+  // This does not append executions or change the original source ledger.
+  useEffect(() => {
+    if (l2ContextFor !== document ||
+        document.execution_clock !== "ORIGINAL_EVENT_TIME_NOT_OHLC_M1" ||
+        selectedWindow.symbol !== document.symbol) return;
+    try {
+      const window = validateInclusiveWindow(selectedWindow.start, selectedWindow.end);
+      const status = m5Catalog.current.status(document.symbol!, document,
+        window.startMs, window.endExclusiveMs);
+      if (!status.complete) return;
+      const market = m5Catalog.current.asMarket(
+        document.symbol!, window.startMs, window.endExclusiveMs, document);
+      const expanded = selectedL2MarketContext(
+        document, [market], window.startMs, window.endExclusiveMs);
+      if (expanded.before.length) setL2Context(old =>
+        old.length === expanded.before.length &&
+        old.at(-1)?.end_ms === expanded.before.at(-1)?.end_ms
+          ? old : expanded.before);
+      if (expanded.after.length) setL2After(old =>
+        old.length === expanded.after.length &&
+        old.at(-1)?.end_ms === expanded.after.at(-1)?.end_ms
+          ? old : expanded.after);
+    } catch { /* Incomplete/invalid windows stay blocked, never fabricated. */ }
+  }, [document, l2ContextFor, selectedWindow, m5CatalogRevision]);
+
   // Keep the requested candle cadence independent of network packet arrivals.
   // A batch may contain many verified bars, but each timer tick reveals ONE M5.
   // A stalled Scanner frontier costs no playback time: never catch up in a burst.
-  const availableEvents = useRef(document.events);
-  availableEvents.current = document.events;
+  const availableEvents = useRef(displayEvents);
+  availableEvents.current = displayEvents;
   useEffect(() => {
     if (!playing) return;
     const timer = window.setInterval(() => {
@@ -857,12 +1085,31 @@ export function ReplayPage() {
     try {
       if (file.size > 24 * 1024 * 1024) throw new Error("Файл больше 24 МБ");
       const data: unknown = JSON.parse(await file.text());
-      const parsed = parseReplayDocument(data);
+      const parsed = parseLocalReplayUpload(data);
+      const source = data && typeof data === "object" ? data as Record<string, unknown> : {};
+      const firstClose = parsed.events.find(e => e.kind === "CANDLE_CLOSED")?.candle;
+      const initialMs = source.start_ms;
+      const terminalMs = source.end_inclusive_ms;
+      const startMs = typeof initialMs === "number" && Number.isSafeInteger(initialMs) &&
+        initialMs % 60_000 === 0 ? initialMs : firstClose?.start_ms;
+      const endMs = typeof terminalMs === "number" && Number.isSafeInteger(terminalMs) &&
+        terminalMs % 60_000 === 0 ? terminalMs :
+        parsed.events.at(-1)?.time_ms;
+      if (parsed.symbol && startMs !== undefined && endMs !== undefined &&
+          endMs >= startMs) {
+        onPasteSymbol(parsed.symbol);
+        setImportedCoordinates(previous => ({
+          symbol: parsed.symbol!, start_utc: new Date(startMs).toISOString().slice(0, 16),
+          end_utc_inclusive: new Date(Math.floor(endMs / 60_000) * 60_000)
+            .toISOString().slice(0, 16),
+          revision: (previous?.revision ?? 0) + 1,
+        }));
+      }
       setDocument(parsed);
       setSimulationGraphPending(false);
-      // Manual import also replaces the market selection, never leave stale
-      // BTC/date controls beside an imported GRASSUSDT archive.
-      if (parsed.mode === "MARKET_ONLY") syncImportedMarketSelection(parsed);
+      // Import always reflects the source's actual ticker: no stale symbol
+      // when opening an owner-selected offline L2 receipt.
+      if (parsed.symbol) syncImportedMarketSelection(parsed);
       setDrawings([]); setSelectedDrawing(null); setDrawingTool("crosshair");
       setCursor(0);
       setFileLabel(file.name);
@@ -878,6 +1125,7 @@ export function ReplayPage() {
     if (!file) return;
     setPlaying(false);
     setPaperFacts(null); // Invalid replacement must not leave previous PAPER marks displayed.
+    setShowResearchWithPaper(false);
     try {
       if (file.size > 4 * 1024 * 1024)
         throw new Error("JSON PAPER больше 4 МБ");
@@ -924,6 +1172,7 @@ export function ReplayPage() {
   async function lookupLocalEpisode(episodeId: string): Promise<void> {
     setPlaying(false);
     setPaperFacts(null);
+    setShowResearchWithPaper(false);
     setLocalEpisodeMessage("");
     setError(null);
     try {
@@ -952,6 +1201,23 @@ export function ReplayPage() {
     }
   }
 
+  // The Windows filmstrip transports a typed ID, not trusted execution facts.
+  // The local archive lookup remains same-origin and evidence-validated; when
+  // missing, fail closed rather than presenting a synthetic trade as PAPER.
+  useEffect(() => {
+    const query = new URLSearchParams(window.location.search);
+    if (!query.has("episode")) return;
+    const episode = query.get("episode");
+    if (query.size !== 1 || !episode || !/^te_[a-f0-9]{24}$/.test(episode)) {
+      setError("Отклонена некорректная ссылка на PAPER-сделку");
+      return;
+    }
+    void lookupLocalEpisode(episode);
+    // The episode ID is consumed once on page load, not on a market replay
+    // reset; the owner may then rewind and inspect without repeating lookup.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   async function loadLocalHistory(selectedSymbol: string, selectedStart: string, selectedEnd: string,
     choices: readonly string[]) {
     bundledRequest.current?.abort(); bundledRequest.current = null;
@@ -961,8 +1227,87 @@ export function ReplayPage() {
     setHistoryLoading(true);
     setPlaying(false);
     setError(null);
+    setPeriodLoadNotice("");
     try {
       const window = validateInclusiveWindow(selectedStart, selectedEnd);
+      // Imported L2 report: extend ONLY the view over the selected UTC range.
+      // Public Bybit provides historical M5 but does not furnish the original
+      // historical L2 book here. Never replace the imported Robot/L2 ledger
+      // with a MARKET_ONLY document or falsely claim new virtual executions.
+      if (document.execution_clock === "ORIGINAL_EVENT_TIME_NOT_OHLC_M1") {
+        if (document.symbol !== selectedSymbol.trim().toUpperCase())
+          throw new Error("Тикер периода не совпадает с импортированным L2-отчётом");
+        if (window.minutes > 90 * 1440)
+          throw new Error("Для M5-подгрузки допускается не более 90 дней");
+        const existing = m5Catalog.current.status(
+          document.symbol!, document, window.startMs, window.endExclusiveMs);
+        if (existing.complete) {
+          setPeriodLoadNotice("Данные уже загружены локально: " +
+            existing.covered + "/" + existing.required +
+            " закрытых M5. Повторно обращаться к Bybit не нужно. " +
+            "Это покрытие свечей, а не исторического L2-стакана.");
+          setPlayMissingNotice("");
+          return; // NO network request for fully covered selected M5.
+        }
+        const dayMs = 86_400_000;
+        const lastDay = Math.ceil(window.endExclusiveMs / dayMs) * dayMs;
+        if (lastDay > Date.now())
+          throw new Error("Нельзя подгружать будущие или незакрытые свечи");
+        // Request ONLY day ranges with truly missing closed M5. Already fetched
+        // public candles remain in the catalog, even outside the chart viewport.
+        const missing = existing.missingDays;
+        for (let i = 0; i < missing.length;) {
+          const from = missing[i];
+          let to = from + dayMs;
+          i++;
+          while (i < missing.length && missing[i] === to &&
+                 to - from < 7 * dayMs) { to += dayMs; i++; }
+          const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+          const query = new URLSearchParams({
+            symbol: document.symbol!, start: day(from), end: day(to),
+          });
+          const response = await fetch("/local-replay/history?" + query, {
+            method: "GET", cache: "no-store", signal: controller.signal,
+          });
+          if (!response.ok)
+            throw new Error("Исторические M5 Bybit недоступны: HTTP " + response.status +
+              ". L2 и исходные сделки сохранены.");
+          const raw = await response.text();
+          if (raw.length > 24 * 1024 * 1024)
+            throw new Error("Превышен безопасный размер фрагмента M5");
+          const fetched = parseReplayDocument(JSON.parse(raw) as unknown);
+          if (controller.signal.aborted) return;
+          m5Catalog.current.ingest(fetched);
+        }
+        const final = m5Catalog.current.status(
+          document.symbol!, document, window.startMs, window.endExclusiveMs);
+        if (!final.complete)
+          throw new Error("Bybit не подтвердил все M5 выбранного периода: " +
+            final.covered + "/" + final.required +
+            ". Неполный график не объявлен готовым.");
+        const expanded = selectedL2MarketContext(document,
+          [m5Catalog.current.asMarket(document.symbol!,
+            window.startMs, window.endExclusiveMs, document)],
+          window.startMs, window.endExclusiveMs);
+        if (historyRequest.current !== controller || controller.signal.aborted) return;
+        setPlaying(false);
+        setCursor(0);
+        setL2ContextFor(document);
+        setM5CatalogRevision(v => v + 1);
+        // Preserve the already verified 24h ADX warmup if the selected
+        // extension begins at the original report rather than before it.
+        setL2Context(expanded.before.length ? expanded.before :
+          l2ContextFor === document ? l2Context : []);
+        setL2After(expanded.after.length ? expanded.after :
+          l2ContextFor === document ? l2After : []);
+        setPlayMissingNotice("");
+        setPeriodLoadNotice("Публичные M5 получены для выбранного периода; " +
+          "проверено " + expanded.covered + " свечей. L2 за добавленное время отсутствует.");
+        setL2ContextStatus("Bybit M5: " + expanded.covered +
+          " закрытых свечей · только график. Исторические taker-сделки/L2-стакан " +
+          "для добавленных дат НЕ загружены; четыре исходные сделки и P&L неизменны.");
+        return;
+      }
       // The legacy read-only public market loader accepts full UTC days,
       // maximum 7; it cannot silently turn a minute interval into whole days.
       if (window.startMs % 86_400_000 || window.endExclusiveMs % 86_400_000 ||
@@ -1013,29 +1358,99 @@ export function ReplayPage() {
     }
   }
 
-  return (
-    <main className="replay-shell">
-      <header className="replay-header">
-        <div>
-          <h1>Машина времени</h1>
-        </div>
-      </header>
+  useEffect(() => {
+    setPlayMissingNotice("");
+    setPeriodLoadNotice("");
+  }, [selectedWindow]);
 
-      <RunSetupPanel symbol={symbol} onArchiveSymbol={acceptArchiveSymbol}
-        onPasteSymbol={onPasteSymbol} onSimulationStart={onSimulationStart}
-        onSimulationReady={onSimulationReady} onSimulationAppend={onSimulationAppend}
-        onSimulationFailed={onSimulationFailed} onSimulationBusy={setRunLoading}
-        playRequestId={playRequestId} showReport={!simulationGraphPending && !runLoading && cursor >= total}
-        onPublicHistoryRequest={(ticker, from, to, choices) => void loadLocalHistory(ticker, from, to, choices)}
-        publicHistoryLoading={historyLoading}
-        onStrategySelectionChange={setSelectedStrategies}
-        onEpisodeLookup={lookupLocalEpisode} />
-      <section className="replay-controls" aria-label="Управление воспроизведением">
+  // Timeless original public prints are uploaded only after explicit owner
+  // selection, never guessed from M5 or fetched from a live trades endpoint.
+  async function loadFineArchive(file?: File) {
+    if (!file) return;
+    setFineNotice(""); setFineLoading(true); setPlaying(false);
+    try {
+      if (document.execution_clock !== "ORIGINAL_EVENT_TIME_NOT_OHLC_M1" ||
+          !document.symbol)
+        throw new Error("Сначала загрузите оригинальный событийный L2 JSON");
+      if (file.size <= 0 || file.size > 128_000_000)
+        throw new Error("Архив сделок пустой или больше 128 МБ");
+      const sourceBar = document.events.find(e =>
+        e.kind === "CANDLE_CLOSED" && e.candle)?.candle;
+      const last = Math.max(...document.events.map(e => e.time_ms));
+      if (!sourceBar || !Number.isSafeInteger(last))
+        throw new Error("Нет исходного интервала L2");
+      const day = Math.floor(sourceBar.start_ms / 86_400_000) * 86_400_000;
+      const start = Math.max(day, sourceBar.start_ms - 3_600_000);
+      const end = Math.min(day + 86_400_000,
+        Math.ceil((last + 1) / 60_000) * 60_000 + 3_600_000);
+      if (end <= start || end - start > 6 * 3_600_000)
+        throw new Error("Подробный период не помещается в один локальный архив UTC");
+      const query = new URLSearchParams({
+        symbol: document.symbol, filename: file.name,
+        start_ms: String(start), end_ms: String(end),
+      });
+      const response = await fetch("/local-replay/chart-trades?" + query, {
+        method: "POST", headers: {
+          "Content-Type": "application/octet-stream",
+          "X-Local-Chart-Import": "explicit-owner-file",
+        }, body: file, cache: "no-store",
+      });
+      if (!response.ok)
+        throw new Error("Проверка оригинального архива M1/15S: HTTP " + response.status);
+      const raw = await response.text();
+      if (raw.length > 2 * 1024 * 1024)
+        throw new Error("Слишком большой ответ свечей M1/15S");
+      const parsed = parseFineChart(JSON.parse(raw) as unknown, document);
+      setFineFor(document);
+      setFineChart(parsed);
+      setCursor(0); setTimeframe("1m");
+      setFineNotice("Публичные сделки → M1 " + parsed.m1.length +
+        " и 15S " + parsed.s15.length + " свечей. " +
+        (parsed.missing_m1 || parsed.missing_15s
+          ? "Пропуски M1: " + parsed.missing_m1 +
+            ", 15S: " + parsed.missing_15s + " — отсутствующие свечи не выдуманы. "
+          : "Покрытие полное. ") +
+        "Только график; исходные L2 и P&L неизменны.");
+    } catch (e) {
+      setFineNotice(e instanceof Error ? e.message : "Архив M1/15S отклонён");
+    } finally {
+      setFineLoading(false);
+    }
+  }
+
+  function chooseTimeframe(next: "1h" | "5m" | FineBarFrame) {
+    if ((next === "1m" || next === "15s") && !activeFine) return;
+    const at = cursor > 0 ? displayEvents[Math.min(cursor, displayEvents.length)-1]?.time_ms : null;
+    const base = l2PresentationEvents(document, activeL2After);
+    const chosen = next === "1m" ? activeFine?.m1 :
+      next === "15s" ? activeFine?.s15 : undefined;
+    const first = document.events.find(e => e.kind === "CANDLE_CLOSED" && e.candle)
+      ?.candle?.start_ms;
+    const target = chosen && first !== undefined
+      ? finePresentationEvents(base, chosen, first) : base;
+    setPlaying(false);
+    setTimeframe(next);
+    setCursor(at == null ? 0 : target.filter(e => e.time_ms <= at).length);
+  }
+
+  const importControls = (
+    <>
         <label className="replay-file">
           Загрузить JSON прогона
           <input ref={fileInput} type="file" accept=".json,application/json" disabled={runLoading}
             onChange={(e) => void loadFile(e.target.files?.[0])} />
         </label>
+        {document.execution_clock === "ORIGINAL_EVENT_TIME_NOT_OHLC_M1" &&
+          <label className="replay-file">
+            {fineLoading ? "Обрабатываю сделки…" : "Архив сделок M1 / 15S"}
+            <input aria-label="Загрузить архив публичных сделок M1 15S"
+              type="file" accept=".csv.gz,.zip,application/gzip,application/zip"
+              disabled={fineLoading || runLoading}
+              onChange={e => {
+                void loadFineArchive(e.target.files?.[0]);
+                e.currentTarget.value = "";
+              }} />
+          </label>}
         <label className="replay-file">
           Импорт JSON сделки PAPER
           <input ref={paperFileInput} aria-label="Импорт JSON сделки PAPER"
@@ -1069,24 +1484,109 @@ export function ReplayPage() {
           window.setTimeout(() => URL.revokeObjectURL(url), 0);
         }}>Журнал JSON ({simulationGraphPending ? 0 : simulationActionJournal(document).actions.length})</button>
 
-      </section>
+    </>
+  );
+
+  return (
+    <main className="replay-shell">
+      <header className="replay-header">
+        <div>
+          <h1>Машина времени</h1>
+        </div>
+      </header>
+
+      <RunSetupPanel symbol={symbol} importedL2={document.execution_clock === "ORIGINAL_EVENT_TIME_NOT_OHLC_M1"} importedCoordinates={importedCoordinates}
+        onSelectedWindowChange={onSelectedWindowChange} periodLoadNotice={periodLoadNotice}
+        importControls={importControls} onArchiveSymbol={acceptArchiveSymbol}
+        onPasteSymbol={onPasteSymbol} onSimulationStart={onSimulationStart}
+        onSimulationReady={onSimulationReady} onSimulationAppend={onSimulationAppend}
+        onSimulationFailed={onSimulationFailed} onSimulationBusy={setRunLoading}
+        playRequestId={playRequestId} showReport={!simulationGraphPending && !runLoading && cursor >= total}
+        onPublicHistoryRequest={(ticker, from, to, choices) => void loadLocalHistory(ticker, from, to, choices)}
+        publicHistoryLoading={historyLoading}
+        onStrategySelectionChange={setSelectedStrategies}
+        onEpisodeLookup={lookupLocalEpisode} />
+
 
       {localEpisodeMessage && <p role="status" className="replay-note">{localEpisodeMessage}</p>}
       {error && <p role="alert" className="replay-error">{error}</p>}
+      {fineNotice && <p role="status" aria-label="Статус M1 и 15S" className="replay-note">{fineNotice}</p>}
+      {document.execution_clock === "ORIGINAL_EVENT_TIME_NOT_OHLC_M1" && l2ContextStatus &&
+        <p role="status" className="replay-note">{l2ContextStatus}</p>}
+      {document.execution_clock === "ORIGINAL_EVENT_TIME_NOT_OHLC_M1" &&
+        <p role="status" className="replay-note">
+          SIMULATION L2 · события исходной ленты по времени; виртуальные исполнения
+          условны, фактическая очередь и исполнения Bybit не доказаны.
+        </p>}
+      {paperFacts && <section className="replay-paper-passport"
+        role="region" aria-label="Паспорт PAPER-сделки">
+        <div className="replay-paper-passport-heading">
+          <strong>Паспорт PAPER-сделки · разбор постфактум</strong>
+          <span>{paperFacts.symbol} · {paperFacts.side} · {paperFacts.owner} · PnL {paperFacts.pnl_usdt} USDT</span>
+        </div>
+        <dl aria-label="Экономика закрытой PAPER-сделки">
+          <div><dt>Результат по цене, до комиссий</dt>
+            <dd>{paperFacts.realized_price_pnl_usdt} USDT</dd></div>
+          <div><dt>Комиссии всего</dt>
+            <dd>{paperFacts.known_execution_fees_usdt} USDT</dd></div>
+          <div><dt>Net PnL после комиссий</dt>
+            <dd>{paperFacts.pnl_usdt} USDT</dd></div>
+        </dl>
+        <dl aria-label="Исходные исполнения PAPER">
+          {paperFacts.execution_allocations.slice(0, 8).map((fill, index) => (
+            <div key={fill.execution_id + ":" + index}>
+              <dt>{fill.allocation_role === "CLOSE"
+                ? "Выход CLOSE · причина STOP/TAKE не подтверждена"
+                : fill.allocation_role === "OPEN" ? "Вход OPEN" : fill.allocation_role}
+                {" · "}{fill.order_side}</dt>
+              <dd>Цена {fill.execution_price} · объём {fill.allocated_quantity}</dd>
+              <dd>Комиссия {fill.allocated_fee} USDT</dd>
+              <dd><JournalTime timestamp={fill.occurred_at_ms} zone="MSK" /></dd>
+            </div>
+          ))}
+          {paperFacts.execution_allocations.length > 8 && (
+            <div>
+              <dt>Остальные исполнения</dt>
+              <dd>Показаны первые 8 из {paperFacts.execution_allocations.length}; полный список — в исходном JSON</dd>
+            </div>
+          )}
+        </dl>
+        {paperSetupContext?.status === "EXACT_D2_LINK" ? (
+          <>
+            <dl>
+              <div><dt>Паттерн исходного сетапа</dt>
+                <dd>{paperSetupContext.setup.pattern}</dd></div>
+              <div><dt>Таймфрейм</dt><dd>{paperSetupContext.setup.timeframe}</dd></div>
+              <div><dt>Версия стратегии</dt><dd>{paperSetupContext.setup.strategy_version}</dd></div>
+              <div><dt>Режим входа</dt><dd>{paperSetupContext.setup.entry_mode}</dd></div>
+              <div><dt>ID сетапа</dt><dd>{paperSetupContext.setup.setup_id}</dd></div>
+              <div><dt>Связь</dt><dd>EXACT_D2_LINK</dd></div>
+            </dl>
+            <p>Коды наблюдений D2: {paperSetupContext.decisions.map(d =>
+              d.reason_code).join(" · ")}. Связь с сетапом доказана по ID;
+              это не полный журнал решений Robot. Паспорт доступен для
+              послеторгового анализа, а график сохраняет временную причинность.</p>
+          </>
+        ) : (
+          <>
+            <strong className="replay-paper-pattern-unproven">Паттерн не подтверждён</strong>
+            <p>Нет доказанной связи эпизода с исходным сетапом D2
+              {paperSetupContext ? " (" + paperSetupContext.status + ")" : " (контекст D2 не экспортирован)"}.
+              Название не определяется по тикеру, свечам или близкому сигналу.</p>
+          </>
+        )}
+        <p>График: {paperOverlay.status === "MATCHED"
+          ? "фактические исполнения сопоставлены с проверенными свечами"
+          : "покрытие истории для этой PAPER-сделки не подтверждено"}.
+          Исходные исполнения и комиссии неизменны; это не новое моделирование.</p>
+      </section>}
       {paperFacts && <p className="replay-note" role="status" aria-label="PAPER факты сделки">
         PAPER · {paperFacts.symbol} · {paperFacts.trade_episode_id}
         {" · "}{paperFacts.execution_allocations.length} фактических исполнений
         {" · "}{paperOverlay.status === "MATCHED"
-          ? "Кружки на закрытых свечах · цена оригинального исполнения"
+          ? "Контурные треугольники на закрытых свечах · цена оригинального исполнения"
           : paperOverlay.reason}
-        {" · "}Gross PnL: {paperFacts.realized_price_pnl_usdt} USDT
-        {" · "}Комиссии всего: {paperFacts.known_execution_fees_usdt} USDT
-        {" · "}Net PnL: {paperFacts.pnl_usdt} USDT
-        {" · "}Комиссии по исполнениям: {paperFacts.execution_allocations.slice(0, 8).map(item =>
-          `${item.allocation_role} (${item.order_side}): ${item.allocated_fee} USDT`).join("; ")}
-        {paperFacts.execution_allocations.length > 8
-          ? `; ещё ${paperFacts.execution_allocations.length - 8} исполнений в исходном JSON` : ""}
-        {" · "}CLOSE не доказывает STOP или TAKE: причина закрытия отсутствует в экспорте.
+        {" · "}PnL по цене и известным комиссиям: {paperFacts.pnl_usdt} USDT
         {" · "}JSON без криптографической подписи; не виртуальные сделки и не решения Robot.
         {paperSetupContext && (
           paperSetupContext.status !== "EXACT_D2_LINK"
@@ -1130,13 +1630,22 @@ export function ReplayPage() {
             ? "Клинья выбраны, но оригинальный Scanner ещё не запускался."
             : "Клинья не выбраны и в публичном M5-просмотре не искались."}
       </p>}
+      {document.mode === "MARKET_ONLY" && document.scanner_research && paperFacts && (
+        <label className="replay-research-layer-toggle">
+          <input type="checkbox" checked={showResearchWithPaper}
+            onChange={(e) => setShowResearchWithPaper(e.target.checked)} />
+          Показывать исследовательские сигналы Scanner — не исходный сигнал PAPER
+        </label>
+      )}
       {document.mode === "MARKET_ONLY" && document.scanner_research && <p
         className="replay-note" role="status" aria-label="Результат Scanner M5">
         Локальный Scanner по закрытым M5 · найдено и раскрыто к текущему моменту:
         {" "}{scannerObservations.length} из {document.scanner_observations?.length ?? 0}.
-        {scannerObservations.length === 0
-          ? " Пока нет подтверждённых наблюдений исходных детекторов."
-          : " Ромб — клин; квадрат — Ikigai Box. Розовый — отказ фильтра."}
+        {!showResearchObservations
+          ? " Исследовательские маркеры и записи скрыты во время разбора PAPER."
+          : scannerObservations.length === 0
+            ? " Пока нет подтверждённых наблюдений исходных детекторов."
+            : " Ромб — исследовательский клин; квадрат — Ikigai Box. Розовый — отказ фильтра."}
         {" "}Исследовательский режим, без Robot/PnL и исполнения.
       </p>}
       <details className="replay-diagnostics">
@@ -1209,12 +1718,16 @@ export function ReplayPage() {
             <strong className="replay-chart-symbol" aria-label="Тикер графика">
               {document.symbol?.replace(/USDT$/, "") || "—"}
             </strong>
-            <button type="button" disabled title="Нет проверенной минутной истории в потоке графика">M1</button>
-            <button type="button" disabled title="Нет исходной ленты сделок для 15-секундного графика">15с</button>
-            <button type="button" aria-pressed={timeframe === "5m"}
-              onClick={() => setTimeframe("5m")}>M5</button>
             <button type="button" aria-pressed={timeframe === "1h"}
-              onClick={() => setTimeframe("1h")}>H1</button>
+              onClick={() => chooseTimeframe("1h")}>H1</button>
+            <button type="button" aria-pressed={timeframe === "5m"}
+              onClick={() => chooseTimeframe("5m")}>M5</button>
+            <button type="button" aria-pressed={timeframe === "1m"} disabled={!activeFine}
+              title={!activeFine ? "Загрузите архив публичных сделок M1/15S" : "Минутные сделки"}
+              onClick={() => chooseTimeframe("1m")}>M1</button>
+            <button type="button" aria-pressed={timeframe === "15s"} disabled={!activeFine}
+              title={!activeFine ? "Загрузите архив публичных сделок M1/15S" : "15-секундные сделки"}
+              onClick={() => chooseTimeframe("15s")}>15S</button>
             <div className="replay-playback-controls" role="group" aria-label="Управление воспроизведением">
         <button type="button" className="replay-player-button" title="В начало"
           aria-label="В начало" disabled={simulationGraphPending}
@@ -1222,10 +1735,19 @@ export function ReplayPage() {
           <PlayerIcon name="beginning" />
         </button>
         <button type="button" className="replay-player-button"
-          title={playbackComplete ? "Прогон завершён" : playing ? "Пауза" : "Пуск"}
-          aria-label={playbackComplete ? "Прогон завершён" : playing ? "Пауза" : "Пуск"}
-          disabled={(simulationGraphPending && (runLoading || !preparedRun)) || playbackComplete}
+          title={playbackComplete && !missingForPlay ? "Прогон завершён" : playing ? "Пауза" : "Пуск"}
+          aria-label={playbackComplete && !missingForPlay ? "Прогон завершён" : playing ? "Пауза" : "Пуск"}
+          disabled={(simulationGraphPending && (runLoading || !preparedRun)) || (playbackComplete && !missingForPlay)}
           onClick={() => {
+            if (missingForPlay) {
+              setPlaying(false);
+              setPlayMissingNotice("Данные для выбранного периода не подгружены: " +
+                selectedCoverage!.covered + "/" + selectedCoverage!.required +
+                " закрытых M5. Подгрузите недостающие данные с Bybit. " +
+                "Исходные L2-сделки сохранены.");
+              return;
+            }
+            setPlayMissingNotice("");
             if (simulationGraphPending) { setPlayRequestId(id => id + 1); return; }
             setPlaying(s => !s);
           }}>
@@ -1239,7 +1761,7 @@ export function ReplayPage() {
         <button type="button" className="replay-player-button" title="Шаг вперёд"
           aria-label="Шаг вперёд" onClick={() => {
             setPlaying(false);
-            setCursor((current) => nextClosedCandleCursor(document.events, current));
+            setCursor((current) => nextClosedCandleCursor(displayEvents, current));
           }} disabled={simulationGraphPending || cursor >= total}><PlayerIcon name="forward" /></button>
         <input className="replay-seek" type="range" min={0} max={seekPoints.length - 1}
                 step={1} value={simulationGraphPending ? 0 : seekIndex}
@@ -1252,6 +1774,7 @@ export function ReplayPage() {
           <input type="range" min="1" max="60" value={rate} onChange={(e) => setRate(Number(e.target.value))} />
         </label>
             </div>
+            {playMissingNotice && <p role="alert" className="replay-playback-missing">{playMissingNotice}</p>}
           </div>
           <div className="replay-drawing-tools" role="group" aria-label="Инструменты рисования">
             {REPLAY_DRAWING_TOOLS.map(({ tool, label }) => (
@@ -1281,8 +1804,10 @@ export function ReplayPage() {
                 {runLoading ? `Проверяю первые M1: ${runWaitingSeconds} с. Затем свечи появятся постепенно.` :
                   "График нового прогона появится после нажатия ▶"}
               </div>
-            : <ReplayChart document={document} cursor={cursor} paperOverlay={paperOverlay}
+            : <ReplayChart document={displayDocument} cursor={cursor} prehistory={l2ContextFor === document ? l2Context : []}
+                fineBars={fineBars ?? []} paperOverlay={paperOverlay}
                 paperFacts={paperFacts} selectedStrategies={selectedStrategies.selected}
+                showResearchObservations={showResearchObservations}
                 showTrendGeometry={showTrendGeometry}
                 showDebug={showDebug} timeframe={timeframe}
                 drawings={drawings} selectedId={selectedDrawing} drawingTool={drawingTool}
@@ -1290,14 +1815,25 @@ export function ReplayPage() {
                 onDrawingGesture={() => setPlaying(false)} />}
         </section>
         <aside className="replay-events" aria-label="Журнал событий">
-          <h2>Журнал событий</h2>
+          <div className="replay-events-heading">
+            <h2>Журнал событий</h2>
+            <div role="group" aria-label="Часовой пояс журнала">
+              <button type="button" aria-pressed={journalZone === "MSK"}
+                onClick={() => setJournalZone("MSK")}>МСК</button>
+              <button type="button" aria-pressed={journalZone === "UTC"}
+                onClick={() => setJournalZone("UTC")}>UTC</button>
+            </div>
+          </div>
           <div className="replay-events-list" aria-live="off">
             {document.mode === "MARKET_ONLY" && document.scanner_research &&
               scannerObservations.map((item: PublicScannerObservation) => (
               <div className="replay-events-item" key={item.strategy + item.signal_id}>
-                <strong>{item.pattern === "Ikigai Box"
+                <strong>Исследование Scanner · {item.pattern === "Ikigai Box"
                   ? "Ikigai Box" : item.pattern === "Falling Wedge" ? "Нисходящий клин" : "Восходящий клин"}</strong>
-                <span>{new Date(item.available_at_ms).toLocaleTimeString("ru-RU", { timeZone: "UTC" })} UTC
+                <span>{journalTimeParts(item.available_at_ms, journalZone).seconds}{" "}
+                  <span className="replay-journal-ms" title="Миллисекунды">
+                    ({journalTimeParts(item.available_at_ms, journalZone).milliseconds})
+                  </span>{" "}{journalZone === "MSK" ? "МСК" : "UTC"}
                   {" · "}{item.status === "FILTER_APPROVED" ? "фильтр принят"
                     : item.status === "FILTER_REJECTED" ? "фильтр отказал" : "структура подтверждена"}
                   {" · "}{item.reason}
@@ -1310,10 +1846,7 @@ export function ReplayPage() {
                 <strong>Подтверждённые наблюдения D2 · не полный журнал Robot</strong>
                 {paperDecisionObservations.map(event => (
                   <div className="replay-events-item" key={event.decision_event_id}>
-                    <time>{new Date(event.occurred_at_ms).toLocaleString("ru-RU", {
-                      timeZone: "UTC", day: "2-digit", month: "2-digit",
-                      hour: "2-digit", minute: "2-digit",
-                    })} UTC</time>
+                    <JournalTime timestamp={event.occurred_at_ms} zone={journalZone} />
                     <span>{event.kind}: {event.previous_state ?? "—"} → {event.next_state} · {event.reason_code}</span>
                     <span>Источник: {event.controller}</span>
                   </div>
@@ -1321,10 +1854,7 @@ export function ReplayPage() {
               </section>
             )}
             {journal.map(item => <div className="replay-events-item" key={item.sequence}>
-              <time>{new Date(item.time).toLocaleString("ru-RU", {
-                timeZone: "UTC", day: "2-digit", month: "2-digit",
-                hour: "2-digit", minute: "2-digit",
-              })} UTC</time>
+              <JournalTime timestamp={item.time} zone={journalZone} />
               <span>{item.message}</span>
             </div>)}
           </div>

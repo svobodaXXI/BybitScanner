@@ -29,12 +29,22 @@
 }
 .replay-player-icon { display: block; width: 21px; height: 21px; fill: currentColor; pointer-events: none; }
 .replay-note { padding: 9px 12px; background: #28251b; border: 1px solid #55442e; color: #d4be85; border-radius: 7px; }
+/* Research is opt-in while viewing actual PAPER executions. */
+.replay-research-layer-toggle { display: flex; align-items: center; gap: 8px; width: fit-content; max-width: 100%; padding: 8px 11px; margin: 10px 0; border: 1px solid #40536b; border-radius: 7px; color: #bdcee3; font-size: 12px; cursor: pointer; }
+.replay-research-layer-toggle input { accent-color: #75b2df; }
 .replay-geometry-note { padding: 7px 11px; color: #9eb2cb; font-size: 12px; border: 1px solid #28394c; border-radius: 7px; margin: 8px 0; }
 .replay-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(255px, 300px); gap: 10px; margin-top: 12px; }
 .replay-chart-panel { min-width: 0; min-height: 710px; background: #121923; border: 1px solid #273649; border-radius: 9px; overflow: hidden; }
 .replay-chart-shell { width: 100%; }
 .replay-events { min-width: 0; max-height: 770px; display: flex; flex-direction: column; background: #121923; border: 1px solid #273649; border-radius: 9px; overflow: hidden; }
 .replay-events h2 { margin: 0; padding: 14px; font-size: 15px; border-bottom: 1px solid #2b3e55; }
+.replay-events-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; border-bottom: 1px solid #2b3e55; }
+.replay-events-heading h2 { border-bottom: 0; }
+.replay-events-heading div[role="group"] { display: flex; gap: 4px; padding: 7px 10px; }
+.replay-events-heading button { font: inherit; font-size: 11px; cursor: pointer; background: #243247; color: #baccdf; border: 1px solid #415574; border-radius: 4px; padding: 4px 7px; }
+.replay-events-heading button[aria-pressed="true"] { background: #30638b; color: #fff; border-color: #75b2df; }
+.replay-events-item time { font-variant-numeric: tabular-nums; }
+.replay-events-item .replay-journal-ms { color: #8396b0; font-size: 11px; font-variant-numeric: tabular-nums; }
 .replay-events-list { overflow-y: auto; min-height: 0; padding: 10px; }
 .replay-events-list p { color: #8b9cb4; }
 .replay-events-item { display: grid; gap: 5px; padding: 10px 4px; border-bottom: 1px solid #273649; font-size: 12px; line-height: 1.5; }
@@ -104,3 +114,18 @@
 .replay-chart-pending { display: flex; align-items: center; justify-content: center;
   min-height: 660px; padding: 24px; text-align: center; color: #94a9c3;
   background: #121923; }
+
+/* Import-window warning sits directly under Play/seek, not in the chart. */
+.replay-playback-missing { flex: 0 0 100%; margin: 2px 0 0 12px;
+  font-size: 12px; color: #ffc6a5; line-height: 1.4; }
+
+.replay-paper-passport { border: 1px solid #40597c; background: #162234; color: #e8effb; border-radius: 9px; padding: 12px 14px; margin: 12px 0; }
+.replay-paper-passport-heading { display: flex; justify-content: space-between; flex-wrap: wrap; align-items: baseline; gap: 6px 20px; padding-bottom: 8px; border-bottom: 1px solid #33455f; }
+.replay-paper-passport-heading strong { font-size: 15px; }
+.replay-paper-passport-heading span { color: #b7c9e2; font-size: 13px; font-variant-numeric: tabular-nums; }
+.replay-paper-passport dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); gap: 8px 12px; margin: 10px 0; }
+.replay-paper-passport dl div { display: grid; align-content: start; gap: 3px; min-width: 0; }
+.replay-paper-passport dt { color: #9fb5d0; font-size: 12px; }
+.replay-paper-passport dd { margin: 0; overflow-wrap: anywhere; font-weight: 600; }
+.replay-paper-passport p { font-size: 12px; color: #aebed5; margin: 9px 0 0; }
+.replay-paper-pattern-unproven { display: block; font-size: 14px; color: #f5d7a0; margin-top: 10px; }

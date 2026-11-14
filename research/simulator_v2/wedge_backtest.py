@@ -13,14 +13,25 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from decimal import Decimal
+from itertools import groupby
 from pathlib import Path
 from typing import Callable, Iterable
 
 from research.historical_market_replay import Candle
+from robot_entry_flow_evidence import (
+    FlowTransition, ImpulseSignal, OI_MODES, OpenInterestChange, ImpulseProtectedPlan,
+    open_interest_asof, permits_paper_entry, recognize_impulse_signal,
+    plan_impulse_protected_entry,
+)
 from research.simulator_v2.cache import _checksum, _rows
+from research.simulator_v2.historical_orderbook import iter_pinned_orderbook
+from research.simulator_v2.l2_episode_report import episode_rows
 from research.simulator_v2.history import HistoryChunk, MINUTE_MS
 from research.simulator_v2.report import ReplayReport, run_verified_chunks
 from research.simulator_v2.session import VirtualReplaySession
+from research.simulator_v2.virtual_exchange import L2PartialTakePolicy
+from research.simulator_v2.taker_flow_archive import pinned_taker_minutes
+from research.simulator_v2.oi_history import load_oi_csv
 from research.simulator_v2.trade_range import (
     TradeDayProof, _ordered_proofs, iter_pinned_trade_chunks,
 )
@@ -45,6 +56,22 @@ class WedgeBacktestResult:
     pending_protection: bool
     archive_proofs: tuple[TradeDayProof, ...] = ()
     replay_document: dict[str, object] | None = None
+    paper_flow_gate_enabled: bool = False
+    paper_flow_rejected_retests: int = 0
+    paper_flow_permitted_retests: int = 0
+    paper_oi_rejected_retests: int = 0
+    paper_oi_mode: str = "OFF"
+    paper_oi_sha256: str | None = None
+    execution_model: str = "SIMULATION_OHLC_STOP_FIRST_NOT_REAL_BYBIT_FILLS"
+    l2_source_sha256: str | None = None
+    l2_unproven_entry_depth_count: int = 0
+    l2_deferred_stop_count: int = 0
+    l2_partial_take_fills: int = 0
+    l2_be_stop_amendments: int = 0
+    l2_partial_depth_unproven_count: int = 0
+    l2_episodes: tuple[dict[str, object], ...] = ()
+    impulse_signals: int = 0
+    impulse_risk_rejections: int = 0
     namespace: str = "SIMULATION"
 
     def to_payload(self) -> dict[str, object]:
@@ -56,6 +83,8 @@ class WedgeBacktestResult:
             "requested_minutes": (self.requested_end_inclusive_ms - self.requested_start_ms) // MINUTE_MS + 1,
             "market_warmup_start_ms": self.market_warmup_start_ms,
             "scanner_wedge_observations": self.scanner_wedge_observations,
+            "impulse_signals": self.impulse_signals,
+            "impulse_risk_rejections": self.impulse_risk_rejections,
             "robot_retests_in_period": self.robot_retests_in_period,
             "submitted_protected_limits": self.submitted_protected_limits,
             "skipped_busy_entries": self.skipped_busy_entries,
@@ -66,7 +95,31 @@ class WedgeBacktestResult:
                 proof.to_payload(symbol=self.report.symbol)
                 for proof in self.archive_proofs
             ],
-            "execution_model": "SIMULATION_OHLC_STOP_FIRST_NOT_REAL_BYBIT_FILLS",
+            "execution_model": self.execution_model,
+            **({"l2_source_sha256": self.l2_source_sha256,
+                 "l2_unproven_entry_depth_count": self.l2_unproven_entry_depth_count,
+                 "l2_deferred_stop_count": self.l2_deferred_stop_count,
+                 "l2_partial_take_fills": self.l2_partial_take_fills,
+                 "l2_be_stop_amendments": self.l2_be_stop_amendments,
+                 "l2_partial_depth_unproven_count": self.l2_partial_depth_unproven_count,
+                 "l2_episodes": list(self.l2_episodes),
+                 "execution_certainty": (
+                     "CONDITIONAL_L2_PARTIAL_BE_MODEL"
+                     if (self.l2_partial_take_fills or self.l2_be_stop_amendments
+                         or self.l2_partial_depth_unproven_count)
+                     else "CONDITIONAL_L2_DEPTH_OR_DEFERRED_STOP"
+                     if (self.l2_unproven_entry_depth_count or self.l2_deferred_stop_count)
+                     else "CONDITIONAL_MODEL_NO_REAL_FILL_PROOF"
+                 )}
+               if self.l2_source_sha256 is not None else {}),
+            **({"paper_flow_entry": {
+                "permitted_retests": self.paper_flow_permitted_retests,
+                "rejected_retests": self.paper_flow_rejected_retests,
+                "oi_rejected_retests": self.paper_oi_rejected_retests,
+                "oi_mode": self.paper_oi_mode,
+                "oi_source_sha256": self.paper_oi_sha256,
+                "execution": "EXISTING_PROTECTED_VIRTUAL_EXCHANGE",
+            }} if self.paper_flow_gate_enabled else {}),
         }
 
 
@@ -87,6 +140,10 @@ def run_verified_wedge_chunks(
     *,
     start_ms: int, end_inclusive_ms: int,
     visual_recorder: WedgeVisualReplay | None = None,
+    flow_on_close: Callable[[VirtualReplaySession, Candle], FlowTransition | None] | None = None,
+    oi_mode: str = "OFF",
+    oi_at_entry: Callable[[int], OpenInterestChange | None] | None = None,
+    oi_source_sha256: str | None = None,
 ) -> WedgeBacktestResult:
     """Trade ONLY after native Scanner→Robot retest and native risk preview.
 
@@ -100,11 +157,21 @@ def run_verified_wedge_chunks(
             or session.wedge_scanner is None or session.wedge_robot is None
             or session.wedge_robot.risk_settings is None):
         raise ValueError("original Wedge Scanner/Robot and explicit virtual risk terms required")
+    if oi_mode not in OI_MODES or (
+        oi_mode != "OFF" and (flow_on_close is None or oi_at_entry is None)
+    ):
+        raise ValueError("OI-filtered virtual entry requires authentic flow and OI series")
     skipped_busy = submitted = 0
+    flow_rejected = flow_permitted = oi_rejected = 0
     consumed_preview_ids: set[str] = set()
 
     def on_close(active: VirtualReplaySession, candle: Candle) -> None:
-        nonlocal submitted, skipped_busy
+        nonlocal submitted, skipped_busy, flow_rejected, flow_permitted, oi_rejected
+        flow = (
+            flow_on_close(active, candle)
+            if flow_on_close is not None and start_ms <= candle.start_ms < end_exclusive
+            else None
+        )
         if candle.start_ms < start_ms:
             return
         if candle.end_ms >= end_exclusive:
@@ -145,6 +212,21 @@ def run_verified_wedge_chunks(
                     or snapshot.position_quantity != 0):
                 skipped_busy += 1
                 continue
+            # Experimental PAPER rule is evaluated only where the original
+            # Scanner->Robot has produced an independently risk-approved
+            # protected LIMIT. Same Robot rule is imported into any PAPER
+            # runner; no second entry plan or executor exists.
+            if flow_on_close is not None:
+                if not permits_paper_entry(preview.direction, flow):
+                    flow_rejected += 1
+                    continue
+                if oi_mode != "OFF" and not permits_paper_entry(
+                    preview.direction, flow, oi_mode=oi_mode,
+                    oi=oi_at_entry(candle.end_ms),
+                ):
+                    oi_rejected += 1
+                    continue
+                flow_permitted += 1
             active.submit_protected_preview(preview)
             submitted += 1
         if visual_recorder is not None:
@@ -185,6 +267,144 @@ def run_verified_wedge_chunks(
             e.kind == "TAKE_FILLED" for e in session.exchange.events
         ),
         pending_protection=session.exchange.active_protection is not None,
+        paper_flow_gate_enabled=flow_on_close is not None,
+        paper_flow_rejected_retests=flow_rejected,
+        paper_flow_permitted_retests=flow_permitted,
+        paper_oi_rejected_retests=oi_rejected,
+        paper_oi_mode=oi_mode,
+        paper_oi_sha256=oi_source_sha256,
+    )
+
+
+
+def run_verified_impulse_chunks(
+    session: VirtualReplaySession,
+    chunks: Iterable[HistoryChunk],
+    *, start_ms: int, end_inclusive_ms: int,
+    risk_settings: SimWedgeRiskSettings,
+    flow_on_close: Callable[[VirtualReplaySession, Candle], FlowTransition | None],
+    oi_mode: str = "OFF",
+    oi_at_entry: Callable[[int], OpenInterestChange | None] | None = None,
+    oi_source_sha256: str | None = None,
+    visual_recorder: WedgeVisualReplay | None = None,
+    impulse_plans: dict[str, ImpulseProtectedPlan] | None = None,
+    on_eligible_impulse_signal: Callable[[ImpulseSignal], None] | None = None,
+    on_before_m1: Callable[[VirtualReplaySession, Candle], None] | None = None,
+) -> WedgeBacktestResult:
+    """Pure Scanner impulse + shared Robot risk → original protected venue.
+
+    Executes only after a fully verified committed closed M1. Signals are
+    based on contiguous original taker prints. Trades fill no earlier than
+    the NEXT M1, with the same stop-first/fee mechanics as native Wedge.
+    """
+    end_exclusive = _valid_window(start_ms, end_inclusive_ms)
+    if not isinstance(session, VirtualReplaySession) or not isinstance(risk_settings, SimWedgeRiskSettings):
+        raise ValueError("isolated virtual Robot and explicit risk terms required")
+    if not callable(flow_on_close) or oi_mode not in OI_MODES:
+        raise ValueError("real taker flow callback and valid OI mode required")
+    if oi_mode != "OFF" and oi_at_entry is None:
+        raise ValueError("active OI filter requires original 5m OI")
+    if on_eligible_impulse_signal is not None and not callable(on_eligible_impulse_signal):
+        raise TypeError("diagnostic signal callback must be callable")
+    if (risk_settings.entry_fee_rate < session.exchange.taker_fee_rate
+            or risk_settings.exit_fee_rate < session.exchange.taker_fee_rate):
+        raise ValueError("impulse risk fee assumptions must cover virtual venue taker fees")
+    detected = rejected = permitted = oi_rejected = risk_rejected = busy = submitted = 0
+
+    def on_close(active: VirtualReplaySession, candle: Candle) -> None:
+        nonlocal detected, rejected, permitted, oi_rejected, risk_rejected, busy, submitted
+        if not start_ms <= candle.start_ms < end_exclusive:
+            return
+        transition = flow_on_close(active, candle)
+        signal = recognize_impulse_signal(
+            transition, closed_at_ms=candle.end_ms,
+            candle_open=candle.open, candle_close=candle.close,
+            candle_low=candle.low, candle_high=candle.high,
+        )
+        # Last closed minute cannot submit a new order beyond this range.
+        if signal is not None and candle.end_ms < end_exclusive:
+            detected += 1
+            # Read-only diagnostic consumers see exactly the same eligible
+            # signal-time window as the Robot. The terminal close is observed
+            # by the flow detector but cannot submit a next-M1 entry.
+            if on_eligible_impulse_signal is not None:
+                on_eligible_impulse_signal(signal)
+            if (active.exchange.pending is not None
+                    or active.exchange.active_protection is not None
+                    or active.account.snapshot(
+                        as_of_ms=active.virtual_time_ms,
+                        mark_price=candle.close,
+                    ).position_quantity != 0):
+                busy += 1
+            elif not permits_paper_entry(signal.direction, transition):
+                rejected += 1
+            elif oi_mode != "OFF" and not permits_paper_entry(
+                signal.direction, transition, oi_mode=oi_mode,
+                oi=oi_at_entry(candle.end_ms),
+            ):
+                oi_rejected += 1
+            else:
+                try:
+                    plan = plan_impulse_protected_entry(
+                        signal, tick_size=risk_settings.tick_size,
+                        quantity=risk_settings.contracts_per_working_volume,
+                        max_notional_usdt=risk_settings.max_notional_usdt,
+                        max_risk_usdt=risk_settings.max_risk_usdt,
+                        entry_fee_rate=risk_settings.entry_fee_rate,
+                        exit_fee_rate=risk_settings.exit_fee_rate,
+                        quantity_step=risk_settings.quantity_step,
+                        minimum_quantity=risk_settings.minimum_quantity,
+                    )
+                except ValueError:
+                    # Invalid quantity, notional, STOP or fee-aware RR is
+                    # rejected, never replaced by a naked virtual order.
+                    risk_rejected += 1
+                else:
+                    active.submit_protected_impulse(plan)
+                    if impulse_plans is not None:
+                        impulse_plans[f"IMPULSE_{candle.end_ms}"] = plan
+                    submitted += 1
+                    permitted += 1
+        if visual_recorder is not None:
+            visual_recorder.record(active, candle)
+
+    report = run_verified_chunks(
+        session, chunks, on_committed_m1=on_close, on_before_m1=on_before_m1,
+    )
+    if report.last_closed_ms != end_exclusive or report.first_open_ms > start_ms:
+        raise ValueError("verified historical impulse trade window was not complete")
+    if session.exchange.l2_stop_pending:
+        raise ValueError("unresolved triggered STOP at selected L2 history end")
+    return WedgeBacktestResult(
+        report=replace(
+            report, scenario_type=(
+                "IMPULSE_FLOW_HISTORICAL_L2_TAKER_VIRTUAL_SIMULATION"
+                if on_before_m1 is not None
+                else "IMPULSE_FLOW_SHARED_ROBOT_PROTECTED_VIRTUAL_SIMULATION"
+            ),
+        ),
+        requested_start_ms=start_ms, requested_end_inclusive_ms=end_inclusive_ms,
+        market_warmup_start_ms=report.first_open_ms,
+        scanner_wedge_observations=0, robot_retests_in_period=0,
+        submitted_protected_limits=submitted, skipped_busy_entries=busy,
+        stop_exits=sum(e.kind == "STOP_FILLED" for e in session.exchange.events),
+        take_exits=sum(e.kind == "TAKE_FILLED" for e in session.exchange.events),
+        pending_protection=session.exchange.active_protection is not None,
+        l2_unproven_entry_depth_count=session.exchange.l2_unproven_entry_depth_count,
+        l2_deferred_stop_count=session.exchange.l2_deferred_stop_count,
+        l2_partial_take_fills=session.exchange.l2_partial_take_fills,
+        l2_be_stop_amendments=session.exchange.l2_be_stop_amendments,
+        l2_partial_depth_unproven_count=session.exchange.l2_partial_depth_unproven_count,
+        l2_episodes=(
+            episode_rows(session.account.fills, session.exchange.events, impulse_plans)
+            if session.exchange.execution_mode == "HISTORICAL_L2" else ()
+        ),
+        paper_flow_gate_enabled=True,
+        paper_flow_rejected_retests=rejected,
+        paper_flow_permitted_retests=permitted,
+        paper_oi_rejected_retests=oi_rejected,
+        paper_oi_mode=oi_mode, paper_oi_sha256=oi_source_sha256,
+        impulse_signals=detected, impulse_risk_rejections=risk_rejected,
     )
 
 
@@ -200,6 +420,15 @@ def run_cached_wedge_trade_range(
     maker_fee_rate: Decimal = Decimal("0.0002"),
     capture_replay: bool = False,
     on_replay_events: Callable[[list[dict[str, object]]], None] | None = None,
+    flow_archive_dir: Path | None = None,
+    oi_mode: str = "OFF",
+    oi_history_path: Path | None = None,
+    impulse_mode: bool = False,
+    on_eligible_impulse_signal: Callable[[ImpulseSignal], None] | None = None,
+    l2_archive_path: Path | None = None,
+    l2_archive_sha256: str | None = None,
+    l2_depth: int = 50,
+    l2_partial_take_policy: L2PartialTakePolicy | None = None,
 ) -> WedgeBacktestResult:
     """Offline Bybit public-trade M1 with an exact inclusive minute cutoff.
 
@@ -217,6 +446,18 @@ def run_cached_wedge_trade_range(
         raise ValueError("selected minute window lies outside pinned trade days")
     if end_exclusive > latest_closed_boundary_ms:
         raise ValueError("selected end includes an unclosed M1")
+    l2_mode = l2_archive_path is not None
+    if l2_mode and (not impulse_mode or flow_archive_dir is None
+                    or not isinstance(l2_archive_sha256, str)):
+        raise ValueError("L2 requires pinned book and taker trade tapes in impulse mode")
+    if not l2_mode and l2_archive_sha256 is not None:
+        raise ValueError("L2 SHA without explicit historical L2 archive")
+    if l2_partial_take_policy is not None and (not l2_mode or not impulse_mode):
+        raise ValueError("partial TAKE/BE research requires original impulse HISTORICAL_L2")
+    if l2_mode and capture_replay and on_replay_events is not None and not callable(on_replay_events):
+        raise ValueError("historical L2 replay callback must be callable")
+
+
     # Load no more than the Scanner's explicit M5 lookback plus a closed-day
     # buffer. Do not force the requested end to equal the full manifest end.
     # The subset gets its OWN checksum-derived source ID; unselected days
@@ -256,20 +497,128 @@ def run_cached_wedge_trade_range(
         simulation_run_id=simulation_run_id, symbol=symbol,
         initial_balance=initial_balance,
         taker_fee_rate=taker_fee_rate, maker_fee_rate=maker_fee_rate,
-        wedge_scanner_config=scanner_config, wedge_robot_config=robot_config,
-        wedge_risk_settings=risk_settings,
+        wedge_scanner_config=None if impulse_mode else scanner_config,
+        wedge_robot_config=None if impulse_mode else robot_config,
+        wedge_risk_settings=None if impulse_mode else risk_settings,
+        execution_mode="HISTORICAL_L2" if l2_mode else "OHLC_M1",
+        l2_partial_take_policy=l2_partial_take_policy,
     )
+    impulse_plans: dict[str, ImpulseProtectedPlan] = {}
     recorder = WedgeVisualReplay(
         run_id=simulation_run_id, symbol=symbol,
         start_ms=start_ms, end_ms=end_exclusive,
         on_events=on_replay_events,
+        impulse_plans=impulse_plans if impulse_mode else None,
+        historical_l2=l2_mode,
     ) if capture_replay else None
-    result = run_verified_wedge_chunks(
-        session, cut_to_selected_end(),
-        start_ms=start_ms, end_inclusive_ms=end_inclusive_ms,
-        visual_recorder=recorder,
-    )
+    if oi_mode not in OI_MODES or (
+        (oi_mode != "OFF" and (flow_archive_dir is None or oi_history_path is None))
+        or (impulse_mode and flow_archive_dir is None)
+    ):
+        raise ValueError("OI mode requires validated trade tape and local OI CSV")
+    oi_at_entry = None
+    oi_sha256 = None
+    if oi_mode != "OFF":
+        oi_points, oi_sha256 = load_oi_csv(oi_history_path, symbol=symbol)
+        def oi_at_entry(known_at_ms: int) -> OpenInterestChange | None:
+            return open_interest_asof(oi_points, decision_ms=known_at_ms)
+
+    flow_callback = None
+    if flow_archive_dir is not None:
+        # The optional read-only tape comes from exactly the same pinned
+        # raw day files as the immutable M1 cache. No network or substitute.
+        tape = pinned_taker_minutes(
+            archive_dir=flow_archive_dir, symbol=symbol, proofs=selected_proofs,
+            start_ms=start_ms, end_ms=end_exclusive,
+            latest_closed_boundary_ms=latest_closed_boundary_ms,
+        )
+        source_id, _, _ = _ordered_proofs(
+            selected_proofs, symbol=symbol,
+            latest_closed_boundary_ms=latest_closed_boundary_ms,
+        )
+
+        def flow_callback(active: VirtualReplaySession, minute: Candle):
+            return active.observe_committed_taker_prints(
+                tape[minute.start_ms], source_id=source_id,
+            )
+
+    on_before_m1 = None
+    if l2_mode:
+        # Original L2 is a separately verified source; trade archives
+        # cannot reconstruct bids/asks or resting order priority.
+        orderbooks = iter_pinned_orderbook(
+            l2_archive_path, symbol=symbol, depth=l2_depth,
+            sha256=l2_archive_sha256, start_ms=start_ms,
+            end_exclusive_ms=end_exclusive,
+        )
+        next_book = next(orderbooks, None)
+
+        def on_before_m1(active: VirtualReplaySession, minute: Candle) -> None:
+            nonlocal next_book
+            if minute.start_ms < start_ms:
+                return
+            events: list[tuple[int, str, object]] = []
+            while next_book is not None and next_book.available_at_ms < minute.end_ms:
+                if next_book.available_at_ms >= minute.start_ms:
+                    events.append((next_book.available_at_ms, "BOOK", next_book))
+                next_book = next(orderbooks, None)
+            for trade in tape[minute.start_ms]:
+                if not minute.start_ms <= trade.event_ms < minute.end_ms:
+                    raise ValueError("taker event belongs to a foreign virtual M1")
+                events.append((trade.event_ms, "TRADE", trade))
+            events.sort(key=lambda e: e[0])
+            # Public Bybit archive often has many prints at one event_ms.
+            # A trade group is unordered; it must not be sorted by trade ID.
+            # Book vs trade from separate channels at an identical ms also
+            # has no provable order. Preflight the whole timestamp bucket
+            # BEFORE consuming any event and mutating the virtual ledger.
+            for _, same_ms in groupby(events, key=lambda e: e[0]):
+                bucket = tuple(same_ms)
+                kinds = {item[1] for item in bucket}
+                if len(kinds) != 1:
+                    # A tie is unsafe ONLY if either channel ordering could
+                    # change a virtual fill. Fail closed on actionable ties;
+                    # preserve inert original trades for the Scanner's M1 flow.
+                    active.exchange.on_historical_same_ms_inert_bucket(
+                        books=tuple(data for _, kind, data in bucket if kind == "BOOK"),
+                        trades=tuple(data for _, kind, data in bucket if kind == "TRADE"),
+                    )
+                    continue
+                if "BOOK" in kinds:
+                    for _, _, data in bucket:
+                        active.exchange.on_historical_book(data)
+                else:
+                    active.exchange.on_historical_trade_batch(
+                        tuple(data for _, _, data in bucket)
+                    )
+
+    if impulse_mode:
+        result = run_verified_impulse_chunks(
+            session, cut_to_selected_end(),
+            start_ms=start_ms, end_inclusive_ms=end_inclusive_ms,
+            risk_settings=risk_settings, flow_on_close=flow_callback,
+            visual_recorder=recorder, impulse_plans=impulse_plans,
+            on_eligible_impulse_signal=on_eligible_impulse_signal,
+            on_before_m1=on_before_m1,
+            oi_mode=oi_mode, oi_at_entry=oi_at_entry,
+            oi_source_sha256=oi_sha256,
+        )
+    else:
+        result = run_verified_wedge_chunks(
+            session, cut_to_selected_end(),
+            start_ms=start_ms, end_inclusive_ms=end_inclusive_ms,
+            visual_recorder=recorder, flow_on_close=flow_callback,
+            oi_mode=oi_mode, oi_at_entry=oi_at_entry,
+            oi_source_sha256=oi_sha256,
+        )
     replay = recorder.document(
         source_id=result.report.source_id, expected_fills=result.report.virtual_fills,
     ) if recorder is not None else None
-    return replace(result, archive_proofs=selected_proofs, replay_document=replay)
+    return replace(
+        result, archive_proofs=selected_proofs, replay_document=replay,
+        execution_model=(
+            "SIMULATION_HISTORICAL_TAKER_L2_EVENT_TIME_NOT_REAL_BYBIT_FILLS"
+            if l2_mode else result.execution_model
+        ),
+        l2_source_sha256=l2_archive_sha256 if l2_mode else None,
+    )

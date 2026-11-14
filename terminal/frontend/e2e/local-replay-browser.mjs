@@ -98,15 +98,18 @@ try {
   const endUtc = setup.getByLabel("Конец прогона UTC");
   await startUtc.fill("2026-10-01T12:34");
   const incrementBar = setup.getByRole("group", { name: "Изменить период прогона" });
-  assert.equal(await setup.locator(".replay-run-step").count(), 3);
-  for (const unit of ["1 час", "1 день", "1 неделя"]) {
+  assert.equal(await setup.locator(".replay-run-step").count(), 4);
+  for (const unit of ["1 час", "1 день", "1 неделя", "1 месяц"]) {
     const pair = incrementBar.getByRole("group", { name: "Период " + unit });
     assert.equal(await pair.getByRole("button", { name: "Добавить " + unit }).count(), 1);
     assert.equal(await pair.getByRole("button", { name: "Убавить " + unit }).count(), 1);
   }
   assert.equal(await page.locator(".replay-history-controls").count(), 0,
     "obsolete second ticker/date/Bybit panel must never reappear");
-  assert.equal(await setup.getByRole("button", { name: "Загрузить Bybit (без сделок)" }).count(), 1);
+  assert.equal(await setup.getByRole("button", { name: "Подгрузить период с Bybit" }).count(), 1);
+  assert.equal(await incrementBar.getByRole("button", { name: "Подгрузить период с Bybit" }).count(), 1,
+    "Bybit action must be alongside period steppers, not under end date");
+  assert.equal(await setup.getByRole("button", { name: "3 месяца · 90 дней" }).count(), 0);
   assert.equal(await endUtc.inputValue(), "2026-10-02T12:33");
   const duration = setup.getByRole("status", { name: "Продолжительность прогона" });
   assert.match(await duration.innerText(), /1 день/);
@@ -117,8 +120,11 @@ try {
   assert.equal(await endUtc.inputValue(), "2026-10-03T13:33");
   await incrementBar.getByRole("button", { name: "Добавить 1 неделя" }).click();
   assert.equal(await endUtc.inputValue(), "2026-10-10T13:33");
-  await incrementBar.getByRole("button", { name: "+1 месяц", exact: true }).click();
+  await incrementBar.getByRole("button", { name: "Добавить 1 месяц" }).click();
   assert.equal(await endUtc.inputValue(), "2026-11-09T13:33");
+  await incrementBar.getByRole("button", { name: "Убавить 1 месяц" }).click();
+  assert.equal(await endUtc.inputValue(), "2026-10-10T13:33");
+  await incrementBar.getByRole("button", { name: "Добавить 1 месяц" }).click();
   assert.match(await duration.innerText(), /1 месяц 9 дней 1 час/);
   await incrementBar.getByRole("button", { name: "Убавить 1 час" }).click();
   assert.equal(await endUtc.inputValue(), "2026-11-09T12:33");
@@ -128,7 +134,8 @@ try {
   assert.equal(await endUtc.inputValue(), "2026-11-01T12:33");
   await endUtc.fill("2026-10-11T18:45");
   assert.match(await duration.innerText(), /10 дней 6 часов 12 минут/);
-  assert.equal(await incrementBar.getByRole("button", { name: "3 месяца · 90 дней" }).getAttribute("aria-pressed"), "false");
+  assert.equal(await incrementBar.getByRole("button", { name: "Добавить 1 месяц" }).count(), 1);
+  assert.equal(await incrementBar.getByRole("button", { name: "Убавить 1 месяц" }).count(), 1);
   const coordinates = setup.getByRole("textbox", { name: "Координаты прогона" });
   await coordinates.fill("XRPUSDT | 2026-09-11T00:00 | 2026-09-11T23:59");
   await setup.getByRole("button", { name: "Применить" }).click();
@@ -278,6 +285,9 @@ try {
   // The entire replay control surface belongs beside the M5/H1 switch,
   // never in the file-import row above the chart.
   const controlBar = page.getByRole("group", { name: "Таймфрейм графика" });
+  assert.deepEqual(await controlBar.locator(":scope > button").allTextContents(),
+    ["H1", "M5", "M1", "15S"],
+    "approved owner timeframe order must not regress");
   const playbackBar = controlBar.getByRole("group", { name: "Управление воспроизведением" });
   const actualOrder = await playbackBar.locator("button.replay-player-button").evaluateAll(
     buttons => buttons.map(button => button.getAttribute("aria-label")),
@@ -306,7 +316,7 @@ try {
   assert.equal(await page.getByRole("group", { name: "Таймфрейм графика" })
     .getByText("M1").isDisabled(), true);
   assert.equal(await page.getByRole("group", { name: "Таймфрейм графика" })
-    .getByText("15с").isDisabled(), true);
+    .getByText("15S").isDisabled(), true);
   assert.equal(await page.locator(".replay-controls .replay-rate").count(), 0);
   const drawingBar = page.getByRole("group", { name: "Инструменты рисования" });
   const trendTool = drawingBar.getByRole("button", { name: "Трендовая" });
@@ -433,7 +443,38 @@ try {
     ],
   };
   let publicMarketAttempts = 0;
+  let icntHistoryRequests = 0;
   await page.route("**/local-replay/history?*", async (route) => {
+    const query = new URL(route.request().url()).searchParams;
+    // The L2 import requests PUBLIC M5 prehistory as a chart-only layer.
+    // Keep the original Wedge transport fixture separate: no detector options,
+    // no live network, and never fabricate execution receipts from these bars.
+    if (query.get("symbol") === "ICNTUSDT") {
+      icntHistoryRequests++;
+      assert.equal(query.has("strategies"), false);
+      const first = Date.UTC(2026, 10, 10, 8, 0);
+      const events = Array.from({ length: icntHistoryRequests === 1 ? 312 : 325 }, (_, i) => {
+        const start_ms = first - 86_400_000 + i * 300_000;
+        return {
+          source: "SIMULATION", simulation_run_id: "browser_public_context",
+          sequence: i + 1, kind: "CANDLE_CLOSED",
+          time_ms: start_ms + 300_000,
+          candle: {
+            start_ms, end_ms: start_ms + 300_000,
+            open: 100, high: 101, low: 99, close: 100, volume: 100,
+          },
+        };
+      });
+      await route.fulfill({
+        status: 200, contentType: "application/json",
+        body: JSON.stringify({
+          source: "SIMULATION", simulation_run_id: "browser_public_context",
+          mode: "MARKET_ONLY", market_data_source: "BYBIT_PUBLIC_KLINE",
+          symbol: "ICNTUSDT", timeframe: "5m", events,
+        }),
+      });
+      return;
+    }
     publicMarketAttempts++;
     const requested = new URL(route.request().url()).searchParams.get("strategies")?.split(",") ?? [];
     assert.ok(requested.includes("WEDGE_FALLING") && requested.includes("WEDGE_RISING"),
@@ -473,14 +514,14 @@ try {
   // The actual local Python server uses text/plain for HTTP 502 failures.
   // Show the true failed boundary instead of a misleading JSON.parse error,
   // without silently replacing the selected ticker/history by demo candles.
-  await bounds.getByRole("button", { name: "Загрузить Bybit (без сделок)" }).click();
+  await bounds.getByRole("button", { name: "Подгрузить период с Bybit" }).click();
   const marketError = page.getByRole("alert").filter({ hasText: "Публичный Bybit M5 недоступен (HTTP 502)" });
   await marketError.waitFor();
   assert.match(await marketError.innerText(), /архив M1 и профиль риска/);
   assert.equal(await page.locator(".replay-chart-shell").count(), 0,
     "failed public market download cannot resurrect old market candles");
   await bounds.getByRole("checkbox", { name: "Ikigai Box" }).check();
-  await bounds.getByRole("button", { name: "Загрузить Bybit (без сделок)" }).click();
+  await bounds.getByRole("button", { name: "Подгрузить период с Bybit" }).click();
   await page.getByText("РЕАЛЬНЫЕ СВЕЧИ BYBIT", { exact: false }).waitFor();
   assert.equal(publicMarketAttempts, 2);
   const marketSource = await page.locator(".replay-meta").innerText();
@@ -606,8 +647,8 @@ try {
   assert.equal(await bounds.getByRole("checkbox", { name: "Восходящий клин" }).isChecked(), true);
   assert.equal(await bounds.getByRole("checkbox", { name: "Нисходящий клин" }).isChecked(), true);
 
-  // Exported PAPER facts are marked as HOLLOW rings at their original prices,
-  // separate from virtual triangles. No extra /api or private exchange call.
+  // PAPER facts retain Buy/Sell TRIANGLES with outlined PAPER-specific style,
+  // separate from filled SIMULATION trades and from local Scanner research.
   const episodeFacts = {
     ok: true, schema: "BYBITSCANNER_CLOSED_EPISODE_FACTS_V1",
     namespace: "PAPER_READ_ONLY", source: "PAPER_EXECUTIONS_ATTRIBUTED",
@@ -667,13 +708,39 @@ try {
       ] }],
     },
   };
+  // Audit actual drawing primitives: future regressions must not turn
+  // imported PAPER execution triangles into circles.
+  await page.evaluate(() => {
+    const canvas = document.querySelector(".replay-execution-overlay");
+    if (!(canvas instanceof HTMLCanvasElement)) throw new Error("Missing PAPER overlay canvas");
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Missing PAPER canvas context");
+    const arc = context.arc;
+    const lineTo = context.lineTo;
+    window.__paperMarkerCircleCalls = 0;
+    window.__paperMarkerLineCalls = 0;
+    context.arc = function (...args) {
+      window.__paperMarkerCircleCalls++;
+      return arc.apply(this, args);
+    };
+    context.lineTo = function (...args) {
+      window.__paperMarkerLineCalls++;
+      return lineTo.apply(this, args);
+    };
+  });
   await page.getByLabel("Импорт JSON сделки PAPER").setInputFiles({
     name: "episode-facts.json", mimeType: "application/json",
     buffer: Buffer.from(JSON.stringify(episodeFacts)),
   });
   const factNote = page.getByRole("status", { name: "PAPER факты сделки" });
   await factNote.waitFor();
-  assert.match(await factNote.innerText(), /Кружки на закрытых свечах/);
+  const passport = page.getByRole("region", { name: "Паспорт PAPER-сделки" });
+  assert.match(await passport.innerText(), /Паттерн исходного сетапа[\s\S]*Falling Wedge/);
+  assert.match(await passport.innerText(), /5m[\s\S]*v1[\s\S]*breakout_retest/);
+  assert.match(await passport.innerText(), /EXACT_D2_LINK/);
+  assert.match(await passport.innerText(), /PnL -1.0 USDT/);
+  assert.match(await passport.innerText(), /не полный журнал решений Robot/);
+  assert.match(await factNote.innerText(), /Контурные треугольники на закрытых свечах/);
   assert.match(await factNote.innerText(), /JSON без криптографической подписи/);
   assert.match(await factNote.innerText(), /Falling Wedge · 5m · версия v1/);
   assert.match(await factNote.innerText(), /архивная исходная геометрия/);
@@ -681,8 +748,38 @@ try {
   assert.match(await d2Journal.innerText(), /STRATEGY_OK/);
   assert.match(await d2Journal.innerText(), /RISK_OK/);
   assert.match(await d2Journal.innerText(), /не полный журнал Robot/);
+  const journalZone = page.getByRole("group", {name:"Часовой пояс журнала"});
+  const d2Clock = d2Journal.locator("time").first();
+  assert.match(await d2Clock.innerText(), /\d{2}:\d{2}:\d{2} \(000\) МСК/);
+  await journalZone.getByRole("button",{name:"UTC"}).click();
+  assert.match(await d2Clock.innerText(), /\d{2}:\d{2}:\d{2} \(000\) UTC/);
+  await journalZone.getByRole("button",{name:"МСК"}).click();
+  assert.match(await d2Clock.innerText(), /\d{2}:\d{2}:\d{2} \(000\) МСК/);
   await page.waitForFunction(() =>
     document.querySelector(".replay-execution-overlay")?.dataset.visiblePaperFills === "2");
+  const painted = await page.evaluate(() => ({
+    arcs: window.__paperMarkerCircleCalls,
+    lines: window.__paperMarkerLineCalls,
+  }));
+  assert.equal(painted.arcs, 0, "PAPER triangles must never be drawn as circles");
+  assert.ok(painted.lines >= 4, "PAPER executions must use triangle line segments");
+  const researchToggle = page.getByRole("checkbox", {
+    name: "Показывать исследовательские сигналы Scanner — не исходный сигнал PAPER",
+  });
+  const localResearchJournal = page.getByRole("complementary", { name: "Журнал событий" })
+    .getByText("Исследование Scanner · Ikigai Box");
+  assert.equal(await researchToggle.isChecked(), false,
+    "Research markers must be opt-in during PAPER episode investigation");
+  assert.equal(await overlay.getAttribute("data-visible-scanner-observations"), "0");
+  assert.equal(await localResearchJournal.count(), 0);
+  await researchToggle.check();
+  await page.waitForFunction(() =>
+    document.querySelector(".replay-execution-overlay")?.dataset.visibleScannerObservations === "1");
+  await localResearchJournal.waitFor();
+  await researchToggle.uncheck();
+  await page.waitForFunction(() =>
+    document.querySelector(".replay-execution-overlay")?.dataset.visibleScannerObservations === "0");
+  assert.equal(await localResearchJournal.count(), 0);
   await page.waitForFunction(() =>
     document.querySelector(".replay-execution-overlay")?.dataset.visibleOriginalGeometry === "1");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "0",
@@ -693,6 +790,8 @@ try {
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-original-geometry"), "0");
   await page.waitForFunction(() => !document.querySelector('[aria-label="Наблюдения PAPER D2"]'));
   assert.doesNotMatch(await factNote.innerText(), /Falling Wedge/);
+  assert.match(await passport.innerText(), /Falling Wedge/,
+    "retrospective passport remains available at cursor zero; chart signals do not");
   await page.getByRole("button", { name: "Пуск", exact: true }).click();
   await page.waitForFunction(() =>
     document.querySelector(".replay-execution-overlay")?.dataset.visiblePaperFills === "2");
@@ -701,9 +800,288 @@ try {
   assert.match(await d2Journal.innerText(), /RISK_OK/);
   await page.getByRole("button", { name: "Пауза", exact: true }).click();
   await page.getByRole("button", { name: "Убрать факты PAPER" }).click();
+  await passport.waitFor({state:"detached"});
   await page.waitForFunction(() =>
     document.querySelector(".replay-execution-overlay")?.dataset.visiblePaperFills === "0");
+  // An unrelated episode or absent D2 evidence cannot inherit prior pattern.
+  const noLinkFacts = {
+    ...episodeFacts,
+    trade_episode_id: "te_" + "b".repeat(24),
+    setup_context: {
+      status:"NO_EXACT_EPISODE_LINK", source:"TRADING_DIARY_D2",
+      geometry_status:"NOT_EXPORTED",
+      decision_scope:"D2_OBSERVATIONS_NOT_ROBOT_RUNTIME_LOG",
+    },
+  };
+  await page.getByLabel("Импорт JSON сделки PAPER").setInputFiles({
+    name:"episode-no-link.json",mimeType:"application/json",
+    buffer:Buffer.from(JSON.stringify(noLinkFacts)),
+  });
+  await passport.waitFor();
+  assert.match(await passport.innerText(),/Паттерн не подтверждён/);
+  assert.match(await passport.innerText(),/NO_EXACT_EPISODE_LINK/);
+  assert.doesNotMatch(await passport.innerText(),/Falling Wedge/);
+  await page.getByRole("button", {name:"Убрать факты PAPER"}).click();
+  await passport.waitFor({state:"detached"});
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-original-geometry"), "0");
+
+  // Windows filmstrip launches /replay.html?episode=... . Only exact locally
+  // imported immutable PAPER evidence may auto-resolve; no synthetic full
+  // trading replay, guessed signal or remote VPS request is allowed.
+  const linkPage = await browser.newPage();
+  const linkRequests = [];
+  linkPage.on("request", req => linkRequests.push(req.url()));
+  await linkPage.goto(localUrl + "?episode=" + episodeFacts.trade_episode_id, {
+    waitUntil: "domcontentloaded",
+  });
+  const linkPassport = linkPage.getByRole("region", {name:"Паспорт PAPER-сделки"});
+  await linkPassport.waitFor();
+  assert.match(await linkPassport.innerText(), /Falling Wedge/);
+  assert.match(await linkPage.getByRole("status").allTextContents().then(x=>x.join(" ")),
+    /Найдены локальные факты сделки/);
+  assert.match(await linkPage.getByRole("alert").innerText(),
+    /полная история исходного сигнала/);
+  assert.equal(linkRequests.some(url => url.includes("/api/diary/") ||
+    url.includes("/v5/order/")), false);
+  await linkPage.goto(localUrl + "?episode=te_" + "c".repeat(24), {
+    waitUntil:"domcontentloaded",
+  });
+  assert.match(await linkPage.getByRole("alert").innerText(),
+    /отсутствует в локальной базе/);
+  assert.equal(await linkPage.getByRole("region", {name:"Паспорт PAPER-сделки"}).count(), 0);
+  await linkPage.goto(localUrl + "?episode=../../PAPER", {
+    waitUntil:"domcontentloaded",
+  });
+  assert.match(await linkPage.getByRole("alert").innerText(),
+    /Отклонена некорректная ссылка/);
+  await linkPage.close();
+
+  // Independent browser proof: import the same *nested* receipt structure the
+  // owner already has, without trading, re-running L2 or external requests.
+  const l2Start = Date.UTC(2026, 10, 10, 8, 0);
+  const l2RunId = "browser_l2_receipt";
+  const l2Directions = ["LONG", "LONG", "SHORT", "LONG"];
+  const l2Exits = ["100", "101", "101", "101"];
+  const l2Reasons = ["STOP", "TAKE", "STOP", "TAKE"];
+  const l2Net = ["-1.2", "8.8", "-11.2", "8.8"];
+  const l2Episodes = l2Directions.map((direction, i) => ({
+    order_id: "IMPULSE_" + (l2Start + i * 10000), direction,
+    entry_ms: l2Start + (i === 3 ? 300000 : i * 10000) + 1000,
+    exit_ms: l2Start + (i === 3 ? 300000 : i * 10000) + 2000,
+    entry_price: "100", exit_price: l2Exits[i],
+    entry_fee: "0.6", exit_fee: "0.6", quantity: "10",
+    partial_quantity: null, exit_reason: l2Reasons[i],
+    net_pnl_usdt: l2Net[i],
+  }));
+  const l2Events = [];
+  for (const row of l2Episodes) {
+    const trade_id = "SIMULATION:" + l2RunId + ":" + row.order_id;
+    for (const kind of ["ENTRY_FILLED", "EXIT_FILLED"]) {
+      l2Events.push({
+        source: "SIMULATION", simulation_run_id: l2RunId,
+        sequence: l2Events.length + 1, kind, trade_id,
+        side: row.direction,
+        time_ms: kind === "ENTRY_FILLED" ? row.entry_ms : row.exit_ms,
+        price: Number(kind === "ENTRY_FILLED" ? row.entry_price : row.exit_price),
+        ...(kind === "EXIT_FILLED" ? {
+          reason: row.exit_reason, net_usdt: row.net_pnl_usdt,
+          pnl_percent: String(Number(row.net_pnl_usdt) / 10),
+        } : {}),
+      });
+    }
+  }
+  l2Events.push({
+    source: "SIMULATION", simulation_run_id: l2RunId,
+    sequence: l2Events.length + 1, kind: "CANDLE_CLOSED",
+    time_ms: l2Start + 300000,
+    candle: { start_ms: l2Start, end_ms: l2Start + 300000,
+      open: 100, high: 103, low: 99, close: 101, volume: 1000 },
+  });
+  // The fourth original virtual trade occurs after the final SOURCE M5.
+  // The public 08:05–08:10 close is required before revealing it.
+  l2Events.sort((a, b) => a.time_ms - b.time_ms);
+  l2Events.forEach((e, i) => { e.sequence = i + 1; });
+  const originalReceipt = {
+    state: "VIRTUAL_L2_PROBE_CONDITIONAL",
+    scenario: "ONE_BOUNDED_LOCAL_SIMULATION_NOT_REAL_BYBIT_EXECUTIONS",
+    code_sha: "389e175c542d8319d245b70357d5e27c50e6f8e6",
+    l2_sha256: "79b032aafc5c97ea3790947cdd72347af83c88b9a1360aa219cdef5f5cbe54df",
+    trade_gzip_sha256: "47f3d3ea153374fe759adc81d2b340f5557d0fef84e90d28862d1a1239b0718a",
+    result: {
+      symbol: "ICNTUSDT",
+      execution_model: "SIMULATION_HISTORICAL_TAKER_L2_EVENT_TIME_NOT_REAL_BYBIT_FILLS",
+      l2_source_sha256: "79b032aafc5c97ea3790947cdd72347af83c88b9a1360aa219cdef5f5cbe54df",
+      final_position_quantity: "0", virtual_fills: 8, realized_net_pnl: "5.2",
+      l2_episodes: l2Episodes,
+      replay: {
+        source: "SIMULATION", simulation_run_id: l2RunId,
+        mode: "STRATEGY", demo: false, symbol: "ICNTUSDT", timeframe: "5m",
+        market_data_source: "PINNED_BYBIT_PUBLIC_TRADES_PLUS_L2_EVENT_TIME_SIMULATION",
+        execution_clock: "ORIGINAL_EVENT_TIME_NOT_OHLC_M1",
+        execution_certainty: "CONDITIONAL_L2_NOT_REAL_EXCHANGE_FILLS",
+        partial_and_be_markers: "EVENTS_ONLY_CONDITIONAL",
+        events: l2Events,
+      },
+    },
+  };
+  assert.equal(await page.locator(".replay-controls").count(), 0,
+    "JSON import controls must move away from former strip");
+  const importedActions = page.getByRole("group", { name: "Импорт и отчёты прогона" });
+  assert.equal(await importedActions.getByText("Загрузить JSON прогона").count(), 1);
+  assert.equal(await importedActions.getByText("Импорт JSON сделки PAPER").count(), 1);
+  await page.getByLabel("Загрузить JSON прогона").setInputFiles({
+    name: "original-l2-result.json", mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(originalReceipt)),
+  });
+  await page.getByRole("status").filter({ hasText: "SIMULATION L2" }).waitFor();
+  const importedCoordinates = page.getByRole("textbox", { name: "Координаты прогона" });
+  await page.waitForFunction(() =>
+    document.querySelector('input[aria-label="Координаты прогона"]')?.value ===
+      "ICNTUSDT | 2026-11-10T08:00 | 2026-11-10T08:05");
+  assert.equal(await page.getByLabel("Начало прогона UTC").inputValue(), "2026-11-10T08:00");
+  assert.equal(await page.getByLabel("Конец прогона UTC").inputValue(), "2026-11-10T08:05");
+  await page.getByRole("status").filter({ hasText: "Публичная M5: 288 до и 12 после" }).waitFor();
+  assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-displayed-candles"), "288",
+    "before the first L2 close, only verified closed historical M5 may be drawn");
+  assert.match(await page.getByRole("group", { name: "Индикатор ADX DMI" }).innerText(),
+    /ADX 0\.0/,
+    "L2 public prehistory must restore closed-M5 Wilder ADX even before source replay");
+  await page.getByRole("button", { name: "M5", exact: true }).click();
+  await page.getByRole("button", { name: "Шаг вперёд" }).click();
+  await page.waitForFunction(() =>
+    document.querySelector(".replay-execution-overlay")?.dataset.visibleFills === "6");
+  assert.match(await page.locator(".replay-meta").innerText(), /1 \/ 3 \/ 3/,
+    "last source M5 must not reveal the fourth post-boundary trade");
+  await page.getByRole("button", { name: "Шаг вперёд" }).click();
+  await page.waitForFunction(() =>
+    document.querySelector(".replay-execution-overlay")?.dataset.visibleFills === "8");
+  assert.match(await page.locator(".replay-meta").innerText(), /2 \/ 4 \/ 4/);
+  assert.equal((await page.locator(".replay-chart-symbol").innerText()).trim(), "ICNT");
+  assert.match(await page.getByRole("status").filter({ hasText: "SIMULATION L2" }).innerText(),
+    /не доказаны/);
+  assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-paper-fills"), "0");
+  assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "8");
+  assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-displayed-candles"), "290",
+    "public M5 prehistory must not overwrite the original L2 execution candle");
+  await page.screenshot({ path: join(screenshotDir, "machine-time-l2-replay.png"), fullPage: true });
+  console.log("LOCAL_L2_REPLAY_BROWSER_OK (Chromium, original nested receipt import, 8 event-time marks, no PAPER)");
+  // The selected source period is already covered in this local viewer.
+  // Clicking Bybit must NOT repeat a public network request.
+  const beforeDuplicate = icntHistoryRequests;
+  await page.getByRole("button", { name: "Подгрузить период с Bybit" }).click();
+  await page.getByRole("status", { name: "Покрытие выбранного периода" })
+    .filter({ hasText: "Данные уже загружены локально" }).waitFor();
+  assert.equal(icntHistoryRequests, beforeDuplicate,
+    "already covered historical M5 must never be downloaded twice");
+
+  // Owner UX: imported coordinates stay editable. Applying the selected
+  // interval MUST NOT clear the original L2 receipts or start Robot.
+  const selectedWindow = page.getByRole("textbox", { name: "Координаты прогона" });
+  await page.getByRole("button", { name: "Добавить 1 час" }).click();
+  assert.equal(await page.getByLabel("Конец прогона UTC").inputValue(), "2026-11-10T09:05");
+  assert.match(await selectedWindow.inputValue(), /ICNTUSDT \| 2026-11-10T08:00 \| 2026-11-10T09:05/);
+  await page.getByRole("button", { name: "Применить", exact: true }).click();
+  assert.match(await page.locator(".replay-meta").innerText(), /4 \/ 4/,
+    "Apply on imported source must not turn original L2 into a new simulation");
+  // The initial public reply already contained the next hour, although
+  // only 12 post-window bars were drawn. Retain those 5m for free.
+  const cachedRequests = icntHistoryRequests;
+  await page.getByRole("button", { name: "Подгрузить период с Bybit" }).click();
+  await page.getByRole("status", { name: "Покрытие выбранного периода" })
+    .filter({ hasText: "Данные уже загружены локально" }).waitFor();
+  assert.equal(icntHistoryRequests, cachedRequests,
+    "extended source window must reuse the full public reply, not re-fetch it");
+  await page.getByRole("button", { name: "Добавить 1 час" }).click();
+  assert.equal(await page.getByLabel("Конец прогона UTC").inputValue(), "2026-11-10T10:05");
+  const beforeGapClick = icntHistoryRequests;
+  await page.getByRole("button", { name: "Пуск", exact: true }).click();
+  await page.getByRole("alert").filter({
+    hasText: "Данные для выбранного периода не подгружены",
+  }).waitFor();
+  assert.equal(icntHistoryRequests, beforeGapClick,
+    "Play warning never downloads without explicit Bybit action");
+  assert.match(await page.locator(".replay-meta").innerText(), /4 \/ 4/,
+    "blocked Play must preserve the original four trades");
+  await page.getByRole("button", { name: "Подгрузить период с Bybit" }).click();
+  await page.getByRole("status").filter({ hasText: "Исторические taker-сделки/L2-стакан" }).waitFor();
+  assert.equal(icntHistoryRequests, beforeGapClick+1,
+    "only a truly missing M5 day receives a new Bybit request");
+  assert.match(await page.locator(".replay-meta").innerText(), /original-l2-result\.json/,
+    "public period extension must preserve the imported JSON source");
+
+
+  // Owner's original SIMULATION L2 events remain unchanged when selecting
+  // trade-derived M1 and 15S. Mocked prints are TEST ONLY; the actual local
+  // server independently checks the selected gzip ZIP/raw archive.
+  let fineUploads = 0;
+  await page.route("**/local-replay/chart-trades?*", async route => {
+    fineUploads++;
+    const q = new URL(route.request().url()).searchParams;
+    assert.equal(q.get("symbol"), "ICNTUSDT");
+    assert.equal(q.get("filename"), "ICNTUSDT2026-11-10.csv.gz");
+    assert.equal(route.request().method(), "POST");
+    const first = Number(q.get("start_ms")), end = Number(q.get("end_ms"));
+    assert.equal(first % 60_000, 0);
+    assert.ok(end > first && end-first < 6*3_600_000);
+    const s15 = Array.from({length:(end-first)/15_000}, (_,i) => ({
+      start_ms:first+i*15_000,end_ms:first+(i+1)*15_000,
+      open:100,high:101,low:99,close:100,volume:1,
+    }));
+    const m1 = Array.from({length:(end-first)/60_000}, (_,i) => ({
+      start_ms:first+i*60_000,end_ms:first+(i+1)*60_000,
+      open:100,high:101,low:99,close:100,volume:4,
+    }));
+    await route.fulfill({status:200,contentType:"application/json",body:JSON.stringify({
+      source:"BYBIT_PUBLIC_TRADES_DERIVED_OHLC_LOCAL_ARCHIVE",
+      symbol:"ICNTUSDT",start_ms:first,end_ms:end,
+      raw_trade_sha256:"47f3d3ea153374fe759adc81d2b340f5557d0fef84e90d28862d1a1239b0718a",
+      pinned_original_icnt:true,missing_m1:0,missing_15s:0,
+      m1,s15,trades_scanned:10000,l2_executions_unchanged:true,
+    })});
+  });
+  assert.equal(await page.getByRole("button",{name:"M1",exact:true}).isDisabled(),true);
+  assert.equal(await page.getByRole("button",{name:"15S",exact:true}).isDisabled(),true);
+  await page.getByLabel("Загрузить архив публичных сделок M1 15S").setInputFiles({
+    name:"ICNTUSDT2026-11-10.csv.gz",mimeType:"application/octet-stream",
+    buffer:Buffer.from("fake trade gzip - backend is mocked only in E2E"),
+  });
+  await page.getByRole("status",{name:"Статус M1 и 15S"})
+    .filter({hasText:"Покрытие полное"}).waitFor();
+  assert.equal(fineUploads,1);
+  assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-chart-timeframe"),"1m");
+  assert.equal(await page.getByRole("button",{name:"15S",exact:true}).isDisabled(),false);
+  const seek = page.getByRole("slider",{name:"Перемотка воспроизведения"});
+  await seek.focus();
+  await seek.press("End");
+  const fineState = async () => page.evaluate(() => ({
+    fills:document.querySelector(".replay-execution-overlay")?.dataset.visibleFills,
+    timeframe:document.querySelector(".replay-chart-shell")?.dataset.chartTimeframe,
+    bars:document.querySelector(".replay-chart-shell")?.dataset.displayedCandles,
+    seek:document.querySelector(".replay-seek")?.value,
+    seekMax:document.querySelector(".replay-seek")?.max,
+    meta:document.querySelector(".replay-meta")?.textContent?.slice(0,350),
+  }));
+  await page.waitForTimeout(500);
+  const visibleM1 = Number((await fineState()).fills);
+  assert.ok(visibleM1 > 0 && visibleM1 <= 8,
+    "M1 must paint original markers inside its current viewport; " +
+    "off-screen fills remain in original 4/4 ledger: " + JSON.stringify(await fineState()));
+  assert.match(await page.locator(".replay-meta").innerText(),/4 \/ 4/,
+    "M1 displays all original L2 event-time fills, not re-simulated fills");
+  await page.getByRole("button",{name:"15S",exact:true}).click();
+  assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-chart-timeframe"),"15s");
+  await page.waitForTimeout(500);
+  const visible15S = Number((await fineState()).fills);
+  assert.ok(visible15S > 0 && visible15S <= 8,
+    "15S must paint original markers inside its current viewport; " +
+    "all 4/4 immutable receipts remain in the journal: " + JSON.stringify(await fineState()));
+  assert.match(await page.locator(".replay-meta").innerText(),/4 \/ 4/,
+    "15S displays the SAME frozen original L2 event-time entries and exits");
+  assert.equal(fineUploads,1,"Switching M1 to 15S must not re-upload source trades");
+  await page.getByRole("button",{name:"M5",exact:true}).click();
+  assert.match(await page.locator(".replay-meta").innerText(),/4 \/ 4/,
+    "M5 remains exact after switching to and from verified fine scales");
+  console.log("LOCAL_FINE_TF_BROWSER_OK (M1/15s visual only, original 4/4 L2 immutable)");
 
   await page.mouse.move(620, 660); // Crosshair must not create DMI dots.
   await page.screenshot({ path: join(screenshotDir, "machine-time-browser.png"), fullPage: true });
@@ -734,6 +1112,10 @@ try {
     await copyFile(
       join(screenshotDir, "machine-time-browser.png"),
       join(process.env.LOCAL_REPLAY_E2E_SCREENSHOTS, "machine-time-browser.png"),
+    ).catch(() => {});
+    await copyFile(
+      join(screenshotDir, "machine-time-l2-replay.png"),
+      join(process.env.LOCAL_REPLAY_E2E_SCREENSHOTS, "machine-time-l2-replay.png"),
     ).catch(() => {});
   }
   await rm(screenshotDir, { recursive: true, force: true });

@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Callable
 
 from research.historical_market_replay import Candle
+from robot_entry_flow_evidence import ImpulseProtectedPlan
 from research.wilder_dmi import WilderDmi
 from research.simulator_v2.session import VirtualReplaySession
 
@@ -19,6 +20,8 @@ class WedgeVisualReplay:
     def __init__(
         self, *, run_id: str, symbol: str, start_ms: int, end_ms: int,
         on_events: Callable[[list[dict[str, object]]], None] | None = None,
+        impulse_plans: dict[str, ImpulseProtectedPlan] | None = None,
+        historical_l2: bool = False,
     ):
         self.run_id = run_id
         self.symbol = symbol
@@ -34,11 +37,17 @@ class WedgeVisualReplay:
         self._m5 = 0
         self._last_released_trade_events = 0
         self._on_events = on_events
+        self._impulse_plans = impulse_plans
+        if type(historical_l2) is not bool:
+            raise TypeError("explicit historical L2 visual flag required")
+        self._historical_l2 = historical_l2
+        self._partial_receipts: dict[str, object] = {}
         self._emitted = 0
         self._event_order = {
             "CANDLE_CLOSED": 0, "WEDGE_ACCEPTED": 1, "WEDGE_BREAKOUT": 2,
             "WEDGE_RETEST": 3, "ENTRY_SIGNAL": 4,
-            "ENTRY_FILLED": 5, "EXIT_FILLED": 6,
+            "ENTRY_FILLED": 5, "PARTIAL_FILLED": 6,
+            "STOP_AMENDED": 7, "EXIT_FILLED": 8,
         }
 
     def _publish(self) -> None:
@@ -64,6 +73,106 @@ class WedgeVisualReplay:
             item["kind"] != "CANDLE_CLOSED" for item in pending
         )
 
+    def _record_l2_fills(
+        self, session: VirtualReplaySession, minute: Candle,
+        events: tuple,
+    ) -> None:
+        """Project only original event-time virtual journal, never M1 OHLC fills.
+
+        Cross-check each receipt against the immutable account and matching
+        order event. Mixed/partial chronology must not be guessed or reordered.
+        """
+        if session.exchange.execution_mode != "HISTORICAL_L2":
+            raise ValueError("L2 visual journal requires original L2 exchange")
+        fresh = session.account.fills[self._fills:]
+        receipts = {fill.fill_id: fill for fill in fresh}
+        if len(receipts) != len(fresh):
+            raise ValueError("duplicate L2 virtual receipt ID in replay")
+        matched: set[str] = set()
+        suffix = {
+            "FILLED": "_fill",
+            "PARTIAL_TAKE_FILLED": "_partial_fill",
+            "STOP_FILLED": "_stop_fill",
+            "TAKE_FILLED": "_take_fill",
+        }
+        for order in events:
+            if order.kind == "STOP_AMENDED_BE":
+                if order.order_id not in self._partial_receipts:
+                    raise ValueError("L2 BE amendment without a preceding partial fill")
+                if not minute.start_ms <= order.virtual_time_ms < minute.end_ms:
+                    raise ValueError("L2 amended STOP escaped its original minute")
+                if order.stop_price is None or order.stop_price <= 0:
+                    raise ValueError("BE STOP amendment lacks original virtual stop price")
+                self._items.append({
+                    "kind": "STOP_AMENDED", "time_ms": order.virtual_time_ms,
+                    "trade_id": f"SIMULATION:{self.run_id}:{order.order_id}",
+                    "reason": "NET_BREAK_EVEN_AFTER_PARTIAL",
+                    "stop": float(order.stop_price),
+                })
+                continue
+            if order.kind not in suffix:
+                continue
+            identity = order.order_id + suffix[order.kind]
+            receipt = receipts.get(identity)
+            if (identity in matched or receipt is None
+                    or receipt.virtual_time_ms != order.virtual_time_ms
+                    or not minute.start_ms <= receipt.virtual_time_ms < minute.end_ms):
+                raise ValueError("L2 fill has no corresponding event-time ledger receipt")
+            matched.add(identity)
+            entry = order.kind == "FILLED"
+            side = "LONG" if (receipt.side == "BUY") == entry else "SHORT"
+            financials = {}
+            if entry:
+                if order.order_id in self._entry_receipts:
+                    raise ValueError("duplicate L2 entry visual receipt")
+                self._entry_receipts[order.order_id] = receipt
+            elif order.kind == "PARTIAL_TAKE_FILLED":
+                original = self._entry_receipts.get(order.order_id)
+                if (original is None or order.order_id in self._partial_receipts
+                        or original.side == receipt.side
+                        or not 0 < receipt.quantity < original.quantity):
+                    raise ValueError("unproven L2 partial quantity or identity")
+                self._partial_receipts[order.order_id] = receipt
+                financials = {
+                    "reason": "PARTIAL_TAKE",
+                    "quantity": format(receipt.quantity, "f"),
+                    "fee_usdt": format(receipt.fee, "f"),
+                }
+            else:
+                original = self._entry_receipts.pop(order.order_id, None)
+                partial = self._partial_receipts.pop(order.order_id, None)
+                if (original is None or original.side == receipt.side
+                        or receipt.quantity + (partial.quantity if partial else 0)
+                        != original.quantity):
+                    raise ValueError("L2 final exit does not reconcile position quantity")
+                direction = 1 if original.side == "BUY" else -1
+                gross = ((receipt.price - original.price) * receipt.quantity
+                         + ((partial.price - original.price) * partial.quantity
+                            if partial else 0)) * direction
+                net = gross - original.fee - receipt.fee - (partial.fee if partial else 0)
+                basis = original.price * original.quantity
+                financials = {
+                    "reason": order.kind.removesuffix("_FILLED"),
+                    "quantity": format(receipt.quantity, "f"),
+                    "net_usdt": format(net, "f"),
+                    "pnl_percent": format(net * 100 / basis, "f"),
+                }
+            self._items.append({
+                "kind": ("ENTRY_FILLED" if entry else
+                         "PARTIAL_FILLED" if order.kind == "PARTIAL_TAKE_FILLED"
+                         else "EXIT_FILLED"),
+                "time_ms": receipt.virtual_time_ms,
+                "side": side,
+                "price": float(receipt.price),
+                "trade_id": f"SIMULATION:{self.run_id}:{order.order_id}",
+                "quantity": format(receipt.quantity, "f"),
+                "fee_usdt": format(receipt.fee, "f"),
+                **financials,
+            })
+            self._fills += 1
+        if matched != set(receipts):
+            raise ValueError("orphan L2 account receipt cannot be visualized")
+
     def record(self, session: VirtualReplaySession, minute: Candle) -> None:
         if not self.start_ms <= minute.start_ms < self.end_ms:
             return
@@ -71,10 +180,12 @@ class WedgeVisualReplay:
             session.account.simulation_run_id != self.run_id
         ):
             raise ValueError("visual replay changed SIMULATION identity")
+        if (session.exchange.execution_mode == "HISTORICAL_L2") != self._historical_l2:
+            raise ValueError("legacy M1 visual cannot mislabel L2 event-time fills")
         robot = session.wedge_robot
-        if robot is None:
-            raise ValueError("visual replay requires the original Wedge Robot")
-        decisions = robot.decisions
+        if robot is None and self._impulse_plans is None:
+            raise ValueError("visual replay requires committed Wedge or impulse Robot")
+        decisions = robot.decisions if robot is not None else ()
         if len(decisions) < self._decision_count:
             raise ValueError("Robot decisions went backwards")
         for decision in decisions[self._decision_count:]:
@@ -97,29 +208,49 @@ class WedgeVisualReplay:
             raise ValueError("virtual order journal went backwards")
         # The existing Robot created every protected LIMIT. Expose the actual
         # submission, never an unapproved candidate as a trade entry.
-        for order in orders[self._order_count:]:
+        fresh_orders = orders[self._order_count:]
+        for order in fresh_orders:
             if order.kind != "SUBMITTED" or order.order_type != "LIMIT":
                 continue
-            robot = session.wedge_robot
             if robot is None:
-                raise ValueError("visual replay requires original Wedge Robot")
-            preview = next((
-                p for p in robot.risk_previews
-                if p.request.order_id == order.order_id
-            ), None)
-            if preview is None:
-                raise ValueError("unproved LIMIT submitted without Robot risk preview")
+                # Impulse order must match a committed shared Robot plan.
+                plan = (self._impulse_plans or {}).get(order.order_id)
+                if plan is None or plan.signal.known_at_ms != order.virtual_time_ms:
+                    raise ValueError("impulse LIMIT lacks committed Robot risk plan")
+                side, price, stop, take = (
+                    plan.signal.direction, plan.entry_price,
+                    plan.stop_price, plan.take_price,
+                )
+            else:
+                preview = next((
+                    p for p in robot.risk_previews
+                    if p.request.order_id == order.order_id
+                ), None)
+                if preview is None:
+                    raise ValueError("unproved LIMIT submitted without Robot risk preview")
+                side = "LONG" if preview.request.side == "BUY" else "SHORT"
+                price, stop, take = (
+                    preview.request.limit_price, preview.stop_price,
+                    preview.take_price,
+                )
             self._items.append({
                 "kind": "ENTRY_SIGNAL", "time_ms": order.virtual_time_ms,
-                "side": "LONG" if preview.request.side == "BUY" else "SHORT",
-                "price": float(preview.request.limit_price),
-                "stop": float(preview.stop_price), "take": float(preview.take_price),
+                "side": side,
+                "price": float(price),
+                "stop": float(stop), "take": float(take),
                 "trade_id": f"SIMULATION:{self.run_id}:{order.order_id}",
             })
         self._order_count = len(orders)
 
-        receipts = session.exchange.last_minute_fills
-        fill_events = session.exchange.last_minute_order_events
+        if self._historical_l2:
+            self._record_l2_fills(session, minute, fresh_orders)
+            receipts = ()
+            fill_events = ()
+        else:
+            if session.exchange.execution_mode != "OHLC_M1":
+                raise ValueError("legacy M1 visual cannot mislabel L2 event-time fills")
+            receipts = session.exchange.last_minute_fills
+            fill_events = session.exchange.last_minute_order_events
         if len(receipts) != len(fill_events):
             raise ValueError("virtual fills and exchange events diverged")
         for receipt, order in zip(receipts, fill_events):
@@ -223,7 +354,14 @@ class WedgeVisualReplay:
             "source": "SIMULATION", "simulation_run_id": self.run_id,
             "mode": "STRATEGY", "demo": False, "timeframe": "5m",
             "symbol": self.symbol,
-            "market_data_source": "BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M",
+            "market_data_source": (
+                "PINNED_BYBIT_PUBLIC_TRADES_PLUS_L2_EVENT_TIME_SIMULATION"
+                if self._historical_l2 else "BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M"
+            ),
+            **({"execution_certainty": "CONDITIONAL_L2_NOT_REAL_EXCHANGE_FILLS",
+                "execution_clock": "ORIGINAL_EVENT_TIME_NOT_OHLC_M1",
+                "partial_and_be_markers": "EVENTS_ONLY_CONDITIONAL"
+                } if self._historical_l2 else {}),
             "source_id": source_id,
             "events": events,
         }

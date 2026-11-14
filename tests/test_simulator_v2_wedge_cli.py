@@ -124,6 +124,60 @@ class TimeMachineWedgeConfigTests(unittest.TestCase):
                     latest_closed_boundary_ms=BOUNDARY,
                 )
 
+    def test_optional_taker_archive_is_forwarded_only_to_wedge(self):
+        manifest = provenance(fake_proofs())
+        archive = Path("raw-trades")
+        with patch(
+            "research.simulator_v2.wedge_cli.run_cached_wedge_trade_range",
+            return_value="FLOW_SHADOW",
+        ) as runner:
+            result = run_from_time_machine_config(
+                config=selection(), manifest=manifest,
+                cache_dir=Path("sim-test-cache"),
+                latest_closed_boundary_ms=BOUNDARY,
+                flow_archive_dir=archive,
+            )
+        self.assertEqual(result, "FLOW_SHADOW")
+        self.assertEqual(runner.call_args.kwargs["flow_archive_dir"], archive)
+        with self.assertRaisesRegex(ValueError, "only for Wedge"):
+            run_from_time_machine_config(
+                config={**selection(), "selected_strategies": ["IKIGAI_BOX"]},
+                manifest=manifest, cache_dir=Path("sim-test-cache"),
+                latest_closed_boundary_ms=BOUNDARY,
+                flow_archive_dir=archive,
+            )
+
+    def test_impulse_only_reuses_original_robot_runner_and_requires_source(self):
+        manifest = provenance(fake_proofs())
+        config = {**selection(), "selected_strategies": ["IMPULSE_FLOW"], "oi_mode": "FALLING"}
+        with self.assertRaisesRegex(ValueError, "pinned original taker"):
+            run_from_time_machine_config(
+                config=config, manifest=manifest, cache_dir=Path("sim-test-cache"),
+                latest_closed_boundary_ms=BOUNDARY,
+            )
+        with self.assertRaisesRegex(ValueError, "isolated"):
+            run_from_time_machine_config(
+                config={**config, "selected_strategies": ["IMPULSE_FLOW", "WEDGE_FALLING"]},
+                manifest=manifest, cache_dir=Path("sim-test-cache"),
+                latest_closed_boundary_ms=BOUNDARY,
+                flow_archive_dir=Path("raw-trades"),
+            )
+        with patch(
+            "research.simulator_v2.wedge_cli.run_cached_wedge_trade_range",
+            return_value="PROTECTED_IMPULSE",
+        ) as runner:
+            result = run_from_time_machine_config(
+                config=config, manifest=manifest,
+                cache_dir=Path("sim-test-cache"),
+                latest_closed_boundary_ms=BOUNDARY,
+                flow_archive_dir=Path("raw-trades"),
+                oi_history_path=Path("oi-history/BTCUSDT.csv"),
+            )
+        self.assertEqual(result, "PROTECTED_IMPULSE")
+        self.assertTrue(runner.call_args.kwargs["impulse_mode"])
+        self.assertIsNone(runner.call_args.kwargs["robot_config"])
+        self.assertEqual(runner.call_args.kwargs["oi_mode"], "FALLING")
+
     def test_box_only_dispatches_native_box_runner(self):
         manifest = provenance(fake_proofs())
         with patch(

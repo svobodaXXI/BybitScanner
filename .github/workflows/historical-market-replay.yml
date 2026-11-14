@@ -64,7 +64,7 @@ jobs:
       - name: Install locked frontend dependencies
         run: npm ci
       - name: Validate standalone replay model and Telegram-style execution markers
-        run: npm run test -- src/replay/replayModel.test.ts src/replay/executionMarkers.test.ts src/replay/runSetup.test.ts
+        run: npm run test -- src/replay/replayModel.test.ts src/replay/executionMarkers.test.ts src/replay/runSetup.test.ts src/replay/l2ReplayImport.test.ts src/replay/l2ReplayUpload.test.ts src/replay/l2ChartContext.test.ts src/replay/replayChartDmi.test.ts src/replay/l2PeriodContext.test.ts src/replay/l2M5Catalog.test.ts src/replay/fineChart.test.ts src/replay/journalTime.test.ts
       - name: Build main terminal without experimental simulator
         run: |
           npm run build
@@ -74,6 +74,12 @@ jobs:
       - name: Assemble self-contained local Windows simulator package
         run: |
           mkdir -p "$RUNNER_TEMP/machine-time/research"
+          mkdir -p "$RUNNER_TEMP/machine-time/research/local_replay_viewer"
+          cp ../../research/local_replay_viewer/fine_trades.py "$RUNNER_TEMP/machine-time/research/local_replay_viewer/"
+          cp ../../research/local_replay_viewer/windows_protocol.py "$RUNNER_TEMP/machine-time/research/local_replay_viewer/"
+          cp ../../research/local_replay_viewer/device_relay_client.py "$RUNNER_TEMP/machine-time/research/local_replay_viewer/"
+          cp ../../research/local_replay_viewer/paired_device.py "$RUNNER_TEMP/machine-time/research/local_replay_viewer/"
+          cp ../../research/local_replay_viewer/paper_episode_local_store.py "$RUNNER_TEMP/machine-time/research/local_replay_viewer/"
           cp ../../research/local_replay_viewer/server.py "$RUNNER_TEMP/machine-time/server.py"
           cp ../../research/local_replay_viewer/START_LOCAL.cmd "$RUNNER_TEMP/machine-time/START_LOCAL.cmd"
           cp ../../research/local_replay_viewer/README.txt "$RUNNER_TEMP/machine-time/README.txt"
@@ -90,6 +96,7 @@ jobs:
           cp ../../pivots.py ../../confirmation.py ../../scanner_geometry_cursor.py "$RUNNER_TEMP/machine-time/"
           cp ../../robot_state_machine.py ../../robot_entry_limit.py ../../robot_protection.py ../../robot_l_shape.py ../../retest_account_risk.py ../../retest_campaign.py "$RUNNER_TEMP/machine-time/"
           cp ../../mirror_retest_robot.py ../../mirror_retest_observer.py ../../mirror_retest_robot_bridge.py ../../retest_calibration.py ../../robot_failure_diagnostics.py ../../robot_market_confirmation.py ../../robot_partial_fill.py ../../robot_candidate_store.py "$RUNNER_TEMP/machine-time/"
+          cp ../../robot_entry_flow_evidence.py "$RUNNER_TEMP/machine-time/"
           mkdir -p "$RUNNER_TEMP/machine-time/terminal/api" "$RUNNER_TEMP/machine-time/terminal/domain" "$RUNNER_TEMP/machine-time/terminal/application" "$RUNNER_TEMP/machine-time/terminal/paper" "$RUNNER_TEMP/machine-time/terminal/market_data" "$RUNNER_TEMP/machine-time/terminal/persistence"
           cp ../../terminal/api/models.py "$RUNNER_TEMP/machine-time/terminal/api/"
           cp ../../terminal/domain/models.py ../../terminal/domain/states.py "$RUNNER_TEMP/machine-time/terminal/domain/"
@@ -153,6 +160,7 @@ jobs:
         run: |
           python -B server.py --check
           python -B smoke_package.py
+          python -c "from research.local_replay_viewer.fine_trades import aggregate_owner_trade_bars; print('LOCAL_FINE_TRADES_IMPORT_OK')"
           python -c "from research.simulator_v2.wedge_cli import run_from_time_machine_config; from research.simulator_v2.wedge_observer import WedgeScannerConfig; import pandas; print('LOCAL_WEDGE_ENGINE_PACKAGE_IMPORT_OK')"
           python -B box_lifecycle_smoke.py
           if (Test-Path terminal/runtime -PathType Container) { throw 'Production runtime leaked into SIMULATION ZIP' }

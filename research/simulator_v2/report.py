@@ -105,6 +105,7 @@ def run_verified_chunks(
     *,
     order_schedule: Mapping[int, MarketRequest] | None = None,
     on_committed_m1: Callable[[VirtualReplaySession, Candle], None] | None = None,
+    on_before_m1: Callable[[VirtualReplaySession, Candle], None] | None = None,
 ) -> ReplayReport:
     """Single-use, synchronous run of already verified chunks.
 
@@ -125,6 +126,11 @@ def run_verified_chunks(
         raise TypeError("SIMULATION M1 callback must be callable")
     if on_committed_m1 is not None and order_schedule:
         raise ValueError("cannot combine strategy replay with manual order schedule")
+    if session.exchange.execution_mode == "HISTORICAL_L2":
+        if not callable(on_before_m1) or order_schedule:
+            raise ValueError("L2 replay requires a verified event feeder and no M1 order schedule")
+    elif on_before_m1 is not None:
+        raise ValueError("historical L2 feeder is forbidden in OHLC mode")
     for timestamp, request in order_schedule.items():
         if type(timestamp) is not int or timestamp < 0 or timestamp % MINUTE_MS:
             raise ValueError("schedule uses an invalid M1 close timestamp")
@@ -170,6 +176,10 @@ def run_verified_chunks(
             if active_day is not None and current_day != active_day:
                 assert latest_snapshot is not None
                 days.append(_day_entry(active_day, latest_snapshot))
+            # Historical book/trade events must execute in event-time BEFORE
+            # the candle is committed. The M1 stage never creates L2 fills.
+            if on_before_m1 is not None:
+                on_before_m1(session, candle)
             latest_snapshot = session.step(candle)
             # Only committed closed M1 may trigger a new strategy LIMIT; its
             # fill is eligible at the NEXT M1. Callback error blocks report.

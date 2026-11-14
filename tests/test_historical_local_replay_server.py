@@ -335,5 +335,87 @@ class LoopbackServerTests(unittest.TestCase):
             self.assertEqual(calls, [])
 
 
+
+class LocalVirtualTradeEntryTests(unittest.TestCase):
+    def test_fixed_local_archive_opt_in_passes_only_to_wedge(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "raw-trades").mkdir()
+            (root / "manifest.json").write_text("{}", encoding="utf-8")
+            (root / "wedge-risk.json").write_text(
+                json.dumps({"scanner": {}, "risk": {"terms_source": "test"}}),
+                encoding="utf-8",
+            )
+            params = {
+                "symbol": "BTCUSDT", "start_utc": "2026-10-01T01:00",
+                "end_utc_inclusive": "2026-10-01T01:02",
+                "selected_strategies": ["WEDGE_FALLING"],
+                "initial_balance": "1000",
+            }
+            # The local HTTP test must not import Scanner dependencies or
+            # pretend to test the real research engine (its own CI does that).
+            from types import ModuleType
+            from unittest.mock import Mock
+            stub = ModuleType("research.simulator_v2.wedge_cli")
+            stub.MAX_MANIFEST_BYTES = 125_000
+            stub.parse_manifest = Mock()
+            runner = Mock()
+            runner.return_value.to_payload.return_value = {"namespace": "SIMULATION"}
+            stub.run_from_time_machine_config = runner
+            with (
+                patch.object(local, "SIM_DATA", root),
+                patch.object(local, "local_simulation_status", return_value={"can_attempt": True}),
+                patch.dict("sys.modules", {"research.simulator_v2.wedge_cli": stub}),
+            ):
+                response = local.run_local_simulation(params)
+                self.assertEqual(response["namespace"], "SIMULATION")
+                self.assertEqual(
+                    runner.call_args.kwargs["flow_archive_dir"],
+                    root / "raw-trades",
+                )
+                self.assertEqual(
+                    runner.call_args.kwargs["config"]["selected_strategies"],
+                    ["WEDGE_FALLING"],
+                )
+                runner.reset_mock()
+                local.run_local_simulation({**params, "oi_mode": "RISING"})
+                self.assertEqual(
+                    runner.call_args.kwargs["oi_history_path"],
+                    root / "oi-history" / "BTCUSDT.csv",
+                )
+                self.assertEqual(
+                    runner.call_args.kwargs["config"]["oi_mode"], "RISING",
+                )
+                runner.reset_mock()
+                local.run_local_simulation({
+                    **params, "selected_strategies": ["IMPULSE_FLOW"], "oi_mode": "FALLING",
+                })
+                self.assertEqual(
+                    runner.call_args.kwargs["config"]["selected_strategies"],
+                    ["IMPULSE_FLOW"],
+                )
+                self.assertEqual(runner.call_args.kwargs["flow_archive_dir"], root / "raw-trades")
+                runner.reset_mock()
+                with self.assertRaisesRegex(ValueError, "one isolated"):
+                    local.run_local_simulation({
+                        **params, "selected_strategies": ["IMPULSE_FLOW", "WEDGE_FALLING"],
+                    })
+                runner.assert_not_called()
+                # Box does not silently use the Wedge-only research tape.
+                local.run_local_simulation({
+                    **params, "selected_strategies": ["IKIGAI_BOX"],
+                })
+                self.assertIsNone(runner.call_args.kwargs["flow_archive_dir"])
+                runner.reset_mock()
+                (root / "raw-trades").rmdir()
+                local.run_local_simulation(params)
+                self.assertIsNone(runner.call_args.kwargs["flow_archive_dir"])
+                runner.reset_mock()
+                (root / "raw-trades").write_text("not a folder", encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "unsafe local raw taker"):
+                    local.run_local_simulation(params)
+                runner.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import mimetypes
+import os
 from pathlib import Path
 import re
 from secrets import token_hex
@@ -21,6 +22,7 @@ from typing import Callable
 from urllib.parse import parse_qs, unquote, urlencode, urlsplit
 from urllib.request import Request, urlopen
 import webbrowser
+import zipfile
 
 HERE = Path(__file__).resolve().parent
 # Works both in GitHub source tree and in the packaged Windows zip.
@@ -119,11 +121,17 @@ def run_local_simulation(
     Does not download anything, import production Scanner/Robot runtimes,
     accept arbitrary file paths, or write to any exchange/PAPER ledger.
     """
-    if not isinstance(request_data, dict) or set(request_data) != {
+    required = {
         "symbol", "start_utc", "end_utc_inclusive",
         "selected_strategies", "initial_balance",
-    }:
+    }
+    if (not isinstance(request_data, dict)
+            or not required <= set(request_data)
+            or not set(request_data) <= required | {"oi_mode"}):
         raise ValueError("expected exact local wedge run selection")
+    oi_mode = request_data.get("oi_mode", "OFF")
+    if oi_mode not in ("OFF", "RISING", "FALLING"):
+        raise ValueError("invalid OI entry filter")
     if any(
         not isinstance(request_data[k], str) or not 1 <= len(request_data[k]) <= 40
         for k in ("symbol", "start_utc", "end_utc_inclusive", "initial_balance")
@@ -131,12 +139,14 @@ def run_local_simulation(
         raise ValueError("invalid local wedge run field")
     selected = request_data["selected_strategies"]
     if (not isinstance(selected, list) or not selected or len(selected) > 2
-            or any(s not in ("WEDGE_RISING", "WEDGE_FALLING", "IKIGAI_BOX")
+            or any(s not in ("WEDGE_RISING", "WEDGE_FALLING", "IKIGAI_BOX", "IMPULSE_FLOW")
                    for s in selected)
             or len(set(selected)) != len(selected)):
         raise ValueError("only implemented Wedge or Ikigai Box may trade")
     if "IKIGAI_BOX" in selected and len(selected) != 1:
         raise ValueError("Ikigai Box currently requires an isolated one-strategy run")
+    if "IMPULSE_FLOW" in selected and len(selected) != 1:
+        raise ValueError("Impulse flow requires one isolated virtual strategy")
 
     status = local_simulation_status()
     if not status["can_attempt"]:
@@ -181,9 +191,27 @@ def run_local_simulation(
             "start_utc": configuration["start_utc"],
             "end_utc_inclusive": configuration["end_utc_inclusive"],
         })
+    # Optional owner-installed historical prints: fixed local directory,
+    # never a browser-provided path. The pinned raw checksum is verified by
+    # Simulator V2 before any evidence is accepted. Box remains unchanged.
+    flow_archive_dir = None
+    if "IKIGAI_BOX" not in selected:
+        raw_folder = SIM_DATA / "raw-trades"
+        if raw_folder.exists() or raw_folder.is_symlink():
+            if raw_folder.is_symlink() or not raw_folder.is_dir():
+                raise ValueError("unsafe local raw taker archive directory")
+            flow_archive_dir = raw_folder
+    # Fixed, symbol-bound local historical OI source; browser cannot choose
+    # arbitrary paths or activate production feeds.
+    oi_history_path = (
+        SIM_DATA / "oi-history" / (configuration["symbol"] + ".csv")
+        if oi_mode != "OFF" else None
+    )
     result = run_from_time_machine_config(
         config=configuration, manifest=manifest,
         cache_dir=SIM_DATA / "m1-cache",
+        flow_archive_dir=flow_archive_dir,
+        oi_history_path=oi_history_path,
         latest_closed_boundary_ms=latest,
         capture_replay=True,
         on_replay_events=(
@@ -479,6 +507,56 @@ def handler_factory(static_dir: Path = STATIC_DIR,
                     "ok": True, "trade_episode_id": episode_id, "stored_locally": True,
                 }).encode("utf-8"), "application/json")
                 return
+            if path == "/local-replay/chart-trades":
+                # Explicit browser file picker only. Extract selected public
+                # prints in one ephemeral bounded temporary file; do not save
+                # owner archives to the application or read arbitrary paths.
+                from research.local_replay_viewer.fine_trades import (
+                    aggregate_owner_trade_bars, MAX_ARCHIVE_BYTES,
+                )
+                from tempfile import TemporaryDirectory
+                address = f"http://127.0.0.1:{self.server.server_address[1]}"
+                local = f"http://localhost:{self.server.server_address[1]}"
+                if (self.headers.get("Origin") not in (address, local)
+                    or self.headers.get("Sec-Fetch-Site") == "cross-site"
+                    or self.headers.get("X-Local-Chart-Import") != "explicit-owner-file"
+                    or self.headers.get("Content-Type") != "application/octet-stream"):
+                    self._error(403, "Explicit same-origin public trade chart import only")
+                    return
+                try:
+                    params = parse_qs(urlsplit(self.path).query, strict_parsing=True)
+                    if set(params) != {"symbol", "filename", "start_ms", "end_ms"} or any(
+                        len(value) != 1 for value in params.values()
+                    ):
+                        raise ValueError("Expected exact public trade chart parameters")
+                    size = int(self.headers.get("Content-Length", "0"))
+                    if not 0 < size <= MAX_ARCHIVE_BYTES:
+                        self._error(413, "Owner-selected public trades exceed upload limit")
+                        return
+                    with TemporaryDirectory(prefix="machine-time-public-chart-") as temp:
+                        temporary = Path(temp) / "public-trades-upload"
+                        with temporary.open("xb") as output:
+                            remaining = size
+                            while remaining:
+                                data = self.rfile.read(min(1_048_576, remaining))
+                                if not data:
+                                    raise ValueError("Incomplete local trade archive upload")
+                                output.write(data)
+                                remaining -= len(data)
+                        chart = aggregate_owner_trade_bars(
+                            temporary, filename=params["filename"][0],
+                            symbol=params["symbol"][0],
+                            start_ms=int(params["start_ms"][0]),
+                            end_ms=int(params["end_ms"][0]),
+                        )
+                    self._send(200, json.dumps(chart, ensure_ascii=False,
+                        separators=(",", ":"), allow_nan=False).encode("utf-8"),
+                        "application/json; charset=utf-8")
+                except (ValueError, OSError, KeyError, EOFError, zipfile.BadZipFile):
+                    self._error(422, "Invalid/incomplete public trade archive or fine chart range")
+                except Exception:
+                    self._error(500, "Local public trade chart processing failed")
+                return
             if path not in (
                 "/local-replay/simulation/wedge",
                 "/local-replay/simulation/wedge-stream",
@@ -564,25 +642,112 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Local-only read-only historical simulator viewer")
     parser.add_argument("--check", action="store_true", help="verify packaged assets/imports, no network")
     parser.add_argument("--no-browser", action="store_true", help="run loopback server without opening the browser")
+    parser.add_argument("--open-url", help=argparse.SUPPRESS)
+    parser.add_argument("--episode", help=argparse.SUPPRESS)
     args = parser.parse_args()
+    from research.local_replay_viewer.windows_protocol import (
+        active_viewer_port, clear_active_viewer, episode_from_url,
+        install_per_user_handler, set_active_viewer,
+    )
+    if args.open_url and (args.check or args.no_browser or args.episode):
+        raise SystemExit("Invalid local launch combination")
+    if args.open_url and args.open_url.startswith("bybitscanner-simulator://pair"):
+        # A website cannot silently pair a device: Windows displays the
+        # complete HTTPS origin and requires an explicit native confirmation.
+        from research.local_replay_viewer.paired_device import accept_pairing_url
+        try:
+            paired = accept_pairing_url(args.open_url)
+        except (ValueError, OSError) as exc:
+            raise SystemExit("Simulator pairing rejected") from exc
+        print("SIMULATOR_PAIRING_CONFIRMED" if paired
+              else "SIMULATOR_PAIRING_NOT_APPROVED", flush=True)
+        return
+    try:
+        episode = episode_from_url(args.open_url) if args.open_url else (
+            episode_from_url("bybitscanner-simulator://open?episode=" + args.episode)
+            if args.episode else None
+        )
+    except ValueError as exc:
+        raise SystemExit("Rejected invalid simulator episode link") from exc
     if not (STATIC_DIR / "replay.html").is_file():
         raise SystemExit("Missing standalone replay build: dist/replay.html")
     if args.check:
         print("LOCAL_REPLAY_PACKAGE_OK (assets and imports); no HTTP/network exercised")
         return
+    script = Path(__file__).resolve()
+    if args.open_url:
+        active_port = active_viewer_port(script)
+        if active_port is not None:
+            webbrowser.open(
+                f"http://127.0.0.1:{active_port}/replay.html?episode={episode}"
+            )
+            return
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler_factory())
     port = server.server_address[1]
+    if sys.platform == "win32":
+        try:
+            install_per_user_handler(script, Path(sys.executable))
+            set_active_viewer(script, port)
+        except (OSError, ValueError) as exc:
+            # Local archive inspection must not depend on optional Windows
+            # association rights. Without registration the owner may still
+            # launch START_LOCAL.cmd and use the normal local viewer.
+            print("Windows filmstrip association unavailable: " + str(exc), flush=True)
     uri = f"http://127.0.0.1:{port}/replay.html"
+    if episode:
+        uri += "?episode=" + episode
     print("Local research simulation viewer: " + uri, flush=True)
-    print("NO PAPER / NO VPS / NO LIVE. Close this window to stop.", flush=True)
+    print("NO PRIVATE BYBIT / NO PAPER TRADING / NO LIVE. Close this window to stop.", flush=True)
     if not args.no_browser:
         webbrowser.open(uri)
+    device_stop = threading.Event()
+    device_thread = None
+    # The TLS bridge is disabled by default. Pairing must supply an independently
+    # trusted, exact HTTPS origin and a dedicated device-only secret; browser
+    # cookies, PAPER runtime and exchange credentials never reach this process.
+    if sys.platform == "win32":
+        # No token file, no outbound relay. A native user-confirmed pairing
+        # creates the DPAPI credential; the running viewer picks it up without
+        # restart. Inbound connections remain loopback-only.
+        from research.local_replay_viewer.paired_device import run_paired_receiver
+        device_thread = threading.Thread(
+            target=run_paired_receiver,
+            kwargs={
+                "stop": device_stop, "local_archive": PAPER_EPISODES,
+                "open_episode": lambda eid: webbrowser.open(
+                    f"http://127.0.0.1:{port}/replay.html?episode={eid}"
+                ),
+            },
+            daemon=True, name="paper-facts-only-receiver",
+        )
+        device_thread.start()
+    elif os.environ.get("BYBITSCANNER_SIMULATOR_DEVICE_BRIDGE_ENABLED") == "1":
+        # Isolated non-Windows development fixture only, not a production
+        # Windows credential path or a secret stored in the repository.
+        from research.local_replay_viewer.device_relay_client import PairedEpisodeReceiver
+        receiver = PairedEpisodeReceiver(
+            origin=os.environ.get("BYBITSCANNER_SIMULATOR_BRIDGE_ORIGIN", ""),
+            device_id=os.environ.get("BYBITSCANNER_SIMULATOR_DEVICE_ID", ""),
+            token=os.environ.get("BYBITSCANNER_SIMULATOR_DEVICE_TOKEN", ""),
+            local_archive=PAPER_EPISODES,
+            open_episode=lambda eid: webbrowser.open(
+                f"http://127.0.0.1:{port}/replay.html?episode={eid}"
+            ),
+        )
+        device_thread = threading.Thread(target=receiver.loop, args=(device_stop,),
+                                         daemon=True, name="paper-facts-only-receiver")
+        device_thread.start()
     try:
         server.serve_forever(poll_interval=0.2)
     except KeyboardInterrupt:
         pass
     finally:
+        device_stop.set()
+        if device_thread is not None:
+            device_thread.join(timeout=5)
         server.server_close()
+        if sys.platform == "win32":
+            clear_active_viewer(script, port)
 
 
 if __name__ == "__main__":
