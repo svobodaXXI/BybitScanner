@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import mimetypes
+import os
 from pathlib import Path
 import re
 from secrets import token_hex
@@ -688,11 +689,34 @@ def main() -> None:
     print("NO PRIVATE BYBIT / NO PAPER TRADING / NO LIVE. Close this window to stop.", flush=True)
     if not args.no_browser:
         webbrowser.open(uri)
+    device_stop = threading.Event()
+    device_thread = None
+    # The TLS bridge is disabled by default. Pairing must supply an independently
+    # trusted, exact HTTPS origin and a dedicated device-only secret; browser
+    # cookies, PAPER runtime and exchange credentials never reach this process.
+    if os.environ.get("BYBITSCANNER_SIMULATOR_DEVICE_BRIDGE_ENABLED") == "1":
+        from research.local_replay_viewer.device_relay_client import PairedEpisodeReceiver
+        receiver = PairedEpisodeReceiver(
+            origin=os.environ.get("BYBITSCANNER_SIMULATOR_BRIDGE_ORIGIN", ""),
+            device_id=os.environ.get("BYBITSCANNER_SIMULATOR_DEVICE_ID", ""),
+            token=os.environ.get("BYBITSCANNER_SIMULATOR_DEVICE_TOKEN", ""),
+            local_archive=PAPER_EPISODES,
+            open_episode=lambda eid: webbrowser.open(
+                f"http://127.0.0.1:{port}/replay.html?episode={eid}"
+            ),
+        )
+        device_thread = threading.Thread(target=receiver.loop, args=(device_stop,),
+                                         daemon=True, name="paper-facts-only-receiver")
+        device_thread.start()
+        print("Paired PAPER read-only receiver enabled; HTTPS origin pinned.", flush=True)
     try:
         server.serve_forever(poll_interval=0.2)
     except KeyboardInterrupt:
         pass
     finally:
+        device_stop.set()
+        if device_thread is not None:
+            device_thread.join(timeout=5)
         server.server_close()
         if sys.platform == "win32":
             clear_active_viewer(script, port)
