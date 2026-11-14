@@ -641,17 +641,51 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Local-only read-only historical simulator viewer")
     parser.add_argument("--check", action="store_true", help="verify packaged assets/imports, no network")
     parser.add_argument("--no-browser", action="store_true", help="run loopback server without opening the browser")
+    parser.add_argument("--open-url", help=argparse.SUPPRESS)
+    parser.add_argument("--episode", help=argparse.SUPPRESS)
     args = parser.parse_args()
+    from research.local_replay_viewer.windows_protocol import (
+        active_viewer_port, clear_active_viewer, episode_from_url,
+        install_per_user_handler, set_active_viewer,
+    )
+    if args.open_url and (args.check or args.no_browser or args.episode):
+        raise SystemExit("Invalid local launch combination")
+    try:
+        episode = episode_from_url(args.open_url) if args.open_url else (
+            episode_from_url("bybitscanner-simulator://open?episode=" + args.episode)
+            if args.episode else None
+        )
+    except ValueError as exc:
+        raise SystemExit("Rejected invalid simulator episode link") from exc
     if not (STATIC_DIR / "replay.html").is_file():
         raise SystemExit("Missing standalone replay build: dist/replay.html")
     if args.check:
         print("LOCAL_REPLAY_PACKAGE_OK (assets and imports); no HTTP/network exercised")
         return
+    script = Path(__file__).resolve()
+    if args.open_url:
+        active_port = active_viewer_port(script)
+        if active_port is not None:
+            webbrowser.open(
+                f"http://127.0.0.1:{active_port}/replay.html?episode={episode}"
+            )
+            return
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler_factory())
     port = server.server_address[1]
+    if sys.platform == "win32":
+        try:
+            install_per_user_handler(script, Path(sys.executable))
+            set_active_viewer(script, port)
+        except (OSError, ValueError) as exc:
+            # Local archive inspection must not depend on optional Windows
+            # association rights. Without registration the owner may still
+            # launch START_LOCAL.cmd and use the normal local viewer.
+            print("Windows filmstrip association unavailable: " + str(exc), flush=True)
     uri = f"http://127.0.0.1:{port}/replay.html"
+    if episode:
+        uri += "?episode=" + episode
     print("Local research simulation viewer: " + uri, flush=True)
-    print("NO PAPER / NO VPS / NO LIVE. Close this window to stop.", flush=True)
+    print("NO PRIVATE BYBIT / NO PAPER TRADING / NO LIVE. Close this window to stop.", flush=True)
     if not args.no_browser:
         webbrowser.open(uri)
     try:
@@ -660,6 +694,8 @@ def main() -> None:
         pass
     finally:
         server.server_close()
+        if sys.platform == "win32":
+            clear_active_viewer(script, port)
 
 
 if __name__ == "__main__":
