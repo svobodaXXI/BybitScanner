@@ -766,7 +766,7 @@ try {
   const researchToggle = page.getByRole("checkbox", {
     name: "Показывать исследовательские сигналы Scanner — не исходный сигнал PAPER",
   });
-  const localResearchJournal = page.getByRole("region", { name: "Журнал событий" })
+  const localResearchJournal = page.getByRole("complementary", { name: "Журнал событий" })
     .getByText("Исследование Scanner · Ikigai Box");
   assert.equal(await researchToggle.isChecked(), false,
     "Research markers must be opt-in during PAPER episode investigation");
