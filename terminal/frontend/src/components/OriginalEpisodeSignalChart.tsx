@@ -247,7 +247,8 @@ function InteractiveTradeChart({ original, bars, frame, executions, side }: {
         ? a.price + (b.price - a.price) * (time - a.bar_open_time_ms)
           / (b.bar_open_time_ms - a.bar_open_time_ms)
         : a.price;
-      if (finish > start) addOverlay([
+      if (finish > start && [priceAt(start), priceAt(finish)].every(value =>
+        Number.isFinite(value) && value > 0)) addOverlay([
         { time: utc(start), value: priceAt(start) },
         { time: utc(finish), value: priceAt(finish) },
       ], "#e1b653");
@@ -360,6 +361,7 @@ export function OriginalEpisodeSignalChart(props: OriginalSignalChartProps) {
 
   async function selectFrame(next: string) {
     if (!original || loading || !frameMs(next) || next === frame) return;
+    const previous = frame;
     setFrame(next);
     if (barsByFrame[next]) {
       setMessage("Показаны ранее загруженные закрытые свечи.");
@@ -378,6 +380,7 @@ export function OriginalEpisodeSignalChart(props: OriginalSignalChartProps) {
       setBarsByFrame(prior => ({ ...prior, [next]: rows }));
       setMessage("Закрытые свечи получены; для следующих 20 нажмите кнопку.");
     } catch {
+      setFrame(previous);
       setMessage("Для этого таймфрейма проверенные свечи пока недоступны.");
     } finally {
       setLoading(false);
