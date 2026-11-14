@@ -1559,7 +1559,7 @@ describe("shared statistics trade action standard", () => {
       expect(film).toBeEnabled();
       fireEvent.click(film);
       expect(clicked).toEqual(["bybitscanner-simulator://open?episode=" + episodeId]);
-      expect(screen.getByRole("status")).toHaveTextContent("Свечи и решения не переданы");
+      expect(screen.getByRole("status")).toHaveTextContent("Результат запуска не подтверждён");
     } finally {
       a.mockRestore();
     }
