@@ -157,3 +157,80 @@ def fetch_closed_extension(
     except (requests.RequestException, TypeError, ValueError, KeyError,
             InvalidOperation, OverflowError, AttributeError) as exc:
         raise RetrospectiveBarsError("retrospective_history_unavailable") from exc
+
+
+def fetch_closed_trade_timeframe(
+    snapshot: dict, *, interval: str, after_ms: int,
+    session=None, now_ms: int | None = None,
+) -> tuple[int, list[dict]]:
+    """Bounded read-only historical candles for a verified archived trade signal.
+
+    Uses the editor's public Bybit source and 20-closed-bar step. Unlike the
+    immutable detector snapshot, this is a selectable display timeframe only.
+    It never manufactures M1 from M5 or modifies the original geometry.
+    """
+    try:
+        validate_snapshot(
+            snapshot, candidate_id=snapshot["signal_id"],
+            symbol=snapshot["symbol"], timeframe=snapshot["timeframe"],
+        )
+        first = snapshot["bars"][0]["open_time_ms"]
+        last = snapshot["bars"][-1]["open_time_ms"]
+        symbol = snapshot["symbol"]
+    except (ValueError, TypeError, KeyError, IndexError) as exc:
+        raise RetrospectiveBarsError("invalid_source_snapshot") from exc
+    intervals = {**TF_MS, "240": 14_400_000}
+    if interval not in intervals:
+        raise RetrospectiveBarsError("unsupported_trade_timeframe")
+    period = intervals[interval]
+    current = int(time.time() * 1000) if now_ms is None else now_ms
+    if (type(after_ms) is not int or after_ms % period != 0
+            or after_ms < (first // period) * period - 40 * period
+            or after_ms > current or last > current):
+        raise RetrospectiveBarsError("invalid_retrospective_cutoff")
+    last_closed = (current // period - 1) * period
+    count = min(EDITOR_STEP_BARS, (last_closed - after_ms) // period)
+    if count <= 0:
+        raise RetrospectiveBarsError("no_new_closed_retrospective_bars")
+    cutoff = after_ms + count * period
+    try:
+        import requests
+    except ImportError as exc:
+        raise RetrospectiveBarsError("retrospective_history_unavailable") from exc
+    try:
+        response = (session or requests).get(
+            "https://api.bybit.com/v5/market/kline",
+            params={
+                "category": "linear", "symbol": symbol, "interval": interval,
+                "start": after_ms + period, "end": cutoff, "limit": count,
+            },
+            timeout=8,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        raw = payload.get("result", {}).get("list", [])
+        if payload.get("retCode") != 0 or len(raw) != count:
+            raise RetrospectiveBarsError("retrospective_history_incomplete")
+        parsed = []
+        for item in raw:
+            if not isinstance(item, list) or len(item) < 5:
+                raise RetrospectiveBarsError("retrospective_history_invalid")
+            parsed.append({
+                "open_time_ms": int(item[0]),
+                **{field: float(Decimal(str(item[index])))
+                   for index, field in enumerate(("open", "high", "low", "close"), 1)},
+            })
+        parsed.sort(key=lambda bar: bar["open_time_ms"])
+        import math
+        for offset, bar in enumerate(parsed, 1):
+            op, hi, lo, close = (bar[name] for name in ("open", "high", "low", "close"))
+            if (bar["open_time_ms"] != after_ms + offset * period
+                    or any(not math.isfinite(v) or v <= 0 for v in (op, hi, lo, close))
+                    or lo > min(op, close) or hi < max(op, close) or lo > hi):
+                raise RetrospectiveBarsError("invalid_retrospective_ohlc")
+        return cutoff, parsed
+    except RetrospectiveBarsError:
+        raise
+    except (requests.RequestException, TypeError, ValueError, KeyError,
+            InvalidOperation, OverflowError, AttributeError) as exc:
+        raise RetrospectiveBarsError("retrospective_history_unavailable") from exc
