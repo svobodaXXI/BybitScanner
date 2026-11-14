@@ -2,7 +2,7 @@
 import syntheticDmiFixture from "./syntheticDmiFixture.json";
 export type ReplayKind =
   "CANDLE_CLOSED" | "WEDGE_ACCEPTED" | "WEDGE_BREAKOUT" | "WEDGE_RETEST" |
-  "ENTRY_SIGNAL" | "ENTRY_FILLED" | "PARTIAL_FILLED" | "STOP_AMENDED" | "EXIT_FILLED";
+  "ENTRY_SIGNAL" | "ENTRY_FILLED" | "PARTIAL_FILLED" | "STOP_AMENDED" | "EXIT_FILLED" | "CHART_TICK";
 export type ReplayCandle = {
   start_ms: number;
   end_ms: number;
