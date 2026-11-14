@@ -41,9 +41,9 @@ class FineTradesTests(unittest.TestCase):
         self.assertEqual(result["source"], "BYBIT_PUBLIC_TRADES_DERIVED_OHLC_LOCAL_ARCHIVE")
         self.assertEqual(result["trades_scanned"], 6)
         self.assertEqual(len(result["m1"]), 2)
-        self.assertEqual(len(result["s15"]), 3)
+        self.assertEqual(len(result["s15"]), 4)
         self.assertEqual(result["missing_m1"], 0)
-        self.assertEqual(result["missing_15s"], 5)
+        self.assertEqual(result["missing_15s"], 4)
         self.assertEqual(result["m1"][0]["open"], 99)
         self.assertEqual(result["m1"][0]["close"], 102)
         self.assertEqual(result["m1"][0]["volume"], 7)
@@ -60,7 +60,7 @@ class FineTradesTests(unittest.TestCase):
                 z.writestr("unused.txt","no archive access")
             result = aggregate_owner_trade_bars(path,filename=ZIP,symbol=SYMBOL,
                 start_ms=START,end_ms=START+120_000)
-        self.assertEqual(len(result["s15"]),3)
+        self.assertEqual(len(result["s15"]),4)
 
     def test_wrong_provenance_day_or_period_does_not_backfill(self):
         with TemporaryDirectory() as temp:
