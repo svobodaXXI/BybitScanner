@@ -1102,7 +1102,8 @@ export function nextClosedCandleCursor(events: readonly ReplayEvent[], cursor: n
   const length = events.length;
   const current = Math.max(0, Math.min(length, Math.floor(cursor)));
   let index = current;
-  while (index < length && events[index].kind !== "CANDLE_CLOSED") index++;
+  while (index < length && events[index].kind !== "CANDLE_CLOSED" &&
+         events[index].kind !== "CHART_TICK") index++;
   // While streaming, an action after the last received closed candle
   // belongs to an unseen future M1/M5. Do not reveal it on the chart.
   if (index === length) return current;
