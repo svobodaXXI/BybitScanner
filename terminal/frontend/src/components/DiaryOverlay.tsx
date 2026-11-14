@@ -293,8 +293,40 @@ export function displayTradePnl(value: string | null | undefined): string {
   }).format(numeric);
 }
 
-/** The filmstrip carries only a typed ID, never a claimed full replay. */
-function requestSimulatorLocator(episodeId: string, onNotice: (message: string) => void) {
+type PaperBridgeScope = {
+  account_id: "paper";
+  owner: "ROBOT" | "MANUAL";
+  source_revision: number;
+};
+
+async function enqueuePairedPaperCase(
+  episodeId: string, scope: PaperBridgeScope,
+): Promise<string> {
+  if (!/^te_[a-f0-9]{24}$/.test(episodeId) ||
+      scope.account_id !== "paper" || !["ROBOT", "MANUAL"].includes(scope.owner) ||
+      !Number.isSafeInteger(scope.source_revision) || scope.source_revision < 1)
+    throw new Error("invalid_scoped_paper_episode");
+  const response = await fetch("/api/diary/simulator-bridge/request", {
+    method: "POST", credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ episode_id: episodeId, ...scope }),
+  });
+  if (!response.ok) throw new Error("scoped_paper_bridge_unavailable");
+  const receipt: unknown = await response.json();
+  if (!receipt || typeof receipt !== "object" ||
+      (receipt as Record<string, unknown>).ok !== true ||
+      (receipt as Record<string, unknown>).state !== "QUEUED" ||
+      typeof (receipt as Record<string, unknown>).request_id !== "string" ||
+      !/^[a-f0-9]{32}$/.test(String((receipt as Record<string, unknown>).request_id)))
+    throw new Error("invalid_scoped_paper_bridge_receipt");
+  return String((receipt as Record<string, unknown>).request_id);
+}
+
+/** Native Windows URI launches immediately; paired relay sends one exact,
+ * read-only PAPER episode. Neither path proves full campaign replay.
+ */
+function requestSimulatorLocator(episodeId: string, onNotice: (message: string) => void,
+                                 scope?: PaperBridgeScope) {
   if (!/^te_[0-9a-f]{24}$/.test(episodeId)) {
     onNotice("Нет подтверждённого ID формата te_… для локального Симулятора.");
     return;
@@ -308,7 +340,22 @@ function requestSimulatorLocator(episodeId: string, onNotice: (message: string) 
       document.body.appendChild(link);
       try { link.click(); } finally { link.remove(); }
       onNotice("Windows получила запрос открыть Симулятор по ID " + episodeId
-        + ". Свечи и решения не переданы; результат запуска не подтверждён.");
+        + ". Результат запуска не подтверждён.");
+      if (scope) {
+        void enqueuePairedPaperCase(episodeId, scope).then(
+          () => onNotice("Подключённому адаптеру переданы подтверждённые факты PAPER. " +
+            "Загрузка на ПК и полный replay ещё не подтверждены."),
+          () => onNotice("Windows получила ID, но автоматическая доставка фактов " +
+            "не подтверждена: подключённый адаптер недоступен."),
+        );
+      }
+    } else if (scope) {
+      void enqueuePairedPaperCase(episodeId, scope).then(
+        () => onNotice("Подключённому ПК отправлены точные факты PAPER по выбранной сделке. " +
+          "Ожидается подтверждение локального просмотра."),
+        () => onNotice("Нет подключённого Симулятора для автоматической доставки. " +
+          "ID сделки: " + episodeId),
+      );
     } else {
       const clipboard = navigator.clipboard;
       if (typeof clipboard?.writeText !== "function") {
@@ -389,8 +436,8 @@ function Value({ value }: { value: string | null | undefined }) {
 /** Owner click routes only a typed ID: local Windows link or paired VPS relay.
  * Neither path transfers PAPER facts or implies a complete historical replay.
  */
-function SimulatorLaunchAction({ episodeId, allowLocalLaunch }: {
-  episodeId: string; allowLocalLaunch: boolean;
+function SimulatorLaunchAction({ episodeId, allowLocalLaunch, scope }: {
+  episodeId: string; allowLocalLaunch: boolean; scope: PaperBridgeScope;
 }) {
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
@@ -503,19 +550,10 @@ function SimulatorLaunchAction({ episodeId, allowLocalLaunch }: {
         // Same-origin HTTPS owner UI. Nginx controls owner access; the relay
         // independently checks Origin. The paired PC supplies a separate
         // scoped token when it contacts the VPS (never given to this page).
-        const response = await fetch("/api/diary/simulator-bridge/request", {
-          method: "POST", credentials: "same-origin",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ episode_id: episodeId }),
-        });
-        if (!response.ok) throw new Error("simulator_bridge_unavailable");
-        const result: unknown = await response.json();
-        const receipt = result as Record<string, unknown>;
-        if (!result || typeof result !== "object" || receipt.ok !== true
-          || receipt.state !== "QUEUED" || typeof receipt.request_id !== "string"
-          || !/^[0-9a-f]{32}$/.test(receipt.request_id))
-          throw new Error("invalid_simulator_bridge_receipt");
-        setNotice("Запрос передан подключённому устройству. Проверяю подтверждение." + suffix);
+        const requestId = await enqueuePairedPaperCase(episodeId, scope);
+        const receipt = { request_id: requestId };
+        setNotice("Точные факты PAPER поставлены в очередь подключённому устройству. " +
+          "Проверяю подтверждение." + suffix);
         let state = "QUEUED";
         for (let attempt = 0; attempt < 8; attempt++) {
           // Check once immediately: an already connected adapter may have
@@ -538,7 +576,8 @@ function SimulatorLaunchAction({ episodeId, allowLocalLaunch }: {
           if (state === "LAUNCHED" || state === "FAILED" || state === "EXPIRED") break;
         }
         if (state === "LAUNCHED")
-          setNotice("Локальная утилита подтвердила запрос открытия. Полная история ещё не передана." + suffix);
+          setNotice("Локальная утилита подтвердила открытие выбранного эпизода. " +
+            "Полная история кампании и свечи ещё не доказаны." + suffix);
         else
           setNotice("Нет подтверждения открытия Симулятора на ПК или ноутбуке." + suffix);
       } else {
@@ -954,7 +993,9 @@ function ClosedDealsView({ report, symbolFilter, onClearSymbolFilter }: {
         </section>
         <TradeExecutionPriceChart points={executionPoints} />
         <SimulatorLaunchAction episodeId={selected.trade_episode_id}
-          allowLocalLaunch={report.account_id === "paper"} />
+          allowLocalLaunch={report.account_id === "paper"}
+          scope={{ account_id: "paper", owner: report.owner,
+            source_revision: report.source_revision }} />
         <button className="diary-detail-back" type="button" disabled={downloading}
           onClick={() => void downloadFacts(selected)}>
           {downloading ? "Выгружаю факты…" : "Скачать JSON исполнений"}
@@ -1001,7 +1042,9 @@ function ClosedDealsView({ report, symbolFilter, onClearSymbolFilter }: {
               </button>
               <TradeActionButtons onDetails={() => setSelectedId(deal.trade_episode_id)}
                 onReplay={/^te_[0-9a-f]{24}$/.test(deal.trade_episode_id) && report.account_id === "paper"
-                  ? () => requestSimulatorLocator(deal.trade_episode_id, setFilmNotice) : undefined} />
+                  ? () => requestSimulatorLocator(deal.trade_episode_id, setFilmNotice,
+                    { account_id: "paper", owner: report.owner,
+                      source_revision: report.source_revision }) : undefined} />
             </div>
           ))}
         </div>
@@ -1009,7 +1052,7 @@ function ClosedDealsView({ report, symbolFilter, onClearSymbolFilter }: {
       {filmNotice ? <p className="diary-finrez-coverage" role="status">{filmNotice}</p> : null}
       {downloadError ? <p className="diary-finrez-coverage" role="alert">{downloadError}</p> : null}
       <p className="diary-finrez-basis">
-        Киноплёнка передаёт в локальный Симулятор только ID сделки. История свечей и решения робота автоматически не загружаются. Фактические исполнения доступны через JSON в карточке сделки.
+        Киноплёнка передаёт ID и, при подключённом адаптере, точные read-only факты выбранной PAPER-сделки. Свечи и полный журнал Robot пока не передаются. Без подтверждения адаптера автоматическая доставка недоступна.
       </p>
     </div>
   );
