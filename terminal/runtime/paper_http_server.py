@@ -3083,6 +3083,33 @@ class RobotProtectionCoverageManager:
             self._hub.discard(context)
 
 
+def _closed_paper_episode_projection(server, *, owner: str,
+                                     episode_id: str, revision: int) -> dict:
+    """Exactly the same read-only PAPER/D2 evidence for owner JSON and relay.
+
+    The caller must first validate its independent owner authentication and
+    exact account/owner/episode/revision scope. This function never authorizes
+    LIVE, changes ledgers, or recreates missing Robot decisions.
+    """
+    snapshot = load_paper_source_snapshot(server.diary_source_db_path)
+    projection = project_paper_closed_episode_facts(
+        snapshot, account_id="paper", owner=owner,
+        trade_episode_id=episode_id, source_revision=revision,
+        now_ms=int(time.time() * 1000),
+    )
+    d2_context = project_episode_d2_context_read_only(
+        getattr(server, "diary_setup_store_path", None),
+        trade_episode_id=episode_id, account_id="paper",
+        symbol=projection["symbol"], side=projection["side"],
+        opening_controller=projection["execution_allocations"][0]["controller"],
+    )
+    projection["setup_context"] = attach_verified_original_geometry(
+        d2_context, symbol=projection["symbol"],
+        opened_at_ms=projection["opened_at_ms"],
+    )
+    return {"ok": True, **projection}
+
+
 class PaperHttpHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
@@ -3391,24 +3418,9 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 self._json_response(400, {"ok": False, "error": "episode_facts_identity_invalid"})
                 return
             try:
-                snapshot = load_paper_source_snapshot(self.server.diary_source_db_path)
-                projection = project_paper_closed_episode_facts(
-                    snapshot, account_id="paper", owner=params["owner"][0],
-                    trade_episode_id=episode_id, source_revision=int(revision),
-                    now_ms=int(time.time() * 1000),
-                )
-                # The optional D2 setup/decision database is independent from
-                # PAPER. It is read only by exact episode ID, never initialized.
-                # Its lack of a link is explicitly NOT proof of a Robot signal.
-                d2_context = project_episode_d2_context_read_only(
-                    getattr(self.server, "diary_setup_store_path", None),
-                    trade_episode_id=episode_id, account_id="paper",
-                    symbol=projection["symbol"], side=projection["side"],
-                    opening_controller=projection["execution_allocations"][0]["controller"],
-                )
-                projection["setup_context"] = attach_verified_original_geometry(
-                    d2_context, symbol=projection["symbol"],
-                    opened_at_ms=projection["opened_at_ms"],
+                projection = _closed_paper_episode_projection(
+                    self.server, owner=params["owner"][0],
+                    episode_id=episode_id, revision=int(revision),
                 )
             except EpisodeFactsSourceChanged:
                 self._json_response(409, {"ok": False, "error": "episode_facts_source_changed"})
@@ -3423,7 +3435,7 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 LOGGER.exception("Closed episode facts projection unavailable")
                 self._json_response(503, {"ok": False, "error": "episode_facts_evidence_unavailable"})
                 return
-            self._json_response(200, {"ok": True, **projection})
+            self._json_response(200, projection)
             return
 
         if parsed.path == "/api/diary/campaign-lineage":
@@ -4089,11 +4101,42 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 if not 1 <= size <= 320:
                     raise RelayInvalid("invalid_simulator_bridge_payload_size")
                 if path.endswith("/request"):
-                    payload = self._payload({"episode_id"})
+                    payload = self._payload(
+                        {"episode_id"}, optional=frozenset({
+                            "account_id", "owner", "source_revision",
+                        }),
+                    )
+                    request_origin = self.headers.get("Origin", "")
+                    fetch_site = self.headers.get("Sec-Fetch-Site", "")
+                    # Check owner CSRF BEFORE touching the PAPER read model.
+                    relay.check_owner_request(
+                        request_origin=request_origin, fetch_site=fetch_site,
+                    )
+                    from terminal.diary.simulator_launch_relay import EPISODE_ID
+                    episode_id = payload["episode_id"]
+                    if not isinstance(episode_id, str) or not EPISODE_ID.fullmatch(episode_id):
+                        raise RelayInvalid("invalid_episode_locator")
+                    fields = {"account_id", "owner", "source_revision"}
+                    selected = set(payload) & fields
+                    evidence = None
+                    if selected:
+                        if selected != fields:
+                            raise RelayInvalid("incomplete_episode_scope")
+                        if payload["account_id"] != "paper":
+                            # No LIVE/MAIN source is eligible for a device relay.
+                            raise RelayForbidden("live_replay_unauthorized")
+                        owner = payload["owner"]
+                        revision = payload["source_revision"]
+                        if (owner not in {"ROBOT", "MANUAL"}
+                                or type(revision) is not int or revision < 1):
+                            raise RelayInvalid("invalid_episode_scope")
+                        evidence = _closed_paper_episode_projection(
+                            self.server, owner=owner,
+                            episode_id=episode_id, revision=revision,
+                        )
                     result = relay.enqueue(
-                        payload["episode_id"],
-                        request_origin=self.headers.get("Origin", ""),
-                        fetch_site=self.headers.get("Sec-Fetch-Site", ""),
+                        episode_id, request_origin=request_origin,
+                        fetch_site=fetch_site, episode_facts=evidence,
                     )
                 elif path.endswith("/status"):
                     payload = self._payload({"request_id"})
@@ -4123,6 +4166,15 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 return
             except RelayUnavailable as exc:
                 self._json_response(503, {"ok": False, "error": str(exc)})
+                return
+            except EpisodeFactsSourceChanged:
+                self._json_response(409, {"ok": False, "error": "episode_facts_source_changed"})
+                return
+            except EpisodeFactsNotFound:
+                self._json_response(404, {"ok": False, "error": "episode_not_in_scope"})
+                return
+            except StatisticsScopeError:
+                self._json_response(503, {"ok": False, "error": "episode_facts_evidence_unavailable"})
                 return
             except (RelayInvalid, ValueError, TypeError, KeyError,
                     json.JSONDecodeError):
