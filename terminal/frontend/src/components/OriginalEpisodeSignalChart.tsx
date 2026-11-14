@@ -1,4 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import {
+  CandlestickSeries, ColorType, CrosshairMode, LineSeries, createChart,
+  type IChartApi, type ISeriesApi, type Time, type UTCTimestamp,
+} from "lightweight-charts";
+import { editorMoscowCrosshairTime, editorMoscowTickMark } from "../chart/editorMoscowTime";
 
 /** Read-only historical evidence in the TERMINAL Statistics view.
  * This component must NEVER import geometry feedback/review drawings.
@@ -28,6 +33,7 @@ function frameMs(frame: string): number | null {
     "5": 300_000, M5: 300_000, "5M": 300_000,
     "15": 900_000, M15: 900_000, "15M": 900_000,
     "60": 3_600_000, H1: 3_600_000, "1H": 3_600_000,
+    "240": 14_400_000, H4: 14_400_000, "4H": 14_400_000,
     D: 86_400_000, D1: 86_400_000, "1D": 86_400_000,
   };
   return aliases[key] ?? null;
@@ -129,148 +135,309 @@ export function parseOriginalTradeContinuation(
   return bars;
 }
 
-function Chart({ original, bars, executions, side }: {
-  original: OriginalEvidence; bars: readonly Bar[]; executions: readonly Execution[];
-  side: OriginalSignalChartProps["side"];
-}) {
-  const W = 960, H = 320, left = 20, right = 20, top = 16, bottom = 28;
-  const first = bars[0].open_time_ms, last = bars[bars.length - 1].open_time_ms;
-  const x = (ms: number) => left + (ms - first) / Math.max(original.intervalMs, last - first + original.intervalMs) * (W - left - right);
-  const lows = bars.map(b => b.low), highs = bars.map(b => b.high);
-  const minimum = Math.min(...lows), maximum = Math.max(...highs);
-  const margin = Math.max((maximum - minimum) * 0.06, maximum * 0.0001);
-  const lo = minimum - margin, hi = maximum + margin;
-  const y = (price: number) => top + (hi - price) / (hi - lo) * (H - top - bottom);
-  const upWicks: string[] = [], downWicks: string[] = [];
-  const upBodies: string[] = [], downBodies: string[] = [];
-  for (const bar of bars) {
-    const px = x(bar.open_time_ms);
-    const bullish = bar.close >= bar.open;
-    (bullish ? upWicks : downWicks).push("M" + px + " " + y(bar.high) + "V" + y(bar.low));
-    (bullish ? upBodies : downBodies).push("M" + px + " " + y(bar.open) + "V" + y(bar.close));
+/** Secondary timeframe uses genuine Bybit OHLC; never subdivide source M5 to fake M1. */
+export function parseOriginalTradeTimeframe(
+  raw: unknown, original: OriginalEvidence, interval: string, afterMs: number,
+): Bar[] | null {
+  if (!raw || typeof raw !== "object" || !frameMs(interval)) return null;
+  const payload = raw as Record<string, unknown>;
+  const period = frameMs(interval)!;
+  if (payload.ok !== true || payload.signal_id !== original.snapshot.signal_id
+      || payload.source_revision !== original.revision || payload.interval !== interval
+      || !Array.isArray(payload.bars) || !payload.bars.length || payload.bars.length > 20
+      || !Number.isSafeInteger(afterMs) || afterMs < 0 || afterMs % period !== 0) return null;
+  const bars: Bar[] = [];
+  for (const item of payload.bars) {
+    const bar = asBar(item);
+    if (!bar || bar.open_time_ms !== afterMs + (bars.length + 1) * period) return null;
+    bars.push(bar);
   }
-  const width = Math.max(1, Math.min(5, (W - left - right) / bars.length * 0.68));
-  const lines = original.snapshot.boundaries.map(boundary => {
-    const a = boundary.anchors[0], b = boundary.anchors[1];
-    const to = boundary.kind === "horizontal" || boundary.kind === "horizontal-ray" || boundary.kind === "ray"
-      ? last : b?.bar_open_time_ms ?? last;
-    const at = boundary.kind === "horizontal" ? first : a.bar_open_time_ms;
-    const priceAt = (ms: number) => b
-      ? a.price + (b.price - a.price) * (ms - a.bar_open_time_ms) / (b.bar_open_time_ms - a.bar_open_time_ms)
-      : a.price;
-    return {
-      id: boundary.boundary_id,
-      path: "M" + x(at) + " " + y(priceAt(at)) + "L" + x(to) + " " + y(priceAt(to)),
+  return payload.as_of_ms === bars[bars.length - 1].open_time_ms ? bars : null;
+}
+
+const TIMEFRAMES = [
+  { id: "D", label: "D1" }, { id: "240", label: "H4" },
+  { id: "60", label: "H1" }, { id: "15", label: "M15" },
+  { id: "5", label: "M5" }, { id: "1", label: "M1" },
+] as const;
+const utc = (ms: number) => Math.floor(ms / 1000) as UTCTimestamp;
+
+/** Same lightweight-charts engine / Moscow axis as Terminal, but without orders or drawing tools. */
+function InteractiveTradeChart({ original, bars, frame, executions, side }: {
+  original: OriginalEvidence; bars: readonly Bar[]; frame: string;
+  executions: readonly Execution[]; side: OriginalSignalChartProps["side"];
+}) {
+  const host = useRef<HTMLDivElement>(null);
+  const api = useRef<IChartApi | null>(null);
+  const series = useRef<ISeriesApi<"Candlestick", Time> | null>(null);
+  const overlays = useRef<Array<ISeriesApi<"Line", Time>>>([]);
+  const previousFrame = useRef<string | null>(null);
+  const [markerCount, setMarkerCount] = useState(0);
+
+  useEffect(() => {
+    if (!host.current) return;
+    const chart = createChart(host.current, {
+      autoSize: true,
+      layout: {
+        background: { type: ColorType.Solid, color: "#10151b" },
+        textColor: "#aab9c7", attributionLogo: false,
+      },
+      localization: { locale: "ru-RU", timeFormatter: editorMoscowCrosshairTime },
+      grid: {
+        vertLines: { color: "#202830" }, horzLines: { color: "#202830" },
+      },
+      crosshair: { mode: CrosshairMode.Normal },
+      timeScale: {
+        timeVisible: true, secondsVisible: false, rightOffset: 5,
+        tickMarkFormatter: editorMoscowTickMark,
+      },
+      handleScroll: {
+        mouseWheel: true, pressedMouseMove: true,
+        horzTouchDrag: true, vertTouchDrag: false,
+      },
+      handleScale: {
+        axisPressedMouseMove: true, mouseWheel: true, pinch: true,
+      },
+    });
+    api.current = chart;
+    series.current = chart.addSeries(CandlestickSeries, {
+      upColor: "#5ac7aa", downColor: "#f0747d",
+      wickUpColor: "#5ac7aa", wickDownColor: "#f0747d",
+      borderVisible: false,
+    });
+    return () => {
+      overlays.current = [];
+      series.current = null;
+      api.current = null;
+      previousFrame.current = null;
+      chart.remove();
     };
-  });
-  const markers = executions.map((fill, index) => {
-    const candle = bars.find(b => b.open_time_ms <= fill.at
-      && fill.at < b.open_time_ms + original.intervalMs);
-    if (!candle || !Number.isFinite(fill.price) || fill.price < candle.low || fill.price > candle.high)
-      return null;
-    const opening = index === 0;
-    const color = opening ? (side === "SHORT" ? "#f0747d" : "#5ac7aa")
-      : index === executions.length - 1 ? (side === "SHORT" ? "#5ac7aa" : "#f0747d") : "#f5d68f";
-    return { id: index, x: x(candle.open_time_ms), y: y(fill.price), price: fill.price,
-      at: fill.at, color, label: opening ? "Первое исполнение" :
-        index === executions.length - 1 ? "Последнее исполнение" : "Исполнение" };
-  }).filter((m): m is NonNullable<typeof m> => m !== null);
+  }, []);
+
+  useEffect(() => {
+    const chart = api.current, candles = series.current;
+    if (!chart || !candles || !bars.length) return;
+    const sameFrame = previousFrame.current === frame;
+    const viewport = sameFrame ? chart.timeScale().getVisibleLogicalRange() : null;
+    candles.setData(bars.map(bar => ({
+      time: utc(bar.open_time_ms),
+      open: bar.open, high: bar.high, low: bar.low, close: bar.close,
+    })));
+    for (const overlay of overlays.current) chart.removeSeries(overlay);
+    overlays.current = [];
+    const last = bars[bars.length - 1].open_time_ms;
+    const first = bars[0].open_time_ms;
+    const addOverlay = (points: Array<{ time: UTCTimestamp; value: number }>, color: string, marker = false) => {
+      if (!points.length) return;
+      const line = chart.addSeries(LineSeries, {
+        color, lineWidth: marker ? 1 : 2, lineVisible: !marker,
+        pointMarkersVisible: marker, pointMarkersRadius: marker ? 5 : 0,
+        crosshairMarkerVisible: marker, lastValueVisible: false,
+        priceLineVisible: false,
+      });
+      line.setData(points);
+      overlays.current.push(line);
+    };
+    for (const boundary of original.snapshot.boundaries) {
+      const a = boundary.anchors[0], b = boundary.anchors[1];
+      const start = boundary.kind === "horizontal" ? first : a.bar_open_time_ms;
+      const finish = boundary.kind === "segment" ? b.bar_open_time_ms
+        : Math.max(last, b?.bar_open_time_ms ?? a.bar_open_time_ms + original.intervalMs);
+      const priceAt = (time: number) => b
+        ? a.price + (b.price - a.price) * (time - a.bar_open_time_ms)
+          / (b.bar_open_time_ms - a.bar_open_time_ms)
+        : a.price;
+      if (finish > start) addOverlay([
+        { time: utc(start), value: priceAt(start) },
+        { time: utc(finish), value: priceAt(finish) },
+      ], "#e1b653");
+    }
+    const candleTimes = new Set(bars.map(bar => bar.open_time_ms));
+    const period = frameMs(frame)!;
+    let found = 0;
+    executions.forEach((fill, index) => {
+      const candle = Math.floor(fill.at / period) * period;
+      if (!candleTimes.has(candle) || !Number.isFinite(fill.price) || fill.price <= 0) return;
+      const opening = index === 0;
+      const color = opening ? (side === "SHORT" ? "#f0747d" : "#5ac7aa")
+        : index === executions.length - 1 ? (side === "SHORT" ? "#5ac7aa" : "#f0747d")
+          : "#f5d68f";
+      addOverlay([{ time: utc(candle), value: fill.price }], color, true);
+      found++;
+    });
+    setMarkerCount(found);
+    if (viewport) {
+      chart.timeScale().setVisibleLogicalRange(viewport);
+    } else {
+      const visible = bars.slice(-Math.min(bars.length, 80));
+      if (visible.length >= 2) chart.timeScale().setVisibleRange({
+        from: utc(visible[0].open_time_ms), to: utc(visible[visible.length - 1].open_time_ms),
+      });
+      else chart.timeScale().fitContent();
+    }
+    previousFrame.current = frame;
+  }, [original, bars, frame, executions, side]);
+
   return (
     <div className="diary-original-signal-plot">
-      <svg viewBox="0 0 960 320" role="img" aria-label="Закрытые свечи и исходные линии сигнала Робота">
-        <rect x={0} y={0} width={W} height={H} fill="#10151b" />
-        <path d={upWicks.join(" ")} fill="none" stroke="#5ac7aa" strokeWidth={1} />
-        <path d={downWicks.join(" ")} fill="none" stroke="#f0747d" strokeWidth={1} />
-        <path d={upBodies.join(" ")} fill="none" stroke="#5ac7aa" strokeWidth={width} />
-        <path d={downBodies.join(" ")} fill="none" stroke="#f0747d" strokeWidth={width} />
-        {lines.map(line => <path key={line.id} d={line.path}
-          stroke="#e1b653" strokeWidth={2} fill="none" />)}
-        {markers.map(m => <circle key={m.id} cx={m.x} cy={m.y} r={4.5}
-          stroke={m.color} strokeWidth={2} fill="#10151b">
-          <title>{m.label + ": " + m.price + " · " + new Date(m.at).toISOString()}</title>
-        </circle>)}
-        <text x={left} y={H - 5} fontSize={11} fill="#aab9c7">
-          {new Date(first).toISOString().slice(0, 16).replace("T", " ") + " UTC"}
-        </text>
-        <text x={W - right} y={H - 5} fontSize={11} fill="#aab9c7" textAnchor="end">
-          {new Date(last + original.intervalMs).toISOString().slice(0, 16).replace("T", " ") + " UTC"}
-        </text>
-      </svg>
-      <small>Жёлтые линии: только оригинальные архивные якоря. Кружки: фактические исполнения в подтверждённых свечах ({markers.length}/{executions.length}).</small>
+      <div ref={host} className="diary-interactive-trade-chart" role="application"
+        aria-label="Интерактивный свечной график сделки" />
+      <div className="diary-trade-chart-controls">
+        <span>Жёлтые линии: исходная геометрия · МСК</span>
+        <button type="button" onClick={() => api.current?.timeScale().fitContent()}>
+          Весь график
+        </button>
+      </div>
+      <small>Фактические исполнения на загруженных свечах: {markerCount}/{executions.length}.
+        Удерживайте палец для перекрестия; двигайте и масштабируйте график двумя пальцами.</small>
     </div>
   );
 }
 
 export function OriginalEpisodeSignalChart(props: OriginalSignalChartProps) {
-  const { candidateId, symbol, timeframe, pattern, openedAtMs, closedAtMs, executions, side } = props;
+  const { candidateId, symbol, timeframe, pattern, openedAtMs, executions, side } = props;
   const [original, setOriginal] = useState<OriginalEvidence | null>(null);
-  const [candles, setCandles] = useState<Bar[]>([]);
+  const [barsByFrame, setBarsByFrame] = useState<Record<string, Bar[]>>({});
+  const [frame, setFrame] = useState("");
+  const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
+  const activeRequest = useRef<AbortController | null>(null);
+
   useEffect(() => {
+    activeRequest.current?.abort();
     setOriginal(null);
-    setCandles([]);
+    setBarsByFrame({});
+    setFrame("");
+    setLoading(false);
     if (!candidateId || !timeframe || !pattern) {
       setMessage("Исходная геометрия недоступна: нет доказанной связи сделки с исходным сигналом Робота.");
       return;
     }
-    let active = true;
     const controller = new AbortController();
-    const base = "/api/workspace/signal-geometry?signal_id=" + encodeURIComponent(candidateId);
+    activeRequest.current = controller;
+    let active = true;
     setMessage("Проверяю архив первоначального сигнала…");
     void (async () => {
       try {
-        const response = await fetch(base, { cache: "no-store", signal: controller.signal });
-        if (!response.ok) throw new Error("original_unavailable");
+        const response = await fetch("/api/workspace/signal-geometry?signal_id="
+          + encodeURIComponent(candidateId), { cache: "no-store", signal: controller.signal });
+        if (!response.ok) throw new Error("source_unavailable");
         const evidence = parseOriginalTradeSignal(await response.json() as unknown, {
           candidateId, symbol, timeframe, pattern, openedAtMs,
         });
-        if (!evidence) throw new Error("original_identity_mismatch");
+        if (!evidence) throw new Error("source_mismatch");
         if (!active) return;
         setOriginal(evidence);
-        setCandles(evidence.snapshot.bars);
-        const originalLast = evidence.snapshot.bars[evidence.snapshot.bars.length - 1].open_time_ms;
-        let last = originalLast;
-        let accumulated = [...evidence.snapshot.bars];
-        const needed = Math.floor(closedAtMs / evidence.intervalMs) * evidence.intervalMs;
-        setMessage("Исходный сигнал подтверждён; получаю закрытые свечи после сигнала…");
-        // Existing owner-initiated public continuation fetches 20 closed bars per request.
-        // Bounded retries: never flood the backend, never invent a missing interval.
-        for (let n = 0; n < 20 && last < needed; n++) {
-          const url = "/api/workspace/signal-geometry/continuation?signal_id="
-            + encodeURIComponent(candidateId) + "&after_ms=" + last;
-          const next = await fetch(url, { cache: "no-store", signal: controller.signal });
-          if (!next.ok) throw new Error("market_extension_unavailable");
-          const extension = parseOriginalTradeContinuation(
-            await next.json() as unknown, evidence, last,
-          );
-          if (!extension) throw new Error("invalid_market_extension");
-          last = extension[extension.length - 1].open_time_ms;
-          if (!active) return;
-          accumulated = accumulated.concat(extension.filter(bar => bar.open_time_ms <= needed));
-          setCandles(accumulated);
-        }
-        if (active) setMessage(last >= needed
-          ? "Исходная геометрия и публичные закрытые свечи до выхода получены."
-          : "Период сделки длиннее доступного окна. Отображён только подтверждённый участок.");
-      } catch (error) {
-        if (!active) return;
-        setMessage(error instanceof Error && error.message === "original_identity_mismatch"
-          ? "Исходная геометрия недоступна: архив не совпадает с точным сигналом и временем сделки."
-          : originalLastMessage());
+        setBarsByFrame({ [evidence.snapshot.timeframe]: evidence.snapshot.bars });
+        setFrame(evidence.snapshot.timeframe);
+        setMessage("Исходный сигнал подтверждён. Следующие 20 закрытых свечей — по кнопке.");
+      } catch {
+        if (active) setMessage("Исходная геометрия недоступна или не совпадает с сигналом сделки.");
       }
     })();
-    function originalLastMessage() {
-      return "Исходная геометрия или дальнейшие закрытые свечи недоступны. Не подставляем исправления из Редактора и не выдумываем историю.";
-    }
     return () => { active = false; controller.abort(); };
-  }, [candidateId, symbol, timeframe, pattern, openedAtMs, closedAtMs]);
+  }, [candidateId, symbol, timeframe, pattern, openedAtMs]);
+
+  async function fetchTradeBars(evidence: OriginalEvidence, selected: string, afterMs: number) {
+    const controller = new AbortController();
+    activeRequest.current = controller;
+    const source = selected === evidence.snapshot.timeframe;
+    const url = source
+      ? "/api/workspace/signal-geometry/continuation?signal_id="
+        + encodeURIComponent(evidence.snapshot.signal_id) + "&after_ms=" + afterMs
+      : "/api/workspace/signal-geometry/candles?signal_id="
+        + encodeURIComponent(evidence.snapshot.signal_id) + "&interval="
+        + encodeURIComponent(selected) + "&after_ms=" + afterMs;
+    const response = await fetch(url, { cache: "no-store", signal: controller.signal });
+    if (!response.ok) throw new Error("verified_candles_unavailable");
+    const raw: unknown = await response.json();
+    const rows = source
+      ? parseOriginalTradeContinuation(raw, evidence, afterMs)
+      : parseOriginalTradeTimeframe(raw, evidence, selected, afterMs);
+    if (!rows) throw new Error("invalid_verified_candles");
+    return rows;
+  }
+
+  async function selectFrame(next: string) {
+    if (!original || loading || !frameMs(next) || next === frame) return;
+    setFrame(next);
+    if (barsByFrame[next]) {
+      setMessage("Показаны ранее загруженные закрытые свечи.");
+      return;
+    }
+    if (next === original.snapshot.timeframe) return;
+    setLoading(true);
+    setMessage("Загружаю проверенные свечи " + TIMEFRAMES.find(x => x.id === next)?.label + "…");
+    const period = frameMs(next)!;
+    const sourceLastClose = original.snapshot.bars[original.snapshot.bars.length - 1].open_time_ms
+      + original.intervalMs;
+    const lastBeforeEntry = Math.floor(sourceLastClose / period) * period - period;
+    const afterMs = lastBeforeEntry - 20 * period;
+    try {
+      const rows = await fetchTradeBars(original, next, afterMs);
+      setBarsByFrame(prior => ({ ...prior, [next]: rows }));
+      setMessage("Закрытые свечи получены; для следующих 20 нажмите кнопку.");
+    } catch {
+      setMessage("Для этого таймфрейма проверенные свечи пока недоступны.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function addMore() {
+    if (!original || loading || !frame) return;
+    const existing = barsByFrame[frame] ?? [];
+    if (!existing.length || existing.length >= 2000) return;
+    const last = existing[existing.length - 1].open_time_ms;
+    const lastClosed = (Math.floor(Date.now() / frameMs(frame)!) - 1) * frameMs(frame)!;
+    if (last >= lastClosed) {
+      setMessage("Новых закрытых свечей пока нет.");
+      return;
+    }
+    setLoading(true);
+    setMessage("Загружаю следующие 20 закрытых свечей…");
+    try {
+      const rows = await fetchTradeBars(original, frame, last);
+      if (existing.length + rows.length > 2000) throw new Error("trade_chart_bar_limit");
+      setBarsByFrame(prior => {
+        const current = prior[frame] ?? [];
+        if (!current.length || current[current.length - 1].open_time_ms !== last) return prior;
+        return { ...prior, [frame]: [...current, ...rows] };
+      });
+      setMessage("Следующие закрытые свечи добавлены.");
+    } catch {
+      setMessage("Не удалось получить следующую подтверждённую порцию свечей.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const candles = barsByFrame[frame] ?? [];
+  const period = frameMs(frame);
+  const lastClosed = period ? (Math.floor(Date.now() / period) - 1) * period : 0;
+  const canExtend = !!original && !!candles.length && !loading
+    && candles.length < 2000 && candles[candles.length - 1].open_time_ms < lastClosed;
   return (
     <section className="diary-detail-section" aria-label="Исходный сигнал сделки">
       <h3>Свечной график · исходный сигнал Робота</h3>
-      {original && candles.length > 0 && <Chart original={original} bars={candles}
-        executions={executions} side={side} />}
+      {original && (
+        <div className="diary-trade-timeframes" role="group" aria-label="Таймфрейм сделки">
+          {TIMEFRAMES.map(option => <button key={option.id} type="button"
+            aria-pressed={frame === option.id} disabled={loading}
+            onClick={() => void selectFrame(option.id)}>{option.label}</button>)}
+        </div>
+      )}
+      {original && candles.length > 0 && <InteractiveTradeChart original={original}
+        bars={candles} frame={frame} executions={executions} side={side} />}
+      {original && (
+        <button className="diary-detail-back" type="button" disabled={!canExtend}
+          onClick={() => void addMore()}>
+          {loading ? "Загрузка…" : "Показать следующие свечи"}
+        </button>
+      )}
       <p className="diary-finrez-basis" aria-live="polite">{message}</p>
-      <small>Только неизменяемый архив сигнала. Геометрия из Редактора не используется; это не воспроизведение решений Robot.</small>
+      <small>Только неизменяемый архив сигнала и настоящие закрытые свечи.
+        Изменения Редактора и неподтверждённые исполнения не подставляются.</small>
     </section>
   );
 }
