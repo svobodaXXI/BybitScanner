@@ -202,6 +202,12 @@ function ReplayChart({ document, cursor, prehistory, fineBars, paperOverlay, pap
 
   useEffect(() => {
     chart.current?.timeScale().applyOptions({ timeVisible: true, secondsVisible: timeframe === "15s" });
+    // Original fills near the beginning of a 2h detailed window must remain
+    // visible when moving from 120 M1 bars to 480+ 15S bars; otherwise the
+    // overlay correctly culls off-screen fills and appears empty.
+    if (timeframe !== "1m" && timeframe !== "15s") return;
+    const frame = window.requestAnimationFrame(() => chart.current?.timeScale().fitContent());
+    return () => window.cancelAnimationFrame(frame);
   }, [timeframe]);
 
   useEffect(() => {
