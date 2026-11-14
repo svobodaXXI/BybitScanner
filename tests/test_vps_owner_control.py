@@ -40,7 +40,7 @@ class OwnerControlTests(unittest.TestCase):
 
         def run(cmd, **_kw):
             calls.append(cmd)
-            if "LoadState" in " ".join(cmd):
+            if "--property=LoadState" in cmd:
                 return completed(cmd, out="LoadState=loaded\n")
             return completed(cmd, out=(
                 "LoadState=loaded\nActiveState=active\nSubState=exited\n"
