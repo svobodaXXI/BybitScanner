@@ -63,8 +63,14 @@ def status(request: str, *, run=subprocess.run) -> int:
 
 def submit(action: str, sha: str, request: str, origin: str,
            *, run=subprocess.run, uid: int | None = None) -> int:
-    if action not in ACTIONS or SHA.fullmatch(sha) is None:
-        raise ValueError("invalid_exact_action_or_sha")
+    if action not in ACTIONS:
+        raise ValueError("invalid_action")
+    if sha == "installed" and action in ("start", "stop"):
+        from pathlib import Path
+        from tools.vps_release_identity import verify_release
+        sha = verify_release(Path(REPO))
+    if not isinstance(sha, str) or SHA.fullmatch(sha) is None:
+        raise ValueError("invalid_exact_sha")
     if ORIGIN.fullmatch(origin) is None:
         raise ValueError("invalid_origin")
     unit = unit_name(request)
