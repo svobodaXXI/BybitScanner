@@ -83,6 +83,20 @@ def _crypt(raw: bytes, *, decrypt: bool) -> bytes:
     source = _Blob(len(raw), ctypes.cast(memory, ctypes.POINTER(ctypes.c_ubyte)))
     target = _Blob()
     crypto = ctypes.windll.crypt32
+    # Explicit pointer-sized WinAPI signatures: never let ctypes infer a
+    # 32-bit integer for an address on 64-bit Windows.
+    crypto.CryptProtectData.argtypes = [
+        ctypes.POINTER(_Blob), wintypes.LPCWSTR, ctypes.c_void_p,
+        ctypes.c_void_p, ctypes.c_void_p, wintypes.DWORD,
+        ctypes.POINTER(_Blob),
+    ]
+    crypto.CryptProtectData.restype = wintypes.BOOL
+    crypto.CryptUnprotectData.argtypes = [
+        ctypes.POINTER(_Blob), ctypes.c_void_p, ctypes.c_void_p,
+        ctypes.c_void_p, ctypes.c_void_p, wintypes.DWORD,
+        ctypes.POINTER(_Blob),
+    ]
+    crypto.CryptUnprotectData.restype = wintypes.BOOL
     if decrypt:
         result = crypto.CryptUnprotectData(
             ctypes.byref(source), None, None, None, None,
@@ -98,7 +112,10 @@ def _crypt(raw: bytes, *, decrypt: bool) -> bytes:
     try:
         return ctypes.string_at(target.pbData, target.cbData)
     finally:
-        ctypes.windll.kernel32.LocalFree(target.pbData)
+        free = ctypes.windll.kernel32.LocalFree
+        free.argtypes = [ctypes.c_void_p]
+        free.restype = ctypes.c_void_p
+        free(ctypes.cast(target.pbData, ctypes.c_void_p))
 
 
 def _confirm(origin: str, device: str) -> bool:
@@ -172,3 +189,33 @@ def load_pairing() -> dict[str, str] | None:
         return parsed
     except (TypeError, ValueError, UnicodeError) as exc:
         raise OSError("invalid_pairing_store") from exc
+
+
+def run_paired_receiver(stop, *, local_archive: Path, open_episode,
+                        poll_interval: float = 3.0) -> None:
+    """Hot-start the outbound receiver after Windows owner confirms pairing.
+
+    The already-running viewer detects an added/rotated DPAPI credential
+    without accepting any inbound network command or restarting trading.
+    """
+    active = None
+    receiver = None
+    while not stop.is_set():
+        try:
+            pairing = load_pairing()
+            if pairing is None:
+                active, receiver = None, None
+            elif pairing != active:
+                receiver = PairedEpisodeReceiver(
+                    origin=pairing["origin"], device_id=pairing["device_id"],
+                    token=pairing["token"], local_archive=local_archive,
+                    open_episode=open_episode,
+                )
+                active = pairing
+            if receiver is not None:
+                receiver.poll_once()
+        except (OSError, ValueError, TypeError, UnicodeError,
+                json.JSONDecodeError):
+            # Fail closed on this poll. Never log the device token.
+            pass
+        stop.wait(poll_interval)
