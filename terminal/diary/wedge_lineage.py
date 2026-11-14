@@ -110,7 +110,17 @@ def project_selected_paper_wedge(
     for candidate in evidence["candidates"]:
         if candidate.get("trading_account_id") != "paper":
             continue
-        ids = _order_ids(candidate) if candidate.get("robot_state_json") else frozenset()
+        if not candidate.get("robot_state_json"):
+            continue
+        try:
+            ids = _order_ids(candidate)
+        except WedgeLineageUnproven:
+            # A candidate without exact persisted entry-order identity proves
+            # nothing about this episode. Do not let unrelated rejected/legacy
+            # candidates globally veto other independent exact-ID evidence.
+            # An affected episode still remains UNPROVEN unless one unique
+            # candidate and Robot entry ledger match its actual opening orders.
+            continue
         if ids & opening_order_ids:
             candidates.append((candidate, ids))
     if len(candidates) != 1 or candidates[0][1] != opening_order_ids:
