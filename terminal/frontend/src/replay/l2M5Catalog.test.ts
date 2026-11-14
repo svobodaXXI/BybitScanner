@@ -54,6 +54,6 @@ describe("session-local M5 inventory for source L2 replay", () => {
     } as ReplayDocument)).toThrow(/Conflicting/);
     expect(catalog.status("ICNTUSDT",source,base,base+3*M5).complete).toBe(true);
     expect(() => catalog.ingest({ ...publicM5(base,1),
-      market_data_source:"UNVERIFIED" } as ReplayDocument)).toThrow();
+      market_data_source:"UNVERIFIED" } as unknown as ReplayDocument)).toThrow();
   });
 });
