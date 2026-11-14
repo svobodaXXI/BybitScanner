@@ -98,8 +98,8 @@ try {
   const endUtc = setup.getByLabel("Конец прогона UTC");
   await startUtc.fill("2026-10-01T12:34");
   const incrementBar = setup.getByRole("group", { name: "Изменить период прогона" });
-  assert.equal(await setup.locator(".replay-run-step").count(), 3);
-  for (const unit of ["1 час", "1 день", "1 неделя"]) {
+  assert.equal(await setup.locator(".replay-run-step").count(), 4);
+  for (const unit of ["1 час", "1 день", "1 неделя", "1 месяц"]) {
     const pair = incrementBar.getByRole("group", { name: "Период " + unit });
     assert.equal(await pair.getByRole("button", { name: "Добавить " + unit }).count(), 1);
     assert.equal(await pair.getByRole("button", { name: "Убавить " + unit }).count(), 1);
@@ -107,6 +107,9 @@ try {
   assert.equal(await page.locator(".replay-history-controls").count(), 0,
     "obsolete second ticker/date/Bybit panel must never reappear");
   assert.equal(await setup.getByRole("button", { name: "Подгрузить период с Bybit" }).count(), 1);
+  assert.equal(await incrementBar.getByRole("button", { name: "Подгрузить период с Bybit" }).count(), 1,
+    "Bybit action must be alongside period steppers, not under end date");
+  assert.equal(await setup.getByRole("button", { name: "3 месяца · 90 дней" }).count(), 0);
   assert.equal(await endUtc.inputValue(), "2026-10-02T12:33");
   const duration = setup.getByRole("status", { name: "Продолжительность прогона" });
   assert.match(await duration.innerText(), /1 день/);
@@ -117,8 +120,11 @@ try {
   assert.equal(await endUtc.inputValue(), "2026-10-03T13:33");
   await incrementBar.getByRole("button", { name: "Добавить 1 неделя" }).click();
   assert.equal(await endUtc.inputValue(), "2026-10-10T13:33");
-  await incrementBar.getByRole("button", { name: "+1 месяц", exact: true }).click();
+  await incrementBar.getByRole("button", { name: "Добавить 1 месяц" }).click();
   assert.equal(await endUtc.inputValue(), "2026-11-09T13:33");
+  await incrementBar.getByRole("button", { name: "Убавить 1 месяц" }).click();
+  assert.equal(await endUtc.inputValue(), "2026-10-10T13:33");
+  await incrementBar.getByRole("button", { name: "Добавить 1 месяц" }).click();
   assert.match(await duration.innerText(), /1 месяц 9 дней 1 час/);
   await incrementBar.getByRole("button", { name: "Убавить 1 час" }).click();
   assert.equal(await endUtc.inputValue(), "2026-11-09T12:33");
@@ -128,7 +134,8 @@ try {
   assert.equal(await endUtc.inputValue(), "2026-11-01T12:33");
   await endUtc.fill("2026-10-11T18:45");
   assert.match(await duration.innerText(), /10 дней 6 часов 12 минут/);
-  assert.equal(await incrementBar.getByRole("button", { name: "3 месяца · 90 дней" }).getAttribute("aria-pressed"), "false");
+  assert.equal(await incrementBar.getByRole("button", { name: "Добавить 1 месяц" }).count(), 1);
+  assert.equal(await incrementBar.getByRole("button", { name: "Убавить 1 месяц" }).count(), 1);
   const coordinates = setup.getByRole("textbox", { name: "Координаты прогона" });
   await coordinates.fill("XRPUSDT | 2026-09-11T00:00 | 2026-09-11T23:59");
   await setup.getByRole("button", { name: "Применить" }).click();
