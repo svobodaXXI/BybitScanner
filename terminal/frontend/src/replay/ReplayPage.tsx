@@ -662,13 +662,17 @@ export function ReplayPage() {
   const [l2After, setL2After] = useState<ReplayCandle[]>([]);
   const [l2ContextFor, setL2ContextFor] = useState<ReplayDocument | null>(null);
   const [l2ContextStatus, setL2ContextStatus] = useState("");
+  const [fineFor, setFineFor] = useState<ReplayDocument | null>(null);
+  const [fineChart, setFineChart] = useState<FineChart | null>(null);
+  const [fineLoading, setFineLoading] = useState(false);
+  const [fineNotice, setFineNotice] = useState("");
   const historyRequest = useRef<AbortController | null>(null);
   const bundledRequest = useRef<AbortController | null>(null);
   const [cursor, setCursor] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [rate, setRate] = useState(8);
   const [showDebug, setShowDebug] = useState(false);
-  const [timeframe, setTimeframe] = useState<"5m" | "1h">("5m");
+  const [timeframe, setTimeframe] = useState<"5m" | "1h" | FineBarFrame>("5m");
   const [drawingTool, setDrawingTool] = useState<DrawingTool>("crosshair");
   const [drawings, setDrawings] = useState<DrawingObject[]>([]);
   const [selectedDrawing, setSelectedDrawing] = useState<string | null>(null);
@@ -698,8 +702,16 @@ export function ReplayPage() {
   // Do not mutate the original L2 document. Only the viewport/playback receives
   // a combined, read-only clock of source events and public post-range M5 closes.
   const activeL2After = l2ContextFor === document ? l2After : [];
-  const displayEvents = useMemo(
-    () => l2PresentationEvents(document, activeL2After), [document, activeL2After]);
+  const activeFine = fineFor === document ? fineChart : null;
+  const fineBars = timeframe === "1m" ? activeFine?.m1 :
+    timeframe === "15s" ? activeFine?.s15 : undefined;
+  const displayEvents = useMemo(() => {
+    const base = l2PresentationEvents(document, activeL2After);
+    if (!fineBars) return base;
+    const first = document.events.find(e => e.kind === "CANDLE_CLOSED" && e.candle)
+      ?.candle?.start_ms;
+    return first === undefined ? base : finePresentationEvents(base, fineBars, first);
+  }, [document, activeL2After, fineBars]);
   const displayDocument = useMemo(
     () => displayEvents === document.events ? document :
       { ...document, events: displayEvents }, [document, displayEvents]);
@@ -724,7 +736,7 @@ export function ReplayPage() {
           o.available_at_ms <= shown.lastTimeMs!)
       : [], [document, shown.lastTimeMs, selectedStrategies]);
   const journal = useMemo(() => (document.demo ? [] : displayEvents.slice(0, cursor))
-    .filter(event => event.kind !== "CANDLE_CLOSED").map(event => {
+    .filter(event => event.kind !== "CANDLE_CLOSED" && event.kind !== "CHART_TICK").map(event => {
       const fmt = (value: string) => {
         const number = Number(value);
         return number > 0 ? "+" + number.toFixed(4) : number.toFixed(4);
@@ -776,7 +788,7 @@ export function ReplayPage() {
     const result = [0];
     for (let i = 0; i < displayEvents.length; i++) {
       const closed = displayEvents[i];
-      if (closed.kind !== "CANDLE_CLOSED") continue;
+      if (closed.kind !== "CANDLE_CLOSED" && closed.kind !== "CHART_TICK") continue;
       let next = i + 1;
       while (next < displayEvents.length &&
              displayEvents[next].time_ms === closed.time_ms) next++;
@@ -1290,6 +1302,76 @@ export function ReplayPage() {
     setPeriodLoadNotice("");
   }, [selectedWindow]);
 
+  // Timeless original public prints are uploaded only after explicit owner
+  // selection, never guessed from M5 or fetched from a live trades endpoint.
+  async function loadFineArchive(file?: File) {
+    if (!file) return;
+    setFineNotice(""); setFineLoading(true); setPlaying(false);
+    try {
+      if (document.execution_clock !== "ORIGINAL_EVENT_TIME_NOT_OHLC_M1" ||
+          !document.symbol)
+        throw new Error("Сначала загрузите оригинальный событийный L2 JSON");
+      if (file.size <= 0 || file.size > 128_000_000)
+        throw new Error("Архив сделок пустой или больше 128 МБ");
+      const sourceBar = document.events.find(e =>
+        e.kind === "CANDLE_CLOSED" && e.candle)?.candle;
+      const last = Math.max(...document.events.map(e => e.time_ms));
+      if (!sourceBar || !Number.isSafeInteger(last))
+        throw new Error("Нет исходного интервала L2");
+      const day = Math.floor(sourceBar.start_ms / 86_400_000) * 86_400_000;
+      const start = Math.max(day, sourceBar.start_ms - 3_600_000);
+      const end = Math.min(day + 86_400_000,
+        Math.ceil((last + 1) / 60_000) * 60_000 + 3_600_000);
+      if (end <= start || end - start > 6 * 3_600_000)
+        throw new Error("Подробный период не помещается в один локальный архив UTC");
+      const query = new URLSearchParams({
+        symbol: document.symbol, filename: file.name,
+        start_ms: String(start), end_ms: String(end),
+      });
+      const response = await fetch("/local-replay/chart-trades?" + query, {
+        method: "POST", headers: {
+          "Content-Type": "application/octet-stream",
+          "X-Local-Chart-Import": "explicit-owner-file",
+        }, body: file, cache: "no-store",
+      });
+      if (!response.ok)
+        throw new Error("Проверка оригинального архива M1/15S: HTTP " + response.status);
+      const raw = await response.text();
+      if (raw.length > 2 * 1024 * 1024)
+        throw new Error("Слишком большой ответ свечей M1/15S");
+      const parsed = parseFineChart(JSON.parse(raw) as unknown, document);
+      setFineFor(document);
+      setFineChart(parsed);
+      setCursor(0); setTimeframe("1m");
+      setFineNotice("Публичные сделки → M1 " + parsed.m1.length +
+        " и 15S " + parsed.s15.length + " свечей. " +
+        (parsed.missing_m1 || parsed.missing_15s
+          ? "Пропуски M1: " + parsed.missing_m1 +
+            ", 15S: " + parsed.missing_15s + " — отсутствующие свечи не выдуманы. "
+          : "Покрытие полное. ") +
+        "Только график; исходные L2 и P&L неизменны.");
+    } catch (e) {
+      setFineNotice(e instanceof Error ? e.message : "Архив M1/15S отклонён");
+    } finally {
+      setFineLoading(false);
+    }
+  }
+
+  function chooseTimeframe(next: "1h" | "5m" | FineBarFrame) {
+    if ((next === "1m" || next === "15s") && !activeFine) return;
+    const at = cursor > 0 ? displayEvents[Math.min(cursor, displayEvents.length)-1]?.time_ms : null;
+    const base = l2PresentationEvents(document, activeL2After);
+    const chosen = next === "1m" ? activeFine?.m1 :
+      next === "15s" ? activeFine?.s15 : undefined;
+    const first = document.events.find(e => e.kind === "CANDLE_CLOSED" && e.candle)
+      ?.candle?.start_ms;
+    const target = chosen && first !== undefined
+      ? finePresentationEvents(base, chosen, first) : base;
+    setPlaying(false);
+    setTimeframe(next);
+    setCursor(at == null ? 0 : target.filter(e => e.time_ms <= at).length);
+  }
+
   const importControls = (
     <>
         <label className="replay-file">
@@ -1297,6 +1379,17 @@ export function ReplayPage() {
           <input ref={fileInput} type="file" accept=".json,application/json" disabled={runLoading}
             onChange={(e) => void loadFile(e.target.files?.[0])} />
         </label>
+        {document.execution_clock === "ORIGINAL_EVENT_TIME_NOT_OHLC_M1" &&
+          <label className="replay-file">
+            {fineLoading ? "Обрабатываю сделки…" : "Архив сделок M1 / 15S"}
+            <input aria-label="Загрузить архив публичных сделок M1 15S"
+              type="file" accept=".csv.gz,.zip,application/gzip,application/zip"
+              disabled={fineLoading || runLoading}
+              onChange={e => {
+                void loadFineArchive(e.target.files?.[0]);
+                e.currentTarget.value = "";
+              }} />
+          </label>}
         <label className="replay-file">
           Импорт JSON сделки PAPER
           <input ref={paperFileInput} aria-label="Импорт JSON сделки PAPER"
@@ -1356,6 +1449,7 @@ export function ReplayPage() {
 
       {localEpisodeMessage && <p role="status" className="replay-note">{localEpisodeMessage}</p>}
       {error && <p role="alert" className="replay-error">{error}</p>}
+      {fineNotice && <p role="status" aria-label="Статус M1 и 15S" className="replay-note">{fineNotice}</p>}
       {document.execution_clock === "ORIGINAL_EVENT_TIME_NOT_OHLC_M1" && l2ContextStatus &&
         <p role="status" className="replay-note">{l2ContextStatus}</p>}
       {document.execution_clock === "ORIGINAL_EVENT_TIME_NOT_OHLC_M1" &&
@@ -1493,11 +1587,15 @@ export function ReplayPage() {
               {document.symbol?.replace(/USDT$/, "") || "—"}
             </strong>
             <button type="button" aria-pressed={timeframe === "1h"}
-              onClick={() => setTimeframe("1h")}>H1</button>
+              onClick={() => chooseTimeframe("1h")}>H1</button>
             <button type="button" aria-pressed={timeframe === "5m"}
-              onClick={() => setTimeframe("5m")}>M5</button>
-            <button type="button" disabled title="Нет проверенной минутной истории в потоке графика">M1</button>
-            <button type="button" disabled title="Нет исходной ленты сделок для 15-секундного графика">15S</button>
+              onClick={() => chooseTimeframe("5m")}>M5</button>
+            <button type="button" aria-pressed={timeframe === "1m"} disabled={!activeFine}
+              title={!activeFine ? "Загрузите архив публичных сделок M1/15S" : "Минутные сделки"}
+              onClick={() => chooseTimeframe("1m")}>M1</button>
+            <button type="button" aria-pressed={timeframe === "15s"} disabled={!activeFine}
+              title={!activeFine ? "Загрузите архив публичных сделок M1/15S" : "15-секундные сделки"}
+              onClick={() => chooseTimeframe("15s")}>15S</button>
             <div className="replay-playback-controls" role="group" aria-label="Управление воспроизведением">
         <button type="button" className="replay-player-button" title="В начало"
           aria-label="В начало" disabled={simulationGraphPending}
@@ -1574,7 +1672,8 @@ export function ReplayPage() {
                 {runLoading ? `Проверяю первые M1: ${runWaitingSeconds} с. Затем свечи появятся постепенно.` :
                   "График нового прогона появится после нажатия ▶"}
               </div>
-            : <ReplayChart document={displayDocument} cursor={cursor} prehistory={l2ContextFor === document ? l2Context : []} paperOverlay={paperOverlay}
+            : <ReplayChart document={displayDocument} cursor={cursor} prehistory={l2ContextFor === document ? l2Context : []}
+                fineBars={fineBars ?? []} paperOverlay={paperOverlay}
                 paperFacts={paperFacts} selectedStrategies={selectedStrategies.selected}
                 showTrendGeometry={showTrendGeometry}
                 showDebug={showDebug} timeframe={timeframe}
