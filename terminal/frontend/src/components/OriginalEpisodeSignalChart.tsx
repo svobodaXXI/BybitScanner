@@ -265,7 +265,7 @@ export function OriginalEpisodeSignalChart(props: OriginalSignalChartProps) {
       <h3>Свечной график · исходный сигнал Робота</h3>
       {original && candles.length > 0 && <Chart original={original} bars={candles}
         executions={executions} side={side} />}
-      <p className="diary-finrez-basis" role="status">{message}</p>
+      <p className="diary-finrez-basis" aria-live="polite">{message}</p>
       <small>Только неизменяемый архив сигнала. Геометрия из Редактора не используется; это не воспроизведение решений Robot.</small>
     </section>
   );
