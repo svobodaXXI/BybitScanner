@@ -2,6 +2,30 @@
 
 Status: **observed operator evidence**, not a runtime/trading readiness receipt. Scope: the **desktop PC** Windows user `svobo`, not the laptop. The owner uses **Codex Desktop GUI already installed/open**, not a CLI-first workflow. Do **not** instruct the owner to launch Codex by typing `codex` in PowerShell. Command-line PowerShell is for bounded SSH access/testing when truly needed; use the already-open Desktop app for Codex tasks. Codex Desktop's direct SSH access is **NOT YET VERIFIED** (see separate execution-environment caveat below).
 
+## VERIFIED LAPTOP CODEX DESKTOP SSH ROUTE — 2026-11-15
+
+**Scope: Windows 10 x64 laptop only**, user profile `C:\Users\SVOBODA21`. This is distinct from the **desktop PC** route documented below. Owner's PowerShell and Codex both confirmed access to `v3286418.hosted-by-vdsina.ru`, SSH exit code `0`. Codex used Windows OpenSSH `9.5.4.1`. This evidence proves transport only; it does **not** establish permission or readiness for VPS deployment, STOP, PAPER trading, or LIVE.
+
+**Use the literal Windows OpenSSH executable from Codex's Windows PowerShell environment**, not the unsupported laptop alias `bybitscanner-vps` and not a separate bundled SSH that cannot see the agent:
+
+```powershell
+& 'C:\Windows\System32\OpenSSH\ssh.exe' `
+  -i 'C:\Users\SVOBODA21\.ssh\bybitscanner_laptop' `
+  -o IdentitiesOnly=yes `
+  -o PasswordAuthentication=no `
+  -o BatchMode=yes `
+  -o StrictHostKeyChecking=yes `
+  root@83.217.213.181 'echo SSH_OK; hostname'
+```
+
+The reported Codex probe returned the expected host and exit `0`. The owner's reported working transport command originally omitted a remote command; the `echo SSH_OK; hostname` suffix above is the safe read-only verification form. For actual authorized work, replace the read-only remote command with the approved operation, preserving the same executable, identity and SSH options. **Do not call a bare interactive SSH shell a deployment.**
+
+**Agent boundary/root cause:** Codex initially reported `CODEX_SSH_AGENT_UNAVAILABLE`: its previous `ssh-add -l` returned `Error connecting to agent`, and `BatchMode` authentication failed. The successful investigation established a running **Windows ssh-agent** with the existing `bybitscanner_laptop` key already unlocked and available. Agent service `StartType=Manual` was **not changed**. Codex's actual execution environment was Windows PowerShell and could use the Windows OpenSSH executable/agent. Do not infer that every Codex process, sandbox or SSH binary inherits this access.
+
+On subsequent sessions, try this **known-good route once**. If the Windows ssh-agent service is stopped, `Start-Service ssh-agent` may be necessary where permitted, followed by rechecking agent visibility. It does not load/unlock a key by itself; if the key is absent, ask the owner for the minimum authorized interactive unlock rather than handling or saving passphrases. Do not create keys, disable host-key checking, alter VPS sshd, or switch to VDSina console as a default troubleshooting path.
+
+**Acceptance boundary:** Codex authenticated successfully to the expected VPS with exit code `0`; no STOP, deployment, release journal, systemd operation, PAPER DB or trading mutation was performed. Keep the *laptop* route separate from the PC's `ssh bybitscanner-vps` alias targeting `212.193.14.116`.
+
 ## CURRENT PRIMARY PC SSH ROUTE — reference standard (owner-verified 2026-11-14)
 
 **Main/default connection from the desktop PC (including with Happ/VPN enabled):**
