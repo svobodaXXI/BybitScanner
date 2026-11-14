@@ -647,8 +647,8 @@ try {
   assert.equal(await bounds.getByRole("checkbox", { name: "Восходящий клин" }).isChecked(), true);
   assert.equal(await bounds.getByRole("checkbox", { name: "Нисходящий клин" }).isChecked(), true);
 
-  // Exported PAPER facts are marked as HOLLOW rings at their original prices,
-  // separate from virtual triangles. No extra /api or private exchange call.
+  // PAPER facts retain Buy/Sell TRIANGLES with outlined PAPER-specific style,
+  // separate from filled SIMULATION trades and from local Scanner research.
   const episodeFacts = {
     ok: true, schema: "BYBITSCANNER_CLOSED_EPISODE_FACTS_V1",
     namespace: "PAPER_READ_ONLY", source: "PAPER_EXECUTIONS_ATTRIBUTED",
@@ -708,6 +708,26 @@ try {
       ] }],
     },
   };
+  // Audit actual drawing primitives: future regressions must not turn
+  // imported PAPER execution triangles into circles.
+  await page.evaluate(() => {
+    const canvas = document.querySelector(".replay-execution-overlay");
+    if (!(canvas instanceof HTMLCanvasElement)) throw new Error("Missing PAPER overlay canvas");
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Missing PAPER canvas context");
+    const arc = context.arc;
+    const lineTo = context.lineTo;
+    window.__paperMarkerCircleCalls = 0;
+    window.__paperMarkerLineCalls = 0;
+    context.arc = function (...args) {
+      window.__paperMarkerCircleCalls++;
+      return arc.apply(this, args);
+    };
+    context.lineTo = function (...args) {
+      window.__paperMarkerLineCalls++;
+      return lineTo.apply(this, args);
+    };
+  });
   await page.getByLabel("Импорт JSON сделки PAPER").setInputFiles({
     name: "episode-facts.json", mimeType: "application/json",
     buffer: Buffer.from(JSON.stringify(episodeFacts)),
@@ -720,7 +740,7 @@ try {
   assert.match(await passport.innerText(), /EXACT_D2_LINK/);
   assert.match(await passport.innerText(), /PnL -1.0 USDT/);
   assert.match(await passport.innerText(), /не полный журнал решений Robot/);
-  assert.match(await factNote.innerText(), /Кружки на закрытых свечах/);
+  assert.match(await factNote.innerText(), /Контурные треугольники на закрытых свечах/);
   assert.match(await factNote.innerText(), /JSON без криптографической подписи/);
   assert.match(await factNote.innerText(), /Falling Wedge · 5m · версия v1/);
   assert.match(await factNote.innerText(), /архивная исходная геометрия/);
@@ -737,6 +757,29 @@ try {
   assert.match(await d2Clock.innerText(), /\d{2}:\d{2}:\d{2} \(000\) МСК/);
   await page.waitForFunction(() =>
     document.querySelector(".replay-execution-overlay")?.dataset.visiblePaperFills === "2");
+  const painted = await page.evaluate(() => ({
+    arcs: window.__paperMarkerCircleCalls,
+    lines: window.__paperMarkerLineCalls,
+  }));
+  assert.equal(painted.arcs, 0, "PAPER triangles must never be drawn as circles");
+  assert.ok(painted.lines >= 4, "PAPER executions must use triangle line segments");
+  const researchToggle = page.getByRole("checkbox", {
+    name: "Показывать исследовательские сигналы Scanner — не исходный сигнал PAPER",
+  });
+  const localResearchJournal = page.getByRole("region", { name: "Журнал событий" })
+    .getByText("Исследование Scanner · Ikigai Box");
+  assert.equal(await researchToggle.isChecked(), false,
+    "Research markers must be opt-in during PAPER episode investigation");
+  assert.equal(await overlay.getAttribute("data-visible-scanner-observations"), "0");
+  assert.equal(await localResearchJournal.count(), 0);
+  await researchToggle.check();
+  await page.waitForFunction(() =>
+    document.querySelector(".replay-execution-overlay")?.dataset.visibleScannerObservations === "1");
+  await localResearchJournal.waitFor();
+  await researchToggle.uncheck();
+  await page.waitForFunction(() =>
+    document.querySelector(".replay-execution-overlay")?.dataset.visibleScannerObservations === "0");
+  assert.equal(await localResearchJournal.count(), 0);
   await page.waitForFunction(() =>
     document.querySelector(".replay-execution-overlay")?.dataset.visibleOriginalGeometry === "1");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "0",
