@@ -60,7 +60,9 @@ class ExactPaperBridgeTests(TestCase):
             "namespace": "PAPER_READ_ONLY", "source": "PAPER_EXECUTIONS_ATTRIBUTED",
             "account_id": "paper", "owner": "ROBOT", "source_revision": source_revision,
             "trade_episode_id": self.EPISODE, "symbol": "BTCUSDT",
-            "side": "LONG", "replay_evidence": "EXECUTION_FACTS_ONLY_NO_DECISIONS_OR_CANDLES",
+            "side": "LONG", "opened_at_ms": 1793999999000,
+            "closed_at_ms": 1794000001000,
+            "replay_evidence": "EXECUTION_FACTS_ONLY_NO_DECISIONS_OR_CANDLES",
             "execution_allocations": [{
                 "execution_id": "fill-1", "execution_price": "123.456789",
                 "controller": "ROBOT", "occurred_at_ms": 1794000000123,
