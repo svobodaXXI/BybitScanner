@@ -118,7 +118,7 @@ describe("original signal on a closed deal", () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response("", { status: 404 }));
     vi.stubGlobal("fetch", fetchMock);
     render(<OriginalEpisodeSignalChart {...props} />);
-    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/недоступны/));
+    await waitFor(() => expect(screen.getByText(/Исходная геометрия или дальнейшие закрытые свечи недоступны/)).toBeInTheDocument());
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
