@@ -21,6 +21,7 @@ from typing import Callable
 from urllib.parse import parse_qs, unquote, urlencode, urlsplit
 from urllib.request import Request, urlopen
 import webbrowser
+import zipfile
 
 HERE = Path(__file__).resolve().parent
 # Works both in GitHub source tree and in the packaged Windows zip.
@@ -504,6 +505,56 @@ def handler_factory(static_dir: Path = STATIC_DIR,
                 self._send(200, json.dumps({
                     "ok": True, "trade_episode_id": episode_id, "stored_locally": True,
                 }).encode("utf-8"), "application/json")
+                return
+            if path == "/local-replay/chart-trades":
+                # Explicit browser file picker only. Extract selected public
+                # prints in one ephemeral bounded temporary file; do not save
+                # owner archives to the application or read arbitrary paths.
+                from research.local_replay_viewer.fine_trades import (
+                    aggregate_owner_trade_bars, MAX_ARCHIVE_BYTES,
+                )
+                from tempfile import TemporaryDirectory
+                address = f"http://127.0.0.1:{self.server.server_address[1]}"
+                local = f"http://localhost:{self.server.server_address[1]}"
+                if (self.headers.get("Origin") not in (address, local)
+                    or self.headers.get("Sec-Fetch-Site") == "cross-site"
+                    or self.headers.get("X-Local-Chart-Import") != "explicit-owner-file"
+                    or self.headers.get("Content-Type") != "application/octet-stream"):
+                    self._error(403, "Explicit same-origin public trade chart import only")
+                    return
+                try:
+                    params = parse_qs(urlsplit(self.path).query, strict_parsing=True)
+                    if set(params) != {"symbol", "filename", "start_ms", "end_ms"} or any(
+                        len(value) != 1 for value in params.values()
+                    ):
+                        raise ValueError("Expected exact public trade chart parameters")
+                    size = int(self.headers.get("Content-Length", "0"))
+                    if not 0 < size <= MAX_ARCHIVE_BYTES:
+                        self._error(413, "Owner-selected public trades exceed upload limit")
+                        return
+                    with TemporaryDirectory(prefix="machine-time-public-chart-") as temp:
+                        temporary = Path(temp) / "public-trades-upload"
+                        with temporary.open("xb") as output:
+                            remaining = size
+                            while remaining:
+                                data = self.rfile.read(min(1_048_576, remaining))
+                                if not data:
+                                    raise ValueError("Incomplete local trade archive upload")
+                                output.write(data)
+                                remaining -= len(data)
+                        chart = aggregate_owner_trade_bars(
+                            temporary, filename=params["filename"][0],
+                            symbol=params["symbol"][0],
+                            start_ms=int(params["start_ms"][0]),
+                            end_ms=int(params["end_ms"][0]),
+                        )
+                    self._send(200, json.dumps(chart, ensure_ascii=False,
+                        separators=(",", ":"), allow_nan=False).encode("utf-8"),
+                        "application/json; charset=utf-8")
+                except (ValueError, OSError, KeyError, EOFError, zipfile.BadZipFile):
+                    self._error(422, "Invalid/incomplete public trade archive or fine chart range")
+                except Exception:
+                    self._error(500, "Local public trade chart processing failed")
                 return
             if path not in (
                 "/local-replay/simulation/wedge",
