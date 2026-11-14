@@ -5,6 +5,8 @@ on:
       - "tools/windows_vps_manager.py"
       - "tools/Запустить VPS Manager.cmd"
       - "tests/test_windows_vps_manager.py"
+      - "tools/vps_owner_control.py"
+      - "tests/test_vps_owner_control.py"
       - ".github/workflows/windows-vps-manager.yml"
   workflow_dispatch:
 
@@ -23,9 +25,11 @@ jobs:
       - name: Check Tkinter
         run: python -c "import tkinter; print('Tkinter import OK')"
       - name: Compile utility
-        run: python -m py_compile tools/windows_vps_manager.py
+        run: python -m py_compile tools/windows_vps_manager.py tools/vps_owner_control.py
       - name: Run isolated safety tests
         run: python -m unittest discover -s tests -p test_windows_vps_manager.py -v
+      - name: Verify detached owner protocol
+        run: python -m unittest discover -s tests -p test_vps_owner_control.py -v
       - name: Build portable Windows EXE
         run: |
           python -m pip install pyinstaller==6.16.0
