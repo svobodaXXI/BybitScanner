@@ -47,6 +47,13 @@ const extension = {
     open: 100, high: 102, low: 98, close: 100.5,
   })),
 };
+const secondPage = {
+  ...extension,
+  as_of_ms: t + 41 * interval,
+  bars: extension.bars.map(bar => ({
+    ...bar, open_time_ms: bar.open_time_ms + 20 * interval,
+  })),
+};
 afterEach(() => { vi.unstubAllGlobals(); });
 
 describe("original signal on a closed deal", () => {
@@ -83,6 +90,36 @@ describe("original signal on a closed deal", () => {
       ...extension, bars: extension.bars.slice(1),
     }, source, t + interval)).toBeNull();
     expect(parseOriginalTradeContinuation(extension, source, t + 22 * interval)).toBeNull();
+    expect(parseOriginalTradeContinuation(secondPage, source, t + 21 * interval)).toHaveLength(20);
+    expect(parseOriginalTradeContinuation(secondPage, source, t + 20 * interval)).toBeNull();
+    expect(parseOriginalTradeContinuation({
+      ...secondPage, bars: secondPage.bars.slice(1),
+    }, source, t + 21 * interval)).toBeNull();
+    expect(parseOriginalTradeContinuation({
+      ...secondPage, as_of_ms: t + 40 * interval,
+    }, source, t + 21 * interval)).toBeNull();
+  });
+
+  it("keeps earlier candles when a closed deal needs multiple continuation pages", async () => {
+    const firstUrl = "/api/workspace/signal-geometry/continuation?signal_id=candidate-42&after_ms="
+      + (t + interval);
+    const secondUrl = "/api/workspace/signal-geometry/continuation?signal_id=candidate-42&after_ms="
+      + (t + 21 * interval);
+    const fetchMock = vi.fn(async (url: string) => new Response(JSON.stringify(
+      url === firstUrl ? extension : url === secondUrl ? secondPage : archived,
+    ), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<OriginalEpisodeSignalChart {...props} closedAtMs={t + 26 * interval + 2000} />);
+    await screen.findByText(/до выхода получены/);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledWith(firstUrl, expect.any(Object));
+    expect(fetchMock).toHaveBeenCalledWith(secondUrl, expect.any(Object));
+    const svg = screen.getByRole("img", {
+      name: /Закрытые свечи и исходные линии сигнала Робота/,
+    });
+    const wicks = svg.querySelector('path[stroke="#5ac7aa"]');
+    expect(wicks?.getAttribute("d")?.match(/M/g)).toHaveLength(27);
+    expect(screen.queryByText(/123456/)).not.toBeInTheDocument();
   });
 
   it("shows archived rays and public closed candles with actual execution markers", async () => {
