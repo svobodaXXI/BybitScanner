@@ -25,16 +25,6 @@ SYMBOL_RE = re.compile(r"^[A-Z0-9]{3,30}USDT$")
 DAY_MS = 86_400_000
 
 
-def _read_archive(path: Path, filename: str):
-    if filename.endswith(".csv.gz"):
-        return gzip.open(path, "rt", encoding="utf-8-sig", newline="")
-    if filename.endswith(".zip"):
-        name = filename[:-4]  # Label is not used as an archive member path.
-        del name
-        raise ValueError("ZIP requires explicit member inspection")
-    raise ValueError("Expected a Bybit .csv.gz or .zip archive")
-
-
 def aggregate_owner_trade_bars(
     path: Path, *, filename: str, symbol: str, start_ms: int, end_ms: int,
 ) -> dict[str, object]:
