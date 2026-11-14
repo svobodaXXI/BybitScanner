@@ -116,10 +116,12 @@ export function parseOriginalTradeContinuation(
       || payload.source_revision !== original.revision
       || !Array.isArray(payload.bars) || !payload.bars.length || payload.bars.length > 1000) return null;
   const lastSource = original.snapshot.bars[original.snapshot.bars.length - 1].open_time_ms;
+  if (!Number.isSafeInteger(lastRequestedMs) || lastRequestedMs < lastSource
+      || (lastRequestedMs - lastSource) % original.intervalMs !== 0) return null;
   const bars: Bar[] = [];
   for (const item of payload.bars) {
     const bar = asBar(item);
-    if (!bar || bar.open_time_ms !== lastSource + (bars.length + 1) * original.intervalMs) return null;
+    if (!bar || bar.open_time_ms !== lastRequestedMs + (bars.length + 1) * original.intervalMs) return null;
     bars.push(bar);
   }
   if (payload.as_of_ms !== bars[bars.length - 1].open_time_ms
@@ -228,6 +230,7 @@ export function OriginalEpisodeSignalChart(props: OriginalSignalChartProps) {
         setCandles(evidence.snapshot.bars);
         const originalLast = evidence.snapshot.bars[evidence.snapshot.bars.length - 1].open_time_ms;
         let last = originalLast;
+        let accumulated = [...evidence.snapshot.bars];
         const needed = Math.floor(closedAtMs / evidence.intervalMs) * evidence.intervalMs;
         setMessage("Исходный сигнал подтверждён; получаю закрытые свечи после сигнала…");
         // Existing owner-initiated public continuation fetches 20 closed bars per request.
@@ -243,7 +246,8 @@ export function OriginalEpisodeSignalChart(props: OriginalSignalChartProps) {
           if (!extension) throw new Error("invalid_market_extension");
           last = extension[extension.length - 1].open_time_ms;
           if (!active) return;
-          setCandles([...evidence.snapshot.bars, ...extension.filter(bar => bar.open_time_ms <= needed)]);
+          accumulated = accumulated.concat(extension.filter(bar => bar.open_time_ms <= needed));
+          setCandles(accumulated);
         }
         if (active) setMessage(last >= needed
           ? "Исходная геометрия и публичные закрытые свечи до выхода получены."
