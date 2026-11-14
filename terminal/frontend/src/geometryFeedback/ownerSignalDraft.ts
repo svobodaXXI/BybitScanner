@@ -241,12 +241,35 @@ export function buildOwnerChartDraftV3(input: {
   const period = periods[input.timeframe];
   if (!period || !/^[A-Z0-9]{2,25}$/.test(input.symbol))
     throw new Error("Недоступны инструмент или таймфрейм для нового сигнала");
-  if (input.frozenCandles.length < 20 || input.frozenCandles.length > 120)
-    throw new Error("Для примера требуется от 20 до 120 закрытых свечей");
-  const bars = input.frozenCandles.map((candle, index) => {
+  if (input.frozenCandles.length < 20)
+    throw new Error("Для примера требуется минимум 20 закрытых свечей");
+  // Serialize against the FULL chart first: logical anchor indices belong to
+  // that chart, and cannot be silently shifted when selecting archive bars.
+  const lines = serializeReviewDrawings(input.drawings, input.frozenCandles);
+  const sourceTimes = input.frozenCandles.map((candle) => Date.parse(candle.time));
+  const anchorPositions = lines.flatMap((line) => line.anchors.map((anchor) =>
+    sourceTimes.indexOf(anchor.bar_open_time_ms)));
+  if (!anchorPositions.length || anchorPositions.some((index) => index < 0))
+    throw new Error("Опоры разметки отсутствуют в исходных свечах");
+  const firstAnchor = Math.min(...anchorPositions);
+  const lastAnchor = Math.max(...anchorPositions);
+  if (lastAnchor - firstAnchor >= 120)
+    throw new Error("Разметка занимает больше 120 свечей. Сузьте участок фигуры");
+  // The server's immutable owner-chart contract accepts 20..120 consecutive
+  // closed bars. Keep all manual anchors and some preceding context, rather
+  // than sending an entire 200-bar Scanner snapshot or dropping early rays.
+  const windowStart = input.frozenCandles.length > 120
+    ? Math.max(0, Math.min(firstAnchor, Math.max(firstAnchor - 12, lastAnchor - 119)))
+    : 0;
+  const sourceWindow = input.frozenCandles.slice(windowStart, windowStart + 120);
+  const windowTimes = new Set(sourceWindow.map((candle) => Date.parse(candle.time)));
+  if (lines.some((line) => line.anchors.some((anchor) =>
+    !windowTimes.has(anchor.bar_open_time_ms))))
+    throw new Error("Не удалось включить все опоры в сохраняемые свечи");
+  const bars = sourceWindow.map((candle, index) => {
     const at = Date.parse(candle.time);
     if (!Number.isSafeInteger(at) || at < 0 || at % period[1] !== 0 ||
-        (index > 0 && at !== Date.parse(input.frozenCandles[index - 1].time) + period[1]))
+        (index > 0 && at !== Date.parse(sourceWindow[index - 1].time) + period[1]))
       throw new Error("Пропуск или неверное время свечи");
     const { open, high, low, close } = candle;
     if ([open, high, low, close].some((value) =>
@@ -267,7 +290,6 @@ export function buildOwnerChartDraftV3(input: {
     throw new Error("Для клина или треугольника нарисуйте два луча");
   if (input.note.length > 1024)
     throw new Error("Комментарий слишком длинный");
-  const lines = serializeReviewDrawings(input.drawings, input.frozenCandles);
   if (lines.some((line) => line.anchors.length === 2 &&
       line.anchors[0].bar_open_time_ms >= line.anchors[1].bar_open_time_ms))
     throw new Error("Точки инструмента должны идти по времени вперёд");
