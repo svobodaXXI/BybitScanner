@@ -1175,6 +1175,23 @@ export function ReplayPage() {
     }
   }
 
+  // The Windows filmstrip transports a typed ID, not trusted execution facts.
+  // The local archive lookup remains same-origin and evidence-validated; when
+  // missing, fail closed rather than presenting a synthetic trade as PAPER.
+  useEffect(() => {
+    const query = new URLSearchParams(window.location.search);
+    if (!query.has("episode")) return;
+    const episode = query.get("episode");
+    if (query.size !== 1 || !episode || !/^te_[a-f0-9]{24}$/.test(episode)) {
+      setError("Отклонена некорректная ссылка на PAPER-сделку");
+      return;
+    }
+    void lookupLocalEpisode(episode);
+    // The episode ID is consumed once on page load, not on a market replay
+    // reset; the owner may then rewind and inspect without repeating lookup.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   async function loadLocalHistory(selectedSymbol: string, selectedStart: string, selectedEnd: string,
     choices: readonly string[]) {
     bundledRequest.current?.abort(); bundledRequest.current = null;
