@@ -646,3 +646,22 @@
   border: 1px solid #27313b;
   border-radius: 0.3rem;
 }
+
+
+/* Original immutable Robot source, separate from Editor review/feedback drawings. */
+.diary-original-signal-plot {
+  display: grid;
+  gap: 0.35rem;
+  max-width: 100%;
+  min-width: 0;
+}
+.diary-original-signal-plot svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 26rem;
+  background: #10151b;
+  border: 1px solid #27313b;
+  border-radius: 0.3rem;
+}
+.diary-original-signal-plot small { color: #aab9c7; }
