@@ -1,8 +1,25 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import {
   OriginalEpisodeSignalChart, parseOriginalTradeSignal, parseOriginalTradeContinuation,
+  parseOriginalTradeTimeframe,
 } from "./OriginalEpisodeSignalChart";
+
+
+vi.mock("lightweight-charts", () => ({
+  CandlestickSeries: "Candlestick", LineSeries: "Line",
+  ColorType: { Solid: "solid" }, CrosshairMode: { Normal: 0 },
+  createChart: vi.fn(() => {
+    const scale = {
+      getVisibleLogicalRange: vi.fn(() => null),
+      setVisibleLogicalRange: vi.fn(), setVisibleRange: vi.fn(), fitContent: vi.fn(),
+    };
+    return {
+      addSeries: vi.fn(() => ({ setData: vi.fn() })),
+      removeSeries: vi.fn(), remove: vi.fn(), timeScale: () => scale,
+    };
+  }),
+}));
 
 const interval = 300_000;
 const t = Date.UTC(2026, 10, 13);
@@ -100,7 +117,7 @@ describe("original signal on a closed deal", () => {
     }, source, t + 21 * interval)).toBeNull();
   });
 
-  it("keeps earlier candles when a closed deal needs multiple continuation pages", async () => {
+  it("loads 20 closed candles only on each click and keeps original lines unchanged", async () => {
     const firstUrl = "/api/workspace/signal-geometry/continuation?signal_id=candidate-42&after_ms="
       + (t + interval);
     const secondUrl = "/api/workspace/signal-geometry/continuation?signal_id=candidate-42&after_ms="
@@ -109,38 +126,57 @@ describe("original signal on a closed deal", () => {
       url === firstUrl ? extension : url === secondUrl ? secondPage : archived,
     ), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
-    render(<OriginalEpisodeSignalChart {...props} closedAtMs={t + 26 * interval + 2000} />);
-    await screen.findByText(/до выхода получены/);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    render(<OriginalEpisodeSignalChart {...props} />);
+    expect(await screen.findByRole("application", {
+      name: "Интерактивный свечной график сделки",
+    })).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(/Фактические исполнения на загруженных свечах: 0\/2/))
+      .toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Показать следующие свечи" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(fetchMock).toHaveBeenCalledWith(firstUrl, expect.any(Object));
+    await waitFor(() => expect(screen.getByText(/Фактические исполнения на загруженных свечах: 2\/2/))
+      .toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Показать следующие свечи" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
     expect(fetchMock).toHaveBeenCalledWith(secondUrl, expect.any(Object));
-    const svg = screen.getByRole("img", {
-      name: /Закрытые свечи и исходные линии сигнала Робота/,
-    });
-    const wicks = svg.querySelector('path[stroke="#5ac7aa"]');
-    expect(wicks?.getAttribute("d")?.match(/M/g)).toHaveLength(27);
     expect(screen.queryByText(/123456/)).not.toBeInTheDocument();
   });
 
-  it("shows archived rays and public closed candles with actual execution markers", async () => {
+  it("switches to real M1 historical candles without resampling M5", async () => {
+    const minute = 60_000;
+    const lastBeforeEntry = t + 9 * minute;
+    const afterMs = lastBeforeEntry - 20 * minute;
+    const intervalUrl = "/api/workspace/signal-geometry/candles?signal_id=candidate-42&interval=1&after_ms="
+      + afterMs;
+    const response = {
+      ok: true, signal_id: "candidate-42", source_revision: "a".repeat(64),
+      interval: "1", as_of_ms: lastBeforeEntry,
+      bars: Array.from({ length: 20 }, (_, i) => ({
+        open_time_ms: afterMs + (i + 1) * minute,
+        open: 100, high: 102, low: 98, close: 100.5,
+      })),
+    };
+    const source = parseOriginalTradeSignal(archived, identity)!;
+    expect(parseOriginalTradeTimeframe(response, source, "1", afterMs)).toHaveLength(20);
+    expect(parseOriginalTradeTimeframe({ ...response, interval: "5" }, source, "1", afterMs)).toBeNull();
+    expect(parseOriginalTradeTimeframe({ ...response, bars: response.bars.slice(1) }, source, "1", afterMs))
+      .toBeNull();
     const fetchMock = vi.fn(async (url: string) => new Response(JSON.stringify(
-      url.includes("/continuation") ? extension : archived,
+      url === intervalUrl ? response : archived,
     ), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     render(<OriginalEpisodeSignalChart {...props} />);
-    expect(await screen.findByRole("img", {
-      name: /Закрытые свечи и исходные линии сигнала Робота/,
-    })).toBeInTheDocument();
-    await screen.findByText(/до выхода получены/);
-    expect(screen.getByText(/Кружки: фактические исполнения.*\(2\/2\)/)).toBeInTheDocument();
-    expect(screen.queryByText(/123456/)).not.toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/workspace/signal-geometry?signal_id=candidate-42", expect.any(Object),
-    );
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/workspace/signal-geometry/continuation?signal_id=candidate-42&after_ms=" + (t + interval),
-      expect.any(Object),
-    );
+    await screen.findByRole("application", { name: "Интерактивный свечной график сделки" });
+    fireEvent.click(screen.getByRole("button", { name: "M1" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(intervalUrl, expect.any(Object)));
+    await waitFor(() => expect(screen.getByRole("button", { name: "M1" }))
+      .toHaveAttribute("aria-pressed", "true"));
+    fireEvent.click(screen.getByRole("button", { name: "M5" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "M5" }))
+      .toHaveAttribute("aria-pressed", "true"));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("never requests unrelated source geometry without an exact candidate", async () => {
@@ -155,8 +191,8 @@ describe("original signal on a closed deal", () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response("", { status: 404 }));
     vi.stubGlobal("fetch", fetchMock);
     render(<OriginalEpisodeSignalChart {...props} />);
-    await waitFor(() => expect(screen.getByText(/Исходная геометрия или дальнейшие закрытые свечи недоступны/)).toBeInTheDocument());
-    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(/Исходная геометрия недоступна или не совпадает с сигналом сделки/)).toBeInTheDocument());
+    expect(screen.queryByRole("application")).not.toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
