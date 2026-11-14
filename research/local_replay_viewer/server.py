@@ -651,6 +651,17 @@ def main() -> None:
     )
     if args.open_url and (args.check or args.no_browser or args.episode):
         raise SystemExit("Invalid local launch combination")
+    if args.open_url and args.open_url.startswith("bybitscanner-simulator://pair"):
+        # A website cannot silently pair a device: Windows displays the
+        # complete HTTPS origin and requires an explicit native confirmation.
+        from research.local_replay_viewer.paired_device import accept_pairing_url
+        try:
+            paired = accept_pairing_url(args.open_url)
+        except (ValueError, OSError) as exc:
+            raise SystemExit("Simulator pairing rejected") from exc
+        print("SIMULATOR_PAIRING_CONFIRMED" if paired
+              else "SIMULATOR_PAIRING_NOT_APPROVED", flush=True)
+        return
     try:
         episode = episode_from_url(args.open_url) if args.open_url else (
             episode_from_url("bybitscanner-simulator://open?episode=" + args.episode)
@@ -694,7 +705,25 @@ def main() -> None:
     # The TLS bridge is disabled by default. Pairing must supply an independently
     # trusted, exact HTTPS origin and a dedicated device-only secret; browser
     # cookies, PAPER runtime and exchange credentials never reach this process.
-    if os.environ.get("BYBITSCANNER_SIMULATOR_DEVICE_BRIDGE_ENABLED") == "1":
+    if sys.platform == "win32":
+        # No token file, no outbound relay. A native user-confirmed pairing
+        # creates the DPAPI credential; the running viewer picks it up without
+        # restart. Inbound connections remain loopback-only.
+        from research.local_replay_viewer.paired_device import run_paired_receiver
+        device_thread = threading.Thread(
+            target=run_paired_receiver,
+            kwargs={
+                "stop": device_stop, "local_archive": PAPER_EPISODES,
+                "open_episode": lambda eid: webbrowser.open(
+                    f"http://127.0.0.1:{port}/replay.html?episode={eid}"
+                ),
+            },
+            daemon=True, name="paper-facts-only-receiver",
+        )
+        device_thread.start()
+    elif os.environ.get("BYBITSCANNER_SIMULATOR_DEVICE_BRIDGE_ENABLED") == "1":
+        # Isolated non-Windows development fixture only, not a production
+        # Windows credential path or a secret stored in the repository.
         from research.local_replay_viewer.device_relay_client import PairedEpisodeReceiver
         receiver = PairedEpisodeReceiver(
             origin=os.environ.get("BYBITSCANNER_SIMULATOR_BRIDGE_ORIGIN", ""),
@@ -708,7 +737,6 @@ def main() -> None:
         device_thread = threading.Thread(target=receiver.loop, args=(device_stop,),
                                          daemon=True, name="paper-facts-only-receiver")
         device_thread.start()
-        print("Paired PAPER read-only receiver enabled; HTTPS origin pinned.", flush=True)
     try:
         server.serve_forever(poll_interval=0.2)
     except KeyboardInterrupt:
