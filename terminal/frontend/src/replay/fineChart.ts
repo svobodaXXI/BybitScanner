@@ -42,7 +42,7 @@ function validBars(raw: unknown, interval: number,
         (c.low as number) > Math.min(c.open as number,c.close as number))
       throw new Error("Неподтверждённые свечи из архива сделок");
     previous = c.start_ms as number;
-    return c as ReplayCandle;
+    return c as unknown as ReplayCandle;
   });
 }
 export function parseFineChart(
