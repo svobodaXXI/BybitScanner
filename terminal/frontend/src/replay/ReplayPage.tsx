@@ -13,6 +13,7 @@ import { parseLocalReplayUpload } from "./l2ReplayUpload";
 import { l2Prehistory, l2Posthistory, l2PresentationEvents } from "./l2ChartContext";
 import { chartWilderDmi } from "./replayChartDmi";
 import { selectedL2MarketContext, loadedL2M5Coverage } from "./l2PeriodContext";
+import { L2M5Catalog } from "./l2M5Catalog";
 import {
   matchPaperFactsToMarket, parsePaperEpisodeFacts, revealedPaperMarkers,
   type PaperEpisodeFacts, type PaperOverlay,
@@ -643,6 +644,8 @@ export function ReplayPage() {
   const [importedCoordinates, setImportedCoordinates] = useState<{
     symbol: string; start_utc: string; end_utc_inclusive: string; revision: number;
   } | null>(null);
+  const m5Catalog = useRef(new L2M5Catalog());
+  const [m5CatalogRevision, setM5CatalogRevision] = useState(0);
   const [l2Context, setL2Context] = useState<ReplayCandle[]>([]);
   const [l2After, setL2After] = useState<ReplayCandle[]>([]);
   const [l2ContextFor, setL2ContextFor] = useState<ReplayDocument | null>(null);
@@ -694,12 +697,12 @@ export function ReplayPage() {
         selectedWindow.symbol !== document.symbol) return null;
     try {
       const period = validateInclusiveWindow(selectedWindow.start, selectedWindow.end);
-      return loadedL2M5Coverage(document,
-        l2ContextFor === document ? l2Context : [],
-        l2ContextFor === document ? l2After : [],
-        period.startMs, period.endExclusiveMs);
+      const local = m5Catalog.current.status(
+        document.symbol!, document, period.startMs, period.endExclusiveMs);
+      return { complete: local.complete, covered: local.covered,
+        required: local.required };
     } catch { return null; }
-  }, [document, selectedWindow, l2ContextFor, l2Context, l2After]);
+  }, [document, selectedWindow, m5CatalogRevision]);
   const missingForPlay = document.execution_clock === "ORIGINAL_EVENT_TIME_NOT_OHLC_M1" &&
     selectedCoverage !== null && !selectedCoverage.complete;
   const scannerObservations = useMemo(() =>
@@ -946,6 +949,8 @@ export function ReplayPage() {
         const candles = l2Prehistory(document, history);
         const after = l2Posthistory(document, history);
         if (controller.signal.aborted) return;
+        m5Catalog.current.ingest(history);
+        setM5CatalogRevision(v => v + 1);
         setL2Context(candles);
         setL2After(after);
         setL2ContextFor(document);
@@ -1122,10 +1127,8 @@ export function ReplayPage() {
           throw new Error("Тикер периода не совпадает с импортированным L2-отчётом");
         if (window.minutes > 90 * 1440)
           throw new Error("Для M5-подгрузки допускается не более 90 дней");
-        const existing = loadedL2M5Coverage(document,
-          l2ContextFor === document ? l2Context : [],
-          l2ContextFor === document ? l2After : [],
-          window.startMs, window.endExclusiveMs);
+        const existing = m5Catalog.current.status(
+          document.symbol!, document, window.startMs, window.endExclusiveMs);
         if (existing.complete) {
           setPeriodLoadNotice("Данные уже загружены локально: " +
             existing.covered + "/" + existing.required +
@@ -1139,12 +1142,18 @@ export function ReplayPage() {
         const lastDay = Math.ceil(window.endExclusiveMs / dayMs) * dayMs;
         if (lastDay > Date.now())
           throw new Error("Нельзя подгружать будущие или незакрытые свечи");
-        const pieces: ReplayDocument[] = [];
-        for (let from = firstDay; from < lastDay; from += 7 * dayMs) {
-          const to = Math.min(from + 7 * dayMs, lastDay);
+        // Request ONLY day ranges with truly missing closed M5. Already fetched
+        // public candles remain in the catalog, even outside the chart viewport.
+        const missing = existing.missingDays;
+        for (let i = 0; i < missing.length;) {
+          const from = missing[i];
+          let to = from + dayMs;
+          i++;
+          while (i < missing.length && missing[i] === to &&
+                 to - from < 7 * dayMs) { to += dayMs; i++; }
           const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
           const query = new URLSearchParams({
-            symbol: document.symbol, start: day(from), end: day(to),
+            symbol: document.symbol!, start: day(from), end: day(to),
           });
           const response = await fetch("/local-replay/history?" + query, {
             method: "GET", cache: "no-store", signal: controller.signal,
@@ -1155,14 +1164,25 @@ export function ReplayPage() {
           const raw = await response.text();
           if (raw.length > 24 * 1024 * 1024)
             throw new Error("Превышен безопасный размер фрагмента M5");
-          pieces.push(parseReplayDocument(JSON.parse(raw) as unknown));
+          const fetched = parseReplayDocument(JSON.parse(raw) as unknown);
+          if (controller.signal.aborted) return;
+          m5Catalog.current.ingest(fetched);
         }
-        const expanded = selectedL2MarketContext(
-          document, pieces, window.startMs, window.endExclusiveMs);
+        const final = m5Catalog.current.status(
+          document.symbol!, document, window.startMs, window.endExclusiveMs);
+        if (!final.complete)
+          throw new Error("Bybit не подтвердил все M5 выбранного периода: " +
+            final.covered + "/" + final.required +
+            ". Неполный график не объявлен готовым.");
+        const expanded = selectedL2MarketContext(document,
+          [m5Catalog.current.asMarket(document.symbol!,
+            window.startMs, window.endExclusiveMs, document)],
+          window.startMs, window.endExclusiveMs);
         if (historyRequest.current !== controller || controller.signal.aborted) return;
         setPlaying(false);
         setCursor(0);
         setL2ContextFor(document);
+        setM5CatalogRevision(v => v + 1);
         // Preserve the already verified 24h ADX warmup if the selected
         // extension begins at the original report rather than before it.
         setL2Context(expanded.before.length ? expanded.before :
