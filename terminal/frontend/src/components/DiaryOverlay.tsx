@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
 import { marketApiRoutes } from "../marketData/apiRoutes";
 import { AccountMenu } from "./AccountMenu";
+import { OriginalEpisodeSignalChart } from "./OriginalEpisodeSignalChart";
 import "./DiaryOverlay.css";
 
 export type DiarySection = "FINREZ" | "PATTERNS" | "DEALS" | "TRADES" | "SETUPS" | "STATISTICS" | "MIRROR";
@@ -939,7 +940,8 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, lossOnly, onClea
   const [showExportText, setShowExportText] = useState(false);
   const [filmNotice, setFilmNotice] = useState("");
 
-  const [executionPoints, setExecutionPoints] = useState<TradeExecutionPoint[]>([]);
+  const [executionRecord, setExecutionRecord] = useState<{ id: string; points: TradeExecutionPoint[] }>({ id: "", points: [] });
+  const executionPoints = executionRecord.id === selectedId ? executionRecord.points : [];
   const [verifiedSetups, setVerifiedSetups] = useState<Record<string, VerifiedEpisodeSetup | null>>({});
   const indexedVerifiedSetups = useMemo(() => {
     const proven: Record<string, VerifiedEpisodeSetup> = {};
@@ -980,7 +982,7 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, lossOnly, onClea
   const selectedPattern = selected ? patternFor(selected) : null;
   useEffect(() => {
     const deal = report.closed_episodes?.find((entry) => entry.trade_episode_id === selectedId);
-    setExecutionPoints([]);
+    setExecutionRecord({ id: "", points: [] });
     if (!deal) return;
     let active = true;
     void fetch(marketApiRoutes.diaryEpisodeFacts(
@@ -1023,7 +1025,7 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, lossOnly, onClea
       })
       .then((result) => {
         if (!active || !result) return;
-        setExecutionPoints(result.points);
+        setExecutionRecord({ id: deal.trade_episode_id, points: result.points });
         setVerifiedSetups((prior) => ({
           ...prior, [deal.trade_episode_id]: result.setup,
         }));
@@ -1134,6 +1136,13 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, lossOnly, onClea
             ? "Источник: точная цепочка Robot candidate → order → execution → episode. Не D2, без исходной геометрии и журнала решений."
             : "Источник при наличии D2-связи: отдельные наблюдения Trading Diary D2, не полный журнал решений Робота."}</small>
         </section>
+        <OriginalEpisodeSignalChart
+          candidateId={verifiedWedgeSignal(selected, report)?.candidateId ?? null}
+          symbol={selected.symbol}
+          timeframe={verifiedWedgeSignal(selected, report)?.timeframe ?? null}
+          pattern={verifiedWedgeSignal(selected, report)?.pattern ?? null}
+          side={selected.side} openedAtMs={selected.opened_at_ms}
+          closedAtMs={selected.closed_at_ms} executions={executionPoints} />
         <TradeExecutionPriceChart points={executionPoints} />
         <SimulatorLaunchAction episodeId={selected.trade_episode_id}
           allowLocalLaunch={report.account_id === "paper"} />
