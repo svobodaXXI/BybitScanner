@@ -10,8 +10,12 @@ import argparse
 import os
 import queue
 import re
+import shlex
 import subprocess
+import sys
 import threading
+import time
+import uuid
 import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox, ttk
@@ -86,6 +90,16 @@ ACTIONS = {
     ),
 }
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+EXACT_SHA = re.compile(r"[0-9a-f]{40}\Z")
+REQUEST_ID = re.compile(r"[0-9a-f]{32}\Z")
+CONTROL_ACTIONS = {
+    "Обновить EDITOR_ONLY": "update",
+    "Запустить PAPER-ядро": "start",
+    "Остановить PAPER-ядро": "stop",
+    "Обновить и запустить PAPER": "update-and-start",
+}
+CONTROL_MODULE = "/opt/BybitScanner/venv/bin/python -m tools.vps_owner_control"
+
 
 
 def ssh_command(host: str, user: str, action: str, key: str = "") -> list[str]:
@@ -94,7 +108,7 @@ def ssh_command(host: str, user: str, action: str, key: str = "") -> list[str]:
     key = key.strip()
     if not HOST_PATTERN.fullmatch(host) or host.startswith("-"):
         raise ValueError("Недопустимое имя или адрес VPS")
-    if not USER_PATTERN.fullmatch(user):
+    if not USER_PATTERN.fullmatch(user) and not (host == "bybitscanner-vps" and not user):
         raise ValueError("Недопустимое имя пользователя")
     if action not in ACTIONS:
         raise ValueError("Неизвестная операция")
@@ -109,8 +123,87 @@ def ssh_command(host: str, user: str, action: str, key: str = "") -> list[str]:
         "ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
         "-o", "ConnectTimeout=8", "-o", "NumberOfPasswordPrompts=0",
         "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=2",
-        *identity, f"{user}@{host}", ACTIONS[action],
+        *identity, (f"{user}@{host}" if user else host), ACTIONS[action],
     ]
+
+
+def preferred_route() -> tuple[str, str]:
+    # Existing OpenSSH alias owns the key, verified host and network route.
+    config = Path.home() / ".ssh" / "config"
+    try:
+        if any("bybitscanner-vps" in line.split()[1:]
+               for line in config.read_text(encoding="utf-8").splitlines()
+               if line.strip().lower().startswith("host ")):
+            return "bybitscanner-vps", ""
+    except (OSError, UnicodeError):
+        pass
+    remote = os.environ.get("BYBITSCANNER_VPS_SSH_TARGET", "")
+    if re.fullmatch(r"[A-Za-z_][A-Za-z_0-9-]*@[A-Za-z0-9._-]+", remote):
+        user, host = remote.split("@", 1)
+        return host, user
+    return "", "bybitscanner"
+
+
+def device_origin() -> str:
+    return ("win-" + re.sub(r"[^A-Za-z0-9_.-]", "-",
+                            os.environ.get("COMPUTERNAME") or "unknown"))[:64]
+
+
+def control_ssh_command(host: str, user: str, key: str, operation: str,
+                        *, sha: str = "", request_id: str = "",
+                        origin: str = "") -> list[str]:
+    argv = ssh_command(host, user, "Состояние", key)
+    if operation in CONTROL_ACTIONS.values():
+        if sha == "installed" and operation in ("start", "stop"):
+            pass
+        elif EXACT_SHA.fullmatch(sha) is None:
+            raise ValueError("Нужен точный SHA релиза (40 символов)")
+        if REQUEST_ID.fullmatch(request_id) is None:
+            raise ValueError("Недопустимый ID операции")
+        src = origin or device_origin()
+        if re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", src) is None:
+            raise ValueError("Недопустимое имя устройства")
+        args = ["submit", operation, sha, "--request-id", request_id, "--origin", src]
+    elif operation == "status":
+        if REQUEST_ID.fullmatch(request_id) is None:
+            raise ValueError("Недопустимый ID операции")
+        args = ["status", request_id]
+    elif operation == "list":
+        args = ["list"]
+    else:
+        raise ValueError("Неизвестная операция")
+    argv[-1] = CONTROL_MODULE + " " + " ".join(shlex.quote(part) for part in args)
+    return argv
+
+
+def run_cli(options: argparse.Namespace) -> int:
+    host, user = (options.host, options.user) if options.host else preferred_route()
+    if not host:
+        print("VPS_ROUTE_UNCONFIGURED: existing SSH alias or BYBITSCANNER_VPS_SSH_TARGET required")
+        return 2
+    key = options.key or ""
+    req = options.request_id or (uuid.uuid4().hex if options.operation in
+                                  CONTROL_ACTIONS.values() else "")
+    sha = options.sha or ("installed" if options.operation in ("start", "stop") else "")
+    try:
+        argv = control_ssh_command(host, user, key, options.operation,
+                                   sha=sha, request_id=req)
+    except ValueError as exc:
+        print("BLOCKED: " + str(exc))
+        return 2
+    try:
+        completed = subprocess.run(argv, capture_output=True, text=True,
+                                   timeout=35, stdin=subprocess.DEVNULL, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        print("SSH_UNPROVEN; request_id=" + req + "; check status; do not resubmit")
+        return 2
+    print(completed.stdout.strip())
+    if completed.returncode != 0:
+        print("REMOTE_STATUS_UNPROVEN; request_id=" + req)
+        return 2
+    if options.operation in CONTROL_ACTIONS.values():
+        print("SUBMITTED_NOT_COMPLETE; request_id=" + req)
+    return 0
 
 
 class VPSManager(tk.Tk):
