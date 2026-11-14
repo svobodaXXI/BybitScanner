@@ -35,6 +35,13 @@
 .replay-chart-shell { width: 100%; }
 .replay-events { min-width: 0; max-height: 770px; display: flex; flex-direction: column; background: #121923; border: 1px solid #273649; border-radius: 9px; overflow: hidden; }
 .replay-events h2 { margin: 0; padding: 14px; font-size: 15px; border-bottom: 1px solid #2b3e55; }
+.replay-events-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; border-bottom: 1px solid #2b3e55; }
+.replay-events-heading h2 { border-bottom: 0; }
+.replay-events-heading div[role="group"] { display: flex; gap: 4px; padding: 7px 10px; }
+.replay-events-heading button { font: inherit; font-size: 11px; cursor: pointer; background: #243247; color: #baccdf; border: 1px solid #415574; border-radius: 4px; padding: 4px 7px; }
+.replay-events-heading button[aria-pressed="true"] { background: #30638b; color: #fff; border-color: #75b2df; }
+.replay-events-item time { font-variant-numeric: tabular-nums; }
+.replay-events-item .replay-journal-ms { color: #8396b0; font-size: 11px; font-variant-numeric: tabular-nums; }
 .replay-events-list { overflow-y: auto; min-height: 0; padding: 10px; }
 .replay-events-list p { color: #8b9cb4; }
 .replay-events-item { display: grid; gap: 5px; padding: 10px 4px; border-bottom: 1px solid #273649; font-size: 12px; line-height: 1.5; }
