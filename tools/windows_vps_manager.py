@@ -212,10 +212,15 @@ class VPSManager(tk.Tk):
         self.title("BybitScanner VPS Manager — PAPER")
         self.geometry("880x510")
         self.minsize(780, 380)
-        self.host = tk.StringVar(value=host)
-        self.user = tk.StringVar(value=user)
+        automatic = preferred_route() if not host else (host, user)
+        self.host = tk.StringVar(value=automatic[0])
+        self.user = tk.StringVar(value=automatic[1])
         if key is None:
-            key = str(DEFAULT_KEY) if DEFAULT_KEY.is_file() else ""
+            key = "" if automatic[0] == "bybitscanner-vps" else (
+                str(DEFAULT_KEY) if DEFAULT_KEY.is_file() else "")
+        self.sha = tk.StringVar(value="")
+        self.last_request_id = ""
+        self.origin = device_origin()
         self.key = tk.StringVar(value=key)
         self.status = tk.StringVar(value="Не подключено · PAPER only")
         self.events: queue.Queue[tuple[str, str]] = queue.Queue()
@@ -231,11 +236,29 @@ class VPSManager(tk.Tk):
             row=1, column=1, columnspan=3, padx=6, pady=(7, 0), sticky="we"
         )
         ttk.Label(top, textvariable=self.status).grid(row=2, column=0, columnspan=4, sticky="w", pady=9)
+        ttk.Label(top, text="Целевой SHA (для обновления):").grid(row=3, column=0, sticky="w")
+        ttk.Entry(top, textvariable=self.sha, width=48).grid(
+            row=3, column=1, columnspan=3, sticky="we")
+        ttk.Label(top, text="Устройство: " + self.origin).grid(
+            row=4, column=0, columnspan=4, sticky="w")
         buttons = ttk.Frame(self, padding=(12, 0, 12, 9))
         buttons.pack(fill="x")
         self.buttons = []
         for index, name in enumerate(ACTIONS):
             button = ttk.Button(buttons, text=name, command=lambda selected=name: self.run_action(selected))
+            button.grid(row=index // 3, column=index % 3, padx=(0, 7), pady=3, sticky="ew")
+            self.buttons.append(button)
+        for index, (label, mode) in enumerate(CONTROL_ACTIONS.items(), start=len(ACTIONS)):
+            button = ttk.Button(buttons, text=label,
+                                command=lambda selected=mode: self.run_control(selected))
+            button.grid(row=index // 3, column=index % 3, padx=(0, 7), pady=3, sticky="ew")
+            self.buttons.append(button)
+        for index, (label, mode) in enumerate((
+            ("Статус последней операции", "status"),
+            ("Все операции монолита", "list"),
+        ), start=len(ACTIONS) + len(CONTROL_ACTIONS)):
+            button = ttk.Button(buttons, text=label,
+                                command=lambda selected=mode: self.run_control(selected))
             button.grid(row=index // 3, column=index % 3, padx=(0, 7), pady=3, sticky="ew")
             self.buttons.append(button)
         for column in range(3):
@@ -271,6 +294,77 @@ class VPSManager(tk.Tk):
         self.write(f"\n> {name}")
         threading.Thread(target=self.worker, args=(command,), daemon=True).start()
 
+    def run_control(self, mode: str) -> None:
+        if self.busy:
+            return
+        sha = self.sha.get().strip() or (
+            "installed" if mode in ("start", "stop") else "")
+        request = (uuid.uuid4().hex if mode in CONTROL_ACTIONS.values()
+                   else self.last_request_id)
+        if mode == "status" and not request:
+            messagebox.showinfo("VPS Manager", "Операций в этом сеансе пока нет")
+            return
+        try:
+            command = control_ssh_command(
+                self.host.get(), self.user.get(), self.key.get(),
+                mode, sha=sha, request_id=request, origin=self.origin)
+        except ValueError as exc:
+            messagebox.showerror("VPS Manager", str(exc))
+            return
+        if mode in CONTROL_ACTIONS.values():
+            if not messagebox.askyesno(
+                "Подтверждение PAPER", f"Отправить на VPS действие {mode} для {sha}?"):
+                return
+            self.last_request_id = request
+        self.busy = True
+        self.status.set("Выполняется: " + mode)
+        for button in self.buttons:
+            button.state(["disabled"])
+        self.write(f"\n> {mode} · {request}")
+        threading.Thread(target=self.worker_control,
+                         args=(command, mode, request), daemon=True).start()
+
+    def worker_control(self, command: list[str], mode: str, request: str) -> None:
+        try:
+            result = subprocess.run(
+                command, capture_output=True, text=True, errors="replace",
+                timeout=35, stdin=subprocess.DEVNULL, creationflags=NO_WINDOW,
+                check=False)
+            output = result.stdout.strip()
+            if mode not in CONTROL_ACTIONS.values():
+                state = ("success" if result.returncode == 0 else
+                         "submitted" if result.returncode == 3 else "failure")
+                self.events.put((state, output or "Статус не доказан"))
+                return
+            # Lost submit reply => only query the same request; never replay it.
+            status_command = control_ssh_command(
+                self.host.get(), self.user.get(), self.key.get(), "status",
+                request_id=request)
+            state = "submitted"
+            for attempt in range(3):
+                if attempt:
+                    time.sleep(2)
+                probe = subprocess.run(
+                    status_command, capture_output=True, text=True, errors="replace",
+                    timeout=20, stdin=subprocess.DEVNULL, creationflags=NO_WINDOW,
+                    check=False)
+                if "STATUS=FINISHED_OK" in probe.stdout and probe.returncode == 0:
+                    state = "success"
+                    output += "\n" + probe.stdout.strip()
+                    break
+                if "STATUS=FAILED" in probe.stdout:
+                    state = "failure"
+                    output += "\n" + probe.stdout.strip()
+                    break
+                if "STATUS=RUNNING" in probe.stdout:
+                    output += "\n" + probe.stdout.strip()
+                    break
+            self.events.put((state, (output or "Ответ запуска неизвестен")
+                             + "\nREQUEST_ID=" + request))
+        except (OSError, subprocess.TimeoutExpired, ValueError):
+            self.events.put(("failure", "SSH_STATUS_UNPROVEN; REQUEST_ID=" + request
+                             + "; повторять операцию нельзя, проверяйте статус"))
+
     def worker(self, command: list[str]) -> None:
         try:
             result = subprocess.run(
@@ -290,8 +384,9 @@ class VPSManager(tk.Tk):
                 kind, result = self.events.get_nowait()
                 self.write(result)
                 self.busy = False
-                self.status.set("Успешно · Exit code 0" if kind == "success"
-                                else "Ошибка · диагностика не выполнена")
+                self.status.set("Успешно · подтверждён результат" if kind == "success"
+                                else "Отправлено / выполняется" if kind == "submitted"
+                                else "Ошибка / результат не доказан")
                 for button in self.buttons:
                     button.state(["!disabled"])
         except queue.Empty:
@@ -306,10 +401,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--host", default="")
     parser.add_argument("--user", default="bybitscanner")
     parser.add_argument("--key", default=None)
+    parser.add_argument("--operation", choices=(*CONTROL_ACTIONS.values(),
+                                                 "status", "list"), default=None)
+    parser.add_argument("--sha", default="")
+    parser.add_argument("--request-id", default="")
     args, _unknown = parser.parse_known_args(argv)
     return args
 
 
 if __name__ == "__main__":
     options = parse_args()
+    if options.operation:
+        sys.exit(run_cli(options))
     VPSManager(options.host, options.user, options.key).mainloop()
