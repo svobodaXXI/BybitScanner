@@ -446,7 +446,7 @@ try {
       icntHistoryRequests++;
       assert.equal(query.has("strategies"), false);
       const first = Date.UTC(2026, 10, 10, 8, 0);
-      const events = Array.from({ length: 301 }, (_, i) => {
+      const events = Array.from({ length: icntHistoryRequests === 1 ? 312 : 325 }, (_, i) => {
         const start_ms = first - 86_400_000 + i * 300_000;
         return {
           source: "SIMULATION", simulation_run_id: "browser_public_context",
@@ -866,6 +866,16 @@ try {
   await page.getByRole("button", { name: "Применить", exact: true }).click();
   assert.match(await page.locator(".replay-meta").innerText(), /4 \/ 4/,
     "Apply on imported source must not turn original L2 into a new simulation");
+  // The initial public reply already contained the next hour, although
+  // only 12 post-window bars were drawn. Retain those 5m for free.
+  const cachedRequests = icntHistoryRequests;
+  await page.getByRole("button", { name: "Подгрузить период с Bybit" }).click();
+  await page.getByRole("status", { name: "Покрытие выбранного периода" })
+    .filter({ hasText: "Данные уже загружены локально" }).waitFor();
+  assert.equal(icntHistoryRequests, cachedRequests,
+    "extended source window must reuse the full public reply, not re-fetch it");
+  await page.getByRole("button", { name: "Добавить 1 час" }).click();
+  assert.equal(await page.getByLabel("Конец прогона UTC").inputValue(), "2026-11-10T10:05");
   const beforeGapClick = icntHistoryRequests;
   await page.getByRole("button", { name: "Пуск", exact: true }).click();
   await page.getByRole("alert").filter({
@@ -877,6 +887,8 @@ try {
     "blocked Play must preserve the original four trades");
   await page.getByRole("button", { name: "Подгрузить период с Bybit" }).click();
   await page.getByRole("status").filter({ hasText: "Исторические taker-сделки/L2-стакан" }).waitFor();
+  assert.equal(icntHistoryRequests, beforeGapClick+1,
+    "only a truly missing M5 day receives a new Bybit request");
   assert.match(await page.locator(".replay-meta").innerText(), /original-l2-result\.json/,
     "public period extension must preserve the imported JSON source");
 
