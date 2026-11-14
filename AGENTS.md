@@ -35,8 +35,11 @@ first for repository evidence, CI, PRs and *only the remote diagnostics it actua
 supports*; GitHub repository access alone is not SSH or proof of VPS runtime.
 If an approved VPS operation needs host access, delegate its full bounded outcome
 to the existing Codex/VPS mechanism. Only after a **specific verified blocker**
-to both assistant tools and Codex, use the owner's proven Windows PowerShell
-SSH path with `bybitscanner_laptop`; VNC is the last resort if SSH is unusable.
+to both assistant tools and Codex, use the owner's **primary desktop-PC** Windows
+PowerShell route `ssh bybitscanner-vps` (alias `212.193.14.116` with the existing
+PC identity). The historical `bybitscanner_laptop` key and old-IP commands are
+**laptop-specific / fallback**, not the default for this PC. VNC is last resort
+if SSH remains unusable.
 Do not ask the owner to run routine read-only commands one by one, repeat
 investigations, reconfigure working keys, or manually carry intermediate outputs
 when a usable authorized agent route exists. The owner supplies only
@@ -47,18 +50,27 @@ see `DOCUMENTS/VPS_PAPER_TELEGRAM_ONE_BUTTON_LESSONS_20261027.md` §6.
 This priority is **routing, not permission**: GitHub merge, deployment,
 PAPER DB/position, STOP/START, reconcile and trading authority remain unchanged.
 
-## SSH banner timeout / blocked PAPER release — mandatory fast route (2026-11-11)
+## VPS SSH — current primary PC route and blocked-release fast path (2026-11-14)
 
-When Codex or Windows OpenSSH reports `Connection timed out during banner exchange`,
-or an interrupted install reports `PAPER_unit_not_stopped`, **first read**
+**Current canonical PC transport:** Windows PowerShell `ssh bybitscanner-vps`,
+resolved to `root@212.193.14.116` and the existing key
+`C:\Users\svobo\.ssh\bybitscanner_vdsina_gateway_20261030`. On 2026-11-14,
+the owner confirmed **Happ/VPN was ON** when this alias returned `SSH_OK`,
+the expected VPS hostname and exit 0. **Do not instruct the owner to disable
+VPN as the default access step.** This is an observed successful connection,
+not a guarantee that every future handshake or Codex environment works.
+For the exact command, scope and evidence, first read
 `DOCUMENTS/WINDOWS_PC_VPS_ACCESS_RECOVERY_20261108.md` →
-`2026-11-11 — SSH banner timeout during blocked PAPER update: PC fast path`.
-That section records the confirmed **VPN-off + old-IP SSH success** and
-subsequent timeout **after VPN was re-enabled**, the trusted PC key path,
-four-unit check and exact fail-closed boundaries. Do **not** infer durable SSH recovery from a single
-`SSH_OK`, repeat STOP/installer, or use VNC before the existing safe
-PowerShell route has been considered. This is a routing pointer, not release
-or runtime authorization.
+`CURRENT PRIMARY PC SSH ROUTE`.
+
+When SSH banner timeout occurs, first prefer this PC alias without changing
+VPN settings; avoid repeated failed probes or switching keys/IPs speculatively.
+The 2026-11-11 VPN-off/old-IP route is **historical contingency evidence only**,
+not an equal-priority default. Codex Desktop may not inherit the Windows alias:
+verify its environment separately instead of assuming access. For a blocked
+release or `PAPER_unit_not_stopped`, still follow the documented protected
+receipt, four-unit, listener and fail-closed checks. A working SSH connection
+does not grant STOP/deploy/PAPER/LIVE authorization.
 
 ## Outcome-owned delegation — proven lesson (2026-10-28)
 
