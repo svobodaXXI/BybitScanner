@@ -553,13 +553,16 @@ describe("Closed deals / exact episode index", () => {
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
     fireEvent.click(await screen.findByRole("button", { name: /BTCUSDT/ }));
     fireEvent.click(screen.getByRole("button", { name: "Открыть в Симуляторе" }));
-    expect(await screen.findByText(/Локальная утилита подтвердила запрос открытия/))
+    expect(await screen.findByText(/Локальная утилита подтвердила открытие выбранного эпизода/))
       .toHaveTextContent("Идентификатор скопирован.");
     expect(copy).toHaveBeenCalledWith(episodeId);
     expect(fetchMock).toHaveBeenCalledWith("/api/diary/simulator-bridge/request", {
       method: "POST", credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ episode_id: episodeId }),
+      body: JSON.stringify({
+        episode_id: episodeId, account_id: "paper", owner: "ROBOT",
+        source_revision: 3,
+      }),
     });
     expect(fetchMock).toHaveBeenCalledWith("/api/diary/simulator-bridge/status", {
       method: "POST", credentials: "same-origin",
