@@ -156,6 +156,7 @@ jobs:
         run: |
           python -B server.py --check
           python -B smoke_package.py
+          python -c "from research.local_replay_viewer.fine_trades import aggregate_owner_trade_bars; print('LOCAL_FINE_TRADES_IMPORT_OK')"
           python -c "from research.simulator_v2.wedge_cli import run_from_time_machine_config; from research.simulator_v2.wedge_observer import WedgeScannerConfig; import pandas; print('LOCAL_WEDGE_ENGINE_PACKAGE_IMPORT_OK')"
           python -B box_lifecycle_smoke.py
           if (Test-Path terminal/runtime -PathType Container) { throw 'Production runtime leaked into SIMULATION ZIP' }
