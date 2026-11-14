@@ -540,7 +540,7 @@ function Value({ value }: { value: string | null | undefined }) {
  * Neither path transfers PAPER facts or implies a complete historical replay.
  */
 function SimulatorLaunchAction({ episodeId, allowLocalLaunch, scope }: {
-  episodeId: string; allowLocalLaunch: boolean; scope: PaperBridgeScope;
+  episodeId: string; allowLocalLaunch: boolean; scope?: PaperBridgeScope;
 }) {
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
@@ -648,12 +648,13 @@ function SimulatorLaunchAction({ episodeId, allowLocalLaunch, scope }: {
     try {
       if (allowed && onWindows) {
         let transferred = false;
-        try {
-          await enqueuePairedPaperCase(episodeId, scope);
-          transferred = true;
-        } catch {
-          // The native deep link may still work with already imported facts.
-          // Do not claim VPS delivery when the scoped bridge is unavailable.
+        if (scope) {
+          try {
+            await enqueuePairedPaperCase(episodeId, scope);
+            transferred = true;
+          } catch {
+            // Native deep links can still open previously imported facts.
+          }
         }
         setNotice((windowsError
           ? "Windows не смогла принять запрос открытия локальной утилиты."
@@ -662,7 +663,7 @@ function SimulatorLaunchAction({ episodeId, allowLocalLaunch, scope }: {
             ? " Точные факты PAPER переданы в очередь подключённого устройства."
             : " Автоматическая доставка фактов с VPS не подтверждена.")
           + suffix);
-      } else if (allowed) {
+      } else if (allowed && scope) {
         // Same-origin HTTPS owner UI. Nginx controls owner access; the relay
         // independently checks Origin. The paired PC supplies a separate
         // scoped token when it contacts the VPS (never given to this page).
@@ -697,7 +698,10 @@ function SimulatorLaunchAction({ episodeId, allowLocalLaunch, scope }: {
         else
           setNotice("Нет подтверждения открытия Симулятора на ПК или ноутбуке." + suffix);
       } else {
-        setNotice("Автоматический запуск этой сделки недоступен." + suffix);
+        setNotice((allowed
+          ? "Нет подтверждённой ревизии PAPER для автоматической передачи. " +
+            "Откройте эпизод через Статистику → Сделки."
+          : "Автоматический запуск этой сделки недоступен.") + suffix);
       }
     } catch {
       setNotice("Нет доступа к локальному Симулятору или адаптеру VPS." + suffix);
