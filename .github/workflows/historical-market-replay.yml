@@ -78,6 +78,7 @@ jobs:
           cp ../../research/local_replay_viewer/fine_trades.py "$RUNNER_TEMP/machine-time/research/local_replay_viewer/"
           cp ../../research/local_replay_viewer/windows_protocol.py "$RUNNER_TEMP/machine-time/research/local_replay_viewer/"
           cp ../../research/local_replay_viewer/device_relay_client.py "$RUNNER_TEMP/machine-time/research/local_replay_viewer/"
+          cp ../../research/local_replay_viewer/paired_device.py "$RUNNER_TEMP/machine-time/research/local_replay_viewer/"
           cp ../../research/local_replay_viewer/paper_episode_local_store.py "$RUNNER_TEMP/machine-time/research/local_replay_viewer/"
           cp ../../research/local_replay_viewer/server.py "$RUNNER_TEMP/machine-time/server.py"
           cp ../../research/local_replay_viewer/START_LOCAL.cmd "$RUNNER_TEMP/machine-time/START_LOCAL.cmd"
