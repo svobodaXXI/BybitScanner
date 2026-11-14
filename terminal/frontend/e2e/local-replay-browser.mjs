@@ -900,6 +900,65 @@ try {
     "public period extension must preserve the imported JSON source");
 
 
+  // Owner's original SIMULATION L2 events remain unchanged when selecting
+  // trade-derived M1 and 15S. Mocked prints are TEST ONLY; the actual local
+  // server independently checks the selected gzip ZIP/raw archive.
+  let fineUploads = 0;
+  await page.route("**/local-replay/chart-trades?*", async route => {
+    fineUploads++;
+    const q = new URL(route.request().url()).searchParams;
+    assert.equal(q.get("symbol"), "ICNTUSDT");
+    assert.equal(q.get("filename"), "ICNTUSDT2026-11-10.csv.gz");
+    assert.equal(route.request().method(), "POST");
+    const first = Number(q.get("start_ms")), end = Number(q.get("end_ms"));
+    assert.equal(first % 60_000, 0);
+    assert.ok(end > first && end-first < 6*3_600_000);
+    const s15 = Array.from({length:(end-first)/15_000}, (_,i) => ({
+      start_ms:first+i*15_000,end_ms:first+(i+1)*15_000,
+      open:100,high:101,low:99,close:100,volume:1,
+    }));
+    const m1 = Array.from({length:(end-first)/60_000}, (_,i) => ({
+      start_ms:first+i*60_000,end_ms:first+(i+1)*60_000,
+      open:100,high:101,low:99,close:100,volume:4,
+    }));
+    await route.fulfill({status:200,contentType:"application/json",body:JSON.stringify({
+      source:"BYBIT_PUBLIC_TRADES_DERIVED_OHLC_LOCAL_ARCHIVE",
+      symbol:"ICNTUSDT",start_ms:first,end_ms:end,
+      raw_trade_sha256:"47f3d3ea153374fe759adc81d2b340f5557d0fef84e90d28862d1a1239b0718a",
+      pinned_original_icnt:true,missing_m1:0,missing_15s:0,
+      m1,s15,trades_scanned:10000,l2_executions_unchanged:true,
+    })});
+  });
+  assert.equal(await page.getByRole("button",{name:"M1",exact:true}).isDisabled(),true);
+  assert.equal(await page.getByRole("button",{name:"15S",exact:true}).isDisabled(),true);
+  await page.getByLabel("Загрузить архив публичных сделок M1 15S").setInputFiles({
+    name:"ICNTUSDT2026-11-10.csv.gz",mimeType:"application/octet-stream",
+    buffer:Buffer.from("fake trade gzip - backend is mocked only in E2E"),
+  });
+  await page.getByRole("status",{name:"Статус M1 и 15S"})
+    .filter({hasText:"Покрытие полное"}).waitFor();
+  assert.equal(fineUploads,1);
+  assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-chart-timeframe"),"1m");
+  assert.equal(await page.getByRole("button",{name:"15S",exact:true}).isDisabled(),false);
+  const seek = page.getByRole("slider",{name:"Перемотка воспроизведения"});
+  await seek.focus();
+  await seek.press("End");
+  await page.waitForFunction(() =>
+    document.querySelector(".replay-execution-overlay")?.dataset.visibleFills === "8");
+  assert.match(await page.locator(".replay-meta").innerText(),/4 \/ 4/,
+    "M1 displays all original L2 event-time fills, not re-simulated fills");
+  await page.getByRole("button",{name:"15S",exact:true}).click();
+  assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-chart-timeframe"),"15s");
+  await page.waitForFunction(() =>
+    document.querySelector(".replay-execution-overlay")?.dataset.visibleFills === "8");
+  assert.match(await page.locator(".replay-meta").innerText(),/4 \/ 4/,
+    "15S displays the SAME frozen original L2 event-time entries and exits");
+  assert.equal(fineUploads,1,"Switching M1 to 15S must not re-upload source trades");
+  await page.getByRole("button",{name:"M5",exact:true}).click();
+  assert.match(await page.locator(".replay-meta").innerText(),/4 \/ 4/,
+    "M5 remains exact after switching to and from verified fine scales");
+  console.log("LOCAL_FINE_TF_BROWSER_OK (M1/15s visual only, original 4/4 L2 immutable)");
+
   await page.mouse.move(620, 660); // Crosshair must not create DMI dots.
   await page.screenshot({ path: join(screenshotDir, "machine-time-browser.png"), fullPage: true });
 
