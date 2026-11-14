@@ -61,7 +61,7 @@ class FilmstripProtocolTests(TestCase):
             "bybitscanner-simulator://open?episode=te_" + "A" * 24,
             "bybitscanner-simulator://open?episode=%74e_" + "a" * 24,
             "bybitscanner-simulator://open?episode=../../PAPER",
-            "bybitscanner-simulator://open?episode=" + self.EPISODE + "\\n--execute",
+            "bybitscanner-simulator://open?episode=" + self.EPISODE + "\n--execute",
         ]:
             with self.subTest(value=value), self.assertRaises(ValueError):
                 w.episode_from_url(value)
@@ -78,7 +78,7 @@ class FilmstripProtocolTests(TestCase):
         with patch.object(w, "_registry", return_value=reg):
             self.assertTrue(w.install_per_user_handler(script, python))
             self.assertIn(w.CLASSES_KEY, reg.keys)
-            command = reg.keys[w.CLASSES_KEY + r"\\shell\\open\\command"][""]
+            command = reg.keys[w.CLASSES_KEY + r"\shell\open\command"][""]
             self.assertEqual(command, f'"{python}" -B "{script}" --open-url "%1"')
             self.assertNotIn("HKEY_LOCAL_MACHINE", repr(reg.keys))
             w.set_active_viewer(script, 44944)
