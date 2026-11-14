@@ -102,7 +102,9 @@ class PairedEpisodeReceiver:
                 if (not isinstance(payload, dict) or payload.get("trade_episode_id") != episode_id
                         or payload.get("account_id") != "paper"
                         or payload.get("namespace") != "PAPER_READ_ONLY"
-                        or payload.get("owner") not in {"ROBOT", "MANUAL"}):
+                        or payload.get("owner") not in {"ROBOT", "MANUAL"}
+                        or type(payload.get("source_revision")) is not int
+                        or payload["source_revision"] < 1):
                     raise ValueError("cross_account_relay_evidence")
                 raw = json.dumps(payload, allow_nan=False, separators=(",", ":")).encode()
                 if len(raw) > MAX_BYTES:
