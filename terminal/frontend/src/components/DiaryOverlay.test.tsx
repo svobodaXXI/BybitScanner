@@ -521,7 +521,8 @@ describe("Closed deals / exact episode index", () => {
       });
       fireEvent.click(screen.getByRole("button", { name: "Подтвердить подключение" }));
       expect(linkClicks).toEqual([
-        "bybitscanner-simulator://pair?device_id=owner-pc&token=" + token,
+        "bybitscanner-simulator://pair?device_id=owner-pc&token=" + token
+        + "&origin=" + encodeURIComponent(window.location.origin),
       ]);
       expect(screen.getByText(/Запрос сопряжения передан Windows/))
         .toHaveTextContent("Успешное подключение пока не подтверждено.");
