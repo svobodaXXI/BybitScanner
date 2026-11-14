@@ -782,6 +782,37 @@ try {
   await passport.waitFor({state:"detached"});
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-original-geometry"), "0");
 
+  // Windows filmstrip launches /replay.html?episode=... . Only exact locally
+  // imported immutable PAPER evidence may auto-resolve; no synthetic full
+  // trading replay, guessed signal or remote VPS request is allowed.
+  const linkPage = await browser.newPage();
+  const linkRequests = [];
+  linkPage.on("request", req => linkRequests.push(req.url()));
+  await linkPage.goto(localUrl + "?episode=" + episodeFacts.trade_episode_id, {
+    waitUntil: "networkidle",
+  });
+  const linkPassport = linkPage.getByRole("region", {name:"Паспорт PAPER-сделки"});
+  await linkPassport.waitFor();
+  assert.match(await linkPassport.innerText(), /Falling Wedge/);
+  assert.match(await linkPage.getByRole("status").allTextContents().then(x=>x.join(" ")),
+    /Найдены локальные факты сделки/);
+  assert.match(await linkPage.getByRole("alert").innerText(),
+    /полная история исходного сигнала/);
+  assert.equal(linkRequests.some(url => url.includes("/api/diary/") ||
+    url.includes("/v5/order/")), false);
+  await linkPage.goto(localUrl + "?episode=te_" + "c".repeat(24), {
+    waitUntil:"networkidle",
+  });
+  assert.match(await linkPage.getByRole("alert").innerText(),
+    /отсутствует в локальной базе/);
+  assert.equal(await linkPage.getByRole("region", {name:"Паспорт PAPER-сделки"}).count(), 0);
+  await linkPage.goto(localUrl + "?episode=../../PAPER", {
+    waitUntil:"networkidle",
+  });
+  assert.match(await linkPage.getByRole("alert").innerText(),
+    /Отклонена некорректная ссылка/);
+  await linkPage.close();
+
   // Independent browser proof: import the same *nested* receipt structure the
   // owner already has, without trading, re-running L2 or external requests.
   const l2Start = Date.UTC(2026, 10, 10, 8, 0);
