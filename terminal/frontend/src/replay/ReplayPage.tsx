@@ -528,6 +528,15 @@ function ReplayChart({ document, cursor, prehistory, fineBars, paperOverlay, pap
         context.strokeStyle = fill.order_side === "Buy" ? TELEGRAM_BUY_COLOR : TELEGRAM_SELL_COLOR;
         context.lineWidth = 2;
         context.stroke();
+        // Original PAPER role only: CLOSE is not proof of STOP or TAKE.
+        const paperRole = fill.allocation_role === "CLOSE" ? "CLOSE"
+          : ["OPEN", "REVERSAL_OPEN"].includes(fill.allocation_role) ? "OPEN"
+          : fill.allocation_role;
+        const labelOnLeft = x > priceWidth - 85;
+        context.font = "11px system-ui, sans-serif";
+        context.textAlign = labelOnLeft ? "right" : "left";
+        context.fillStyle = "#e1e9f5";
+        context.fillText(paperRole, x + (labelOnLeft ? -10 : 10), Math.max(12, y - 8));
         paintedPaper++;
       }
       // Real native Scanner research on public, CLOSED M5 only: small
@@ -1498,6 +1507,27 @@ export function ReplayPage() {
           <strong>Паспорт PAPER-сделки · разбор постфактум</strong>
           <span>{paperFacts.symbol} · {paperFacts.side} · {paperFacts.owner} · PnL {paperFacts.pnl_usdt} USDT</span>
         </div>
+        <dl aria-label="Экономика закрытой PAPER-сделки">
+          <div><dt>Результат по цене, до комиссий</dt>
+            <dd>{paperFacts.realized_price_pnl_usdt} USDT</dd></div>
+          <div><dt>Комиссии всего</dt>
+            <dd>{paperFacts.known_execution_fees_usdt} USDT</dd></div>
+          <div><dt>Net PnL после комиссий</dt>
+            <dd>{paperFacts.pnl_usdt} USDT</dd></div>
+        </dl>
+        <dl aria-label="Исходные исполнения PAPER">
+          {paperFacts.execution_allocations.map((fill, index) => (
+            <div key={fill.execution_id + ":" + index}>
+              <dt>{fill.allocation_role === "CLOSE"
+                ? "Выход CLOSE · причина STOP/TAKE не подтверждена"
+                : fill.allocation_role === "OPEN" ? "Вход OPEN" : fill.allocation_role}
+                {" · "}{fill.order_side}</dt>
+              <dd>Цена {fill.execution_price} · объём {fill.allocated_quantity}</dd>
+              <dd>Комиссия {fill.allocated_fee} USDT</dd>
+              <dd><JournalTime timestamp={fill.occurred_at_ms} zone="MSK" /></dd>
+            </div>
+          ))}
+        </dl>
         {paperSetupContext?.status === "EXACT_D2_LINK" ? (
           <>
             <dl>
