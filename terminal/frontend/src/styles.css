@@ -322,6 +322,19 @@ button {
 .editor-review-fields > small {
   overflow-wrap: anywhere;
 }
+.editor-correction-export .editor-review-fields > button.editor-owner-signal-save-error {
+  color: #ff7373;
+  border-color: #ff7373;
+  font-weight: 700;
+}
+.editor-correction-export .editor-review-fields > .editor-owner-signal-error-detail {
+  display: block;
+  width: 100%;
+  color: #ff7373;
+  font-weight: 700;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
 .editor-correction-export.editor-review-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 46%);

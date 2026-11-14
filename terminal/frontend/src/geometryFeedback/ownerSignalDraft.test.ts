@@ -180,6 +180,46 @@ describe("untrusted V3 owner annotations", () => {
     expect(draft).not.toHaveProperty("candidate_created");
   });
 
+  it("saves two rays from a 200-candle source in a bounded contiguous 120-candle window", () => {
+    const longCandles = Array.from({ length: 200 }, (_, i) => ({
+      time: new Date(1792368000000 + i * 300000).toISOString(),
+      open: 100, high: 110, low: 90, close: 100,
+    }));
+    const drawn = [
+      ray("upper", [32, 108], [85, 102]),
+      ray("lower", [35, 95], [82, 92]),
+    ];
+    const draft = buildOwnerChartDraftV3({
+      ...base, frozenCandles: longCandles,
+      pattern: "Wedge", formationMovement: "UP",
+      wedgeSubtype: "CORRECTION", drawings: drawn,
+    });
+    expect(draft.bars).toHaveLength(120);
+    expect(draft.bars.every((bar, index) =>
+      index === 0 || bar.open_time_ms - draft.bars[index - 1].open_time_ms === 300000
+    )).toBe(true);
+    const times = new Set(draft.bars.map((bar) => bar.open_time_ms));
+    expect(draft.proposed_boundaries.flatMap((line) => line.anchors)
+      .every((point) => times.has(point.bar_open_time_ms))).toBe(true);
+    expect(draft.proposed_boundaries[0].anchors[0].bar_open_time_ms)
+      .toBe(Date.parse(longCandles[32].time));
+    expect(draft.proposed_boundaries[1].anchors[1].bar_open_time_ms)
+      .toBe(Date.parse(longCandles[82].time));
+  });
+
+  it("refuses a pattern spanning more than 120 bars rather than dropping an anchor", () => {
+    const longCandles = Array.from({ length: 200 }, (_, i) => ({
+      time: new Date(1792368000000 + i * 300000).toISOString(),
+      open: 100, high: 110, low: 90, close: 100,
+    }));
+    expect(() => buildOwnerChartDraftV3({
+      ...base, frozenCandles: longCandles,
+      pattern: "Wedge", formationMovement: "UP",
+      wedgeSubtype: "CORRECTION",
+      drawings: [ray("upper", [15, 108], [150, 102]), ray("lower", [16, 95], [149, 92])],
+    })).toThrow(/120 свечей/);
+  });
+
   it("fails closed on missing wedge subtype and wrong geometry", () => {
     expect(() => buildOwnerChartDraftV3({
       ...base, pattern: "Wedge", formationMovement: "UP",
