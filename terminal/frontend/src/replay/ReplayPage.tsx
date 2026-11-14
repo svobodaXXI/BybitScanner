@@ -12,7 +12,7 @@ import { visibleExecutionMarkers, visibleStopAmendMarkers, TELEGRAM_BUY_COLOR, T
 import { parseLocalReplayUpload } from "./l2ReplayUpload";
 import { l2Prehistory, l2Posthistory, l2PresentationEvents } from "./l2ChartContext";
 import { chartWilderDmi } from "./replayChartDmi";
-import { selectedL2MarketContext, loadedL2M5Coverage } from "./l2PeriodContext";
+import { selectedL2MarketContext } from "./l2PeriodContext";
 import { L2M5Catalog } from "./l2M5Catalog";
 import {
   matchPaperFactsToMarket, parsePaperEpisodeFacts, revealedPaperMarkers,
@@ -964,6 +964,33 @@ export function ReplayPage() {
     return () => controller.abort();
   }, [document]);
 
+  // If an owner extends the period into M5 already returned by an earlier
+  // Bybit request, expose the cached portion on the viewer WITHOUT fetching.
+  // This does not append executions or change the original source ledger.
+  useEffect(() => {
+    if (l2ContextFor !== document ||
+        document.execution_clock !== "ORIGINAL_EVENT_TIME_NOT_OHLC_M1" ||
+        selectedWindow.symbol !== document.symbol) return;
+    try {
+      const window = validateInclusiveWindow(selectedWindow.start, selectedWindow.end);
+      const status = m5Catalog.current.status(document.symbol!, document,
+        window.startMs, window.endExclusiveMs);
+      if (!status.complete) return;
+      const market = m5Catalog.current.asMarket(
+        document.symbol!, window.startMs, window.endExclusiveMs, document);
+      const expanded = selectedL2MarketContext(
+        document, [market], window.startMs, window.endExclusiveMs);
+      if (expanded.before.length) setL2Context(old =>
+        old.length === expanded.before.length &&
+        old.at(-1)?.end_ms === expanded.before.at(-1)?.end_ms
+          ? old : expanded.before);
+      if (expanded.after.length) setL2After(old =>
+        old.length === expanded.after.length &&
+        old.at(-1)?.end_ms === expanded.after.at(-1)?.end_ms
+          ? old : expanded.after);
+    } catch { /* Incomplete/invalid windows stay blocked, never fabricated. */ }
+  }, [document, l2ContextFor, selectedWindow, m5CatalogRevision]);
+
   // Keep the requested candle cadence independent of network packet arrivals.
   // A batch may contain many verified bars, but each timer tick reveals ONE M5.
   // A stalled Scanner frontier costs no playback time: never catch up in a burst.
@@ -1138,7 +1165,6 @@ export function ReplayPage() {
           return; // NO network request for fully covered selected M5.
         }
         const dayMs = 86_400_000;
-        const firstDay = Math.floor(window.startMs / dayMs) * dayMs;
         const lastDay = Math.ceil(window.endExclusiveMs / dayMs) * dayMs;
         if (lastDay > Date.now())
           throw new Error("Нельзя подгружать будущие или незакрытые свечи");
