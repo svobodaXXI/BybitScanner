@@ -789,7 +789,7 @@ try {
   const linkRequests = [];
   linkPage.on("request", req => linkRequests.push(req.url()));
   await linkPage.goto(localUrl + "?episode=" + episodeFacts.trade_episode_id, {
-    waitUntil: "networkidle",
+    waitUntil: "domcontentloaded",
   });
   const linkPassport = linkPage.getByRole("region", {name:"Паспорт PAPER-сделки"});
   await linkPassport.waitFor();
@@ -801,13 +801,13 @@ try {
   assert.equal(linkRequests.some(url => url.includes("/api/diary/") ||
     url.includes("/v5/order/")), false);
   await linkPage.goto(localUrl + "?episode=te_" + "c".repeat(24), {
-    waitUntil:"networkidle",
+    waitUntil:"domcontentloaded",
   });
   assert.match(await linkPage.getByRole("alert").innerText(),
     /отсутствует в локальной базе/);
   assert.equal(await linkPage.getByRole("region", {name:"Паспорт PAPER-сделки"}).count(), 0);
   await linkPage.goto(localUrl + "?episode=../../PAPER", {
-    waitUntil:"networkidle",
+    waitUntil:"domcontentloaded",
   });
   assert.match(await linkPage.getByRole("alert").innerText(),
     /Отклонена некорректная ссылка/);
