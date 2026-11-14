@@ -5,6 +5,8 @@ from contextlib import redirect_stdout
 from io import StringIO
 from unittest.mock import MagicMock, patch
 
+import pandas as pd
+
 config_stub = types.ModuleType("config")
 config_stub.TELEGRAM_TOKEN = "test-token"
 config_stub.TELEGRAM_CHAT_ID = "42"
@@ -31,6 +33,24 @@ sys.modules["analyzer.charts"] = charts_stub
 import analyzer.core as analyzer_core
 import main
 from signal.filter import evaluate_signal
+
+
+_LAST_OPEN_MS = 1_800_000_000_000
+_CLOSED_AT_NS = (_LAST_OPEN_MS + 300_000) * 1_000_000
+
+
+def _closed_test_candles(count):
+    """Real frame; the as-of clock in each test proves all bars are closed."""
+    return pd.DataFrame({
+        "time": [_LAST_OPEN_MS - (count - i - 1) * 300_000
+                 for i in range(count)],
+        "open": [100.0] * count,
+        "high": [101.0] * count,
+        "low": [99.0] * count,
+        "close": [100.0] * count,
+        "volume": [1.0] * count,
+        "turnover": [1.0] * count,
+    })
 
 
 def quality(name):
@@ -179,12 +199,13 @@ class AnalyzerAdmissionConfigurationTests(unittest.TestCase):
         _create_chart_mock,
         _create_report_mock,
     ):
-        candles = MagicMock()
-        candles.__len__.return_value = 10
-        load_candles_mock.return_value = candles
+        load_candles_mock.return_value = _closed_test_candles(60)
 
         with patch.object(analyzer_core, "MODE", "sniper"), \
-                patch.object(analyzer_core, "MIN_SCORE", 67):
+                patch.object(analyzer_core, "MIN_SCORE", 67), \
+                patch.object(analyzer_core.time, "time_ns", return_value=_CLOSED_AT_NS), \
+                patch.object(analyzer_core, "project_frozen_geometry_to_robot_1m",
+                             side_effect=ValueError("unrelated projection")):
             analyzer_core.analyze_symbol("BTCUSDT")
 
         evaluate_signal_mock.assert_called_once_with(
@@ -230,10 +251,7 @@ class AnalyzerRobotHandoffTests(unittest.TestCase):
         _create_chart_mock,
         _create_report_mock,
     ):
-        candles = MagicMock()
-        candles.__len__.return_value = 200
-        candles.iloc.__getitem__.return_value = {"time": 1_800_000}
-        load_candles_mock.return_value = candles
+        load_candles_mock.return_value = _closed_test_candles(200)
 
         geometry = {
             "upper_line": {"slope": -5.0, "intercept": 1100.0},
@@ -254,7 +272,8 @@ class AnalyzerRobotHandoffTests(unittest.TestCase):
             analyzer_core,
             "analyze_wedge",
             return_value={"pattern": "Falling Wedge", "geometry": geometry},
-        ), patch.object(analyzer_core, "TIMEFRAME", "5"):
+        ), patch.object(analyzer_core, "TIMEFRAME", "5"), \
+                patch.object(analyzer_core.time, "time_ns", return_value=_CLOSED_AT_NS):
             result = analyzer_core.analyze_symbol("BTCUSDT")["result"]
 
         self.assertTrue(result["robot_handoff_ready"])

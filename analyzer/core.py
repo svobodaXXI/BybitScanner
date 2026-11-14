@@ -19,6 +19,7 @@ analyzer.core
 """
 
 import traceback
+import time
 
 from pivots import find_pivots
 from wedge import analyze_wedge
@@ -63,6 +64,9 @@ def analyze_symbol(symbol, *, timeframe=None):
         # Candles
         # =========================
 
+        # Capture the decision cutoff BEFORE requesting OHLC, so a bar that
+        # closes during the HTTP request cannot retroactively become evidence.
+        decision_as_of_ms = time.time_ns() // 1_000_000
         df = load_candles(
             symbol,
             timeframe,
@@ -83,10 +87,26 @@ def analyze_symbol(symbol, *, timeframe=None):
             }
 
         # =========================
-        # Pivot
+        # Pivot: ONLY bars closed at the decision cutoff.
+        # Preserve the unmodified fetched frame in `data` for the existing
+        # independent observers (MIRROR/HORN/Box), which own their own cutoff.
+        # The Editor archive must receive this exact same Wedge frame.
         # =========================
 
-        highs, lows = find_pivots(df)
+        tf_ms = int(timeframe) * 60_000
+        wedge_df = df.loc[
+            df["time"] + tf_ms <= decision_as_of_ms
+        ].reset_index(drop=True)
+        if len(wedge_df) < 50:
+            return {
+                "symbol": symbol,
+                "result": None,
+                "highs": [],
+                "lows": [],
+                "data": df,
+            }
+
+        highs, lows = find_pivots(wedge_df)
 
         if (
             len(highs) < 3
@@ -111,13 +131,13 @@ def analyze_symbol(symbol, *, timeframe=None):
         # Wedge
         # =========================
 
-        current_index = len(df) - 1
+        current_index = len(wedge_df) - 1
 
         result = analyze_wedge(
             highs,
             lows,
             current_index=current_index,
-            candles=df
+            candles=wedge_df
         )
 
         if result is None:
@@ -150,17 +170,17 @@ def analyze_symbol(symbol, *, timeframe=None):
                 for name in ("upper_line", "lower_line")
             )
             upper, lower = anchor_indices
-            if any(index < 0 or index >= len(df) for index in (upper, lower)):
+            if any(index < 0 or index >= len(wedge_df) for index in (upper, lower)):
                 raise ValueError("formation anchor outside source candles")
             result["scanner_formation_id"] = (
-                f"{int(df.iloc[upper]['time'])}:{int(df.iloc[lower]['time'])}"
+                f"{int(wedge_df.iloc[upper]['time'])}:{int(wedge_df.iloc[lower]['time'])}"
             )
         except (KeyError, TypeError, ValueError, OverflowError):
             # Unknown identity cannot be used to create a new dedup namespace.
             result["scanner_formation_id"] = None
 
         try:
-            source_candle_time_ms = int(df.iloc[current_index]["time"])
+            source_candle_time_ms = int(wedge_df.iloc[current_index]["time"])
             result["scanner_source_candle_time_ms"] = source_candle_time_ms
             result["robot_geometry"] = project_frozen_geometry_to_robot_1m(
                 result["geometry"],
@@ -184,7 +204,7 @@ def analyze_symbol(symbol, *, timeframe=None):
         # =========================
 
         confirmation = confirm_signal(
-            df,
+            wedge_df,
             result
         )
 
@@ -258,7 +278,7 @@ def analyze_symbol(symbol, *, timeframe=None):
         # =========================
 
         create_chart(
-            df,
+            wedge_df,
             highs,
             lows,
             symbol,
@@ -282,7 +302,8 @@ def analyze_symbol(symbol, *, timeframe=None):
             "result": result,
             "highs": highs,
             "lows": lows,
-            "data": df
+            "data": df,
+            "wedge_decision_candles": wedge_df,
         }
 
     except Exception:
