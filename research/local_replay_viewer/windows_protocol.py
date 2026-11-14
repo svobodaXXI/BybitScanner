@@ -12,9 +12,9 @@ import re
 from urllib.request import urlopen
 
 SCHEME = "bybitscanner-simulator"
-URI = re.compile(r"bybitscanner-simulator://open\\?episode=(te_[a-f0-9]{24})\\Z")
-CLASSES_KEY = r"Software\\Classes\\bybitscanner-simulator"
-APP_KEY = r"Software\\BybitScanner\\MachineTime"
+URI = re.compile(r"bybitscanner-simulator://open\?episode=(te_[a-f0-9]{24})\Z")
+CLASSES_KEY = r"Software\Classes\bybitscanner-simulator"
+APP_KEY = r"Software\BybitScanner\MachineTime"
 
 
 def episode_from_url(raw: str) -> str:
@@ -44,7 +44,7 @@ def install_per_user_handler(script: Path, python: Path) -> bool:
     with registry.CreateKeyEx(registry.HKEY_CURRENT_USER, CLASSES_KEY) as key:
         registry.SetValueEx(key, "", 0, registry.REG_SZ, "BybitScanner Machine Time (local)")
         registry.SetValueEx(key, "URL Protocol", 0, registry.REG_SZ, "")
-    with registry.CreateKeyEx(registry.HKEY_CURRENT_USER, CLASSES_KEY + r"\\shell\\open\\command") as key:
+    with registry.CreateKeyEx(registry.HKEY_CURRENT_USER, CLASSES_KEY + r"\shell\open\command") as key:
         registry.SetValueEx(
             key, "", 0, registry.REG_SZ,
             f'"{python}" -B "{script}" --open-url "%1"',
