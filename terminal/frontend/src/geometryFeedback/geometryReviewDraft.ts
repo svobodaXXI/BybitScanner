@@ -12,12 +12,31 @@ export type TimestampDrawing = {
   type: DrawingObject["type"];
   anchors: TimestampAnchor[];
 };
+
+/** Owner review annotations only; not Scanner recognition or Robot admission. */
+export const EDITOR_REVIEW_PATTERNS = [
+  { value: "Rising Wedge", label: "Восходящий клин" },
+  { value: "Falling Wedge", label: "Нисходящий клин" },
+  { value: "Wedge", label: "Клин" },
+  { value: "Ikigai Box", label: "Коробка" },
+  { value: "Triangle", label: "Треугольник" },
+  { value: "Double Top/Bottom", label: "Двойная вершина / дно" },
+  { value: "Head and Shoulders", label: "Голова и плечи" },
+  { value: "G-Shaped", label: "Г-образный паттерн" },
+] as const;
+
+export function isEditorReviewPattern(value: unknown): value is typeof EDITOR_REVIEW_PATTERNS[number]["value"] {
+  return typeof value === "string" && EDITOR_REVIEW_PATTERNS.some((item) => item.value === value);
+}
+
 export type GeometryReviewDraft = {
   schema_version: 1;
   signal_id: string;
   snapshot_revision: string;
   bars_sha256: string;
-  label: "CONFIRMED" | "GEOMETRY_CORRECTED" | "FALSE_POSITIVE" | "UNCERTAIN";
+  label: "CONFIRMED" | "GEOMETRY_CORRECTED" | "PATTERN_CORRECTED" | "FALSE_POSITIVE" | "UNCERTAIN";
+  /** Optional human correction; Scanner's original type remains immutable. */
+  corrected_pattern?: typeof EDITOR_REVIEW_PATTERNS[number]["value"];
   corrected_boundaries: TimestampDrawing[];
   context_as_of_ms?: number;
   context_bars_sha256?: string;
@@ -42,6 +61,7 @@ export function matchesStoredGeometryReview(
       stored.context_as_of_ms !== submitted.context_as_of_ms ||
       stored.context_bars_sha256 !== submitted.context_bars_sha256 ||
       stored.label !== submitted.label ||
+      stored.corrected_pattern !== submitted.corrected_pattern ||
       stored.note !== submitted.note ||
       stored.idempotency_key !== submitted.idempotency_key ||
       !Array.isArray(savedBoundaries) ||
@@ -102,6 +122,7 @@ export function buildGeometryReviewDraft(input: {
   snapshotRevision: string;
   barsSha256: string;
   label: GeometryReviewDraft["label"];
+  correctedPattern?: GeometryReviewDraft["corrected_pattern"];
   drawings: readonly DrawingObject[];
   frozenCandles: readonly Candle[];
   contextAsOfMs?: number | null;
@@ -109,8 +130,13 @@ export function buildGeometryReviewDraft(input: {
 }): GeometryReviewDraft {
   if (!input.signalId.trim() || !input.snapshotRevision.trim() || !/^[0-9a-f]{64}$/i.test(input.barsSha256))
     throw new Error("Immutable signal provenance is missing");
-  if (!["CONFIRMED", "GEOMETRY_CORRECTED", "FALSE_POSITIVE", "UNCERTAIN"].includes(input.label))
+  if (!["CONFIRMED", "GEOMETRY_CORRECTED", "PATTERN_CORRECTED", "FALSE_POSITIVE", "UNCERTAIN"].includes(input.label))
     throw new Error("Invalid review label");
+  if (input.correctedPattern !== undefined && !isEditorReviewPattern(input.correctedPattern))
+    throw new Error("Неподдерживаемый правильный паттерн");
+  if ((input.label === "PATTERN_CORRECTED") !== (input.correctedPattern !== undefined) &&
+      input.label !== "GEOMETRY_CORRECTED")
+    throw new Error("Паттерн не соответствует виду исправления");
   const corrected_boundaries = input.label === "GEOMETRY_CORRECTED"
     ? serializeReviewDrawings(input.drawings, input.frozenCandles)
     : [];
@@ -132,6 +158,7 @@ export function buildGeometryReviewDraft(input: {
     snapshot_revision: input.snapshotRevision,
     bars_sha256: input.barsSha256,
     label: input.label,
+    ...(input.correctedPattern !== undefined ? { corrected_pattern: input.correctedPattern } : {}),
     corrected_boundaries,
   };
 }
@@ -177,6 +204,7 @@ export function buildEditorGeometryReview(input: {
   snapshotRevision: string;
   barsSha256: string;
   label: GeometryReviewDraft["label"];
+  correctedPattern?: GeometryReviewDraft["corrected_pattern"];
   referenceDrawings: readonly DrawingObject[];
   editableDrawings: readonly DrawingObject[];
   frozenCandles: readonly Candle[];
@@ -198,7 +226,8 @@ export function buildEditorGeometryReview(input: {
   if (input.editableDrawings.length !== normalized.length)
     throw new Error("Unexpected extra drawings in the correction");
   const draft = buildGeometryReviewDraft({ ...input, drawings: normalized });
-  if (input.label === "GEOMETRY_CORRECTED" || input.label === "CONFIRMED") {
+  if (input.label === "GEOMETRY_CORRECTED" || input.label === "CONFIRMED" ||
+      input.label === "PATTERN_CORRECTED") {
     // A confirmed original must match the owner's visible editable geometry.
     // Otherwise the review would silently discard the correction and poison
     // the source-positive examples used for offline detector evaluation.
@@ -207,8 +236,8 @@ export function buildEditorGeometryReview(input: {
     const unchanged = JSON.stringify(original) === JSON.stringify(owner);
     if (input.label === "GEOMETRY_CORRECTED" && unchanged)
       throw new Error("No geometry changes to submit");
-    if (input.label === "CONFIRMED" && !unchanged)
-      throw new Error("Линии изменены: выберите «Исправлена геометрия» или восстановите исходные");
+    if ((input.label === "CONFIRMED" || input.label === "PATTERN_CORRECTED") && !unchanged)
+      throw new Error("Линии изменены: передайте исправление геометрии");
   }
   return draft;
 }

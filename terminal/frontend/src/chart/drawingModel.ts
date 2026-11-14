@@ -26,6 +26,8 @@ export interface DrawingObject {
   style: { color: string; lineWidth: number };
   locked: boolean;
   hidden: boolean;
+  /** Only for read-only projected overlays; original Scanner reference stays dashed. */
+  referenceStroke?: "solid" | "dashed";
 }
 export interface DrawingDocument {
   version: 1;

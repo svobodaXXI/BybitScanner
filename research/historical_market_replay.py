@@ -13,6 +13,28 @@ from typing import Callable, Literal, Sequence
 Side = Literal["LONG", "SHORT"]
 VisualEventKind = Literal["CANDLE_CLOSED", "ENTRY_SIGNAL", "ENTRY_FILLED", "EXIT_FILLED"]
 
+def adverse_fill_price(price: Decimal, side: Side, slippage: Decimal, *, entry: bool) -> Decimal:
+    """Pure SIMULATION fill pricing, shared by replay and open-trigger scenarios."""
+    if side not in ("LONG", "SHORT"):
+        raise ValueError("invalid simulation side")
+    return price * (1 + slippage if (side == "LONG") == entry else 1 - slippage)
+
+
+def stop_take_reference(
+    *, side: Side, bar_open: Decimal, bar_high: Decimal, bar_low: Decimal,
+    stop: Decimal, take: Decimal,
+) -> tuple[bool, bool, Decimal]:
+    """Conservative stop-first OHLC policy, including worse stop gaps."""
+    if side == "LONG":
+        stop_hit, take_hit = bar_low <= stop, bar_high >= take
+        reference = min(bar_open, stop) if stop_hit else take
+    elif side == "SHORT":
+        stop_hit, take_hit = bar_high >= stop, bar_low <= take
+        reference = max(bar_open, stop) if stop_hit else take
+    else:
+        raise ValueError("invalid simulation side")
+    return stop_hit, take_hit, reference
+
 
 def _decimal(value: object) -> Decimal:
     try:
@@ -221,17 +243,11 @@ def replay_candles(
             sequence=event_sequence, kind=kind, time_ms=time_ms, **details,
         ))
 
-    def entry_fill(price: Decimal, side: Side) -> Decimal:
-        return price * (1 + slip if side == "LONG" else 1 - slip)
-
-    def exit_fill(price: Decimal, side: Side) -> Decimal:
-        return price * (1 - slip if side == "LONG" else 1 + slip)
-
     for bar in bars:
         # Only the new OPEN is known here. A pending close-based signal is
         # rechecked at its actual executable price, including adverse gaps.
         if pending is not None:
-            executable = entry_fill(bar.open, pending.side)
+            executable = adverse_fill_price(bar.open, pending.side, slip, entry=True)
             risk = executable - pending.stop if pending.side == "LONG" else pending.stop - executable
             reward = pending.take - executable if pending.side == "LONG" else executable - pending.take
             eligible = (
@@ -269,16 +285,12 @@ def replay_candles(
         for trade_id, intent, entry, entry_ms, entry_fee, notional in positions:
             # Gap through stop is filled at worse open. If STOP and TAKE
             # both touch within this candle, the STOP wins, as before.
-            if intent.side == "LONG":
-                stop_hit = bar.low <= intent.stop
-                take_hit = bar.high >= intent.take
-                exit_reference = min(bar.open, intent.stop) if stop_hit else intent.take
-            else:
-                stop_hit = bar.high >= intent.stop
-                take_hit = bar.low <= intent.take
-                exit_reference = max(bar.open, intent.stop) if stop_hit else intent.take
+            stop_hit, take_hit, exit_reference = stop_take_reference(
+                side=intent.side, bar_open=bar.open, bar_high=bar.high,
+                bar_low=bar.low, stop=intent.stop, take=intent.take,
+            )
             if stop_hit or take_hit:
-                exit_price = exit_fill(exit_reference, intent.side)
+                exit_price = adverse_fill_price(exit_reference, intent.side, slip, entry=False)
                 exit_fee = exit_price * intent.quantity * fee_rate
                 direction = Decimal(1) if intent.side == "LONG" else Decimal(-1)
                 gross = (exit_price - entry) * intent.quantity * direction

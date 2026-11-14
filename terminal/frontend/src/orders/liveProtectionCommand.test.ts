@@ -33,8 +33,8 @@ describe("executeLiveProtection", () => {
 
     expect(fetcher).toHaveBeenCalledTimes(1);
     const [url, options] = fetcher.mock.calls[0];
-    expect(url).toBe("/api/live/stop/amend");
-    expect(JSON.parse(options!.body as string)).toEqual(request);
+    expect(url).toBe("/api/manual-main/trade/stop/amend");
+    expect(JSON.parse(options!.body as string)).toEqual({ ...request, confirmed: true });
   });
 
   it("returns null when authority changed while the request was in flight", async () => {
@@ -50,7 +50,7 @@ describe("executeLiveProtection", () => {
 
     expect(result).toBeNull();
     expect(fetcher).toHaveBeenCalledWith(
-      "/api/live/take/delete",
+      "/api/manual-main/trade/take/delete",
       expect.objectContaining({ method: "POST" }),
     );
   });

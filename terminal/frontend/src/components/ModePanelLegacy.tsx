@@ -6,6 +6,7 @@ import {
   type MarketSide,
   type PaperLimitOrder,
   type PaperState,
+  type PaperOpenPosition,
 } from "../contracts/trading";
 import {
   formatPositionAverageEntry,
@@ -34,11 +35,9 @@ import { LiveFullCloseSubmissionController } from "../orders/liveFullCloseSubmis
 import { OpenPositionsOverlay } from "./OpenPositionsOverlay";
 import { DiaryOverlay } from "./DiaryOverlay";
 import { AccountMenu } from "./AccountMenu";
+import type { AccountMode, ModeAccountDescriptor } from "../accountWorkspace/modeAccountSelection";
 import { LiveAccountInventory } from "./LiveAccountInventory";
-import {
-  accountWorkspaceStore,
-  type AccountWorkspaceProjection,
-} from "../accountWorkspace/accountWorkspaceStore";
+import type { AccountWorkspaceProjection } from "../accountWorkspace/accountWorkspaceStore";
 import { StopSettings } from "./StopSettings";
 
 export type WorkspaceMode = "TERMINAL" | "AUTOPILOT" | "EDITOR";
@@ -96,11 +95,17 @@ export function ModePanel({
   accountOpen = false,
   onAccountToggle = () => {},
   accountWorkspaceProjection = null,
+  modeAccountId = null,
+  onModeAccountSelect,
+  modeAccountError = null,
   mutationsAllowed = true,
   liveMarketAllowed = false,
   liveLimitAllowed = false,
   liveProtectionAllowed = false,
+  refreshMain = async () => { throw new Error("independent_main_refresh_missing"); },
   openPositionsRequest = 0,
+  onRobotPositionsLoaded,
+  robotLivePositions,
 }: {
   mode: WorkspaceMode;
   onModeChange: (mode: WorkspaceMode) => void;
@@ -147,11 +152,17 @@ export function ModePanel({
   accountOpen?: boolean;
   onAccountToggle?: () => void;
   accountWorkspaceProjection?: AccountWorkspaceProjection | null;
+  modeAccountId?: string | null;
+  onModeAccountSelect?: (mode: AccountMode, account: ModeAccountDescriptor) => Promise<void>;
+  modeAccountError?: string | null;
   mutationsAllowed?: boolean;
   liveMarketAllowed?: boolean;
   liveLimitAllowed?: boolean;
   liveProtectionAllowed?: boolean;
+  refreshMain?: () => Promise<void>;
   openPositionsRequest?: number;
+  onRobotPositionsLoaded?: (positions: PaperOpenPosition[] | null) => void;
+  robotLivePositions?: PaperOpenPosition[] | null;
 }) {
   const tradingInputFocus = useTradingNumericInputFocusPolicy();
   const [executionStatus, setExecutionStatus] = useState("");
@@ -546,7 +557,9 @@ export function ModePanel({
     }
     liveDispatchActionIdRef.current = action.client_action_id;
     setLiveConfirmationSubmitting(true);
-    const result = await executeLiveMarketCommand(action, {
+    let result;
+    try {
+      result = await executeLiveMarketCommand(action, {
       currentAuthority: () => {
         const latest = marketAuthority.current;
         const currentProjection = latest.projection;
@@ -558,6 +571,12 @@ export function ModePanel({
           : null;
       },
     });
+    } catch {
+      setLiveConfirmation(null);
+      setLiveConfirmationSubmitting(false);
+      setExecutionStatus("LIVE outcome unknown — check Bybit; do not retry");
+      return;
+    }
     if (!result) {
       setLiveConfirmation(null);
       setLiveConfirmationSubmitting(false);
@@ -566,6 +585,9 @@ export function ModePanel({
     }
     setLiveConfirmation(null);
     setLiveConfirmationSubmitting(false);
+    if (result.status === "accepted_pending") {
+      try { await refreshMain(); } catch { /* exchange ACK is not fill proof */ }
+    }
     setExecutionStatus(result.status === "unknown"
       ? "LIVE result ambiguous — reconciling; do not retry"
       : result.status === "accepted_pending" ? "LIVE accepted — awaiting REST evidence"
@@ -590,7 +612,7 @@ export function ModePanel({
             },
             createClientActionId: () =>
               globalThis.crypto?.randomUUID?.() ?? `live-full-close-${Date.now()}`,
-            refreshActiveLive: accountWorkspaceStore.refreshActiveLive,
+            refreshActiveLive: refreshMain,
           },
         );
         setExecutionStatus(
@@ -604,7 +626,7 @@ export function ModePanel({
         );
       } catch {
         setExecutionStatus("LIVE Full Close transport uncertain — reconciling; do not retry");
-        await accountWorkspaceStore.refreshActiveLive();
+        await refreshMain();
       }
       return;
     }
@@ -739,12 +761,16 @@ export function ModePanel({
           <button
             key={candidate}
             className="workspace-nav-button"
-            aria-label={candidate === "TERMINAL" ? "Терминал" : candidate === "AUTOPILOT" ? "Автопилот" : "Редактор"}
-            title={candidate === "TERMINAL" ? "Терминал" : candidate === "AUTOPILOT" ? "Автопилот" : "Редактор"}
+            aria-label={candidate === "TERMINAL" ? "Терминал" : candidate === "AUTOPILOT" ? "Робот" : "Редактор"}
+            title={candidate === "TERMINAL" ? "Терминал" : candidate === "AUTOPILOT" ? "Робот" : "Редактор"}
             onClick={() => onModeChange(candidate)}
             type="button"
           >
-            <span aria-hidden="true" className="workspace-nav-icon">{candidate === "TERMINAL" ? "$" : candidate === "AUTOPILOT" ? "◉" : "✎"}</span>
+            <span aria-hidden="true" className="workspace-nav-icon">{candidate === "TERMINAL" ? "$" : candidate === "AUTOPILOT" ? (
+              <svg className="workspace-nav-symbol" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="4.5" y="7" width="15" height="13" rx="3" /><path d="M12 7V3.5M10.5 3.5h3M4.5 12H2.5M21.5 12h-2"/><circle cx="9" cy="12.5" r="1"/><circle cx="15" cy="12.5" r="1"/><path d="M9 17h6"/>
+              </svg>
+            ) : "✎"}</span>
           </button>
         ))}
       </nav>
@@ -942,18 +968,37 @@ export function ModePanel({
             <button
               className="paper-diary-button"
               type="button"
-              aria-label="???????? ???????"
-              title="???????? ???????"
+              aria-label="Статистика"
+              title="Статистика"
               onClick={() => setDiaryVisible(true)}
             >
-              D
+              <svg className="workspace-nav-symbol" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true">
+                <rect x="4" y="15" width="2.5" height="5" rx="0.3" />
+                <rect x="10.75" y="10" width="2.5" height="10" rx="0.3" />
+                <rect x="17.5" y="5" width="2.5" height="15" rx="0.3" />
+              </svg>
             </button>
             <button
               className="paper-autopilot-button"
               type="button"
-              aria-label="?????????"
-              title="?????????"
+              aria-label="Робот"
+              title="Робот"
               onClick={() => onModeChange("AUTOPILOT")}
+            >
+              <svg className="paper-autopilot-wheel-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="4.5" y="7" width="15" height="13" rx="3" />
+                <path d="M12 7V3.5M10.5 3.5h3M4.5 12H2.5M21.5 12h-2" />
+                <circle cx="9" cy="12.5" r="1" />
+                <circle cx="15" cy="12.5" r="1" />
+                <path d="M9 17h6" />
+              </svg>
+            </button>
+            <button
+              className="paper-autopilot-button"
+              type="button"
+              aria-label="Передать сделку роботу"
+              title="Передать сделку роботу — функция не подключена"
+              onClick={() => window.alert("Функция не подключена")}
             >
               <svg
                 className="paper-autopilot-wheel-icon"
@@ -1168,7 +1213,18 @@ export function ModePanel({
 
           {diaryVisible ? (
             <DiaryOverlay
+              initialSection="FINREZ"
+              accountMenu={{
+                workspaceProjection: accountWorkspaceProjection,
+                mode: onModeAccountSelect ? "TERMINAL" : undefined,
+                selectedAccountId: modeAccountId,
+                onSelectAccount: onModeAccountSelect,
+                modeAccountError,
+              }}
               accountKey={`${accountWorkspaceProjection?.account_id ?? "unknown"}:${accountWorkspaceProjection?.session_generation ?? 0}`}
+              statisticsScope={mode === "TERMINAL" && accountWorkspaceProjection
+                ? { accountId: accountWorkspaceProjection.account_id, owner: "MANUAL" }
+                : null}
               onClose={() => setDiaryVisible(false)}
             />
           ) : null}
@@ -1306,6 +1362,10 @@ export function ModePanel({
                   open={accountOpen}
                   onToggle={onAccountToggle}
                   workspaceProjection={accountWorkspaceProjection}
+                  mode={onModeAccountSelect ? "TERMINAL" : undefined}
+                  selectedAccountId={modeAccountId}
+                  onSelectAccount={onModeAccountSelect}
+                  modeAccountError={modeAccountError}
                   onActiveAccountChange={setActiveAccountLabel}
                 />
               </div>
@@ -1331,6 +1391,9 @@ export function ModePanel({
           {openPositionsVisible && accountWorkspaceProjection?.provider === "PAPER" ? (
             <OpenPositionsOverlay
               activeSymbol={symbol}
+              robotOnly={mode === "AUTOPILOT"}
+              liveRobotPositions={mode === "AUTOPILOT" ? robotLivePositions : undefined}
+              onInventoryLoaded={mode === "AUTOPILOT" ? onRobotPositionsLoaded : undefined}
               onClose={() => setOpenPositionsVisible(false)}
               onNavigate={(nextSymbol) => {
                 setOpenPositionsVisible(false);
@@ -1340,7 +1403,7 @@ export function ModePanel({
               applyPaperState={applyPaperState}
             />
           ) : null}
-          {openPositionsVisible && accountWorkspaceProjection?.provider !== "PAPER" ? (
+          {openPositionsVisible && mode !== "AUTOPILOT" && accountWorkspaceProjection && accountWorkspaceProjection.provider !== "PAPER" ? (
             <LiveAccountInventory
               activeAccountName={activeAccountLabel && activeAccountLabel.id === accountWorkspaceProjection?.account_id
                 ? activeAccountLabel.name : ""}

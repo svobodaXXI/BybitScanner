@@ -17,17 +17,31 @@
 .replay-rate { margin-left: auto; min-width: 190px; color: #c2d0e0; display: flex; align-items: center; gap: 10px; }
 .replay-rate input { width: 130px; accent-color: #72a9ee; }
 .replay-error { background: #44202a; padding: 12px; border-radius: 7px; color: #ffb6bf; }
-.replay-meta { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 14px 0; }
+.replay-meta { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 14px 0; }
 .replay-meta div { display: flex; flex-direction: column; gap: 6px; padding: 11px 13px; background: #151e2a; border: 1px solid #263447; border-radius: 8px; min-width: 0; }
 .replay-meta span { color: #98abc4; font-size: 12px; }
 .replay-meta strong { font-size: 14px; overflow-wrap: anywhere; font-weight: 600; }
 .replay-progress { height: 5px; border-radius: 5px; background: #29384c; overflow: hidden; }
 .replay-progress > div { height: 100%; background: #7db6ef; transition: width .08s linear; }
+.replay-playback-controls .replay-seek {
+  flex: 1 1 180px; width: auto; min-width: 125px; margin: 0 6px;
+  accent-color: #72a9ee; cursor: pointer;
+}
+.replay-player-icon { display: block; width: 21px; height: 21px; fill: currentColor; pointer-events: none; }
 .replay-note { padding: 9px 12px; background: #28251b; border: 1px solid #55442e; color: #d4be85; border-radius: 7px; }
 .replay-geometry-note { padding: 7px 11px; color: #9eb2cb; font-size: 12px; border: 1px solid #28394c; border-radius: 7px; margin: 8px 0; }
-.replay-grid { display: grid; grid-template-columns: minmax(0, 1fr) 255px; gap: 12px; margin-top: 12px; }
+.replay-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(255px, 300px); gap: 10px; margin-top: 12px; }
 .replay-chart-panel { min-width: 0; min-height: 710px; background: #121923; border: 1px solid #273649; border-radius: 9px; overflow: hidden; }
 .replay-chart-shell { width: 100%; }
+.replay-events { min-width: 0; max-height: 770px; display: flex; flex-direction: column; background: #121923; border: 1px solid #273649; border-radius: 9px; overflow: hidden; }
+.replay-events h2 { margin: 0; padding: 14px; font-size: 15px; border-bottom: 1px solid #2b3e55; }
+.replay-events-list { overflow-y: auto; min-height: 0; padding: 10px; }
+.replay-events-list p { color: #8b9cb4; }
+.replay-events-item { display: grid; gap: 5px; padding: 10px 4px; border-bottom: 1px solid #273649; font-size: 12px; line-height: 1.5; }
+.replay-events-item time { color: #91a8c5; font-size: 11px; }
+.replay-events-item span { color: #e0e8f5; }
+.replay-chart-symbol { margin-right: 6px; font-size: 15px; color: #eaf1fc; }
+.replay-timeframe-switch button:disabled { opacity: .4; cursor: not-allowed; }
 .replay-chart-frame { position: relative; width: 100%; }
 .replay-chart { width: 100%; height: 660px; }
 .replay-execution-overlay {
@@ -40,13 +54,6 @@
 .replay-dmi-minus { color: #f16a72; font-variant-numeric: tabular-nums; }
 .replay-dmi-adx { color: #60a5fa; font-variant-numeric: tabular-nums; }
 .replay-dmi-level { color: #a5b2c4; }
-.replay-events { background: #141d28; border: 1px solid #273649; border-radius: 9px; padding: 14px; min-height: 470px; }
-.replay-events h2 { margin: 0 0 13px; font-size: 15px; }
-.replay-events p { color: #8799b0; }
-.replay-event { border-top: 1px solid #28384b; padding: 10px 0; display: flex; flex-direction: column; gap: 4px; }
-.replay-event time { color: #93a8c1; font-size: 11px; }
-.replay-event strong { font-size: 13px; font-weight: 550; }
-.replay-event small { color: #70839d; overflow-wrap: anywhere; }
 .replay-footer { color: #8d9eb4; font-size: 12px; padding: 14px 0; }
 @media(max-width: 760px) {
   .replay-shell { padding: 12px; }
@@ -54,9 +61,9 @@
   .replay-rate { margin-left: 0; }
   .replay-meta { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .replay-grid { grid-template-columns: 1fr; }
+  .replay-events { max-height: 280px; }
   .replay-chart { height: 560px; }
   .replay-chart-panel { min-height: 610px; }
-  .replay-events { min-height: 140px; }
 }
 .replay-diagnostics { margin: 8px 0; padding: 7px 11px; color: #9eb2cb; border: 1px solid #28394c; border-radius: 7px; font-size: 12px; }
 .replay-diagnostics summary { cursor: pointer; font-weight: 600; }
@@ -67,6 +74,10 @@
 .replay-timeframe-switch button[aria-pressed="true"] { background: #30638b; border-color: #75b2df; color: white; }
 .replay-playback-controls { display: flex; flex: 1 1 auto; align-items: center; flex-wrap: wrap; gap: 6px; margin-left: 12px; }
 .replay-playback-controls button { white-space: nowrap; }
+.replay-playback-controls button.replay-player-button {
+  width: 36px; height: 32px; display: inline-flex; align-items: center;
+  justify-content: center; padding: 5px; color: #e8eef8;
+}
 .replay-playback-controls button:disabled { opacity: .4; cursor: default; }
 .replay-playback-controls .replay-rate { margin-left: auto; min-width: 190px; font-size: 12px; white-space: nowrap; }
 .replay-playback-controls .replay-rate input { width: 125px; }
@@ -88,3 +99,8 @@
   .replay-playback-controls { margin-left: 0; flex-basis: 100%; }
   .replay-playback-controls .replay-rate { margin-left: 0; }
 }
+
+/* The prepared source is visible, but neither stale nor synthetic candles are. */
+.replay-chart-pending { display: flex; align-items: center; justify-content: center;
+  min-height: 660px; padding: 24px; text-align: center; color: #94a9c3;
+  background: #121923; }

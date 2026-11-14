@@ -7,15 +7,21 @@ import { AutopilotDiaryControls } from "./AutopilotDiaryControls";
 import { AutopilotFirstScreen } from "./AutopilotFirstScreen";
 import { AccountMenu } from "./AccountMenu";
 import { RobotManagerPanel } from "./RobotManagerPanel";
+import type { PaperOpenPosition } from "../contracts/trading";
+import type { RobotPositionOrigin } from "../autopilot/robotPositionOrigin";
 
 export type WorkspaceMode = LegacyWorkspaceMode;
 
 type ModePanelProps = ComponentProps<typeof LegacyModePanel> & {
   autopilotTradeEpisodeId?: string | null;
+  onRobotPositionsLoaded?: (positions: PaperOpenPosition[] | null) => void;
+  verifiedRobotPosition?: PaperOpenPosition | null;
+  verifiedRobotOrigin?: RobotPositionOrigin | null;
 };
 
 export function ModePanel({
   autopilotTradeEpisodeId = null,
+  onRobotPositionsLoaded,
   ...props
 }: ModePanelProps) {
   const [openPositionsRequest, setOpenPositionsRequest] = useState(0);
@@ -26,7 +32,8 @@ export function ModePanel({
 
   return (
     <>
-      <LegacyModePanel {...props} openPositionsRequest={openPositionsRequest} />
+      <LegacyModePanel {...props} openPositionsRequest={openPositionsRequest}
+        onRobotPositionsLoaded={onRobotPositionsLoaded} />
       {props.mode === "AUTOPILOT" ? (
         <>
           {robotManagerOpen ? (
@@ -35,15 +42,34 @@ export function ModePanel({
             <>
               <AutopilotFirstScreen
                 accountKey={accountKey}
-                onOpenPositions={() => setOpenPositionsRequest((value) => value + 1)}
+                verifiedPosition={props.verifiedRobotPosition ?? null}
+                verifiedOrigin={props.verifiedRobotOrigin ?? null}
+                oneWorkingVolumeUsdt={props.paperState?.one_wv_usdt ?? null}
+                onPositionsLoaded={onRobotPositionsLoaded}
+                onOpenPositions={props.accountWorkspaceProjection?.provider === "PAPER"
+                  ? () => setOpenPositionsRequest((value) => value + 1)
+                  : undefined}
                 onTradeDetails={setRequestedTradeEpisodeId}
                 onStatistics={() => setStatisticsRequest((value) => value + 1)}
                 onTerminal={() => props.onModeChange("TERMINAL")}
+                onEditor={() => props.onModeChange("EDITOR")}
                 onRobotControls={() => setRobotManagerOpen(true)}
-                accountControl={<AccountMenu open={props.accountOpen ?? false} onToggle={props.onAccountToggle ?? (() => {})} workspaceProjection={props.accountWorkspaceProjection ?? null} />}
+                accountControl={<AccountMenu open={props.accountOpen ?? false}
+                  onToggle={props.onAccountToggle ?? (() => {})}
+                  workspaceProjection={props.accountWorkspaceProjection ?? null}
+                  mode={props.onModeAccountSelect ? "AUTOPILOT" : undefined} selectedAccountId={props.modeAccountId}
+                  onSelectAccount={props.onModeAccountSelect}
+                  modeAccountError={props.modeAccountError} />}
               />
               <AutopilotDiaryControls
             accountKey={accountKey}
+            accountMenu={{
+              workspaceProjection: props.accountWorkspaceProjection ?? null,
+              mode: props.onModeAccountSelect ? "AUTOPILOT" : undefined,
+              selectedAccountId: props.modeAccountId,
+              onSelectAccount: props.onModeAccountSelect,
+              modeAccountError: props.modeAccountError,
+            }}
             tradeEpisodeId={autopilotTradeEpisodeId}
             requestedTradeEpisodeId={requestedTradeEpisodeId}
             requestedStatisticsCount={statisticsRequest}

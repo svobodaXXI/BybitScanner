@@ -30,9 +30,9 @@ async function dispatchLiveMarketCommand(
     currentAuthority: () => { accountId: string; sessionGeneration: number } | null;
   },
 ): Promise<LiveMarketCommandResponse | null> {
-  const response = await (dependencies.fetcher ?? fetch)("/api/live/market", {
+  const response = await (dependencies.fetcher ?? fetch)("/api/manual-main/trade/market", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(request),
+    body: JSON.stringify({ ...request, confirmed: true }),
   });
   const result = await response.json() as LiveMarketCommandResponse;
   const current = dependencies.currentAuthority();

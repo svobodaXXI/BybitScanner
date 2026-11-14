@@ -1,5 +1,9 @@
 export const marketApiRoutes = {
   accounts: "/api/accounts",
+  modeAccountPreferences: "/api/accounts/mode-preferences",
+  manualMainAccounts: "/api/manual-main/accounts",
+  manualMainRefresh: (accountId: string) => `/api/manual-main/accounts/${encodeURIComponent(accountId)}/refresh`,
+  manualMainSummary: (accountId: string) => `/api/manual-main/accounts/${encodeURIComponent(accountId)}/summary`,
   accountRefresh: (accountId: string) => `/api/accounts/${encodeURIComponent(accountId)}/refresh`,
   accountSummary: (accountId: string) => `/api/accounts/${encodeURIComponent(accountId)}/summary`,
   accountActivate: (accountId: string) => `/api/accounts/${encodeURIComponent(accountId)}/activate`,
@@ -11,8 +15,14 @@ export const marketApiRoutes = {
   paperState: (symbol: string) => `/api/paper-state?symbol=${encodeURIComponent(symbol)}`,
   openPositions: "/api/open-positions",
   diaryTrades: "/api/diary/trades",
+  diaryTickerFinrez: (accountId: string, owner: "MANUAL" | "ROBOT", period: "DAY" | "WEEK" | "MONTH" | "YEAR" | "ALL") =>
+    `/api/diary/ticker-finrez?account_id=${encodeURIComponent(accountId)}&owner=${owner}&period=${period}`,
+  diaryEpisodeFacts: (accountId: string, owner: "MANUAL" | "ROBOT", episodeId: string, revision: number) =>
+    `/api/diary/episode-facts?account_id=${encodeURIComponent(accountId)}&owner=${owner}&trade_episode_id=${encodeURIComponent(episodeId)}&source_revision=${revision}`,
   diarySetups: "/api/diary/setups",
   diaryStatistics: "/api/diary/statistics",
+  diaryScopedStatistics: (accountId: string, owner: "MANUAL" | "ROBOT") =>
+    `/api/diary/scoped-statistics?account_id=${encodeURIComponent(accountId)}&owner=${owner}`,
   scannerMirrorLevels: "/api/scanner/mirror-levels",
   trades: (symbol: string) => `/api/public-trades/stream?symbol=${encodeURIComponent(symbol)}`,
   workspaceState: "/api/workspace/state",

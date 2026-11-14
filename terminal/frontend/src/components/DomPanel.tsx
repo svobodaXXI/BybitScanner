@@ -1,5 +1,6 @@
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import type { NormalizedOrderBook, OwnOrder } from "../contracts/marketData";
+import type { PaperOpenPosition } from "../contracts/trading";
 import {
   DOM_ROW_HEIGHT_REM,
   DOM_VISIBLE_ROWS,
@@ -29,6 +30,8 @@ export function DomPanel({
   fastLimitActive = false,
   onFastLimitPriceSelect,
   onOwnOrderCancel = () => {},
+  ownOrdersReadOnly = false,
+  positionSummary = null,
   onViewportGeometryChange,
 }: {
   book: NormalizedOrderBook;
@@ -40,6 +43,9 @@ export function DomPanel({
   fastLimitActive?: boolean;
   onFastLimitPriceSelect?: (price: string) => void;
   onOwnOrderCancel?: (orderId: string) => void;
+  ownOrdersReadOnly?: boolean;
+  /** Only a proven Robot-linked PAPER position; display-only. */
+  positionSummary?: PaperOpenPosition | null;
   onViewportGeometryChange?: (geometry: DomViewportGeometry) => void;
 }) {
   const [viewportGeometry, setViewportGeometry] = useState<DomViewportGeometry>({
@@ -121,7 +127,7 @@ export function DomPanel({
   }, [book, compression, locked, onCenterPriceChange]);
 
   return (
-    <section className="dom-panel workspace-panel" aria-label="DOM order book">
+    <section className={`dom-panel workspace-panel${positionSummary ? " has-position-status" : ""}`} aria-label="DOM order book">
       <div
         className="dom-ladder-viewport"
         ref={ladderViewportRef}
@@ -232,7 +238,14 @@ export function DomPanel({
               key={level.price}
             >
               <span className="order-dots">
-                {orders.map((order) => (
+                {orders.map((order) => ownOrdersReadOnly ? (
+                  <span
+                    aria-label={`PAPER Limit ${order.id}`}
+                    className={`order-dot ${order.side.toLowerCase()}`}
+                    key={order.id}
+                    title={`${order.notionalUsdt} USDT · только просмотр`}
+                  />
+                ) : (
                   <button
                     aria-label={`Cancel Limit ${order.id}`}
                     className={`order-dot ${order.side.toLowerCase()}`}
@@ -327,6 +340,13 @@ export function DomPanel({
         })}
         </div>
         </div>
+      {positionSummary ? (
+        <output className="dom-robot-position-status" aria-label="Позиция робота в стакане">
+          <strong>{positionSummary.position_side === "Long" ? "LONG" : "SHORT"}</strong>
+          <span>{positionSummary.position_quantity} · {positionSummary.engaged_notional_usdt} USDT</span>
+          <span>PnL (снимок): {positionSummary.unrealized_pnl ?? "—"} USDT</span>
+        </output>
+      ) : null}
     </section>
   );
 }

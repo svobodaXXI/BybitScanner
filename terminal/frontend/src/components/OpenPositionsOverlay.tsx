@@ -22,12 +22,20 @@ export function OpenPositionsOverlay({
   onNavigate,
   runPaperMutation,
   applyPaperState,
+  robotOnly = false,
+  onInventoryLoaded,
+  liveRobotPositions,
 }: {
   activeSymbol: string;
   onClose: () => void;
   onNavigate: (symbol: string) => void;
   runPaperMutation: MutationRunner;
   applyPaperState: (state: PaperState) => boolean;
+  /** Autopilot reuses this inventory for Robot-linked positions, view-only. */
+  robotOnly?: boolean;
+  onInventoryLoaded?: (positions: PaperOpenPosition[]) => void;
+  /** Current inventory shared by Autopilot observation; null means unverified. */
+  liveRobotPositions?: PaperOpenPosition[] | null;
 }) {
   const [positions, setPositions] = useState<PaperOpenPosition[]>([]);
   const [loading, setLoading] = useState(true);
@@ -43,15 +51,25 @@ export function OpenPositionsOverlay({
   const bulkActionId = useRef<string | null>(null);
   const bulkTargetSymbols = useRef(new Set<string>());
   const fullCloseSubmission = useRef(new PaperFullCloseSubmissionController());
-  const activePositionIndex = positions.findIndex(
+  // The read-only Autopilot observation owns the refresh timer. Reuse its
+  // inventory instead of creating another poller inside Terminal's overlay.
+  const liveInventoryUnavailable = robotOnly && liveRobotPositions === null;
+  const observedPositions = robotOnly && liveRobotPositions !== undefined
+    ? liveRobotPositions ?? [] : positions;
+  const attributionAvailable = !liveInventoryUnavailable &&
+    observedPositions.every((position) => position.robot_trade_id !== undefined);
+  const visiblePositions = robotOnly
+    ? observedPositions.filter((position) => Boolean(position.robot_trade_id))
+    : observedPositions;
+  const activePositionIndex = visiblePositions.findIndex(
     (position) => position.symbol === activeSymbol,
   );
   const displayedPositions = activePositionIndex <= 0
-    ? positions
+    ? visiblePositions
     : [
-        positions[activePositionIndex],
-        ...positions.slice(0, activePositionIndex),
-        ...positions.slice(activePositionIndex + 1),
+        visiblePositions[activePositionIndex],
+        ...visiblePositions.slice(0, activePositionIndex),
+        ...visiblePositions.slice(activePositionIndex + 1),
       ];
 
   const refresh = useCallback(async () => {
@@ -65,6 +83,8 @@ export function OpenPositionsOverlay({
         throw new Error("inventory response is invalid");
       }
       setPositions(result.positions);
+      // Reuse this exact fresh inventory for the selected Robot chart; no second poll.
+      if (robotOnly) onInventoryLoaded?.(result.positions);
       const openSymbols = new Set(result.positions.map((item) => item.symbol));
       for (const symbol of [...ambiguousSymbols.current]) {
         if (!openSymbols.has(symbol)) ambiguousSymbols.current.delete(symbol);
@@ -94,13 +114,14 @@ export function OpenPositionsOverlay({
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [robotOnly, onInventoryLoaded]);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
   const closePosition = async (position: PaperOpenPosition) => {
+    if (robotOnly) return;
     const symbol = position.symbol;
     if (ambiguousSymbols.current.has(symbol)) return;
     const actionId = actionIds.current.get(symbol)
@@ -188,6 +209,7 @@ export function OpenPositionsOverlay({
   };
 
   const closeAll = async () => {
+    if (robotOnly) return;
     if (positions.length === 0 || bulkPending || ambiguousSymbols.current.size > 0) return;
     const targets = positions.map((position) => position.symbol);
     const actionId = bulkActionId.current ?? `paper-close-all-${Date.now()}`;
@@ -275,16 +297,16 @@ export function OpenPositionsOverlay({
 
   return (
     <div className="paper-open-positions-backdrop" role="presentation">
-      <section className="paper-open-positions" aria-label="Открытые позиции">
+      <section className="paper-open-positions" aria-label={robotOnly ? "Открытые позиции робота" : "Открытые позиции"}>
         <header>
           <div className="paper-open-positions-title">
-            <h2>Открытые позиции</h2>
-            <button
+            <h2>{robotOnly ? "Открытые позиции робота" : "Открытые позиции"}</h2>
+            {!robotOnly ? <button
               className="paper-open-positions-close-all"
               disabled={positions.length === 0 || bulkPending || pendingSymbol !== null || ambiguousSymbols.current.size > 0}
               onClick={() => setConfirmAll(true)}
               type="button"
-            >Закрыть все</button>
+            >Закрыть все</button> : null}
           </div>
           <div className="paper-open-positions-actions">
             <button
@@ -303,11 +325,14 @@ export function OpenPositionsOverlay({
             <button onClick={() => void refresh()} type="button">Повторить</button>
           </div>
         ) : null}
-        {!loading && !loadError && positions.length === 0 ? (
-          <p className="paper-open-positions-state">Нет открытых позиций</p>
+        {!loading && !loadError && robotOnly && !attributionAvailable ? (
+          <p className="paper-open-positions-state">Принадлежность позиций роботу не подтверждена</p>
+        ) : null}
+        {!loading && !loadError && visiblePositions.length === 0 && (!robotOnly || attributionAvailable) ? (
+          <p className="paper-open-positions-state">{robotOnly ? "Нет подтверждённых открытых позиций робота" : "Нет открытых позиций"}</p>
         ) : null}
 
-        {positions.length > 0 ? (
+        {visiblePositions.length > 0 ? (
           <div className="paper-open-positions-list">
             {displayedPositions.map((position) => {
               const sideClass = position.position_side === "Long" ? "long" : "short";
@@ -320,7 +345,7 @@ export function OpenPositionsOverlay({
                 <article
                   className={`paper-open-position-row ${sideClass}${activeSymbolClass}`}
                   key={position.symbol}
-                  aria-label={`Открыть позицию ${position.symbol} в терминале`}
+                  aria-label={robotOnly ? `Показать позицию ${position.symbol} на графике` : `Открыть позицию ${position.symbol} в терминале`}
                   onClick={() => setNavigatePosition(position)}
                   onKeyDown={(event) => {
                     if (event.key === "Enter" || event.key === " ") {
@@ -335,7 +360,7 @@ export function OpenPositionsOverlay({
                     <strong>{position.symbol}</strong>
                     <span>{position.position_side.toUpperCase()}</span>
                   </div>
-                  <button
+                  {!robotOnly ? <button
                     aria-label={`Закрыть позицию ${position.symbol}`}
                     className="paper-open-position-close"
                     disabled={disabled}
@@ -344,7 +369,7 @@ export function OpenPositionsOverlay({
                       setConfirmPosition(position);
                     }}
                     type="button"
-                  >×</button>
+                  >×</button> : null}
                   <div className="paper-open-position-metrics">
                     <span>Объем: {Number(position.engaged_notional_usdt).toFixed(2)} USDT</span>
                     <span>⚔ {Number(position.engaged_wv).toFixed(1)}</span>
@@ -366,7 +391,7 @@ export function OpenPositionsOverlay({
           </div>
         ) : null}
 
-        {confirmPosition ? (
+        {!robotOnly && confirmPosition ? (
           <div className="paper-open-position-confirm" role="presentation">
             <section role="dialog" aria-modal="true" aria-label={`Закрыть всю позицию ${confirmPosition.symbol} по рынку?`}>
               <strong>Закрыть всю позицию {confirmPosition.symbol} по рынку?</strong>
@@ -379,16 +404,16 @@ export function OpenPositionsOverlay({
         ) : null}
         {navigatePosition ? (
           <div className="paper-open-position-confirm" role="presentation">
-            <section role="dialog" aria-modal="true" aria-label={`Перейти в терминал ${navigatePosition.symbol}?`}>
-              <strong>Перейти в терминал {navigatePosition.symbol}?</strong>
+            <section role="dialog" aria-modal="true" aria-label={robotOnly ? `Показать позицию ${navigatePosition.symbol} на графике?` : `Перейти в терминал ${navigatePosition.symbol}?`}>
+              <strong>{robotOnly ? `Показать позицию ${navigatePosition.symbol} на графике?` : `Перейти в терминал ${navigatePosition.symbol}?`}</strong>
               <div>
-                <button onClick={() => onNavigate(navigatePosition.symbol)} type="button">Перейти</button>
+                <button onClick={() => onNavigate(navigatePosition.symbol)} type="button">{robotOnly ? "Показать" : "Перейти"}</button>
                 <button onClick={() => setNavigatePosition(null)} type="button">Отмена</button>
               </div>
             </section>
           </div>
         ) : null}
-        {confirmAll ? (
+        {!robotOnly && confirmAll ? (
           <div className="paper-open-position-confirm" role="presentation">
             <section role="dialog" aria-modal="true" aria-label="Закрыть все открытые позиции по рынку?">
               <strong>Закрыть все открытые PAPER позиции по рынку?</strong>

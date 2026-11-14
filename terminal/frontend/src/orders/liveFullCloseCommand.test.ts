@@ -21,8 +21,8 @@ describe("executeLiveFullClose", () => {
     );
     expect(result?.status).toBe("accepted_pending");
     expect(fetcher).toHaveBeenCalledOnce();
-    expect(fetcher.mock.calls[0]?.[0]).toBe("/api/live/full-close");
-    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toEqual(request);
+    expect(fetcher.mock.calls[0]?.[0]).toBe("/api/manual-main/trade/full-close");
+    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toEqual({ ...request, confirmed: true });
   });
 
   it("drops a response after authority changes", async () => {

@@ -8,9 +8,10 @@ from unittest import mock
 import pytest
 
 from tools.vps_release_resume import (
-    ResumeBlocked, check_resume, _systemd_state, _assert_no_listeners, UNIT_DIR,
+    ResumeBlocked, check_resume, _systemd_state, _assert_no_listeners,
+    _assert_no_paper_listeners, UNIT_DIR,
 )
-from tools.vps_systemd_unit_prepare import UNITS
+from tools.vps_systemd_unit_prepare import PAPER_UNITS, UNITS
 
 SHA = "a" * 40
 
@@ -43,7 +44,39 @@ def test_installed_exact_release_stopped_and_units_resume_without_mutation():
             states=lambda unit: calls.append(("show", unit)),
             listeners=lambda: calls.append(("tcp",)))
         assert result.startswith("RESUME_READY:")
-        assert calls == [("show", unit) for unit in UNITS] + [("tcp",)]
+        assert calls == [("show", unit) for unit in PAPER_UNITS] + [("tcp",)]
+
+
+
+def test_paper_resume_allows_running_main_while_rechecking_all_unit_bytes():
+    with TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        installed = fixture(root)
+        observed = []
+        result = check(
+            root, installed,
+            states=lambda unit: observed.append(unit),
+            listeners=lambda: observed.append("PAPER_tcp_clear"),
+        )
+        assert result.startswith("RESUME_READY:")
+        assert UNITS[-1] not in observed
+        assert observed[-1] == "PAPER_tcp_clear"
+        # MAIN still belongs to installed release identity; running service
+        # may not bypass its reviewed systemd source file.
+        (installed / UNITS[-1]).write_text("unreviewed change")
+        with pytest.raises(ResumeBlocked, match="installed_unit_does_not_match"):
+            check(root, installed)
+
+
+def test_paper_only_resume_allows_main_listener_but_installer_rejects_it():
+    snapshot = " h\n 0: 0100007F:2243 00000000:0000 0A x\n"
+    with mock.patch("tools.vps_release_resume.Path.read_text",
+                    side_effect=[snapshot, " h\n"]):
+        _assert_no_paper_listeners()
+    with mock.patch("tools.vps_release_resume.Path.read_text",
+                    side_effect=[snapshot, " h\n"]):
+        with pytest.raises(ResumeBlocked, match="PAPER_port_owned"):
+            _assert_no_listeners()
 
 
 def test_target_mismatch_never_touches_service_or_listener():

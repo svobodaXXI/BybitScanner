@@ -19,10 +19,10 @@ export async function executeLiveFullClose(
   currentAuthority: () => LiveAuthority | null,
   fetcher: typeof fetch = fetch,
 ): Promise<LiveFullCloseResponse | null> {
-  const response = await fetcher("/api/live/full-close", {
+  const response = await fetcher("/api/manual-main/trade/full-close", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(request),
+    body: JSON.stringify({ ...request, confirmed: true }),
   });
   const result = await response.json() as LiveFullCloseResponse;
   const current = currentAuthority();

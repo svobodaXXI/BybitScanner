@@ -112,6 +112,20 @@ describe("StopLine", () => {
     vi.unstubAllGlobals();
   });
 
+  it("keeps observed STOP and TAKE levels noninteractive", () => {
+    const onEdit = vi.fn();
+    const onDelete = vi.fn();
+    const view = render(<StopLine leg="STOP" price="98" top={100} rightOffset={64} mode="ACTIVE"
+      onEdit={onEdit} onDelete={onDelete} readOnly />);
+    fireEvent.pointerDown(screen.getByLabelText("Active STOP at 98"), { pointerId: 10 });
+    expect(screen.queryByRole("button", { name: "Edit STOP" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete STOP" })).not.toBeInTheDocument();
+    view.rerender(<StopLine leg="TAKE" price="103" top={95} rightOffset={64} mode="CREATE" readOnly />);
+    expect(screen.queryByRole("button", { name: "Confirm TAKE" })).not.toBeInTheDocument();
+    expect(onEdit).not.toHaveBeenCalled();
+    expect(onDelete).not.toHaveBeenCalled();
+  });
+
   it("parameterizes the same lifecycle as a turquoise TAKE line", () => {
     render(<StopLine leg="TAKE" price="103" top={80} rightOffset={64} mode="CREATE" />);
     const line = screen.getByRole("slider", { name: "Pending TAKE at 103" });

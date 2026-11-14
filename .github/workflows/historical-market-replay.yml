@@ -64,7 +64,7 @@ jobs:
       - name: Install locked frontend dependencies
         run: npm ci
       - name: Validate standalone replay model and Telegram-style execution markers
-        run: npm run test -- src/replay/replayModel.test.ts src/replay/executionMarkers.test.ts
+        run: npm run test -- src/replay/replayModel.test.ts src/replay/executionMarkers.test.ts src/replay/runSetup.test.ts
       - name: Build main terminal without experimental simulator
         run: |
           npm run build
@@ -78,9 +78,32 @@ jobs:
           cp ../../research/local_replay_viewer/START_LOCAL.cmd "$RUNNER_TEMP/machine-time/START_LOCAL.cmd"
           cp ../../research/local_replay_viewer/README.txt "$RUNNER_TEMP/machine-time/README.txt"
           cp ../../research/local_replay_viewer/smoke_package.py "$RUNNER_TEMP/machine-time/smoke_package.py"
+          cp ../../research/local_replay_viewer/box_lifecycle_smoke.py "$RUNNER_TEMP/machine-time/box_lifecycle_smoke.py"
           cp -r ../../research/local_replay_viewer/dist "$RUNNER_TEMP/machine-time/dist"
           cp ../../research/export_historical_replay.py ../../research/historical_candle_feed.py ../../research/historical_market_replay.py ../../research/h017_local_risk.py ../../research/h017_blue_open_preview.py ../../research/wilder_dmi.py ../../research/causal_trend_geometry.py "$RUNNER_TEMP/machine-time/research/"
+          # Only original pure Scanner/Robot policy and isolated virtual exchange:
+          # never bundle actual Scanner process, private API, PAPER DB or keys.
+          cp -r ../../research/simulator_v2 "$RUNNER_TEMP/machine-time/research/"
+          cp -r ../../wedge ../../geometry ../../signal "$RUNNER_TEMP/machine-time/"
+          mkdir -p "$RUNNER_TEMP/machine-time/analyzer"
+          cp ../../analyzer/__init__.py ../../analyzer/scoring.py "$RUNNER_TEMP/machine-time/analyzer/"
+          cp ../../pivots.py ../../confirmation.py ../../scanner_geometry_cursor.py "$RUNNER_TEMP/machine-time/"
+          cp ../../robot_state_machine.py ../../robot_entry_limit.py ../../robot_protection.py ../../robot_l_shape.py ../../retest_account_risk.py ../../retest_campaign.py "$RUNNER_TEMP/machine-time/"
+          cp ../../mirror_retest_robot.py ../../mirror_retest_observer.py ../../mirror_retest_robot_bridge.py ../../retest_calibration.py ../../robot_failure_diagnostics.py ../../robot_market_confirmation.py ../../robot_partial_fill.py ../../robot_candidate_store.py "$RUNNER_TEMP/machine-time/"
+          mkdir -p "$RUNNER_TEMP/machine-time/terminal/api" "$RUNNER_TEMP/machine-time/terminal/domain" "$RUNNER_TEMP/machine-time/terminal/application" "$RUNNER_TEMP/machine-time/terminal/paper" "$RUNNER_TEMP/machine-time/terminal/market_data" "$RUNNER_TEMP/machine-time/terminal/persistence"
+          cp ../../terminal/api/models.py "$RUNNER_TEMP/machine-time/terminal/api/"
+          cp ../../terminal/domain/models.py ../../terminal/domain/states.py "$RUNNER_TEMP/machine-time/terminal/domain/"
+          cp ../../terminal/market_data/models.py "$RUNNER_TEMP/machine-time/terminal/market_data/"
+          cp ../../terminal/protection_timing.py "$RUNNER_TEMP/machine-time/terminal/"
+          cp ../../terminal/application/normalization.py ../../terminal/application/command_identity.py ../../terminal/application/ikigai_box_plan_persistence.py ../../terminal/application/ikigai_box_first_grid.py ../../terminal/application/ikigai_box_catchup.py ../../terminal/application/robot_admission.py ../../terminal/application/robot_admission_catchup.py ../../terminal/application/robot_late_admission.py ../../terminal/application/robot_late_admission_market.py ../../terminal/application/robot_breakout_monitor.py ../../terminal/application/box_protection_finalizer.py "$RUNNER_TEMP/machine-time/terminal/application/"
+          cp ../../terminal/persistence/schema.py ../../terminal/persistence/sqlite_store.py ../../terminal/persistence/source_terminal_events.py "$RUNNER_TEMP/machine-time/terminal/persistence/"
+          cp ../../terminal/paper/ikigai_box_plan.py ../../terminal/paper/box_ownership.py ../../terminal/paper/matching.py "$RUNNER_TEMP/machine-time/terminal/paper/"
+          # Deliberate allowlist only: no runtime, executor, exchange adapter,
+          # credential store, private API, service entrypoint or PAPER DB.
           python "$RUNNER_TEMP/machine-time/server.py" --check
+      - name: Bundle Windows Python 3.11 offline analytical wheelhouse
+        run: |
+          python -m pip download --only-binary=:all: --platform win_amd64 --python-version 311 --implementation cp --abi cp311 --dest "$RUNNER_TEMP/machine-time/python-wheels" pandas==2.2.3 numpy==2.1.3
       - name: Select preinstalled Chrome or install Chromium
         run: |
           if command -v google-chrome >/dev/null; then
@@ -120,12 +143,24 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Verify extracted Windows package starts and serves local assets
+      - name: Install analysis wheels exclusively in CI runner
+        shell: pwsh
+        working-directory: machine-time
+        run: python -m pip install --no-index --find-links=python-wheels pandas==2.2.3 numpy==2.1.3
+      - name: Verify Windows package imports original Wedge/Ikigai policy and old viewer
         shell: pwsh
         working-directory: machine-time
         run: |
           python -B server.py --check
           python -B smoke_package.py
+          python -c "from research.simulator_v2.wedge_cli import run_from_time_machine_config; from research.simulator_v2.wedge_observer import WedgeScannerConfig; import pandas; print('LOCAL_WEDGE_ENGINE_PACKAGE_IMPORT_OK')"
+          python -B box_lifecycle_smoke.py
+          if (Test-Path terminal/runtime -PathType Container) { throw 'Production runtime leaked into SIMULATION ZIP' }
+          if (Test-Path terminal/exchange -PathType Container) { throw 'Private exchange adapter leaked into SIMULATION ZIP' }
+          if (Test-Path terminal/persistence/credential_store.py -PathType Leaf) { throw 'Credential store leaked into SIMULATION ZIP' }
+          python -c "from terminal.paper.ikigai_box_plan import plan_approved_first_ikigai_box; from research.simulator_v2.ikigai_plan_preview import preview_box_plan; print('LOCAL_IKIGAI_NATIVE_PLANNER_IMPORT_OK')"
+          python -c "from server import local_simulation_status; s=local_simulation_status(); assert s['wedge_engine_available'] and s['python_dependencies_available']; assert not s['can_attempt']; print('LOCAL_WEDGE_ENGINE_GATED_UNTIL_ARCHIVE_AND_RISK_OK')"
+          python -c "from research.simulator_v2.session import VirtualReplaySession; from research.simulator_v2.wedge_observer import WedgeScannerConfig; from research.historical_market_replay import Candle; from decimal import Decimal as D; s=VirtualReplaySession(simulation_run_id='package-m5',symbol='BTCUSDT',initial_balance=D('1000'),wedge_scanner_config=WedgeScannerConfig(window_bars=50,mode='hunter',min_score=50)); [s.step(Candle(start_ms=i*60000,interval_ms=60000,open=D('100'),high=D('101'),low=D('99'),close=D('100'),volume=D('1'))) for i in range(250)]; assert s.wedge_scanner.closed_m5_count == 50 and s.account.fills == (); print('LOCAL_WEDGE_PACKAGED_ORIGINAL_SCANNER_M5_OK')"
 
   real-bybit-h017-readonly-acceptance:
     # A single research PR trial, or a manual rerun when separately requested.

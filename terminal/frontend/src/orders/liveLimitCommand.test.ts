@@ -23,7 +23,7 @@ describe("LIVE Limit transport", () => {
       accountId: "paper", sessionGeneration: 8,
     }), fetcher as unknown as typeof fetch);
     expect(fetcher).toHaveBeenCalledTimes(1);
-    expect(fetcher.mock.calls[0][0]).toBe("/api/live/limit");
+    expect(fetcher.mock.calls[0][0]).toBe("/api/manual-main/trade/limit");
     expect(JSON.parse(fetcher.mock.calls[0][1].body)).toMatchObject({
       client_action_id: "stable-action", account_id: "bybit-main", session_generation: 7,
     });
@@ -55,7 +55,7 @@ describe("LIVE Limit transport", () => {
       session_generation: authority.sessionGeneration, symbol: "BTCUSDT", order_id: "order-1",
     }, () => authority, fetcher as unknown as typeof fetch);
     expect(fetcher.mock.calls.map(([path]) => path)).toEqual([
-      "/api/live/limit/amend", "/api/live/limit/cancel",
+      "/api/manual-main/trade/limit/amend", "/api/manual-main/trade/limit/cancel",
     ]);
   });
 });

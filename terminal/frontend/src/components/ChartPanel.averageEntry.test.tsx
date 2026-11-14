@@ -1,4 +1,4 @@
-import { render } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { ChartPanel } from "./ChartPanel";
 
@@ -66,4 +66,16 @@ it("creates, updates, clears, and rebinds the authoritative average-entry line",
     <ChartPanel candles={[]} tickSize={0.5} symbol="ETHUSDT" averageEntryPrice={null} />,
   );
   expect(removePriceLine).toHaveBeenCalledTimes(2);
+});
+
+it("opens the live chart as a separate action without changing original Editor drawings", () => {
+  const onShowCurrentEditorChart = vi.fn();
+  render(
+    <ChartPanel candles={[]} tickSize={null} symbol="ICNTUSDT"
+      editorMode signalIdentity="archived-signal"
+      onShowCurrentEditorChart={onShowCurrentEditorChart} />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Показать актуальный график" }));
+  expect(onShowCurrentEditorChart).toHaveBeenCalledOnce();
+  expect(screen.getByLabelText("Название исходного сигнала")).toBeInTheDocument();
 });

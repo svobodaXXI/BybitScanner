@@ -940,8 +940,10 @@ def _robot_candidate_from_row(row: sqlite3.Row) -> RobotCandidateRecord:
             canonical, identity, symbol = _canonical_box_plan(snapshot)
         except (ValueError, TypeError) as exc:
             raise SchemaError("persisted Box plan violates its contract") from exc
+        account = row["trading_account_id"]
         if (identity != row["candidate_id"] or symbol != row["symbol"]
-                or row["trading_account_id"] != "paper" or canonical != canonical_snapshot
+                or not (account == "paper" or account.startswith("simulation:"))
+                or canonical != canonical_snapshot
                 or row["approved_at_ms"] is not None or state is not None
                 or row["state_revision"] != 0):
             raise SchemaError("persisted Box plan identity or lifecycle mismatch")
@@ -1147,19 +1149,28 @@ def _canonical_box_plan(snapshot: dict[str, object]) -> tuple[str, str, str]:
 class SQLiteStore:
     """Synchronous store owned by one backend thread and writer."""
 
-    def __init__(self, connection: sqlite3.Connection, path: Path, busy_timeout_ms: int):
+    def __init__(
+        self, connection: sqlite3.Connection, path: Path, busy_timeout_ms: int,
+        *, allow_simulation_box_accounts: bool = False,
+    ):
         self._connection = connection
         self.path = path
         self._busy_timeout_ms = busy_timeout_ms
+        self._allow_simulation_box_accounts = allow_simulation_box_accounts
         self._owner_thread = threading.get_ident()
 
     @classmethod
-    def open(cls, path: str | Path, *, busy_timeout_ms: int = 5000) -> "SQLiteStore":
+    def open(
+        cls, path: str | Path, *, busy_timeout_ms: int = 5000,
+        allow_simulation_box_accounts: bool = False,
+    ) -> "SQLiteStore":
         database_path = Path(path)
         if not str(database_path):
             raise ValueError("an explicit database path is required")
         if busy_timeout_ms <= 0:
             raise ValueError("busy_timeout_ms must be positive")
+        if type(allow_simulation_box_accounts) is not bool:
+            raise TypeError("allow_simulation_box_accounts must be bool")
 
         connection: sqlite3.Connection | None = None
         try:
@@ -1179,7 +1190,10 @@ class SQLiteStore:
             cls._ensure_robot_candidate_read_indexes(connection)
             cls._ensure_auto_decision_read_indexes(connection)
             cls._ensure_robot_entry_orders(connection)
-            return cls(connection, database_path, busy_timeout_ms)
+            return cls(
+                connection, database_path, busy_timeout_ms,
+                allow_simulation_box_accounts=allow_simulation_box_accounts,
+            )
         except (sqlite3.DatabaseError, OSError) as exc:
             if connection is not None:
                 connection.close()
@@ -1888,6 +1902,18 @@ class SQLiteStore:
     def _assert_owner(self) -> None:
         if not self.is_owned_by_current_thread():
             raise PersistenceError("SQLiteStore must be used by its owning writer thread")
+
+    def _box_account_allowed(self, trading_account_id: TradingAccountId) -> bool:
+        return (
+            isinstance(trading_account_id, TradingAccountId)
+            and (
+                trading_account_id == TradingAccountId("paper")
+            or (
+                self._allow_simulation_box_accounts
+                and trading_account_id.value.startswith("simulation:")
+            )
+            )
+        )
 
     @contextmanager
     def _transaction(self) -> Iterator[None]:
@@ -3333,8 +3359,8 @@ class SQLiteStore:
         calculate terms, submit protection, or enable Robot execution.
         """
         self._assert_owner()
-        if trading_account_id != TradingAccountId("paper"):
-            raise ValueError("Box owned PAPER limit requires paper account")
+        if not self._box_account_allowed(trading_account_id):
+            raise ValueError("Box owned limit requires PAPER or isolated SIMULATION account")
         with self._transaction():
             self._reserve_box_order_identity(
                 candidate_id, order_id=order_id, role=role, slot=slot,
@@ -3369,8 +3395,8 @@ class SQLiteStore:
         every created LIMIT.
         """
         self._assert_owner()
-        if trading_account_id != TradingAccountId("paper"):
-            raise ValueError("Box mixed entry ownership requires paper account")
+        if not self._box_account_allowed(trading_account_id):
+            raise ValueError("Box mixed ownership requires PAPER or isolated SIMULATION account")
         market_slots = {item.slot for item in market_orders}
         limit_slots = {item.slot for item in limit_orders}
         if (
@@ -3418,8 +3444,8 @@ class SQLiteStore:
         execution. Any conflict rolls back both ownership and every LIMIT row.
         """
         self._assert_owner()
-        if trading_account_id != TradingAccountId("paper"):
-            raise ValueError("Box owned PAPER grid requires paper account")
+        if not self._box_account_allowed(trading_account_id):
+            raise ValueError("Box grid requires PAPER or isolated SIMULATION account")
         if len(orders) != 4 or {item.slot for item in orders} != {1, 2, 3, 4}:
             raise ValueError("Box first grid requires exactly ENTRY slots 1..4")
         with self._transaction():
@@ -4861,7 +4887,7 @@ class SQLiteStore:
     def _box_ownership_candidate(self, candidate_id: str) -> RobotCandidateRecord:
         candidate = self.get_robot_candidate(candidate_id)
         if (candidate is None or candidate.status != "BOX_PLAN_ONLY"
-                or candidate.trading_account_id != TradingAccountId("paper")
+                or not self._box_account_allowed(candidate.trading_account_id)
                 or candidate.signal_snapshot["identity"]["market"] != "linear"):
             raise PersistenceError("a frozen first-attempt PAPER linear Box plan is required")
         return candidate
@@ -4910,8 +4936,9 @@ class SQLiteStore:
                     raise PersistenceError("Box ownership requires reconciled FLAT position and journal")
                 baseline_version, baseline_time_ms = position.version, position.updated_at_ms
             self._connection.execute(
-                "INSERT INTO box_attempt_ownership VALUES (?, 'paper', ?, 1, ?, ?, ?, ?)",
-                (candidate_id, candidate.symbol.value, baseline_version, baseline_time_ms,
+                "INSERT INTO box_attempt_ownership VALUES (?, ?, ?, 1, ?, ?, ?, ?)",
+                (candidate_id, candidate.trading_account_id.value,
+                 candidate.symbol.value, baseline_version, baseline_time_ms,
                  len(fills), journal_hash(fills)),
             )
         return True
@@ -4973,14 +5000,14 @@ class SQLiteStore:
         if (role not in {"ENTRY", "EXIT"} or type(slot) is not int
                 or slot not in (range(1, 5) if role == "ENTRY" else range(5))):
             raise ValueError("invalid Box order role/slot")
-        self._box_ownership_candidate(candidate_id)
+        candidate = self._box_ownership_candidate(candidate_id)
         if self._connection.execute(
             "SELECT 1 FROM box_attempt_ownership WHERE candidate_id=?", (candidate_id,),
         ).fetchone() is None:
             raise PersistenceError("Box ownership baseline is missing")
         existing = self._connection.execute(
-            "SELECT * FROM box_order_ownership WHERE trading_account_id='paper' AND order_id=?",
-            (order_id.value,),
+            "SELECT * FROM box_order_ownership WHERE trading_account_id=? AND order_id=?",
+            (candidate.trading_account_id.value, order_id.value),
         ).fetchone()
         if existing is not None:
             if (existing["candidate_id"], existing["role"], existing["slot"]) != (candidate_id, role, slot):
@@ -4997,8 +5024,9 @@ class SQLiteStore:
             raise DuplicateIdentity("cannot adopt a pre-existing order or execution into Box ownership")
         try:
             self._connection.execute(
-                "INSERT INTO box_order_ownership VALUES ('paper', ?, ?, ?, ?)",
-                (order_id.value, candidate_id, role, slot),
+                "INSERT INTO box_order_ownership VALUES (?, ?, ?, ?, ?)",
+                (candidate.trading_account_id.value, order_id.value,
+                 candidate_id, role, slot),
             )
         except sqlite3.IntegrityError as exc:
             raise DuplicateIdentity("Box grid slot already has a durable order identity") from exc
@@ -5217,12 +5245,29 @@ class SQLiteStore:
     def save_box_plan_only(
         self, *, snapshot: dict[str, object], created_at_ms: int,
     ) -> tuple[RobotCandidateRecord, bool]:
+        return self.save_box_plan_only_for_account(
+            snapshot=snapshot,
+            trading_account_id=TradingAccountId("paper"),
+            created_at_ms=created_at_ms,
+        )
+
+    def save_box_plan_only_for_account(
+        self, *, snapshot: dict[str, object],
+        trading_account_id: TradingAccountId, created_at_ms: int,
+    ) -> tuple[RobotCandidateRecord, bool]:
         """Persist an explicit frozen first-attempt plan; never calculate/admit it.
 
         Repeated identical snapshots return the original row. Identity excludes
         prices, calculation versions and observation time: conflicts never replan.
+
+        The ordinary caller remains pinned to ``paper``.  Simulator callers may
+        use only an explicit ``simulation:<run-id>`` account in their own SQLite
+        file; no other account can use the Box plan-only persistence seam.
         """
         self._assert_owner()
+        if (not isinstance(trading_account_id, TradingAccountId)
+                or not self._box_account_allowed(trading_account_id)):
+            raise ValueError("Box plan account must be PAPER or isolated SIMULATION")
         if type(created_at_ms) is not int or created_at_ms < 0:
             raise ValueError("invalid Box plan timestamp")
         snapshot_json, candidate_id, symbol = _canonical_box_plan(snapshot)
@@ -5231,15 +5276,16 @@ class SQLiteStore:
             existing = self.get_robot_candidate(candidate_id)
             if existing is not None:
                 if (existing.status != "BOX_PLAN_ONLY"
-                        or existing.trading_account_id != TradingAccountId("paper")
+                        or existing.trading_account_id != trading_account_id
                         or existing.symbol.value != symbol
                         or existing.snapshot_sha256 != digest):
                     raise DuplicateIdentity("Box formation already has a different frozen plan")
                 return existing, False
             try:
                 self._connection.execute(
-                    "INSERT INTO robot_candidates VALUES (?, 'paper', ?, 'BOX_PLAN_ONLY', ?, ?, NULL, 0, NULL, ?)",
-                    (candidate_id, symbol, snapshot_json, digest, created_at_ms),
+                    "INSERT INTO robot_candidates VALUES (?, ?, ?, 'BOX_PLAN_ONLY', ?, ?, NULL, 0, NULL, ?)",
+                    (candidate_id, trading_account_id.value, symbol,
+                     snapshot_json, digest, created_at_ms),
                 )
             except sqlite3.IntegrityError as exc:
                 raise DuplicateIdentity("Box plan conflicts with durable state") from exc
@@ -5251,8 +5297,26 @@ class SQLiteStore:
         linked_mirror_parent_candidate_id: str | None = None,
         linked_mirror_parent_snapshot_sha256: str | None = None,
     ) -> tuple[RobotCandidateRecord, bool]:
+        return self.handoff_box_plan_to_robot_for_account(
+            source_candidate_id,
+            trading_account_id=TradingAccountId("paper"), symbol=symbol,
+            expected_snapshot_sha256=expected_snapshot_sha256,
+            approved_at_ms=approved_at_ms,
+            linked_mirror_parent_candidate_id=linked_mirror_parent_candidate_id,
+            linked_mirror_parent_snapshot_sha256=linked_mirror_parent_snapshot_sha256,
+        )
+
+    def handoff_box_plan_to_robot_for_account(
+        self, source_candidate_id: str, *, trading_account_id: TradingAccountId,
+        symbol: Symbol, expected_snapshot_sha256: str, approved_at_ms: int,
+        linked_mirror_parent_candidate_id: str | None = None,
+        linked_mirror_parent_snapshot_sha256: str | None = None,
+    ) -> tuple[RobotCandidateRecord, bool]:
         """Atomically persist a linked waiting candidate; never authorize execution."""
         self._assert_owner()
+        if (not isinstance(trading_account_id, TradingAccountId)
+                or not self._box_account_allowed(trading_account_id)):
+            raise ValueError("Box handoff account must be PAPER or isolated SIMULATION")
         if type(approved_at_ms) is not int or approved_at_ms < 0:
             raise ValueError("invalid Box handoff timestamp")
         context = (nullcontext() if getattr(self, "_robot_admission_transaction", False)
@@ -5261,6 +5325,8 @@ class SQLiteStore:
             source = self.get_robot_candidate(source_candidate_id)
             if source is None or source.status != "BOX_PLAN_ONLY":
                 raise PersistenceError("immutable Box source plan is required")
+            if source.trading_account_id != trading_account_id:
+                raise DuplicateIdentity("Box handoff account conflicts with source plan")
             if source.symbol != symbol or source.snapshot_sha256 != expected_snapshot_sha256:
                 raise DuplicateIdentity("Box handoff source symbol or snapshot conflicts")
             if approved_at_ms < max(source.updated_at_ms, source.signal_snapshot["decision_time_ms"]):
@@ -5296,8 +5362,9 @@ class SQLiteStore:
                 })
             try:
                 self._connection.execute(
-                    "INSERT INTO robot_candidates VALUES (?, 'paper', ?, 'APPROVED', ?, ?, ?, 1, ?, ?)",
-                    (candidate_id, symbol.value, snapshot_json, digest,
+                    "INSERT INTO robot_candidates VALUES (?, ?, ?, 'APPROVED', ?, ?, ?, 1, ?, ?)",
+                    (candidate_id, trading_account_id.value, symbol.value,
+                     snapshot_json, digest,
                      _canonical_json(state), approved_at_ms, approved_at_ms),
                 )
             except sqlite3.IntegrityError as exc:
@@ -5794,10 +5861,13 @@ class SQLiteStore:
             if (side != "Flat" or not value.is_finite() or value != 0
                     or sync not in ("synced", "synchronized")):
                 return False
-        # Cancelled is terminal, but a cancelled partially-filled LIMIT
-        # is NOT a never-traded candidate. Fail closed on malformed quantities.
-        for (raw_filled,) in self._connection.execute(
-            "SELECT filled_quantity FROM paper_limit_orders "
+        # Only a fully witnessed, *earlier* cancelled LIMIT may have a
+        # partial fill without belonging to this newly approved candidate.
+        # Compare durable timestamps and exact order-linked executions, never
+        # infer nonexecution from the terminal "cancelled" status alone.
+        for order_id, raw_filled, created_at, updated_at in self._connection.execute(
+            "SELECT order_id, filled_quantity, created_at_ms, updated_at_ms "
+            "FROM paper_limit_orders "
             "WHERE trading_account_id=? AND symbol=? AND status='cancelled'",
             (account, symbol),
         ):
@@ -5805,7 +5875,32 @@ class SQLiteStore:
                 filled = Decimal(str(raw_filled))
             except (InvalidOperation, ValueError, TypeError):
                 return False
-            if not filled.is_finite() or filled != 0:
+            if not filled.is_finite() or filled < 0:
+                return False
+            if filled == 0:
+                continue
+            if (type(created_at) is not int or type(updated_at) is not int
+                    or not 0 <= created_at <= updated_at < approved_at):
+                return False
+            executions = self._connection.execute(
+                "SELECT symbol, quantity, exchange_timestamp_ms FROM executions "
+                "WHERE trading_account_id=? AND order_id=?",
+                (account, order_id),
+            ).fetchall()
+            if not executions:
+                return False
+            total = Decimal("0")
+            for executed_symbol, raw_qty, executed_at in executions:
+                try:
+                    qty = Decimal(str(raw_qty))
+                except (InvalidOperation, ValueError, TypeError):
+                    return False
+                if (executed_symbol != symbol or not qty.is_finite() or qty <= 0
+                        or type(executed_at) is not int
+                        or not created_at <= executed_at < approved_at):
+                    return False
+                total += qty
+            if total != filled:
                 return False
         for table, predicate, params in (
             ("robot_trades", "candidate_id=?", (candidate.candidate_id,)),

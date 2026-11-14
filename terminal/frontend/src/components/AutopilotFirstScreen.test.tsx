@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AutopilotFirstScreen } from "./AutopilotFirstScreen";
@@ -39,6 +39,7 @@ function paperState(symbol: string, stop: string | null, take: string | null) {
 }
 
 const healthyRoutes: Routes = {
+  "/api/robot/state": { ok: true, mode: "ROBOT_RUNNING", recovery_status: "READY" },
   "/api/robot/autopilot": {
     ok: true,
     mode: "PAPER_AUTO",
@@ -99,7 +100,7 @@ const healthyRoutes: Routes = {
 };
 
 function mockFetch(routes: Routes | "offline" | "pending") {
-  const fetchMock = vi.fn((url: string) => {
+  const fetchMock = vi.fn((url: string, _options?: RequestInit) => {
     if (routes === "pending") return new Promise<Response>(() => {});
     if (routes === "offline")
       return Promise.reject(new TypeError("Failed to fetch"));
@@ -113,11 +114,12 @@ function mockFetch(routes: Routes | "offline" | "pending") {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
 describe("Autopilot compact first screen", () => {
-  it("shows only the day result and trade count, without unrelated status labels", async () => {
+  it("shows the daily trade history separately from canonical Robot and autotrading status", async () => {
     mockFetch(healthyRoutes);
     render(<AutopilotFirstScreen now={() => NOW} />);
     expect(await screen.findByText("+2.50 USDT")).toBeInTheDocument();
@@ -125,8 +127,71 @@ describe("Autopilot compact first screen", () => {
     expect(screen.getByText("Сделок за день")).toBeInTheDocument();
     expect(screen.getByText("1")).toBeInTheDocument();
     expect(screen.queryByText("Блок серии STOP")).not.toBeInTheDocument();
-    expect(screen.queryByText("PAPER_AUTO")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Текущее состояние Робота")).toHaveTextContent("Робот: Запущен / READY");
+    expect(screen.getByLabelText("Текущее состояние Робота")).toHaveTextContent("Автовходы: PAPER_AUTO");
     expect(screen.queryByText("Что робот сейчас делает")).not.toBeInTheDocument();
+  });
+
+  it("reuses the Terminal's PAPER position visual fields without trading buttons", async () => {
+    mockFetch(healthyRoutes);
+    const verifiedPosition = { ...position("LSKUSDT", "Long", "1"), robot_trade_id: "robot-lsk" };
+    render(<AutopilotFirstScreen now={() => NOW}
+      verifiedPosition={verifiedPosition} oneWorkingVolumeUsdt="250" />);
+    const panel = screen.getByLabelText("Позиция робота на панели управления");
+    expect(within(panel).getByLabelText("Engaged working volume")).toHaveTextContent("⚔️ 0.1");
+    expect(within(panel).getByTitle("1 РО = 250 USDT")).toBeInTheDocument();
+    expect(within(panel).getByText("20")).toBeInTheDocument();
+    expect(within(panel).getByText("USDT")).toBeInTheDocument();
+    expect(within(panel).getByText("LSKUSDT")).toBeInTheDocument();
+    expect(within(panel).getByText("0.20000")).toBeInTheDocument();
+    expect(within(panel).getByText("+5.00%")).toBeInTheDocument();
+    expect(within(panel).getByText("+1.00 USDT")).toBeInTheDocument();
+    expect(within(panel).queryByRole("button", { name: /Закрыть|Market|Limit/ })).not.toBeInTheDocument();
+  });
+
+  it("shows the exact verified signal context above the day totals", async () => {
+    mockFetch(healthyRoutes);
+    const verifiedPosition = { ...position("LSKUSDT", "Long", "1"), robot_trade_id: "robot-lsk" };
+    render(<AutopilotFirstScreen verifiedPosition={verifiedPosition} verifiedOrigin={{
+      pattern: "Falling Wedge", candidate_id: "candidate-lsk",
+      signal_timeframe_minutes: 5, mirror_campaign: false,
+      mirror_level_source: null, mirror_pattern: null, reentry_attempt_index: 2,
+    }} />);
+    const provenance = screen.getByLabelText("Происхождение выбранной сделки");
+    expect(provenance).toHaveTextContent("Falling Wedge");
+    expect(provenance).toHaveTextContent("Сигнал робота");
+    expect(provenance).toHaveTextContent("5м");
+    expect(provenance).toHaveTextContent("№2");
+    expect(provenance).toHaveTextContent("candidate-lsk");
+    const root = screen.getByRole("region", { name: "Робот: первый экран" });
+    const summary = screen.getByLabelText("Сводка дня");
+    expect(root.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_CONTAINED_BY).toBeTruthy();
+    expect(summary.compareDocumentPosition(provenance) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+    expect(await screen.findByText("+2.50 USDT")).toBeInTheDocument();
+  });
+
+  it("collapses unselected origin and distinguishes no positions from an unverified selection", async () => {
+    mockFetch({ ...healthyRoutes, "/api/open-positions": { ok: true, account_id: "paper", positions: [] } });
+    render(<AutopilotFirstScreen now={() => NOW} />);
+    expect(await screen.findByText("Нет открытых позиций")).toHaveClass("autopilot-trade-origin-empty");
+    expect(screen.queryByText("Основание открытой сделки")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Происхождение выбранной сделки")).not.toBeInTheDocument();
+  });
+
+  it("does not call a failed position inventory empty", async () => {
+    mockFetch("offline");
+    render(<AutopilotFirstScreen now={() => NOW} />);
+    expect(await screen.findByText("Позиции недоступны")).toHaveClass("autopilot-trade-origin-empty");
+    expect(screen.queryByText("Нет открытых позиций")).not.toBeInTheDocument();
+  });
+
+  it("does not attribute an unverified position to the Robot", async () => {
+    mockFetch(healthyRoutes);
+    render(<AutopilotFirstScreen now={() => NOW} />);
+    const panel = screen.getByLabelText("Позиция робота на панели управления");
+    expect(within(panel).getByText("⚔️ —")).toBeInTheDocument();
+    expect(within(panel).queryByText("LSKUSDT")).not.toBeInTheDocument();
+    expect(within(panel).queryByText(/PnL/)).not.toBeInTheDocument();
   });
 
   it("uses accessible icon-only controls in the requested order", async () => {
@@ -135,6 +200,7 @@ describe("Autopilot compact first screen", () => {
     const onOpenPositions = vi.fn();
     const onStatistics = vi.fn();
     const onTerminal = vi.fn();
+    const onEditor = vi.fn();
     const onRobotControls = vi.fn();
     render(<AutopilotFirstScreen
       now={() => NOW}
@@ -142,23 +208,33 @@ describe("Autopilot compact first screen", () => {
       onOpenPositions={onOpenPositions}
       onStatistics={onStatistics}
       onTerminal={onTerminal}
+      onEditor={onEditor}
       onRobotControls={onRobotControls}
       accountControl={<button type="button" aria-label="Счёт">key</button>}
     />);
     await screen.findByText("+2.50 USDT");
-    const nav = screen.getByRole("navigation", { name: "Панель управления Автопилотом" });
+    const nav = screen.getByRole("navigation", { name: "Панель управления Роботом" });
     const buttons = within(nav).getAllByRole("button");
     expect(buttons.map((button) => button.getAttribute("aria-label"))).toEqual([
-      "Подробности сделки", "Все открытые позиции", "Статистика", "Терминал", "Управление роботом", "Счёт",
+      "Подробности сделки", "Все открытые позиции", "Статистика", "Терминал", "Редактор", "Управление роботом", "Счёт",
     ]);
     expect(buttons[0]).toBeDisabled(); // Multiple open positions: no ambiguous trade selection.
+    // Icons are three separate thin strokes/bars, not dense Unicode glyphs.
+    expect(buttons[0].querySelector("svg")).not.toBeNull();
+    expect(buttons[1].querySelectorAll("svg line")).toHaveLength(3);
+    expect(buttons[2].querySelectorAll("svg rect")).toHaveLength(3);
+    expect(buttons[2].textContent).toBe("");
+    expect(buttons[4].querySelector("svg")).not.toBeNull();
+    expect(buttons[5].querySelector("svg")).not.toBeNull();
     fireEvent.click(buttons[1]);
     fireEvent.click(buttons[2]);
     fireEvent.click(buttons[3]);
     fireEvent.click(buttons[4]);
+    fireEvent.click(buttons[5]);
     expect(onOpenPositions).toHaveBeenCalledOnce();
     expect(onStatistics).toHaveBeenCalledOnce();
     expect(onTerminal).toHaveBeenCalledOnce();
+    expect(onEditor).toHaveBeenCalledOnce();
     expect(onRobotControls).toHaveBeenCalledOnce();
     expect(onTradeDetails).not.toHaveBeenCalled();
   });
@@ -216,11 +292,131 @@ describe("Autopilot compact first screen", () => {
     expect(screen.queryByText("+0.00 USDT")).not.toBeInTheDocument();
   });
 
+  it("does not mistake three closed deals for an active Robot", async () => {
+    mockFetch({
+      ...healthyRoutes,
+      "/api/robot/state": { ok: true, mode: "ROBOT_STOPPED", recovery_status: "ROBOT_STOPPED" },
+      "/api/robot/day-summary": {
+        ok: true, source: "robot_trades", account_id: "paper", day_start_ms: DAY_START,
+        closed_trades: 3, trades_without_pnl: 0, net_pnl_usdt: "1.50",
+      },
+    });
+    render(<AutopilotFirstScreen />);
+    expect(await screen.findByText("3")).toBeInTheDocument();
+    expect(screen.getByLabelText("Текущее состояние Робота")).toHaveTextContent("Робот: Остановлен");
+  });
+
+  it("does not infer Robot READY from a healthy PAPER account", async () => {
+    const routes = { ...healthyRoutes };
+    delete routes["/api/robot/state"];
+    mockFetch(routes);
+    render(<AutopilotFirstScreen />);
+    expect(await screen.findByText("+2.50 USDT")).toBeInTheDocument();
+    expect(screen.getByLabelText("Текущее состояние Робота")).toHaveTextContent("состояние недоступно");
+  });
+
   it("shows backend failures without a fabricated zero result", async () => {
     mockFetch("offline");
     render(<AutopilotFirstScreen now={() => NOW} />);
-    expect(await screen.findByRole("alert")).toHaveTextContent("PAPER backend недоступен");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Данные PAPER недоступны");
     expect(screen.queryByText("+0.00 USDT")).not.toBeInTheDocument();
+  });
+
+  it("refreshes one shared Robot inventory without re-fetching trading/diary state", async () => {
+    const initial = [{ ...position("LSKUSDT", "Long", "1"), robot_trade_id: "robot-lsk" }];
+    const updated = [{ ...position("LSKUSDT", "Long", "3"), robot_trade_id: "robot-lsk" },
+      { ...position("NIGHTUSDT", "Short", "2"), robot_trade_id: "robot-night" }];
+    const routes: Routes = {
+      ...healthyRoutes,
+      "/api/open-positions": { ok: true, account_id: "paper", positions: initial },
+    };
+    const intervals: Array<() => void> = [];
+    const nativeSetInterval = window.setInterval.bind(window);
+    vi.spyOn(window, "setInterval").mockImplementation((fn, delay) => {
+      if (delay === 8_000) {
+        intervals.push(fn as () => void);
+        return 987654321; // Only our component timer; not testing-library waitFor.
+      }
+      return nativeSetInterval(fn, delay);
+    });
+    const fetchMock = mockFetch(routes);
+    const onPositionsLoaded = vi.fn();
+    const view = render(<AutopilotFirstScreen onPositionsLoaded={onPositionsLoaded} />);
+
+    await waitFor(() => expect(onPositionsLoaded).toHaveBeenCalledWith(initial));
+    expect(intervals).toHaveLength(1);
+    routes["/api/open-positions"] = { ok: true, account_id: "paper", positions: updated };
+    act(() => { intervals[0](); });
+    await waitFor(() => expect(onPositionsLoaded).toHaveBeenCalledWith(updated));
+
+    const called = (url: string) => fetchMock.mock.calls.filter(([path]) => path === url);
+    expect(called("/api/open-positions")).toHaveLength(2);
+    expect(called("/api/robot/day-summary")).toHaveLength(1);
+    expect(called("/api/robot/state")).toHaveLength(1);
+    expect(called("/api/diary/trades")).toHaveLength(1);
+    expect(called("/api/robot/autopilot")).toHaveLength(1);
+    expect(fetchMock.mock.calls.every(([,options]) =>
+      !options || (typeof options === "object" && !("method" in options)))).toBe(true);
+    view.unmount();
+  });
+
+  it("prevents overlapping inventory loads and invalidates in-flight results on unmount", async () => {
+    let resolveInventory: ((response: Response) => void) | null = null;
+    const pending = new Promise<Response>((resolve) => { resolveInventory = resolve; });
+    const intervals: Array<() => void> = [];
+    const nativeSetInterval = window.setInterval.bind(window);
+    vi.spyOn(window, "setInterval").mockImplementation((fn, delay) => {
+      if (delay === 8_000) {
+        intervals.push(fn as () => void);
+        return 987654321; // Only our component timer; not testing-library waitFor.
+      }
+      return nativeSetInterval(fn, delay);
+    });
+    const fetchMock = vi.fn((url: string, _options?: RequestInit) =>
+      url === "/api/open-positions" ? pending
+        : Promise.resolve(new Response(JSON.stringify(healthyRoutes[url]), { status: 200 })));
+    vi.stubGlobal("fetch", fetchMock);
+    const onPositionsLoaded = vi.fn();
+    const view = render(<AutopilotFirstScreen onPositionsLoaded={onPositionsLoaded} />);
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => url === "/api/open-positions")).toBe(true));
+    expect(intervals).toHaveLength(1);
+    act(() => { intervals[0](); intervals[0](); });
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/open-positions")).toHaveLength(1);
+    const signal = fetchMock.mock.calls.find(([url]) => url === "/api/open-positions")?.[1]?.signal;
+    view.unmount();
+    expect(signal?.aborted).toBe(true);
+    await act(async () => {
+      resolveInventory?.(new Response(JSON.stringify({ ok: true, positions: [
+        { ...position("LSKUSDT", "Long", "1"), robot_trade_id: "robot-lsk" },
+      ] }), { status: 200 }));
+      await Promise.resolve();
+    });
+    expect(onPositionsLoaded).not.toHaveBeenCalledWith(expect.any(Array));
+    expect(onPositionsLoaded).toHaveBeenCalledWith(null);
+  });
+
+  it("clears previously observed Robot inventory when the live read fails", async () => {
+    const initial = [{ ...position("LSKUSDT", "Long", "1"), robot_trade_id: "robot-lsk" }];
+    const routes: Routes = {
+      ...healthyRoutes,
+      "/api/open-positions": { ok: true, account_id: "paper", positions: initial },
+    };
+    const intervals: Array<() => void> = [];
+    const nativeSetInterval = window.setInterval.bind(window);
+    vi.spyOn(window, "setInterval").mockImplementation((fn, delay) => {
+      if (delay === 8_000) {
+        intervals.push(fn as () => void);
+        return 987654321; // Only our component timer; not testing-library waitFor.
+      }
+      return nativeSetInterval(fn, delay);
+    });
+    mockFetch(routes);
+    const onPositionsLoaded = vi.fn();
+    render(<AutopilotFirstScreen onPositionsLoaded={onPositionsLoaded} />);
+    await waitFor(() => expect(onPositionsLoaded).toHaveBeenCalledWith(initial));
+    delete routes["/api/open-positions"];
+    act(() => { intervals[0](); });
+    await waitFor(() => expect(onPositionsLoaded).toHaveBeenLastCalledWith(null));
   });
 
   it("uses read-only requests", async () => {

@@ -56,10 +56,26 @@ from terminal.api.models import (
 from terminal.domain.models import OrderSide
 from terminal.domain.models import Price, Quantity, Symbol, TradingAccountId
 from terminal.diary.models import DiaryEnvironment
+from terminal.diary.episode_context import (
+    attach_verified_original_geometry, project_episode_d2_context_read_only,
+)
 from terminal.diary.presentation import project_trade_episode_list
 from terminal.diary.service import TradeEpisodeReadService
 from terminal.diary.setup_runtime import decision_store_path, project_setup_store
 from terminal.diary.statistics_endpoint import project_active_account_statistics
+from terminal.diary.scoped_statistics_archive import (
+    StatisticsScopeError, load_latest_scoped_statistics_read_only,
+)
+from terminal.diary.scoped_statistics_reporter import load_paper_source_snapshot
+from terminal.diary.campaign_lineage import CampaignLineageUnproven, project_selected_paper_campaign
+from terminal.diary.wedge_lineage import (
+    WedgeLineageUnproven, attach_verified_wedge_signals, project_selected_paper_wedge,
+)
+from terminal.diary.ticker_finrez import (
+    EpisodeFactsNotFound, EpisodeFactsSourceChanged,
+    attach_verified_entry_notional_returns, attach_verified_episode_patterns,
+    project_paper_closed_episode_facts, project_paper_ticker_pnl,
+)
 from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
 from terminal.market_data.hub import MarketDataHub, SymbolContext
 from terminal.market_data.client_projection import ClientMarketProjection, StaleProjectionError
@@ -86,6 +102,7 @@ from terminal.persistence.credential_store import (
 )
 from terminal.persistence.live_account_store import LiveAccountProjectionStore
 from terminal.persistence.active_account_preference import ActiveAccountPreferenceStore
+from terminal.persistence.mode_account_preference import ModeAccountPreferenceStore, ModeAccountPreferenceError
 from terminal.application.live_account_reconciliation import LiveAccountReconciliationError
 from terminal.application.runtime_intent import RuntimeIntent, RuntimeIntentReconciler
 from terminal.application.robot_control import ROBOT_CLOSE_ALL_ALLOWED_STATES, RobotControlRejected, stop_robot
@@ -142,6 +159,7 @@ LIVE_PROTECTION_FIELDS = {
 LIVE_FULL_CLOSE_FIELDS = FULL_CLOSE_FIELDS | LIVE_AUTHORITY_FIELDS
 ACCOUNT_CREATE_FIELDS = {"display_name", "api_key", "api_secret"}
 ACCOUNT_ACTIVATE_FIELDS = {"expected_active_account_id", "expected_session_generation"}
+MODE_ACCOUNT_FIELDS = {"mode", "account_id"}
 PAPER_UNSAFE_LIVE_FLAGS = (
     "live_market_mutations_enabled", "live_mainnet_authorized",
     "live_market_acceptance_single_flight", "live_parity_mutations_enabled",
@@ -253,6 +271,54 @@ def _diary_trade_list(runtime: PaperRuntime) -> dict[str, object]:
             episodes,
             now_ms=int(time.time() * 1000),
         ),
+    }
+
+
+def _robot_position_markers(runtime: PaperRuntime, symbol: str, trade_id: str, now_ms: int) -> dict[str, object]:
+    """Reuse Telegram's exact execution/limit markers for one proven OPEN Robot trade.
+
+    An immutable trade ID must still be the single current Robot association
+    for the selected PAPER position. Never attribute by ticker proximity alone.
+    """
+    from robot_position_view import load_position_view
+
+    account = TradingAccountId("paper")
+    active_trade = runtime.store.get_open_robot_trade_for_symbol(account, Symbol(symbol))
+    if active_trade is None or active_trade.trade_id != trade_id:
+        return {"ok": False, "error": "unproven_robot_position"}
+    view = load_position_view(
+        runtime.store, symbol, trade_id=trade_id, account=account, now_ms=now_ms,
+    )
+    if (view is None or not view.is_open or not view.is_robot
+            or view.trade.trade_id != trade_id or view.quantity is None
+            or view.quantity <= 0):
+        return {"ok": False, "error": "unproven_robot_position"}
+    return {
+        "ok": True, "account_id": "paper",
+        "source": "robot_position_view.TradeMarker",
+        "symbol": symbol, "trade_id": trade_id,
+        # Provenance comes from the SAME immutable open Robot trade as the markers.
+        # Never guess the originating signal from a symbol or manual Diary row.
+        "origin": ({
+            "pattern": getattr(view, "pattern", None),
+            "candidate_id": view.trade.candidate_id,
+            "signal_timeframe_minutes": (
+                getattr(view, "chart_candle_minutes", None)
+                if getattr(view, "signal_snapshot", None) else None
+            ),
+            "mirror_campaign": getattr(view, "mirror_campaign", False),
+            "mirror_level_source": getattr(view, "mirror_level_source", None),
+            "mirror_pattern": getattr(view, "mirror_pattern", None),
+            "reentry_attempt_index": getattr(view, "reentry_attempt_index", None),
+        } if isinstance(getattr(view.trade, "candidate_id", None), str)
+          and view.trade.candidate_id else None),
+        "markers": [
+            {
+                "time_ms": marker.time_ms, "price": str(marker.price),
+                "side": marker.side, "filled": marker.filled,
+            }
+            for marker in view.markers
+        ],
     }
 
 
@@ -3025,6 +3091,36 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
 
+        if parsed.path == "/api/diary/simulator-bridge/poll":
+            # A paired local device initiates an outbound GET. No Nginx owner
+            # credentials or trading secrets are shared with the device.
+            from terminal.diary.simulator_launch_relay import (
+                RelayForbidden, RelayInvalid,
+            )
+            relay = getattr(self.server, "simulator_launch_relay", None)
+            if relay is None:
+                self._json_response(503, {"ok": False, "error": "simulator_bridge_disabled"})
+                return
+            try:
+                params = parse_qs(parsed.query, keep_blank_values=True)
+                if (set(params) != {"device_id", "viewer_running"}
+                        or any(len(values) != 1 for values in params.values())
+                        or params["viewer_running"][0] not in {"0", "1"}):
+                    raise RelayInvalid("invalid_simulator_device")
+                event = relay.poll(
+                    device=params["device_id"][0],
+                    token=self.headers.get("X-BybitScanner-Simulator-Device-Token", ""),
+                    viewer_running=params["viewer_running"][0] == "1",
+                )
+            except RelayForbidden:
+                self._json_response(403, {"ok": False, "error": "simulator_device_unauthorized"})
+                return
+            except RelayInvalid:
+                self._json_response(400, {"ok": False, "error": "invalid_simulator_device"})
+                return
+            self._json_response(200, {"ok": True, **event})
+            return
+
         if parsed.path == OPERATOR_DIAGNOSTICS_PATH:
             if not self._operator_authorized():
                 self._json_response(403, {"ok": False, "error": "operator_unauthorized"})
@@ -3080,6 +3176,30 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                     "scanner_acceptance_ready": _scanner_acceptance_ready(),
                 },
             )
+            return
+
+        if parsed.path == "/api/robot/position-markers":
+            query = parse_qs(parsed.query)
+            symbols, trade_ids = query.get("symbol", []), query.get("trade_id", [])
+            symbol = symbols[0] if len(symbols) == 1 else ""
+            trade_id = trade_ids[0] if len(trade_ids) == 1 else ""
+            if not (6 <= len(symbol) <= 32 and symbol.endswith("USDT")
+                    and symbol.isascii() and symbol.isupper() and symbol.isalnum()
+                    and 1 <= len(trade_id) <= 128 and trade_id.isascii()
+                    and all(c.isalnum() or c in "-_" for c in trade_id)):
+                self._json_response(400, {"ok": False, "error": "invalid_marker_request"})
+                return
+            try:
+                result = self.server.runtime.call(
+                    lambda runtime: _robot_position_markers(
+                        runtime, symbol, trade_id, int(time.time() * 1000),
+                    )
+                )
+            except Exception:
+                LOGGER.exception("Robot position markers unavailable")
+                self._json_response(503, {"ok": False, "error": "robot_markers_unavailable"})
+                return
+            self._json_response(200 if result["ok"] else 404, result)
             return
 
         if parsed.path == "/api/robot/day-summary":
@@ -3187,6 +3307,17 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             self._json_response(200, {"ok": True, **catalog})
             return
 
+        if parsed.path == "/api/accounts/mode-preferences":
+            try:
+                preferences = self.server.runtime.call(
+                    lambda runtime: runtime.mode_account_preferences()
+                )
+            except Exception:
+                self._json_response(503, {"ok": False, "error": "mode_account_preferences_unavailable"})
+                return
+            self._json_response(200, {"ok": True, "preferences": preferences})
+            return
+
         if parsed.path == "/api/diary/trades":
             try:
                 projection = self.server.runtime.call(_diary_trade_list)
@@ -3213,6 +3344,215 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             self._json_response(200, {"ok": True, **projection})
             return
 
+        if parsed.path == "/api/diary/ticker-finrez":
+            # Read-only PAPER execution/attribution projection. This backend is
+            # never a source of MAIN-account history or unscoped robot PnL.
+            params = parse_qs(parsed.query, keep_blank_values=True)
+            if (set(params) != {"account_id", "owner", "period"}
+                    or any(len(values) != 1 for values in params.values())
+                    or params["period"][0] not in {"TODAY", "DAY", "WEEK", "MONTH", "YEAR", "ALL"}
+                    or params["owner"][0] not in {"MANUAL", "ROBOT"}):
+                self._json_response(400, {"ok": False, "error": "finrez_scope_required"})
+                return
+            if params["account_id"][0] != "paper":
+                self._json_response(404, {"ok": False, "error": "finrez_scope_unavailable"})
+                return
+            try:
+                now_ms = int(time.time() * 1000)
+                snapshot = load_paper_source_snapshot(
+                    self.server.diary_source_db_path,
+                    include_wedge_evidence=params["owner"][0] == "ROBOT",
+                )
+                projection = project_paper_ticker_pnl(
+                    snapshot, account_id="paper", owner=params["owner"][0],
+                    period=params["period"][0], now_ms=now_ms,
+                )
+                projection = attach_verified_entry_notional_returns(snapshot, projection)
+                projection = attach_verified_episode_patterns(
+                    snapshot, projection,
+                    d2_path=getattr(self.server, "diary_setup_store_path", None),
+                )
+                projection = attach_verified_wedge_signals(snapshot, projection)
+            except (StatisticsScopeError, ValueError):
+                self._json_response(503, {"ok": False, "error": "finrez_evidence_unavailable"})
+                return
+            except Exception:
+                LOGGER.exception("Ticker Finrez projection unavailable")
+                self._json_response(503, {"ok": False, "error": "finrez_evidence_unavailable"})
+                return
+            self._json_response(200, {"ok": True, **projection})
+            return
+
+        if parsed.path == "/api/diary/episode-facts":
+            # Exactly one selected closed PAPER episode. Read-only evidence
+            # from the same source snapshot as the Finrez episode index;
+            # never dispatch to Scanner/Robot or query a private exchange API.
+            params = parse_qs(parsed.query, keep_blank_values=True)
+            if (set(params) != {"account_id", "owner", "trade_episode_id", "source_revision"}
+                    or any(len(v) != 1 for v in params.values())
+                    or params["owner"][0] not in {"ROBOT", "MANUAL"}):
+                self._json_response(400, {"ok": False, "error": "episode_facts_scope_required"})
+                return
+            if params["account_id"][0] != "paper":
+                self._json_response(404, {"ok": False, "error": "episode_facts_scope_unavailable"})
+                return
+            episode_id, revision = params["trade_episode_id"][0], params["source_revision"][0]
+            if (len(episode_id) != 27 or not episode_id.startswith("te_")
+                    or any(char not in "0123456789abcdef" for char in episode_id[3:])
+                    or not 1 <= len(revision) <= 20 or not revision.isascii()
+                    or not revision.isdecimal() or revision[0] == "0"):
+                self._json_response(400, {"ok": False, "error": "episode_facts_identity_invalid"})
+                return
+            try:
+                snapshot = load_paper_source_snapshot(self.server.diary_source_db_path)
+                projection = project_paper_closed_episode_facts(
+                    snapshot, account_id="paper", owner=params["owner"][0],
+                    trade_episode_id=episode_id, source_revision=int(revision),
+                    now_ms=int(time.time() * 1000),
+                )
+                # The optional D2 setup/decision database is independent from
+                # PAPER. It is read only by exact episode ID, never initialized.
+                # Its lack of a link is explicitly NOT proof of a Robot signal.
+                d2_context = project_episode_d2_context_read_only(
+                    getattr(self.server, "diary_setup_store_path", None),
+                    trade_episode_id=episode_id, account_id="paper",
+                    symbol=projection["symbol"], side=projection["side"],
+                    opening_controller=projection["execution_allocations"][0]["controller"],
+                )
+                projection["setup_context"] = attach_verified_original_geometry(
+                    d2_context, symbol=projection["symbol"],
+                    opened_at_ms=projection["opened_at_ms"],
+                )
+            except EpisodeFactsSourceChanged:
+                self._json_response(409, {"ok": False, "error": "episode_facts_source_changed"})
+                return
+            except EpisodeFactsNotFound:
+                self._json_response(404, {"ok": False, "error": "episode_not_in_scope"})
+                return
+            except (StatisticsScopeError, ValueError):
+                self._json_response(503, {"ok": False, "error": "episode_facts_evidence_unavailable"})
+                return
+            except Exception:
+                LOGGER.exception("Closed episode facts projection unavailable")
+                self._json_response(503, {"ok": False, "error": "episode_facts_evidence_unavailable"})
+                return
+            self._json_response(200, {"ok": True, **projection})
+            return
+
+        if parsed.path == "/api/diary/campaign-lineage":
+            # Proven, read-only Robot campaign genealogy only. Does not
+            # claim to provide historical decisions, geometry or candles.
+            params = parse_qs(parsed.query, keep_blank_values=True)
+            if (set(params) != {"account_id", "owner", "trade_episode_id", "source_revision"}
+                    or any(len(v) != 1 for v in params.values())
+                    or params["owner"][0] not in {"ROBOT", "MANUAL"}):
+                self._json_response(400, {"ok": False, "error": "campaign_lineage_scope_required"})
+                return
+            if params["account_id"][0] != "paper" or params["owner"][0] != "ROBOT":
+                self._json_response(404, {"ok": False, "error": "campaign_lineage_scope_unavailable"})
+                return
+            episode_id, revision = params["trade_episode_id"][0], params["source_revision"][0]
+            if (len(episode_id) != 27 or not episode_id.startswith("te_")
+                    or any(char not in "0123456789abcdef" for char in episode_id[3:])
+                    or not 1 <= len(revision) <= 20 or not revision.isascii()
+                    or not revision.isdecimal() or revision[0] == "0"):
+                self._json_response(400, {"ok": False, "error": "campaign_lineage_identity_invalid"})
+                return
+            try:
+                snapshot = load_paper_source_snapshot(
+                    self.server.diary_source_db_path, include_campaign_evidence=True,
+                )
+                projection = project_selected_paper_campaign(
+                    snapshot, account_id="paper", owner="ROBOT",
+                    trade_episode_id=episode_id, source_revision=int(revision),
+                )
+            except CampaignLineageUnproven:
+                # Missing entry ownership / historical reentry is not a
+                # fabricated empty campaign or a plausible ticker-based join.
+                self._json_response(409, {"ok": False, "error": "campaign_lineage_unproven"})
+                return
+            except (StatisticsScopeError, ValueError):
+                self._json_response(503, {"ok": False, "error": "campaign_lineage_source_unavailable"})
+                return
+            except Exception:
+                LOGGER.exception("Verified campaign lineage unavailable")
+                self._json_response(503, {"ok": False, "error": "campaign_lineage_source_unavailable"})
+                return
+            self._json_response(200, {"ok": True, **projection})
+            return
+
+        if parsed.path == "/api/diary/wedge-lineage":
+            # Exact-ID, read-only Robot Wedge episode proof. Same source
+            # transaction provides fills, origins, candidate state and orders.
+            params = parse_qs(parsed.query, keep_blank_values=True)
+            if (set(params) != {"account_id", "owner", "trade_episode_id", "source_revision"}
+                    or any(len(v) != 1 for v in params.values())
+                    or params["owner"][0] not in {"ROBOT", "MANUAL"}):
+                self._json_response(400, {"ok": False, "error": "wedge_lineage_scope_required"})
+                return
+            if params["account_id"][0] != "paper" or params["owner"][0] != "ROBOT":
+                self._json_response(404, {"ok": False, "error": "wedge_lineage_scope_unavailable"})
+                return
+            episode_id, revision = params["trade_episode_id"][0], params["source_revision"][0]
+            if (len(episode_id) != 27 or not episode_id.startswith("te_")
+                    or any(char not in "0123456789abcdef" for char in episode_id[3:])
+                    or not 1 <= len(revision) <= 20 or not revision.isascii()
+                    or not revision.isdecimal() or revision[0] == "0"):
+                self._json_response(400, {"ok": False, "error": "wedge_lineage_identity_invalid"})
+                return
+            try:
+                snapshot = load_paper_source_snapshot(
+                    self.server.diary_source_db_path, include_wedge_evidence=True,
+                )
+                projection = project_selected_paper_wedge(
+                    snapshot, account_id="paper", owner="ROBOT",
+                    trade_episode_id=episode_id, source_revision=int(revision),
+                )
+            except WedgeLineageUnproven:
+                # Includes changed source revision, absent ownership and
+                # ambiguous lineage. Never guess from symbol or timestamps.
+                self._json_response(409, {"ok": False, "error": "wedge_lineage_unproven"})
+                return
+            except (StatisticsScopeError, ValueError):
+                self._json_response(503, {"ok": False, "error": "wedge_lineage_source_unavailable"})
+                return
+            except Exception:
+                LOGGER.exception("Verified Wedge lineage unavailable")
+                self._json_response(503, {"ok": False, "error": "wedge_lineage_source_unavailable"})
+                return
+            self._json_response(200, {"ok": True, **projection})
+            return
+
+        if parsed.path == "/api/diary/scoped-statistics":
+            # This endpoint never creates or fills the archive; the separate
+            # read-only source reporter owns materialization after owner approval.
+            params = parse_qs(parsed.query, keep_blank_values=True)
+            if set(params) != {"account_id", "owner"} or any(len(v) != 1 for v in params.values()):
+                self._json_response(400, {"ok": False, "error": "statistics_scope_required"})
+                return
+            account_id, owner = params["account_id"][0], params["owner"][0]
+            # This PAPER backend is not an authority for independently hosted
+            # MAIN history. No account fallback, no cross-account reports.
+            if account_id != "paper" or owner not in {"MANUAL", "ROBOT"}:
+                self._json_response(404, {"ok": False, "error": "statistics_scope_unavailable"})
+                return
+            archive_path = os.environ.get("BYBITSCANNER_DIARY_ARCHIVE_DB", "").strip()
+            if not archive_path:
+                self._json_response(503, {"ok": False, "error": "statistics_archive_unavailable"})
+                return
+            try:
+                projection = load_latest_scoped_statistics_read_only(
+                    archive_path, account_id=account_id, owner=owner,
+                )
+            except StatisticsScopeError:
+                self._json_response(503, {"ok": False, "error": "statistics_archive_unavailable"})
+                return
+            if projection is None:
+                self._json_response(503, {"ok": False, "error": "statistics_scope_not_materialized"})
+                return
+            self._json_response(200, {"ok": True, **projection})
+            return
+
         if parsed.path == "/api/diary/statistics":
             try:
                 factor_store_path = getattr(self.server, "diary_factor_store_path", None)
@@ -3235,6 +3575,31 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             self._json_response(200, {"ok": True, **projection})
             return
 
+        if parsed.path == "/api/workspace/owner-training-examples":
+            # Read-only, pattern-filtered OWNER charts. Never trading source.
+            from owner_signal_proposal import (
+                OwnerSignalProposalError, list_owner_chart_training_examples,
+            )
+            params = parse_qs(parsed.query)
+            patterns = params.get("pattern", [])
+            if set(params) != {"pattern"} or len(patterns) != 1:
+                self._json_response(400, {"ok": False, "error": "owner_pattern_required"})
+                return
+            try:
+                examples = list_owner_chart_training_examples(patterns[0])
+            except OwnerSignalProposalError as exc:
+                self._json_response(400, {"ok": False, "error": str(exc)})
+                return
+            except (OSError, ValueError):
+                self._json_response(503, {"ok": False, "error": "owner_examples_unavailable"})
+                return
+            self._json_response(200, {
+                "ok": True, "category": "OWNER_CHART_UNVERIFIED",
+                "pattern": patterns[0], "examples": examples,
+                "training_authorized": False,
+            })
+            return
+
         if parsed.path == "/api/workspace/signal-geometry/continuation":
             # Explicit owner-initiated historical extension; archival source
             # stays immutable, only fully closed Bybit candles are returned.
@@ -3243,16 +3608,23 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             from retrospective_signal_bars import (
                 RetrospectiveBarsError, extension_digest, fetch_closed_extension,
             )
-            ids = parse_qs(parsed.query).get("signal_id", [])
-            if len(ids) != 1 or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", ids[0]):
-                self._json_response(400, {"ok": False, "error": "signal_id_required"})
+            params = parse_qs(parsed.query)
+            ids = params.get("signal_id", [])
+            after = params.get("after_ms", [])
+            if (set(params) - {"signal_id", "after_ms"} or len(ids) != 1
+                    or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", ids[0])
+                    or len(after) > 1
+                    or (after and not re.fullmatch(r"[0-9]{1,16}", after[0]))):
+                self._json_response(400, {"ok": False, "error": "invalid_continuation_request"})
                 return
             snapshot = load_frozen_signal_geometry(ids[0])
             if snapshot is None:
                 self._json_response(404, {"ok": False, "error": "source_geometry_not_found"})
                 return
             try:
-                as_of_ms, extra = fetch_closed_extension(snapshot)
+                as_of_ms, extra = fetch_closed_extension(
+                    snapshot, after_ms=int(after[0]) if after else None,
+                )
             except RetrospectiveBarsError as exc:
                 self._json_response(409 if str(exc) != "retrospective_history_unavailable" else 503,
                                     {"ok": False, "error": str(exc)})
@@ -3751,6 +4123,99 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
+        if path in {
+            "/api/diary/simulator-bridge/request",
+            "/api/diary/simulator-bridge/status",
+            "/api/diary/simulator-bridge/pair",
+            "/api/diary/simulator-bridge/ack",
+        }:
+            # Owner-facing routes rely on existing Nginx owner authentication
+            # AND pinned same-origin browser checks. Device ACK has its own
+            # independent token and never receives PAPER or operator authority.
+            from terminal.diary.simulator_launch_relay import (
+                RelayForbidden, RelayInvalid, RelayUnavailable,
+            )
+            relay = getattr(self.server, "simulator_launch_relay", None)
+            if relay is None:
+                self._json_response(503, {"ok": False, "error": "simulator_bridge_disabled"})
+                return
+            try:
+                size = int(self.headers.get("Content-Length", "0"))
+                if not 1 <= size <= 320:
+                    raise RelayInvalid("invalid_simulator_bridge_payload_size")
+                if path.endswith("/request"):
+                    payload = self._payload({"episode_id"})
+                    result = relay.enqueue(
+                        payload["episode_id"],
+                        request_origin=self.headers.get("Origin", ""),
+                        fetch_site=self.headers.get("Sec-Fetch-Site", ""),
+                    )
+                elif path.endswith("/status"):
+                    payload = self._payload({"request_id"})
+                    result = relay.status(
+                        payload["request_id"],
+                        request_origin=self.headers.get("Origin", ""),
+                        fetch_site=self.headers.get("Sec-Fetch-Site", ""),
+                    )
+                elif path.endswith("/pair"):
+                    # Nginx owner-auth must protect this route exactly as
+                    # request/status. No device token is provisioned on VPS.
+                    payload = self._payload({"device_id"})
+                    result = relay.pairing_credentials(
+                        device_id=payload["device_id"],
+                        request_origin=self.headers.get("Origin", ""),
+                        fetch_site=self.headers.get("Sec-Fetch-Site", ""),
+                    )
+                else:
+                    payload = self._payload({"device_id", "request_id", "launched"})
+                    result = relay.acknowledge(
+                        device=payload["device_id"],
+                        token=self.headers.get("X-BybitScanner-Simulator-Device-Token", ""),
+                        request_id=payload["request_id"], launched=payload["launched"],
+                    )
+            except RelayForbidden:
+                self._json_response(403, {"ok": False, "error": "simulator_bridge_unauthorized"})
+                return
+            except RelayUnavailable as exc:
+                self._json_response(503, {"ok": False, "error": str(exc)})
+                return
+            except (RelayInvalid, ValueError, TypeError, KeyError,
+                    json.JSONDecodeError):
+                self._json_response(400, {"ok": False, "error": "invalid_simulator_bridge_request"})
+                return
+            self._json_response(200, {"ok": True, **result})
+            return
+
+        if path == "/api/workspace/owner-unscanned-signal":
+            # Standalone, untrusted owner chart evidence in the existing
+            # append-only proposal archive. No Scanner or Robot admission.
+            from owner_signal_proposal import (
+                MAX_REQUEST_BYTES, OwnerSignalProposalError,
+                OwnerSignalProposalConflict, record_owner_chart_proposal,
+            )
+            try:
+                size = int(self.headers.get("Content-Length", "0"))
+                if size <= 0 or size > MAX_REQUEST_BYTES:
+                    raise OwnerSignalProposalError("invalid_owner_chart_size")
+                payload = self._payload({
+                    "schema_version", "source_kind", "symbol", "timeframe",
+                    "pattern", "bars", "proposed_boundaries", "idempotency_key",
+                }, frozenset({"note", "direction", "formation_movement", "wedge_subtype"}))
+                proposal = record_owner_chart_proposal(payload)
+            except OwnerSignalProposalConflict as exc:
+                self._json_response(409, {"ok": False, "error": str(exc)})
+                return
+            except (OwnerSignalProposalError, ValueError, TypeError,
+                    json.JSONDecodeError) as exc:
+                self._json_response(400, {"ok": False, "error": str(exc)})
+                return
+            except Exception:
+                LOGGER.exception("Owner unscanned signal archival failed")
+                self._json_response(503, {"ok": False, "error": "owner_chart_unavailable"})
+                return
+            self._json_response(200, {"ok": True, "proposal": proposal})
+            return
+
         if path == "/api/workspace/owner-signal-proposal":
             # Browser-authenticated owner proposal only; never Robot admission,
             # candidate persistence, PAPER mutation, or strategy authority.
@@ -3817,7 +4282,7 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 payload = self._payload({
                     "schema_version", "signal_id", "snapshot_revision", "bars_sha256",
                     "label", "corrected_boundaries", "idempotency_key",
-                }, frozenset({"note", "context_as_of_ms", "context_bars_sha256"}))
+                }, frozenset({"note", "context_as_of_ms", "context_bars_sha256", "corrected_pattern"}))
                 signal_id = payload.get("signal_id")
                 import re
                 if not isinstance(signal_id, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", signal_id):
@@ -3885,6 +4350,35 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 return
             self._json_response(200, {"ok": True, "session": to_primitive(result)})
             return
+        if path == "/api/accounts/mode-preferences":
+            try:
+                payload = self._payload(MODE_ACCOUNT_FIELDS)
+                result = self.server.runtime.call(
+                    lambda runtime: runtime.save_mode_account_preference(
+                        payload["mode"], payload["account_id"]
+                    )
+                )
+            except (ValueError, TypeError, json.JSONDecodeError):
+                self._json_response(400, {"ok": False, "error": "invalid_mode_account_payload"})
+                return
+            except LookupError:
+                self._json_response(404, {"ok": False, "error": "account_not_found"})
+                return
+            except RuntimeError as exc:
+                error = str(exc)
+                if error not in {
+                    "autopilot_account_not_supported", "account_activation_not_ready",
+                    "live_account_snapshot_unavailable",
+                }:
+                    error = "mode_account_preference_rejected"
+                self._json_response(409, {"ok": False, "error": error})
+                return
+            except Exception:
+                self._json_response(503, {"ok": False, "error": "mode_account_preferences_unavailable"})
+                return
+            self._json_response(200, {"ok": True, **result})
+            return
+
         account_activate_id = _account_route_id(urlparse(self.path).path, "activate")
         if account_activate_id is not None:
             try:
@@ -4684,6 +5178,7 @@ def create_configured_paper_runtime(
     account_validator_factory=BybitAccountValidator,
     live_account_store_factory=LiveAccountProjectionStore,
     active_account_preference_store_factory=ActiveAccountPreferenceStore,
+    mode_account_preference_store_factory=ModeAccountPreferenceStore,
     live_adapter_factory=None,
     live_mutation_adapter_factory=BybitV5MutationAdapter,
     live_market_mutations_enabled: bool = False,
@@ -4712,6 +5207,9 @@ def create_configured_paper_runtime(
         ),
         active_account_preference_store=active_account_preference_store_factory(
             database_path.with_suffix(".active_account.json")
+        ),
+        mode_account_preference_store=mode_account_preference_store_factory(
+            database_path.with_suffix(".mode_account_preferences.json")
         ),
         live_adapter_factory=live_adapter_factory,
         live_mutation_adapter_factory=live_mutation_adapter_factory,
@@ -4883,10 +5381,21 @@ def main() -> None:
 
         server.operator_token = os.environ.get("BYBITSCANNER_OPERATOR_TOKEN", "").strip()
         server.autopilot_owner_token = os.environ.get(AUTOPILOT_OWNER_TOKEN_ENV, "").strip()
+        from terminal.diary.simulator_launch_relay import (
+            SimulatorLaunchRelay, RelayInvalid,
+        )
+        try:
+            server.simulator_launch_relay = SimulatorLaunchRelay.from_environment()
+        except RelayInvalid:
+            # An invalid optional research relay must never prevent the
+            # protected PAPER runtime from starting or force a STOP.
+            LOGGER.warning("Optional simulator launch relay disabled: configuration invalid")
+            server.simulator_launch_relay = None
         server.runtime = runtime
         server.market_data = market_data
         server.robot_protection_coverage = robot_protection_coverage
         server.runtime_intent_lock = threading.Lock()
+        server.diary_source_db_path = database_path.resolve()
         server.diary_setup_store_path = decision_store_path(database_path)
         server.diary_factor_store_path = server.diary_setup_store_path
 

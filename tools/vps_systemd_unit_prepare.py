@@ -2,19 +2,22 @@
 
 Only daemon-reload and conditionally reset an already-loaded failed unit.
 Never starts/stops services, installs files, handles SQL, or touches LIVE.
-Call only after the exact approved release and its three service files are
-installed and the previous PAPER runtime has been safely stopped.
+Call only after the exact approved release is installed and PAPER units are
+stopped. An independent MAIN service may remain active during PAPER start.
 """
 from __future__ import annotations
 
 import subprocess
 import sys
 
-UNITS = (
+PAPER_UNITS = (
     "bybitscanner-paper-backend.service",
     "bybitscanner-telegram.service",
     "bybitscanner-paper-start.service",
 )
+# All four tracked units require a protected stop when their release files
+# are replaced. Do not reuse this stricter list for normal PAPER-only START.
+UNITS = PAPER_UNITS + ("bybitscanner-manual-main-read.service",)
 
 
 def prepare_units(*, run=subprocess.run) -> str:
@@ -31,9 +34,9 @@ def prepare_units(*, run=subprocess.run) -> str:
     if result is None or result.returncode != 0:
         return "BLOCKED: systemd_daemon_reload_failed; no unit reset or start"
 
-    # Do not reset any unit until all three identities are known and loaded.
+    # Do not reset any unit until all reviewed identities are known and loaded.
     states: dict[str, tuple[str, str]] = {}
-    for unit in UNITS:
+    for unit in PAPER_UNITS:
         result = command("show", unit, "--property=LoadState,ActiveState", "--no-pager")
         if result is None or result.returncode != 0:
             return f"BLOCKED: systemd_unit_state_unavailable:{unit}; no reset or start"
@@ -44,7 +47,7 @@ def prepare_units(*, run=subprocess.run) -> str:
             return f"BLOCKED: systemd_unit_not_stopped_and_loaded:{unit}; no reset or start"
         states[unit] = (values["LoadState"], values["ActiveState"])
 
-    for unit in UNITS:
+    for unit in PAPER_UNITS:
         if states[unit][1] != "failed":
             continue
         result = command("reset-failed", unit)

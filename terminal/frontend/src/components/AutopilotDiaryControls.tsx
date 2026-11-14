@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { DiaryOverlay, type DiarySection } from "./DiaryOverlay";
+import { DiaryOverlay, type DiaryAccountMenuProps, type DiarySection } from "./DiaryOverlay";
 
 type DiaryLaunch = {
   section: DiarySection;
@@ -13,6 +13,7 @@ export function AutopilotDiaryControls({
   onRequestConsumed,
   requestedStatisticsCount = 0,
   hideActions = false,
+  accountMenu = null,
 }: {
   accountKey: string;
   tradeEpisodeId?: string | null;
@@ -20,6 +21,7 @@ export function AutopilotDiaryControls({
   onRequestConsumed?: () => void;
   requestedStatisticsCount?: number;
   hideActions?: boolean;
+  accountMenu?: DiaryAccountMenuProps | null;
 }) {
   const [launch, setLaunch] = useState<DiaryLaunch | null>(null);
   useEffect(() => {
@@ -29,7 +31,7 @@ export function AutopilotDiaryControls({
   }, [requestedTradeEpisodeId, onRequestConsumed]);
 
   useEffect(() => {
-    if (requestedStatisticsCount > 0) setLaunch({ section: "STATISTICS", tradeEpisodeId: null });
+    if (requestedStatisticsCount > 0) setLaunch({ section: "FINREZ", tradeEpisodeId: null });
   }, [requestedStatisticsCount]);
 
   return (
@@ -37,7 +39,7 @@ export function AutopilotDiaryControls({
       {!hideActions ? <div className="autopilot-diary-actions" aria-label="Дневник автопилота">
         <button
           type="button"
-          onClick={() => setLaunch({ section: "STATISTICS", tradeEpisodeId: null })}
+          onClick={() => setLaunch({ section: "FINREZ", tradeEpisodeId: null })}
         >
           Статистика
         </button>
@@ -58,6 +60,8 @@ export function AutopilotDiaryControls({
         <DiaryOverlay
           key={`${accountKey}:${launch.section}:${launch.tradeEpisodeId ?? ""}`}
           accountKey={accountKey}
+          accountMenu={accountMenu}
+          statisticsScope={{ accountId: "paper", owner: "ROBOT" }}
           initialSection={launch.section}
           initialTradeEpisodeId={launch.tradeEpisodeId}
           onClose={() => setLaunch(null)}

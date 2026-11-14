@@ -17,6 +17,7 @@ from decimal import Decimal, InvalidOperation, ROUND_DOWN
 
 from research.historical_candle_feed import FIVE_MINUTES_MS
 from research.h017_local_risk import H017LocalRiskPolicy
+from research.historical_market_replay import adverse_fill_price, stop_take_reference
 
 
 def positive(value: object, name: str, *, allow_zero: bool = False) -> Decimal:
@@ -151,7 +152,7 @@ def simulate_blue_open_scenario(
                 counts["rejected_preview_below_1r"] += 1
             else:
                 side = candidate["side"]
-                open_fill = bar["open"] * (1 + slip if side == "LONG" else 1 - slip)
+                open_fill = adverse_fill_price(bar["open"], side, slip, entry=True)
                 # Reuse the owner's already implemented H-017 proposal, not an
                 # invented 1R target; apply it at slipped actual OPEN.
                 intent = policy.proposal(
@@ -185,18 +186,12 @@ def simulate_blue_open_scenario(
 
         remaining: list[Position] = []
         for pos in positions:
-            if pos.side == "LONG":
-                hit_stop = bar["low"] <= pos.stop
-                hit_take = bar["high"] >= pos.target
-                exit_reference = min(bar["open"], pos.stop) if hit_stop else pos.target
-                exit_fill = exit_reference * (1 - slip)
-                pnl = (exit_fill - pos.entry) * pos.quantity
-            else:
-                hit_stop = bar["high"] >= pos.stop
-                hit_take = bar["low"] <= pos.target
-                exit_reference = max(bar["open"], pos.stop) if hit_stop else pos.target
-                exit_fill = exit_reference * (1 + slip)
-                pnl = (pos.entry - exit_fill) * pos.quantity
+            hit_stop, hit_take, exit_reference = stop_take_reference(
+                side=pos.side, bar_open=bar["open"], bar_high=bar["high"],
+                bar_low=bar["low"], stop=pos.stop, take=pos.target,
+            )
+            exit_fill = adverse_fill_price(exit_reference, pos.side, slip, entry=False)
+            pnl = (exit_fill - pos.entry) * pos.quantity * (1 if pos.side == "LONG" else -1)
             if not hit_stop and not hit_take:
                 remaining.append(pos)
                 continue

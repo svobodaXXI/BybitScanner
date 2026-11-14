@@ -13,6 +13,8 @@ import {
   loadDiaryTrades,
   loadOpenPositions,
   loadRobotDaySummary,
+  loadRobotRuntimeState,
+  type RobotRuntimeState,
   type RobotDaySummary,
   loadRuntimeHealth,
   type PositionProtection,
@@ -20,9 +22,11 @@ import {
   uniqueOpenEpisodeId,
 } from "../autopilot/autopilotFirstScreenData";
 import type { PaperOpenPosition } from "../contracts/trading";
+import type { RobotPositionOrigin } from "../autopilot/robotPositionOrigin";
 import {
   formatPositionPnlPercent,
   formatPositionPrice,
+  formatPositionAverageEntry,
   positionPnlPercent,
 } from "../marketData/positionPnl";
 import "./AutopilotFirstScreen.css";
@@ -30,9 +34,9 @@ import "./AutopilotFirstScreen.css";
 /**
  * AUTOPILOT first screen (UI-1): read-only summary and open-trade cards.
  *
- * Refresh is explicit (mount + button): every request is served by the PAPER
- * owner thread, so this screen must not add a background polling load to a
- * running PAPER_AUTO session.
+ * Refreshes the one existing read-only positions projection while visible.
+ * Every request is served by the PAPER owner thread, so never re-poll the
+ * full set of runtime/diary endpoints on a timer or add a second bot poller.
  */
 
 const NO_SOURCE = "Нет источника данных";
@@ -205,8 +209,13 @@ export function AutopilotFirstScreen({
   onTradeDetails,
   onStatistics,
   onTerminal,
+  onEditor,
   accountControl,
   onRobotControls,
+  onPositionsLoaded,
+  verifiedPosition = null,
+  verifiedOrigin = null,
+  oneWorkingVolumeUsdt = null,
 }: {
   now?: () => number;
   onOpenPositions?: () => void;
@@ -214,8 +223,14 @@ export function AutopilotFirstScreen({
   onTradeDetails?: (episodeId: string) => void;
   onStatistics?: () => void;
   onTerminal?: () => void;
+  onEditor?: () => void;
   accountControl?: ReactNode;
   onRobotControls?: () => void;
+  /** Share the already-loaded inventory; do not introduce a second API poller. */
+  onPositionsLoaded?: (positions: PaperOpenPosition[] | null) => void;
+  verifiedPosition?: PaperOpenPosition | null;
+  verifiedOrigin?: RobotPositionOrigin | null;
+  oneWorkingVolumeUsdt?: string | null;
 }) {
   const [autopilot, setAutopilot] = useState<Loadable<AutopilotModeState>>({
     status: "loading",
@@ -230,7 +245,32 @@ export function AutopilotFirstScreen({
     status: "loading",
   });
   const [robotDay, setRobotDay] = useState<Loadable<RobotDaySummary>>({ status: "loading" });
+  const [robotRuntime, setRobotRuntime] = useState<Loadable<RobotRuntimeState>>({ status: "loading" });
   const generation = useRef(0);
+  const pendingInventory = useRef<AbortController | null>(null);
+
+  // One bounded, cancellable read-only inventory request at a time. The
+  // selected chart and the shared Terminal list use the same snapshot.
+  const refreshPositions = useCallback(async (initial = false) => {
+    if (pendingInventory.current) return;
+    const controller = new AbortController();
+    pendingInventory.current = controller;
+    if (initial) setPositions({ status: "loading" });
+    try {
+      const inventory = await loadOpenPositions(controller.signal);
+      if (!controller.signal.aborted) {
+        setPositions({ status: "ready", value: inventory });
+        onPositionsLoaded?.(inventory);
+      }
+    } catch {
+      if (!controller.signal.aborted) {
+        setPositions({ status: "error" });
+        onPositionsLoaded?.(null); // Never retain a stale Robot attribution.
+      }
+    } finally {
+      if (pendingInventory.current === controller) pendingInventory.current = null;
+    }
+  }, [onPositionsLoaded]);
 
   const refresh = useCallback(async () => {
     const current = ++generation.current;
@@ -241,25 +281,33 @@ export function AutopilotFirstScreen({
       };
     setAutopilot({ status: "loading" });
     setHealth({ status: "loading" });
-    setPositions({ status: "loading" });
     setTrades({ status: "loading" });
     setRobotDay({ status: "loading" });
+    setRobotRuntime({ status: "loading" });
 
     await Promise.all([
       settle(loadAutopilotMode).then(apply(setAutopilot)),
       settle(loadRuntimeHealth).then(apply(setHealth)),
       settle(() => loadDiaryTrades(accountKey)).then(apply(setTrades)),
       settle(loadRobotDaySummary).then(apply(setRobotDay)),
-      settle(loadOpenPositions).then(apply(setPositions)),
+      settle(loadRobotRuntimeState).then(apply(setRobotRuntime)),
+      refreshPositions(true),
     ]);
-  }, [accountKey]);
+  }, [accountKey, refreshPositions]);
 
   useEffect(() => {
     void refresh();
+    // Only the existing PAPER inventory is refreshed, not all the other
+    // endpoints. No request overlap, timer or Robot attribution after unmount.
+    const timer = window.setInterval(() => { void refreshPositions(); }, 8_000);
     return () => {
+      window.clearInterval(timer);
       generation.current += 1;
+      pendingInventory.current?.abort();
+      pendingInventory.current = null;
+      onPositionsLoaded?.(null);
     };
-  }, [refresh]);
+  }, [refresh, refreshPositions, onPositionsLoaded]);
 
   const backendOffline =
     health.status === "error" &&
@@ -269,13 +317,130 @@ export function AutopilotFirstScreen({
   return (
     <section
       className="autopilot-first-screen"
-      aria-label="Автопилот: первый экран"
+      aria-label="Робот: первый экран"
     >
       {backendOffline ? (
         <p className="autopilot-error" role="alert">
-          PAPER backend недоступен. Запустите runtime ярлыком «Запуск робота».
+          Данные PAPER недоступны. Проверьте соединение с сервером и авторизацию.
         </p>
       ) : null}
+
+      <div className="autopilot-terminal-position-panel" aria-label="Позиция робота на панели управления">
+        <div className="paper-position-controls">
+          <div className="paper-wv-indicator" aria-label="Engaged working volume">
+            <div className="paper-wv-primary">
+              <span className="paper-wv-value paper-hold-target"
+                title={oneWorkingVolumeUsdt ? `1 РО = ${oneWorkingVolumeUsdt} USDT` : undefined}>
+                {"⚔️"} {verifiedPosition ? Number(verifiedPosition.engaged_wv).toFixed(1) : "—"}
+              </span>
+            </div>
+            <div className={`paper-wv-position ${verifiedPosition ? verifiedPosition.position_side.toLowerCase() : "flat"}`}>
+              <span className={`paper-wv-direction ${verifiedPosition ? verifiedPosition.position_side.toLowerCase() : "flat"}`} aria-hidden="true" />
+              <span className="paper-position-notional-hold"
+                title={verifiedPosition ? `${verifiedPosition.position_quantity} ${verifiedPosition.symbol.replace(/USDT$/, "")}` : undefined}>
+                <span className="paper-wv-amount">{verifiedPosition
+                  ? Math.round(Number(verifiedPosition.engaged_notional_usdt))
+                  : "0"}</span>
+                <span className="paper-wv-currency">USDT</span>
+              </span>
+            </div>
+          </div>
+          {verifiedPosition ? (
+            <div className="paper-position-info" aria-label="Current PAPER position">
+              <span className="paper-position-symbol">{verifiedPosition.symbol}</span>
+              {verifiedPosition.average_entry !== null ? (
+                <span className="paper-position-average">
+                  {formatPositionAverageEntry(Number(verifiedPosition.average_entry))}
+                </span>
+              ) : null}
+              {(() => {
+                const percent = positionPnlPercent(
+                  verifiedPosition.position_side,
+                  verifiedPosition.average_entry === null ? null : Number(verifiedPosition.average_entry),
+                  verifiedPosition.current_price === null ? null : Number(verifiedPosition.current_price),
+                );
+                const pnlValue = verifiedPosition.unrealized_pnl === null ? null : Number(verifiedPosition.unrealized_pnl);
+                return (
+                  <>
+                    {percent !== null ? (
+                      <span className={`paper-position-pnl ${percent > 0 ? "positive" : percent < 0 ? "negative" : "neutral"}`}>
+                        {formatPositionPnlPercent(percent)}
+                      </span>
+                    ) : null}
+                    {pnlValue !== null && Number.isFinite(pnlValue) ? (
+                      <span className={`paper-position-pnl ${pnlValue > 0 ? "positive" : pnlValue < 0 ? "negative" : "neutral"}`}>
+                        {formatUsdt(pnlValue)}
+                      </span>
+                    ) : null}
+                  </>
+                );
+              })()}
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+
+      {!verifiedPosition ? (
+        <p className="autopilot-trade-origin-empty" role="status">
+          {positions.status === "ready"
+            ? positions.value.length === 0 ? "Нет открытых позиций" : "Выберите позицию Робота"
+            : positions.status === "error" ? "Позиции недоступны" : "Загрузка позиций…"}
+        </p>
+      ) : (
+        <div className="autopilot-trade-origin" aria-label="Происхождение выбранной сделки">
+          <strong>Основание открытой сделки</strong>
+          {!verifiedOrigin ? (
+          <small>Происхождение сигнала не подтверждено</small>
+        ) : (
+          <dl>
+            <div><dt>Сигнал</dt><dd>{verifiedOrigin.pattern || "Не указан"}</dd></div>
+            <div><dt>Источник</dt><dd>{verifiedOrigin.mirror_campaign ? "MIRROR" : "Сигнал робота"}</dd></div>
+            {verifiedOrigin.signal_timeframe_minutes !== null ? (
+              <div><dt>Таймфрейм сигнала</dt><dd>{verifiedOrigin.signal_timeframe_minutes}м</dd></div>
+            ) : null}
+            {verifiedOrigin.mirror_pattern ? (
+              <div><dt>Основа MIRROR</dt><dd>{verifiedOrigin.mirror_pattern}</dd></div>
+            ) : null}
+            {verifiedOrigin.mirror_level_source ? (
+              <div><dt>Уровень MIRROR</dt><dd>{verifiedOrigin.mirror_level_source}</dd></div>
+            ) : null}
+            {verifiedOrigin.reentry_attempt_index !== null ? (
+              <div><dt>Попытка входа</dt><dd>№{verifiedOrigin.reentry_attempt_index}</dd></div>
+            ) : null}
+            <div><dt>Кандидат</dt><dd className="autopilot-origin-id">{verifiedOrigin.candidate_id}</dd></div>
+          </dl>
+          )}
+        </div>
+      )}
+
+      <nav className="autopilot-utility-stack" aria-label="Панель управления Роботом">
+        <button className="workspace-nav-button" type="button" aria-label="Подробности сделки" title="Подробности сделки"
+          disabled={trades.status !== "ready" || positions.status !== "ready" ||
+            positions.value.length !== 1 ||
+            uniqueOpenEpisodeId(positions.value[0].symbol, trades.value) === null || !onTradeDetails}
+          onClick={() => {
+            if (trades.status !== "ready" || positions.status !== "ready" || positions.value.length !== 1) return;
+            const id = uniqueOpenEpisodeId(positions.value[0].symbol, trades.value);
+            if (id) onTradeDetails?.(id);
+          }}>
+          <span className="workspace-nav-icon" aria-hidden="true"><svg className="workspace-nav-symbol" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="5" width="7" height="15" rx="2"/><rect x="14" y="5" width="7" height="15" rx="2"/><path d="M10 10h4M10 15h4M3 9h7M14 9h7"/></svg></span>
+        </button>
+        <button className="workspace-nav-button" type="button" aria-label="Все открытые позиции" title="Все открытые позиции" disabled={!onOpenPositions} onClick={onOpenPositions}>
+          <span className="workspace-nav-icon" aria-hidden="true"><svg className="workspace-nav-symbol" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg></span>
+        </button>
+        <button className="workspace-nav-button" type="button" aria-label="Статистика" title="Статистика" disabled={!onStatistics} onClick={onStatistics}>
+          <span className="workspace-nav-icon" aria-hidden="true"><svg className="workspace-nav-symbol" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.3"><rect x="4" y="15" width="2.5" height="5" rx="0.3"/><rect x="10.75" y="10" width="2.5" height="10" rx="0.3"/><rect x="17.5" y="5" width="2.5" height="15" rx="0.3"/></svg></span>
+        </button>
+        <button className="workspace-nav-button" type="button" aria-label="Терминал" title="Терминал" disabled={!onTerminal} onClick={onTerminal}>
+          <span className="workspace-nav-icon" aria-hidden="true">$</span>
+        </button>
+        <button className="workspace-nav-button" type="button" aria-label="Редактор" title="Редактор" disabled={!onEditor} onClick={onEditor}>
+          <span className="workspace-nav-icon" aria-hidden="true"><svg className="workspace-nav-symbol" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="m4 20 4.5-1 11-11a2 2 0 0 0-3.5-3.5l-11 11L4 20Z"/><path d="m14.5 6 3.5 3.5"/></svg></span>
+        </button>
+        <button className="workspace-nav-button" type="button" aria-label="Управление роботом" title="Управление роботом" disabled={!onRobotControls} onClick={onRobotControls}><svg className="workspace-nav-symbol" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><path d="M14.7 6.3a5 5 0 0 0-6.4 6.4L3 18l3 3 5.3-5.3a5 5 0 0 0 6.4-6.4l-3.3 3.3-3-3z"/></svg></button>
+        {accountControl ? <div className="workspace-nav-account">{accountControl}</div> : null}
+      </nav>
 
       <dl className="autopilot-summary" aria-label="Сводка дня">
         <SummaryItem label="PnL за день">
@@ -296,33 +461,15 @@ export function AutopilotFirstScreen({
           <LoadState value={robotDay} render={(day) => day.closedTrades} />
         </SummaryItem>
       </dl>
-
-      <nav className="autopilot-utility-stack" aria-label="Панель управления Автопилотом">
-        <button className="workspace-nav-button" type="button" aria-label="Подробности сделки" title="Подробности сделки"
-          disabled={trades.status !== "ready" || positions.status !== "ready" ||
-            positions.value.length !== 1 ||
-            uniqueOpenEpisodeId(positions.value[0].symbol, trades.value) === null || !onTradeDetails}
-          onClick={() => {
-            if (trades.status !== "ready" || positions.status !== "ready" || positions.value.length !== 1) return;
-            const id = uniqueOpenEpisodeId(positions.value[0].symbol, trades.value);
-            if (id) onTradeDetails?.(id);
-          }}>
-          <span className="workspace-nav-icon" aria-hidden="true">◎</span>
-        </button>
-        <button className="workspace-nav-button" type="button" aria-label="Все открытые позиции" title="Все открытые позиции" disabled={!onOpenPositions} onClick={onOpenPositions}>
-          <span className="workspace-nav-icon" aria-hidden="true">☷</span>
-        </button>
-        <button className="workspace-nav-button" type="button" aria-label="Статистика" title="Статистика" disabled={!onStatistics} onClick={onStatistics}>
-          <span className="workspace-nav-icon" aria-hidden="true">▂▅▇</span>
-        </button>
-        <button className="workspace-nav-button" type="button" aria-label="Терминал" title="Терминал" disabled={!onTerminal} onClick={onTerminal}>
-          <span className="workspace-nav-icon" aria-hidden="true">$</span>
-        </button>
-        <button className="workspace-nav-button" type="button" aria-label="Управление роботом" title="Управление роботом" disabled={!onRobotControls} onClick={onRobotControls}><svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M14.7 6.3a5 5 0 0 0-6.4 6.4L3 18l3 3 5.3-5.3a5 5 0 0 0 6.4-6.4l-3.3 3.3-3-3z"/></svg></button>
-        {accountControl ? <div className="workspace-nav-account">{accountControl}</div> : null}
-      </nav>
-
-
+      <output className="autopilot-runtime-status" aria-label="Текущее состояние Робота">
+        Робот: {robotRuntime.status === "ready"
+          ? `${robotRuntime.value.mode === "ROBOT_RUNNING" ? "Запущен"
+              : robotRuntime.value.mode === "ROBOT_STOPPED" ? "Остановлен"
+                : robotRuntime.value.mode} / ${robotRuntime.value.recoveryStatus}`
+          : robotRuntime.status === "error" ? "состояние недоступно" : "загрузка"}.
+        {" "}Автовходы: {autopilot.status === "ready" ? autopilot.value.mode
+          : autopilot.status === "error" ? "состояние недоступно" : "загрузка"}.
+      </output>
     </section>
   );
 }

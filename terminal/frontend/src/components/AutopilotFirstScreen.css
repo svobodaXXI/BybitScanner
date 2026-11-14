@@ -125,44 +125,126 @@
 
 /* Compact icon-only workspace navigation shared across tabs. */
 .workspace-nav-button {
-  width: 2.9rem;
-  height: 2.9rem;
-  min-width: 2.9rem;
-  min-height: 2.9rem;
+  width: 2.15rem;
+  height: 2.15rem;
+  min-width: 2.15rem;
+  min-height: 2.15rem;
   display: grid;
   place-items: center;
   padding: 0;
-  border: 1px solid #475461;
-  border-radius: 0.55rem;
-  background: linear-gradient(135deg, #1b2530, #222d38);
+  border: 1px solid #303b47;
+  border-radius: 0.35rem;
+  background: #171d24;
   color: #f0f4f8;
 }
 .workspace-nav-button:hover, .workspace-nav-button:focus-visible { border-color: #9bbcf1; }
 .workspace-nav-button:focus-visible { outline: 2px solid #92b7ee; outline-offset: 2px; }
 .workspace-nav-button:disabled { opacity: 0.45; cursor: not-allowed; }
-.workspace-nav-icon { display: grid; place-items: center; width: 100%; font-size: 1.3rem; }
+.workspace-nav-icon { display: grid; place-items: center; width: 100%; font-size: 1.15rem; }
+.autopilot-utility-stack .workspace-nav-symbol { display: block; width: 1.2rem; height: 1.2rem; }
 .autopilot-first-screen {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 3rem;
+  grid-template-columns: minmax(0, 1fr) max-content;
   align-items: start;
   gap: 0.55rem;
 }
 .autopilot-summary { display: flex; flex-direction: column; grid-column: 1; gap: 0.8rem; }
 .autopilot-summary-item dd { font-weight: 700; font-size: 1.25rem; }
-.autopilot-utility-stack { grid-column: 2; grid-row: 1 / span 3; display: flex; flex-direction: column; align-items: center; gap: 0.35rem; }
-.workspace-nav-account { width: 2.9rem; height: 2.9rem; overflow: visible; }
-.workspace-nav-account .paper-account-control,
+.autopilot-utility-stack { grid-column: 2; grid-row: 1 / span 3; display: flex; flex-direction: column; align-items: flex-end; gap: 0.35rem; }
+.workspace-nav-account { width: auto; overflow: visible; }
+/* Reuse the Terminal account switcher: keep its key and PAPER label visible. */
 .workspace-nav-account .account-switch-button {
-  width: 2.9rem;
-  min-width: 2.9rem;
-  height: 2.9rem;
-  min-height: 2.9rem;
-  border-radius: 0.55rem;
+  width: auto;
+  min-width: 0;
+  height: 2.15rem;
+  min-height: 2.15rem;
+  border-radius: 0.35rem;
 }
-.workspace-nav-account .account-switch-label { display: none; }
 
 /* Keep existing overlays mounted in Autopilot without the redundant legacy panel. */
 .autopilot-legacy-navigation { display: contents; }
 .autopilot-legacy-navigation > div:first-child,
 .autopilot-legacy-navigation > .mode-switcher { display: none; }
-.mode-switcher .workspace-nav-button { flex: 0 0 2.9rem; }
+.mode-switcher .workspace-nav-button { flex: 0 0 2.15rem; }
+
+/* Reuses the chart shell: position state is a compact, noninteractive footer. */
+.autopilot-position-readout {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.9rem;
+  padding: 0.35rem 0.55rem;
+  border-top: 1px solid #27313b;
+  background: #10151b;
+  color: #d5dde5;
+  font-size: 0.72rem;
+}
+.autopilot-position-readout strong { color: #e1e8ef; }
+
+.chart-panel.has-position-footer { grid-template-rows: minmax(0, 1fr) auto; }
+
+.dom-panel.has-position-status { grid-template-rows: minmax(0, 1fr) auto; }
+.dom-robot-position-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.25rem;
+  padding: 0.35rem;
+  border-top: 1px solid #27313b;
+  font-size: 0.66rem;
+  color: #cbd7df;
+}
+.dom-robot-position-status strong { color: #e1e8ef; }
+
+/* Same PAPER position controls as the manual Terminal; observation only. */
+.autopilot-terminal-position-panel { grid-column: 1; grid-row: 2; min-width: 0; }
+.autopilot-terminal-position-panel .paper-position-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.autopilot-terminal-position-panel .paper-position-info { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
+
+/* Selected OPEN Robot trade first, daily totals last; keep the existing six controls in place. */
+.autopilot-terminal-position-panel { grid-column: 1; grid-row: 1; }
+.autopilot-trade-origin { grid-column: 1; grid-row: 2; min-width: 0; padding: 0.4rem 0; border-top: 1px solid #27313b; }
+.autopilot-trade-origin-empty { grid-column: 1; grid-row: 2; min-width: 0; margin: 0; padding: 0; color: #758391; font-size: 0.7rem; }
+.autopilot-trade-origin > strong { display: block; margin-bottom: 0.35rem; }
+.autopilot-trade-origin small { color: #758391; }
+.autopilot-trade-origin dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr)); gap: 0.3rem 0.6rem; margin: 0; }
+.autopilot-trade-origin dt { color: #758391; font-size: 0.67rem; }
+.autopilot-trade-origin dd { margin: 0.1rem 0 0; overflow-wrap: anywhere; }
+.autopilot-origin-id { font-size: 0.68rem; }
+.autopilot-utility-stack { grid-column: 2; grid-row: 1 / span 2; }
+.autopilot-summary { grid-column: 1 / -1; grid-row: 3; display: flex; flex-wrap: wrap; flex-direction: row; gap: 0.8rem 1.4rem; padding-top: 0.45rem; border-top: 1px solid #27313b; }
+.autopilot-summary-item dd { font-size: 1rem; }
+
+/* An informational snapshot, not an order/admission-ready claim. */
+.autopilot-runtime-status {
+  grid-column: 1 / -1;
+  grid-row: 4;
+  color: #9eacb9;
+  font-size: 0.7rem;
+  overflow-wrap: anywhere;
+}
+
+/* Match the existing mobile Terminal utility rail exactly, including icon size. */
+@media (max-width: 620px) {
+  .autopilot-utility-stack { gap: 0.18rem; }
+  .autopilot-utility-stack > .workspace-nav-button {
+    box-sizing: border-box;
+    width: 1.8rem;
+    min-width: 1.8rem;
+    height: 1.62rem;
+    min-height: 1.62rem;
+    border-radius: 0.28rem;
+    flex: 0 0 1.62rem;
+  }
+  .autopilot-utility-stack .workspace-nav-symbol {
+    width: 1.12rem;
+    height: 1.12rem;
+  }
+  .autopilot-utility-stack .workspace-nav-icon { font-size: 0.9rem; }
+  /* Terminal's statistics bars render at 24px; use the same size here. */
+  .autopilot-utility-stack .workspace-nav-button[aria-label="Статистика"] .workspace-nav-symbol {
+    width: 1.5rem;
+    height: 1.5rem;
+  }
+}

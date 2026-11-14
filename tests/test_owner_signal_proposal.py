@@ -92,3 +92,291 @@ def test_idempotency_cannot_reuse_identity_with_different_geometry(tmp_path):
         record_owner_signal_proposal(second, snapshot, directory=tmp_path)
     assert record_owner_signal_proposal(request, snapshot, directory=tmp_path) == first
     assert len(list(tmp_path.rglob("*.json"))) == 1
+
+
+def _owner_chart_payload():
+    period = 300_000
+    return {
+        "schema_version": 1, "source_kind": "OWNER_CHART_UNVERIFIED",
+        "symbol": "BTCUSDT", "timeframe": "5", "pattern": "Falling Wedge",
+        "bars": [
+            {"open_time_ms": i * period, "open": 100, "high": 110,
+             "low": 90, "close": 100}
+            for i in range(120)
+        ],
+        "proposed_boundaries": [
+            {"id": "upper", "type": "ray", "anchors": [
+                {"bar_open_time_ms": 20 * period, "price": 108},
+                {"bar_open_time_ms": 90 * period, "price": 102},
+            ]},
+            {"id": "lower", "type": "ray", "anchors": [
+                {"bar_open_time_ms": 20 * period, "price": 95},
+                {"bar_open_time_ms": 90 * period, "price": 93},
+            ]},
+        ],
+        "idempotency_key": "owner-chart-token-0000000001", "note": "Scanner missed this wedge",
+    }
+
+
+def test_unscanned_owner_chart_is_archived_by_pattern_without_trading(tmp_path):
+    from owner_signal_proposal import (
+        record_owner_chart_proposal, list_owner_chart_training_examples,
+    )
+    payload = _owner_chart_payload()
+    first = record_owner_chart_proposal(
+        payload, directory=tmp_path, now_ms=121 * 300_000,
+    )
+    assert first["source_kind"] == "OWNER_CHART_UNVERIFIED"
+    assert first["assessment"] == {
+        "decision": "AWAITING_OFFLINE_REPLAY",
+        "reason": "owner_supplied_source_not_scanner_evidence",
+    }
+    assert first["candidate_created"] is False and first["robot_candidate_id"] is None
+    assert first["owner_source_snapshot"]["bars"] == payload["bars"]
+    assert record_owner_chart_proposal(
+        payload, directory=tmp_path, now_ms=121 * 300_000,
+    ) == first
+    assert list_owner_chart_training_examples("Falling Wedge", directory=tmp_path) == [first]
+    assert list_owner_chart_training_examples("Rising Wedge", directory=tmp_path) == []
+    assert len(list(tmp_path.rglob("*.json"))) == 1
+
+
+def test_unscanned_owner_chart_rejects_partial_future_gaps_and_identity_collisions(tmp_path):
+    from owner_signal_proposal import record_owner_chart_proposal
+    payload = _owner_chart_payload()
+    for corrupted in [
+        {**payload, "bars": payload["bars"][:2]},
+        {**payload, "bars": [*payload["bars"][:10], {
+            **payload["bars"][10], "open_time_ms": 123,
+        }, *payload["bars"][11:]]},
+        {**payload, "bars": [{**row, "high": 1} for row in payload["bars"]]},
+        {**payload, "source_kind": "SCANNER"},
+    ]:
+        with pytest.raises(OwnerSignalProposalError):
+            record_owner_chart_proposal(
+                corrupted, directory=tmp_path, now_ms=121 * 300_000,
+            )
+    with pytest.raises(OwnerSignalProposalError, match="invalid_owner_chart_chronology"):
+        record_owner_chart_proposal(payload, directory=tmp_path, now_ms=3)
+    first = record_owner_chart_proposal(payload, directory=tmp_path, now_ms=121 * 300_000)
+    altered = {**payload, "proposed_boundaries": [
+        {**payload["proposed_boundaries"][0], "anchors": [
+            {**payload["proposed_boundaries"][0]["anchors"][0], "price": 109},
+            payload["proposed_boundaries"][0]["anchors"][1],
+        ]},
+        payload["proposed_boundaries"][1],
+    ]}
+    with pytest.raises(OwnerSignalProposalConflict):
+        record_owner_chart_proposal(altered, directory=tmp_path, now_ms=121 * 300_000)
+    assert first["candidate_created"] is False
+
+
+def test_unscanned_owner_chart_http_is_separate_from_scanner_archive(monkeypatch, tmp_path):
+    import json
+    import threading
+    from http.server import ThreadingHTTPServer
+    from urllib.error import HTTPError
+    from urllib.request import Request, urlopen
+    from terminal.runtime.paper_http_server import PaperHttpHandler
+
+    monkeypatch.setenv("BYBITSCANNER_OWNER_SIGNAL_PROPOSAL_DIR", str(tmp_path))
+    server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    payload = _owner_chart_payload()
+    try:
+        request = Request(
+            base + "/api/workspace/owner-unscanned-signal",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"}, method="POST",
+        )
+        with urlopen(request, timeout=3) as response:
+            result = json.load(response)
+        assert result["ok"] is True
+        assert result["proposal"]["source_kind"] == "OWNER_CHART_UNVERIFIED"
+        assert result["proposal"]["candidate_created"] is False
+        with urlopen(
+            base + "/api/workspace/owner-training-examples?pattern=Falling+Wedge",
+            timeout=3,
+        ) as response:
+            archive = json.load(response)
+        assert archive["training_authorized"] is False
+        assert archive["category"] == "OWNER_CHART_UNVERIFIED"
+        assert archive["examples"][0]["proposal_id"] == result["proposal"]["proposal_id"]
+        with pytest.raises(HTTPError) as error:
+            urlopen(
+                base + "/api/workspace/owner-training-examples?pattern=Unknown",
+                timeout=3,
+            )
+        assert error.value.code == 400
+    finally:
+        server.shutdown()
+        worker.join(timeout=3)
+        server.server_close()
+
+
+def test_unscanned_ikigai_box_archives_fibonacci_direction_without_robot_candidate(tmp_path):
+    from owner_signal_proposal import (
+        record_owner_chart_proposal, list_owner_chart_training_examples,
+    )
+    payload = _owner_chart_payload()
+    payload.update(
+        schema_version=2, pattern="Ikigai Box", direction="SHORT",
+        proposed_boundaries=[{
+            "id": "first_impulse_fibonacci", "type": "fibonacci",
+            "anchors": [
+                {"bar_open_time_ms": 10 * 300_000, "price": 95.0},
+                {"bar_open_time_ms": 15 * 300_000, "price": 108.0},
+            ],
+        }],
+    )
+    first = record_owner_chart_proposal(
+        payload, directory=tmp_path, now_ms=121 * 300_000,
+    )
+    assert first["submission"]["direction"] == "SHORT"
+    assert first["submission"]["proposed_boundaries"] == payload["proposed_boundaries"]
+    assert first["owner_source_snapshot"]["boundaries"][0]["kind"] == "fibonacci"
+    assert first["candidate_created"] is False
+    assert first["robot_candidate_id"] is None
+    assert first["assessment"]["decision"] == "AWAITING_OFFLINE_REPLAY"
+    assert list_owner_chart_training_examples("Ikigai Box", directory=tmp_path) == [first]
+    assert record_owner_chart_proposal(
+        payload, directory=tmp_path, now_ms=121 * 300_000,
+    ) == first
+
+    bad = {**payload, "direction": "LONG",
+           "idempotency_key": "ikigai-invalid-dir-000001"}
+    with pytest.raises(OwnerSignalProposalError, match="impulse_direction"):
+        record_owner_chart_proposal(
+            bad, directory=tmp_path, now_ms=121 * 300_000,
+        )
+    fake = {**payload, "proposed_boundaries": [{
+        **payload["proposed_boundaries"][0], "type": "rectangle",
+    }], "idempotency_key": "ikigai-invalid-rect-0001"}
+    with pytest.raises(OwnerSignalProposalError, match="invalid_owner_chart_geometry"):
+        record_owner_chart_proposal(
+            fake, directory=tmp_path, now_ms=121 * 300_000,
+        )
+    assert len(list(tmp_path.rglob("*.json"))) == 1
+
+
+def test_v3_owner_pattern_movement_is_archived_without_robot_trade_side(tmp_path):
+    from owner_signal_proposal import record_owner_chart_proposal
+    payload = _owner_chart_payload()
+    payload.pop("direction", None)
+    payload.update(schema_version=3, pattern="Wedge",
+                   formation_movement="UP", wedge_subtype="CORRECTION")
+    payload["proposed_boundaries"] = [
+        {**line, "id": f"manual_{i + 1}"}
+        for i, line in enumerate(payload["proposed_boundaries"])
+    ]
+    saved = record_owner_chart_proposal(
+        payload, directory=tmp_path, now_ms=121 * 300_000
+    )
+    assert saved["submission"]["schema_version"] == 3
+    assert saved["submission"]["formation_movement"] == "UP"
+    assert saved["submission"]["wedge_subtype"] == "CORRECTION"
+    assert "direction" not in saved["submission"]
+    assert "trade_side" not in saved["submission"]
+    assert saved["candidate_created"] is False
+    assert saved["robot_candidate_id"] is None
+    assert saved["assessment"]["decision"] == "AWAITING_OFFLINE_REPLAY"
+    assert record_owner_chart_proposal(
+        payload, directory=tmp_path, now_ms=121 * 300_000
+    ) == saved
+    for changed in [
+        {**payload, "formation_movement": "LONG"},
+        {**payload, "wedge_subtype": "SHORT"},
+        {**payload, "direction": "LONG"},
+        {**payload, "proposed_boundaries": payload["proposed_boundaries"][:1]},
+    ]:
+        with pytest.raises(OwnerSignalProposalError):
+            record_owner_chart_proposal(
+                changed, directory=tmp_path, now_ms=121 * 300_000
+            )
+
+
+def test_v3_box_is_one_pattern_and_legacy_box_preserved(tmp_path):
+    from owner_signal_proposal import record_owner_chart_proposal
+    payload = _owner_chart_payload()
+    payload.pop("direction", None)
+    payload.update(schema_version=3, pattern="Ikigai Box", formation_movement="DOWN",
+                   proposed_boundaries=[{
+                       "id": "first_impulse_fibonacci", "type": "fibonacci",
+                       "anchors": [
+                           {"bar_open_time_ms": 10 * 300_000, "price": 110.0},
+                           {"bar_open_time_ms": 15 * 300_000, "price": 90.0},
+                       ],
+                   }])
+    saved = record_owner_chart_proposal(
+        payload, directory=tmp_path, now_ms=121 * 300_000
+    )
+    assert saved["submission"]["pattern"] == "Ikigai Box"
+    assert saved["submission"]["formation_movement"] == "DOWN"
+    assert saved["candidate_created"] is False
+    with pytest.raises(OwnerSignalProposalError, match="unsupported_proposed_pattern"):
+        record_owner_chart_proposal(
+            {**payload, "pattern": "Box", "idempotency_key": "owner-box-other-000001"},
+            directory=tmp_path, now_ms=121 * 300_000
+        )
+
+
+def test_v3_other_shapes_are_archive_only(tmp_path):
+    from owner_signal_proposal import record_owner_chart_proposal
+    for index, pattern in enumerate(("Double Top/Bottom", "Head and Shoulders", "G-Shaped")):
+        payload = _owner_chart_payload()
+        payload.pop("direction", None)
+        payload.update(schema_version=3, pattern=pattern,
+                       formation_movement="UP",
+                       idempotency_key=f"owner-v3-pattern-{index:04d}-archive",
+                       proposed_boundaries=[{
+                           "id": "manual_1", "type": "horizontal",
+                           "anchors": [{"bar_open_time_ms": 10 * 300_000, "price": 101.0}],
+                       }])
+        saved = record_owner_chart_proposal(
+            payload, directory=tmp_path, now_ms=121 * 300_000
+        )
+        assert saved["candidate_created"] is False
+        assert saved["robot_candidate_id"] is None
+
+
+def test_v3_owner_chart_http_accepts_movement_without_trade_side(monkeypatch, tmp_path):
+    import json
+    import threading
+    from http.server import ThreadingHTTPServer
+    from urllib.request import Request, urlopen
+    from terminal.runtime.paper_http_server import PaperHttpHandler
+
+    payload = _owner_chart_payload()
+    payload.pop("direction", None)
+    payload.update(
+        schema_version=3, pattern="Wedge",
+        formation_movement="DOWN", wedge_subtype="SLOWDOWN",
+        proposed_boundaries=[
+            {**line, "id": f"manual_{index + 1}"}
+            for index, line in enumerate(payload["proposed_boundaries"])
+        ],
+    )
+    monkeypatch.setenv("BYBITSCANNER_OWNER_SIGNAL_PROPOSAL_DIR", str(tmp_path))
+    server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    try:
+        request = Request(
+            f"http://127.0.0.1:{server.server_address[1]}/api/workspace/owner-unscanned-signal",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"}, method="POST",
+        )
+        with urlopen(request, timeout=3) as response:
+            body = json.load(response)
+        assert body["ok"] is True
+        assert body["proposal"]["submission"]["formation_movement"] == "DOWN"
+        assert body["proposal"]["submission"]["wedge_subtype"] == "SLOWDOWN"
+        assert "direction" not in body["proposal"]["submission"]
+        assert body["proposal"]["candidate_created"] is False
+        assert body["proposal"]["robot_candidate_id"] is None
+    finally:
+        server.shutdown()
+        worker.join(timeout=3)
+        server.server_close()

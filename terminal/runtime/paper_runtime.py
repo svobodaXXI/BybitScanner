@@ -78,6 +78,7 @@ from terminal.application.paper_close_all_report import (
     verified_robot_close,
 )
 from terminal.application.ikigai_box_plan_persistence import persist_ikigai_box_plan
+from terminal.application.box_protection_finalizer import finalize_box_protection_obligation
 from terminal.application.ikigai_box_catchup import (
     build_box_manual_close_market_plan,
     durable_box_market_intent,
@@ -119,6 +120,7 @@ from terminal.persistence.sqlite_store import (
 )
 from terminal.persistence.credential_store import CredentialStore, StoredBybitAccount
 from terminal.persistence.live_account_store import LiveAccountProjectionStore
+from terminal.persistence.mode_account_preference import ModeAccountPreferenceStore
 from terminal.persistence.active_account_preference import (
     ActiveAccountPreferenceError, ActiveAccountPreferenceStore,
 )
@@ -747,6 +749,7 @@ class PaperRuntime:
         account_validator: BybitAccountValidator | None = None,
         live_account_store: LiveAccountProjectionStore | None = None,
         active_account_preference_store: ActiveAccountPreferenceStore | None = None,
+        mode_account_preference_store: ModeAccountPreferenceStore | None = None,
         live_adapter_factory=None,
         live_mutation_adapter_factory=BybitV5MutationAdapter,
         live_market_mutations_enabled: bool = False,
@@ -778,6 +781,7 @@ class PaperRuntime:
         self._account_validator = account_validator
         self._live_account_store = live_account_store
         self._active_account_preference_store = active_account_preference_store
+        self._mode_account_preference_store = mode_account_preference_store
         self._live_market_mutations_enabled = live_market_mutations_enabled
         self._live_mainnet_authorized = live_mainnet_authorized
         self._live_parity_mutations_enabled = live_parity_mutations_enabled
@@ -1639,6 +1643,42 @@ class PaperRuntime:
 
     def account_catalog(self) -> dict[str, object]:
         return self._account_manager.catalog_projection()
+
+    def mode_account_preferences(self) -> dict[str, str | None]:
+        """Read independent display selections; never change trading authority."""
+        store = self._mode_account_preference_store
+        if store is None:
+            raise RuntimeError("mode_account_preferences_unavailable")
+        return {
+            mode: (selected.value if (selected := store.load(mode)) is not None else None)
+            for mode in ("TERMINAL", "AUTOPILOT")
+        }
+
+    def save_mode_account_preference(self, mode: str, account_id_text: str) -> dict[str, str]:
+        """Persist only a known eligible selection; Robot remains PAPER-owned."""
+        if mode not in ("TERMINAL", "AUTOPILOT"):
+            raise ValueError("unsupported_account_mode")
+        if mode == "AUTOPILOT" and account_id_text != self._paper_account_id.value:
+            raise RuntimeError("autopilot_account_not_supported")
+        account_id = TradingAccountId(account_id_text)
+        account = self._account_manager.account(account_id)
+        if not self._account_manager.is_activation_eligible(account_id):
+            raise RuntimeError("account_activation_not_ready")
+        if account.provider is TradingAccountProvider.BYBIT:
+            if self._live_account_store is None:
+                raise RuntimeError("live_account_snapshot_unavailable")
+            snapshot = self._live_account_store.get(account_id_text)
+            if (
+                snapshot is None
+                or snapshot.environment != account.environment.value
+                or snapshot.read_only != (account.status is TradingAccountStatus.READ_ONLY)
+            ):
+                raise RuntimeError("live_account_snapshot_unavailable")
+        store = self._mode_account_preference_store
+        if store is None:
+            raise RuntimeError("mode_account_preferences_unavailable")
+        store.save(mode, account_id)
+        return {"mode": mode, "account_id": account_id.value}
 
     def _stored_bybit_account(self, account_id: str) -> StoredBybitAccount:
         for stored in self._stored_bybit_accounts:
@@ -3425,74 +3465,9 @@ class PaperRuntime:
             # unproven position state.
             return obligation
         if trade.pattern == "IKIGAI_BOX":
-            candidate = self.store.get_robot_candidate(trade.candidate_id)
-            source_id = (
-                candidate.signal_snapshot.get("source_box_candidate_id")
-                if candidate is not None else None
+            return finalize_box_protection_obligation(
+                self.store, obligation, trade, now_ms=now_ms,
             )
-            if not isinstance(source_id, str) or not source_id.strip():
-                return obligation
-            try:
-                proof = self.store.prove_box_owned_position(source_id.strip())
-            except Exception:
-                return obligation
-            if (
-                proof.remaining_quantity != 0
-                or proof.average_exit is None
-                or proof.last_execution_at_ms is None
-                or proof.entry_notional <= 0
-            ):
-                return obligation
-            realized_pct = (
-                (proof.realized_pnl - proof.accumulated_fee)
-                / proof.entry_notional
-                * Decimal("100")
-            )
-            # A prior Box monitor may have labelled this already-executed
-            # STOP as TAKE before the obligation finalizer ran. Only the
-            # exact, zero-exposure, matching-economics race may be corrected.
-            if trade.exit_time_ms is not None and trade.exit_reason != obligation.winning_leg:
-                corrected = self.store.correct_box_take_race_from_proven_stop(
-                    trade_id=trade.trade_id,
-                    obligation_id=obligation.obligation_id,
-                    exit_time_ms=proof.last_execution_at_ms,
-                    exit_price=proof.average_exit,
-                    realized_pnl_usdt=proof.realized_pnl,
-                    realized_pnl_pct=realized_pct,
-                    fees_costs_usdt=proof.accumulated_fee,
-                    updated_at_ms=now_ms,
-                )
-                if not corrected:
-                    LOGGER.error(
-                        "Box STOP/TAKE race cannot be proved; reconciliation required: obligation=%s",
-                        obligation.obligation_id,
-                    )
-                    return obligation
-                LOGGER.warning(
-                    "Corrected proven Box STOP/TAKE reason race: obligation=%s trade=%s",
-                    obligation.obligation_id, trade.trade_id,
-                )
-            else:
-                self.store.close_robot_trade(
-                    trade.trade_id,
-                    exit_time_ms=proof.last_execution_at_ms,
-                    exit_price=proof.average_exit,
-                    exit_reason=obligation.winning_leg,
-                    realized_pnl_usdt=proof.realized_pnl,
-                    realized_pnl_pct=realized_pct,
-                    fees_costs_usdt=proof.accumulated_fee,
-                    updated_at_ms=now_ms,
-                )
-            self.store.clear_paper_protection_for_flat(position_key)
-            if obligation.status == "DISPATCHING":
-                obligation = self.store.transition_paper_protection_obligation(
-                    obligation.obligation_id,
-                    expected_status="DISPATCHING",
-                    next_status="RESOLVED",
-                    expected_version=obligation.version,
-                    updated_at_ms=now_ms,
-                )
-            return obligation
 
         if trade.entry_quantity is None:
             # Reached only if an exec was somehow recorded for a trade
@@ -3647,6 +3622,8 @@ class PaperRuntime:
         projected = []
         for item in self.store.load_open_position_projections(self._account_id):
             symbol = item.position_key.symbol
+            # Link to durable Robot ledger, never guess from symbol or entry timing.
+            robot_trade = self.store.get_open_robot_trade_for_symbol(self._account_id, symbol)
             instrument = self._context._instrument_for(symbol.value)
             # Read-only valuation on the owner: only an already-streamed book,
             # never the provider's REST fallback. Without a fresh one the
@@ -3686,6 +3663,7 @@ class PaperRuntime:
                 current_price=current_price,
                 unrealized_pnl=unrealized_pnl,
                 tick_size=instrument.tick_size,
+                robot_trade_id=robot_trade.trade_id if robot_trade is not None else None,
             ))
         return PaperOpenPositionsResponse(account.trading_account_id.value, tuple(projected))
 

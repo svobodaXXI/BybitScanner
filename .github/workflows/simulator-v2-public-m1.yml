@@ -1,0 +1,35 @@
+name: Simulator V2 public M1 provenance probe
+
+# This external-market diagnostic is opt-in only. Bybit's public API
+# returned HTTP 403 from GitHub-hosted CI on 2026-11-09 (run 42676656902).
+# Do not gate offline SIMULATION tests or merges on network/geographic access.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  public-m1-sample:
+    name: Real public Bybit M1 sample (research only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@v4
+      - name: Use Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Fetch public historical M1 and verify isolated virtual accounting
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python -m research.simulator_v2.public_m1_smoke
+      - name: Preserve verified public candles and virtual report
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: simulator-v2-bybit-public-m1-20261001
+          path: simulator-v2-public-m1-sample/
+          if-no-files-found: error
+          retention-days: 7

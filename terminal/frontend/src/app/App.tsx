@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "r
 import { ChartPanel } from "../components/ChartPanel";
 import { DomPanel } from "../components/DomPanel";
 import { ModePanel, type WorkspaceMode } from "../components/ModePanel";
+import { scopedProjection, useModeAccountSelection } from "../accountWorkspace/modeAccountSelection";
 import { TapePanel } from "../components/TapePanel";
 import { WorkspaceHeader } from "../components/WorkspaceHeader";
 import {
@@ -23,10 +24,15 @@ import {
 } from "../marketData/workspaceSwitch";
 import { TelegramMiniAppBridge } from "../telegram/TelegramMiniAppBridge";
 import { parseSignalWorkspaceLink } from "../geometryFeedback/signalDeepLink";
-import { appendRetrospectiveCandles, projectSignalGeometry, restoreSavedSignalCorrection, type RetrospectiveOhlc } from "../geometryFeedback/signalChartBridge";
-import type { OwnerSignalDraft } from "../geometryFeedback/ownerSignalDraft";
-import { matchesStoredGeometryReview, type GeometryReviewDraft, type TimestampDrawing } from "../geometryFeedback/geometryReviewDraft";
+import { appendRetrospectiveCandles, projectVerifiedSignalOverlay, projectSignalGeometry, restoreSavedSignalCorrection, type RetrospectiveOhlc } from "../geometryFeedback/signalChartBridge";
+import type { OwnerChartDraftV3, OwnerSignalDraft } from "../geometryFeedback/ownerSignalDraft";
+import { isEditorReviewPattern, matchesStoredGeometryReview, type GeometryReviewDraft, type TimestampDrawing } from "../geometryFeedback/geometryReviewDraft";
 import type { Candle } from "../contracts/marketData";
+import type { PaperOpenPosition } from "../contracts/trading";
+import type { RobotTradeMarker } from "../chart/robotTradeMarkers";
+import { parseRobotPositionOrigin, type RobotPositionOrigin } from "../autopilot/robotPositionOrigin";
+import { useRobotSignalGeometry } from "../autopilot/useRobotSignalGeometry";
+import { RobotExecutionJournal } from "../components/RobotExecutionJournal";
 import type { DrawingObject } from "../chart/drawingModel";
 import {
   createLimitDraft,
@@ -98,10 +104,19 @@ const sameProtectionPrice = (left: string | null, right: string | null) => {
 
 export function App() {
   const launchLink = useMemo(() => parseSignalWorkspaceLink(window.location.search), []);
-  const [mode, setMode] = useState<WorkspaceMode>(launchLink?.mode ?? "TERMINAL");
+  // A signal-specific Telegram "Терминал" link opens Robot observation;
+  // a plain Terminal link without a source identity stays manual.
+  const [mode, setMode] = useState<WorkspaceMode>(
+    launchLink?.mode === "TERMINAL" && launchLink.signalId ? "AUTOPILOT" : launchLink?.mode ?? "TERMINAL",
+  );
+  const [robotPositions, setRobotPositions] = useState<PaperOpenPosition[] | null>(null);
+  const [robotMarkers, setRobotMarkers] = useState<{
+    symbol: string; tradeId: string; markers: RobotTradeMarker[]; origin: RobotPositionOrigin | null;
+  } | null>(null);
   const [frozenSignal, setFrozenSignal] = useState<{
     candles: Candle[];
     sourceCandles: Candle[];
+    sourceBoundaries: TimestampDrawing[];
     context: { asOfMs: number; barsSha256: string } | null;
     referenceDrawings: DrawingObject[];
     editableDrawings: DrawingObject[];
@@ -111,12 +126,16 @@ export function App() {
     barsSha256: string;
     savedReviewId: string | null;
     savedReviewLabel: GeometryReviewDraft["label"] | null;
+    savedCorrectedPattern: GeometryReviewDraft["corrected_pattern"] | null;
     savedReviewNote: string | null;
   } | null>(null);
   const [frozenGeometryStatus, setFrozenGeometryStatus] = useState<"loading" | "unavailable" | "ready">("loading");
+  const [showCurrentEditorChart, setShowCurrentEditorChart] = useState(false);
+  const [ownerChartCandles, setOwnerChartCandles] = useState<Candle[] | null>(null);
+  const [ownerChartError, setOwnerChartError] = useState("");
   useEffect(() => {
     const link = launchLink;
-    if (!link || link.mode !== "EDITOR" || !link.signalId) return;
+    if (!link || !link.signalId) return;
     const controller = new AbortController();
     const load = async () => {
       try {
@@ -155,19 +174,25 @@ export function App() {
             context_bars_sha256?: string;
             signal_id?: string; snapshot_revision?: string; bars_sha256?: string;
             label?: GeometryReviewDraft["label"]; note?: string;
+            corrected_pattern?: string;
             corrected_boundaries?: Array<{
               boundary_id: string; kind: TimestampDrawing["type"]; anchors: TimestampDrawing["anchors"];
             }>;
           };
         } | null;
         const savedReviewLabel = savedReview?.submission?.label ?? null;
+        const restoredPattern = savedReview?.submission?.corrected_pattern;
         if (savedReview && (
           typeof savedReview.review_id !== "string"
           || !/^[0-9a-f]{64}$/i.test(savedReview.review_id)
           || savedReview.submission?.signal_id !== link.signalId
           || savedReview.submission?.snapshot_revision !== payload.snapshot_revision
           || savedReview.submission?.bars_sha256 !== payload.bars_sha256
-          || !["CONFIRMED", "GEOMETRY_CORRECTED", "FALSE_POSITIVE", "UNCERTAIN"].includes(savedReviewLabel ?? "")
+          || !["CONFIRMED", "GEOMETRY_CORRECTED", "PATTERN_CORRECTED", "FALSE_POSITIVE", "UNCERTAIN"].includes(savedReviewLabel ?? "")
+          || (savedReview.submission?.corrected_pattern !== undefined
+            && !isEditorReviewPattern(savedReview.submission.corrected_pattern))
+          || (savedReviewLabel === "PATTERN_CORRECTED"
+            && !isEditorReviewPattern(savedReview.submission?.corrected_pattern))
           || typeof savedReview.submission?.note !== "string"
           || savedReview.submission.note.length > 1024
         )) throw new Error("Saved review does not match source signal");
@@ -200,13 +225,15 @@ export function App() {
         }
         if (!controller.signal.aborted) {
           setFrozenSignal({
-            candles: reviewCandles, sourceCandles: candles, context: savedContext,
+            candles: reviewCandles, sourceCandles: candles,
+            sourceBoundaries: boundaries, context: savedContext,
             ...projected, editableDrawings, signalId: link.signalId!,
             originalPattern: typeof payload.original_pattern === "string" && payload.original_pattern.trim()
               ? payload.original_pattern.trim() : null,
             snapshotRevision: payload.snapshot_revision, barsSha256: payload.bars_sha256,
             savedReviewId: typeof savedReview?.review_id === "string" ? savedReview.review_id : null,
             savedReviewLabel,
+            savedCorrectedPattern: isEditorReviewPattern(restoredPattern) ? restoredPattern : null,
             savedReviewNote: savedReview?.submission?.note ?? null,
           });
           setFrozenGeometryStatus("ready");
@@ -263,9 +290,64 @@ export function App() {
   );
   const market = useMarketData();
   const tradingSymbol = market.book.symbol;
+  // Keep verified Scanner source rays and saved Editor corrections in the
+  // current-candle view of the SAME linked signal/symbol/timeframe. Never
+  // reinterpret a source pivot using a nearby candle or another ticker.
+  const currentSignalOverlay = useMemo(() => {
+    if (!launchLink?.signalId || !frozenSignal
+        || tradingSymbol !== launchLink.symbol)
+      return null;
+    try {
+      return projectVerifiedSignalOverlay(
+        frozenSignal.sourceBoundaries, frozenSignal.candles,
+        frozenSignal.editableDrawings, market.candles,
+      );
+    } catch {
+      return null; // The current feed may not contain the archived pivot candles.
+    }
+  }, [launchLink, frozenSignal, tradingSymbol, timeframe, market.candles]);
+  const editorCurrentOverlay = useMemo(() => {
+    if (!launchLink?.signalId || !frozenSignal
+        || tradingSymbol !== launchLink.symbol)
+      return null;
+    if (!ownerChartCandles) return currentSignalOverlay;
+    try {
+      return projectVerifiedSignalOverlay(
+        frozenSignal.sourceBoundaries, frozenSignal.candles,
+        frozenSignal.editableDrawings, ownerChartCandles,
+      );
+    } catch {
+      return null;
+    }
+  }, [launchLink, frozenSignal, tradingSymbol, timeframe, ownerChartCandles, currentSignalOverlay]);
   const { paperState, pendingActions } = usePaperTrading(tradingSymbol);
   const accountWorkspace = useAccountWorkspace(tradingSymbol);
-  const accountProjection = accountWorkspace.projection;
+  const modeAccountSelection = useModeAccountSelection();
+  const selectedModeAccountId = mode === "AUTOPILOT"
+    ? modeAccountSelection.preferences.AUTOPILOT : modeAccountSelection.preferences.TERMINAL;
+  // Never use the process-global active account as authority for another mode.
+  // MAIN is a separate READ-ONLY projection; all manual trading flags stay false.
+  const accountProjection = mode === "EDITOR" ? accountWorkspace.projection
+    : modeAccountSelection.ready && modeAccountSelection.pendingMode !== mode
+      ? scopedProjection(mode, selectedModeAccountId,
+          accountWorkspace.projection, modeAccountSelection.mainProjection)
+      : null;
+  // A Telegram signal is not evidence of another account's geometry.
+  // Reuse the linked rays in Terminal only when its selected account is the
+  // same explicitly scoped account as the Editor source view.
+  const terminalSignalDrawings = useMemo(() => {
+    const eligible = launchLink?.mode === "TERMINAL"
+      ? mode === "TERMINAL" || mode === "AUTOPILOT"
+      : launchLink?.mode === "EDITOR" && mode === "TERMINAL";
+    if (!eligible || !currentSignalOverlay || accountWorkspace.switching ||
+        !modeAccountSelection.ready || modeAccountSelection.pendingMode === mode ||
+        !accountProjection?.account_id ||
+        accountProjection.account_id !== accountWorkspace.projection?.account_id)
+      return null;
+    return currentSignalOverlay;
+  }, [mode, launchLink, currentSignalOverlay, accountWorkspace.switching,
+      accountWorkspace.projection?.account_id, modeAccountSelection.ready,
+      modeAccountSelection.pendingMode, accountProjection?.account_id]);
   const mutationsAllowed = !accountWorkspace.switching
     && accountProjection?.provider === "PAPER"
     && accountProjection.environment === "PAPER"
@@ -348,6 +430,72 @@ export function App() {
   const applyPaperStateForSession = paperTradingStore.captureApplyPaperState();
   const currentPaperState =
     mutationsAllowed && paperState?.symbol === tradingSymbol ? paperState : null;
+  // A Robot trade association alone is not enough: verify the live PAPER
+  // projection agrees before labelling any position or its protection as Robot.
+  const robotPosition = mode === "AUTOPILOT" && accountProjection?.provider === "PAPER" &&
+    accountProjection.environment === "PAPER" && currentPaperState?.ok
+    ? robotPositions?.find((p) =>
+        p.symbol === tradingSymbol && typeof p.robot_trade_id === "string" && p.robot_trade_id.length > 0 &&
+        p.position_side === currentPaperState.position_side &&
+        Number.isFinite(Number(p.position_quantity)) && Number(p.position_quantity) > 0 &&
+        Number(p.position_quantity) === Number(currentPaperState.position_quantity),
+      ) ?? null
+    : null;
+  // Read-only snapshot of EXACTLY the same TradeMarkers used by Telegram
+  // position cards. Never infer Robot executions from OHLC or generic Diary.
+  const activeRobotTradeId = robotPosition?.robot_trade_id ?? null;
+  const robotGeometry = useRobotSignalGeometry({
+    observing: mode === "AUTOPILOT" && robotPosition !== null,
+    tradeId: activeRobotTradeId,
+    symbol: tradingSymbol,
+    markers: robotMarkers,
+    timeframe,
+    candles: market.candles,
+  });
+  useEffect(() => {
+    setRobotMarkers(null);
+    if (mode !== "AUTOPILOT" || !activeRobotTradeId || !robotPosition) return;
+    const controller = new AbortController();
+    const symbol = robotPosition.symbol, tradeId = activeRobotTradeId;
+    let pending = false;
+
+    const refreshMarkers = async () => {
+      if (pending || controller.signal.aborted) return;
+      pending = true;
+      try {
+        const response = await fetch(
+          `/api/robot/position-markers?symbol=${encodeURIComponent(symbol)}&trade_id=${encodeURIComponent(tradeId)}`,
+          { signal: controller.signal },
+        );
+        if (!response.ok) throw new Error("Robot marker projection unavailable");
+        const result = await response.json() as {
+          ok?: boolean; account_id?: string; source?: string; symbol?: string;
+          trade_id?: string; markers?: RobotTradeMarker[]; origin?: unknown;
+        };
+        if (result.ok !== true || result.account_id !== "paper" ||
+            result.source !== "robot_position_view.TradeMarker" ||
+            result.symbol !== symbol || result.trade_id !== tradeId ||
+            !Array.isArray(result.markers))
+          throw new Error("Robot marker identity unproven");
+        if (!controller.signal.aborted)
+          setRobotMarkers({ symbol, tradeId, markers: result.markers, origin: parseRobotPositionOrigin(result.origin) });
+      } catch {
+        // Fail closed: stale entry/fill markers cannot masquerade as live facts.
+        if (!controller.signal.aborted) setRobotMarkers(null);
+      } finally {
+        pending = false;
+      }
+    };
+    void refreshMarkers();
+    // Reuse the existing Robot read-only projection for new fills and
+    // average-entry changes. No trading request or Telegram poller is added.
+    const timer = window.setInterval(() => { void refreshMarkers(); }, 8_000);
+    return () => {
+      window.clearInterval(timer);
+      controller.abort();
+    };
+  }, [mode, activeRobotTradeId, robotPosition?.symbol]);
+
   const liveProtectionPosition = liveProtectionAllowed
     ? projectLiveProtectionPosition(accountProjection, tradingSymbol)
     : null;
@@ -449,11 +597,12 @@ export function App() {
   const refreshPaperState = paperTradingStore.refresh;
 
   useEffect(() => {
-    if (mode === "TERMINAL") void refreshPaperState();
-  }, [mode, refreshPaperState]);
+    if (mode === "TERMINAL" || (mode === "AUTOPILOT" && mutationsAllowed))
+      void refreshPaperState();
+  }, [mode, mutationsAllowed, refreshPaperState]);
 
   useEffect(() => {
-    if (mode !== "TERMINAL") return;
+    if (mode !== "TERMINAL" && (mode !== "AUTOPILOT" || !mutationsAllowed)) return;
 
     if (!paperStateNeedsPolling(paperState)) return;
     const timer = window.setInterval(() => {
@@ -461,7 +610,7 @@ export function App() {
     }, 2_000);
 
     return () => window.clearInterval(timer);
-  }, [mode, paperState, refreshPaperState]);
+  }, [mode, mutationsAllowed, paperState, refreshPaperState]);
 
   useEffect(() => {
     const protectionUnavailable = !mutationsAllowed && !liveProtectionAllowed;
@@ -646,7 +795,7 @@ export function App() {
         currentAuthority: currentLiveAuthority,
         createClientActionId: () =>
           globalThis.crypto?.randomUUID?.() ?? `live-limit-${Date.now()}`,
-        refreshActiveLive: accountWorkspaceStore.refreshActiveLive,
+        refreshActiveLive: modeAccountSelection.refreshMain,
       });
       return attempt.promise.then(() => undefined);
     }
@@ -747,7 +896,7 @@ export function App() {
           currentAuthority: currentLiveAuthority,
           createClientActionId: () =>
             globalThis.crypto?.randomUUID?.() ?? `live-limit-cancel-${Date.now()}`,
-          refreshActiveLive: accountWorkspaceStore.refreshActiveLive,
+          refreshActiveLive: modeAccountSelection.refreshMain,
         },
       );
       return attempt.promise;
@@ -773,7 +922,7 @@ export function App() {
           currentAuthority: currentLiveAuthority,
           createClientActionId: () =>
             globalThis.crypto?.randomUUID?.() ?? `live-limit-amend-${Date.now()}`,
-          refreshActiveLive: accountWorkspaceStore.refreshActiveLive,
+          refreshActiveLive: modeAccountSelection.refreshMain,
         },
       );
       const result = await attempt.promise;
@@ -869,7 +1018,7 @@ export function App() {
             currentAuthority: currentLiveProtectionAuthority,
             createClientActionId: () =>
               globalThis.crypto?.randomUUID?.() ?? `live-stop-${Date.now()}`,
-            refreshActiveLive: accountWorkspaceStore.refreshActiveLive,
+            refreshActiveLive: modeAccountSelection.refreshMain,
           },
         );
         if (
@@ -882,7 +1031,7 @@ export function App() {
           dispatchStopDraft({ type: "restore-editing" });
         }
       } catch {
-        await accountWorkspaceStore.refreshActiveLive();
+        await modeAccountSelection.refreshMain();
       }
       return;
     }
@@ -1014,7 +1163,7 @@ export function App() {
             currentAuthority: currentLiveProtectionAuthority,
             createClientActionId: () =>
               globalThis.crypto?.randomUUID?.() ?? `live-take-${Date.now()}`,
-            refreshActiveLive: accountWorkspaceStore.refreshActiveLive,
+            refreshActiveLive: modeAccountSelection.refreshMain,
           },
         );
         if (
@@ -1027,7 +1176,7 @@ export function App() {
           dispatchTakeDraft({ type: "restore-editing" });
         }
       } catch {
-        await accountWorkspaceStore.refreshActiveLive();
+        await modeAccountSelection.refreshMain();
       }
       return;
     }
@@ -1163,7 +1312,7 @@ export function App() {
             currentAuthority: currentLiveProtectionAuthority,
             createClientActionId: () =>
               globalThis.crypto?.randomUUID?.() ?? `live-${leg.toLowerCase()}-${Date.now()}`,
-            refreshActiveLive: accountWorkspaceStore.refreshActiveLive,
+            refreshActiveLive: modeAccountSelection.refreshMain,
           },
         );
         if (
@@ -1176,7 +1325,7 @@ export function App() {
           dispatch({ type: "restore-editing" });
         }
       } catch {
-        await accountWorkspaceStore.refreshActiveLive();
+        await modeAccountSelection.refreshMain();
       }
       return;
     }
@@ -1237,11 +1386,11 @@ export function App() {
             currentAuthority: currentLiveProtectionAuthority,
             createClientActionId: () =>
               globalThis.crypto?.randomUUID?.() ?? `live-${leg.toLowerCase()}-delete-${Date.now()}`,
-            refreshActiveLive: accountWorkspaceStore.refreshActiveLive,
+            refreshActiveLive: modeAccountSelection.refreshMain,
           },
         );
       } catch {
-        await accountWorkspaceStore.refreshActiveLive();
+        await modeAccountSelection.refreshMain();
       }
       return;
     }
@@ -1272,6 +1421,27 @@ export function App() {
     tradingSymbol,
   ]);
 
+  const submitOwnerChart = async (draft: OwnerChartDraftV3) => {
+                const response = await fetch("/api/workspace/owner-unscanned-signal", {
+                  method: "POST", credentials: "same-origin",
+                  headers: { "Content-Type": "application/json" }, body: JSON.stringify(draft),
+                });
+                const result = await response.json();
+                const record = result.proposal;
+                if (!response.ok || result.ok !== true || typeof record?.proposal_id !== "string" ||
+                    !/^[0-9a-f]{64}$/.test(record.proposal_id) ||
+                    record?.source_kind !== "OWNER_CHART_UNVERIFIED" ||
+                    record?.submission?.pattern !== draft.pattern ||
+                    record?.submission?.formation_movement !== draft.formation_movement ||
+                    record?.submission?.schema_version !== 3 ||
+                    record?.submission?.idempotency_key !== draft.idempotency_key ||
+                    record?.candidate_created !== false || record?.robot_candidate_id !== null ||
+                    record?.assessment?.decision !== "AWAITING_OFFLINE_REPLAY")
+                  throw new Error(result.error || "Сохранение примера не подтверждено");
+                return { proposalId: record.proposal_id,
+                  decision: record.assessment.decision, reason: record.assessment.reason };
+              };
+
   const visibleLimitDrafts =
     limitDraftState.drafts ??
     (limitDraftState.draft ? [limitDraftState.draft] : []);
@@ -1299,6 +1469,93 @@ export function App() {
           Исходный сигнал не указан в ссылке. Показаны текущие свечи без сохранённых линий паттерна.
         </output>
       )}
+      {((mode === "TERMINAL" && (launchLink?.mode === "TERMINAL" || launchLink?.mode === "EDITOR"))
+        || (mode === "AUTOPILOT" && !robotPosition && launchLink?.mode === "TERMINAL")) && launchLink?.signalId
+        && tradingSymbol === launchLink.symbol && timeframe === launchLink.timeframe && (
+          <output role="status" aria-live="polite">
+            {terminalSignalDrawings
+              ? `Исходная геометрия сигнала: ${frozenSignal?.originalPattern ?? launchLink.signalId}`
+              : frozenGeometryStatus === "loading"
+                ? "Загрузка исходной геометрии сигнала…"
+                : "Линии исходного сигнала недоступны на текущих свечах; ордера не изменены."}
+          </output>
+        )}
+      {mode === "AUTOPILOT" && activeRobotTradeId && robotGeometry.origin ? (
+        <output role="status" aria-live="polite" aria-label="Геометрия сигнала выбранной сделки">
+          {robotGeometry.drawings
+            ? `Исходный сигнал робота: ${robotGeometry.origin.pattern ?? robotGeometry.origin.candidate_id}`
+            : robotGeometry.status === "loading"
+              ? "Загрузка исходной геометрии сделки…"
+              : robotGeometry.status === "unavailable"
+                ? "Исходная геометрия сделки отсутствует или не подтверждена."
+                : "Линии исходного сигнала вне текущих свечей или таймфрейм не совпадает."}
+        </output>
+      ) : null}
+      {mode === "EDITOR" && showCurrentEditorChart && frozenSignal && (
+        <div className="editor-current-chart-overlay" role="dialog"
+          aria-modal="true" aria-label="Актуальный график">
+          {market.book.symbol === (launchLink?.symbol ?? market.book.symbol)
+            && market.candles.length > 0 ? (
+            <ChartPanel
+              key={`editor-current:${market.book.symbol}:${timeframe}:${ownerChartCandles ? "owner" : "view"}`}
+              candles={ownerChartCandles ?? market.candles}
+              tickSize={null}
+              editorMode={ownerChartCandles !== null}
+              ownerChartMode={ownerChartCandles !== null}
+              referenceDrawings={editorCurrentOverlay ?? []}
+              onSubmitOwnerChart={ownerChartCandles ? submitOwnerChart : undefined}
+              symbol={market.book.symbol}
+              timeframe={timeframe}
+              readOnly={ownerChartCandles === null}
+            />
+          ) : (
+            <output role="status">
+              Актуальные свечи выбранного инструмента пока недоступны.
+              Исторический сигнал сохранён без изменений.
+            </output>
+          )}
+          <div className="editor-current-chart-toolbar">
+            <strong>Актуальный график · {launchLink?.symbol ?? market.book.symbol} · {timeframe}</strong>
+            {editorCurrentOverlay === null && <output role="status">
+              Линии сигнала не показаны: его опорных свечей нет в текущей истории.
+              Приблизительная разметка не создаётся.
+            </output>}
+            <button type="button" onClick={() => { setShowCurrentEditorChart(false); setOwnerChartCandles(null); setOwnerChartError(""); }}>
+              Вернуться к сигналу
+            </button>
+            {!ownerChartCandles && <button type="button" onClick={() => {
+              const periods: Record<string, number> = {
+                "1": 60000, "1m": 60000, "5": 300000, "5m": 300000,
+                "15": 900000, "15m": 900000, "60": 3600000, "1h": 3600000,
+                "D": 86400000, "1d": 86400000,
+              };
+              const period = periods[timeframe];
+              const now = Date.now();
+              // Freeze the most recent contiguous CLOSED run. Earlier missing
+              // candles must not block 20+ valid recent bars, and gaps may
+              // never be silently bridged in a stored owner example.
+              const closed = market.candles.filter(bar => {
+                const at = Date.parse(bar.time);
+                return period && Number.isSafeInteger(at) && at >= 0 &&
+                  at % period === 0 && at + period <= now;
+              });
+              const recent: typeof closed = [];
+              for (let i = closed.length - 1; i >= 0 && recent.length < 120; i--) {
+                const current = closed[i];
+                if (recent.length && Date.parse(recent[0].time) - Date.parse(current.time) !== period) break;
+                recent.unshift(current);
+              }
+              if (recent.length < 20) {
+                setOwnerChartError(`Для разметки нужно 20 непрерывных закрытых свечей; сейчас доступно ${recent.length}. Дождитесь загрузки полной истории.`);
+                return;
+              }
+              setOwnerChartError("");
+              setOwnerChartCandles(recent.map(bar => ({ ...bar })));
+            }}>Разметить свой сигнал</button>}
+            {ownerChartError && <output role="status">{ownerChartError}</output>}
+          </div>
+        </div>
+      )}
       <section className="workspace-grid" aria-label="Trading workspace">
         <div
           className={`workspace-market-row ${mode !== "EDITOR" && marketSidePanelOpen ? "side-panel-open" : "side-panel-closed"}`}
@@ -1315,11 +1572,13 @@ export function App() {
           candles={mode === "EDITOR" && frozenSignal ? frozenSignal.candles : market.candles}
           editorMode={mode === "EDITOR"}
           onEditorNavigate={setMode}
+          onShowCurrentEditorChart={mode === "EDITOR" && frozenSignal
+            ? () => setShowCurrentEditorChart(true) : undefined}
           retrospectiveContext={mode === "EDITOR" ? frozenSignal?.context ?? null : null}
           onExtendEditorHistory={mode === "EDITOR" && frozenSignal ? async () => {
             const current = frozenSignal;
             const response = await fetch(
-              `/api/workspace/signal-geometry/continuation?signal_id=${encodeURIComponent(current.signalId)}`,
+              `/api/workspace/signal-geometry/continuation?signal_id=${encodeURIComponent(current.signalId)}${current.context ? `&after_ms=${current.context.asOfMs}` : ""}`,
               { credentials: "same-origin" },
             );
             const data = await response.json();
@@ -1352,7 +1611,11 @@ export function App() {
                 : previous,
             );
           } : undefined}
-          referenceDrawings={mode === "EDITOR" ? frozenSignal?.referenceDrawings ?? [] : []}
+          referenceDrawings={mode === "EDITOR"
+            ? frozenSignal?.referenceDrawings ?? []
+            : mode === "AUTOPILOT" ? (robotPosition
+                ? robotGeometry.drawings ?? [] : terminalSignalDrawings ?? [])
+              : mode === "TERMINAL" ? terminalSignalDrawings ?? [] : []}
           editableSeedDrawings={mode === "EDITOR" ? frozenSignal?.editableDrawings ?? [] : []}
           signalIdentity={mode === "EDITOR" ? frozenSignal?.signalId ?? null : null}
           originalPattern={mode === "EDITOR" ? frozenSignal?.originalPattern ?? null : null}
@@ -1360,7 +1623,9 @@ export function App() {
           barsSha256={mode === "EDITOR" ? frozenSignal?.barsSha256 ?? null : null}
           savedReviewId={mode === "EDITOR" ? frozenSignal?.savedReviewId ?? null : null}
           savedReviewLabel={mode === "EDITOR" ? frozenSignal?.savedReviewLabel ?? null : null}
+          savedCorrectedPattern={mode === "EDITOR" ? frozenSignal?.savedCorrectedPattern ?? null : null}
           savedReviewNote={mode === "EDITOR" ? frozenSignal?.savedReviewNote ?? null : null}
+          onSubmitOwnerChart={mode === "EDITOR" && frozenSignal ? submitOwnerChart : undefined}
           onSubmitOwnerSignal={mode === "EDITOR" && frozenSignal ? async (
             proposal: OwnerSignalDraft,
           ) => {
@@ -1452,11 +1717,12 @@ export function App() {
           symbol={mode === "EDITOR" && frozenSignal ? launchLink?.symbol ?? market.book.symbol : market.book.symbol}
           timeframe={mode === "EDITOR" && frozenSignal ? launchLink?.timeframe ?? timeframe : timeframe}
           activeLimitOrders={
-            mode !== "EDITOR" && currentPaperState?.ok ? currentPaperState.active_limit_orders : []
+            mode === "TERMINAL" && currentPaperState?.ok ? currentPaperState.active_limit_orders :
+            mode === "AUTOPILOT" && robotPosition && currentPaperState?.ok ? currentPaperState.active_limit_orders : []
           }
-          pendingLimitDraft={mode === "EDITOR" ? null : limitDraftState.draft}
+          pendingLimitDraft={mode !== "TERMINAL" ? null : limitDraftState.draft}
           liveLimitDrafts={accountProjection?.provider === "BYBIT"}
-          pendingLimitDrafts={mode === "EDITOR" ? [] : visibleLimitDrafts}
+          pendingLimitDrafts={mode !== "TERMINAL" ? [] : visibleLimitDrafts}
           pendingLimitVolumeValid={{
             Buy: sideDraftVolumesValid(visibleLimitDrafts, "Buy", selectedVolumes.Buy),
             Sell: sideDraftVolumesValid(visibleLimitDrafts, "Sell", selectedVolumes.Sell),
@@ -1474,12 +1740,12 @@ export function App() {
             dispatchLimitDraft({ type: "update-price", price, draftId })
           }
           onPendingLimitConfirm={submitLimitDraft}
-          fastLimitActive={mode !== "EDITOR" && fastLimitIntent !== null}
+          fastLimitActive={mode === "TERMINAL" && fastLimitIntent !== null}
           onFastLimitPriceSelect={createFastLimitDraft}
-          onActiveLimitAmend={amendPaperLimit}
-          onActiveLimitCancel={cancelPaperLimit}
-          authoritativeStopPrice={mode === "EDITOR" ? null : activeStopPrice}
-          stopDraft={mode === "EDITOR" ? null : stopDraft}
+          onActiveLimitAmend={mode === "TERMINAL" ? amendPaperLimit : undefined}
+          onActiveLimitCancel={mode === "TERMINAL" ? cancelPaperLimit : undefined}
+          authoritativeStopPrice={mode === "TERMINAL" || (mode === "AUTOPILOT" && robotPosition) ? activeStopPrice : null}
+          stopDraft={mode !== "TERMINAL" ? null : stopDraft}
           onStopDraftPriceChange={updateStopDraftPrice}
           onStopConfirm={() => {
             setProtectionSettings(null);
@@ -1491,8 +1757,8 @@ export function App() {
           }}
           onStopEdit={beginStopEdit}
           onStopDelete={() => deleteProtection("STOP")}
-          authoritativeTakePrice={mode === "EDITOR" ? null : activeTakePrice}
-          takeDraft={mode === "EDITOR" ? null : takeDraft}
+          authoritativeTakePrice={mode === "TERMINAL" || (mode === "AUTOPILOT" && robotPosition) ? activeTakePrice : null}
+          takeDraft={mode !== "TERMINAL" ? null : takeDraft}
           onTakeDraftPriceChange={updateTakeDraftPrice}
           onTakeConfirm={() => {
             setProtectionSettings(null);
@@ -1504,7 +1770,19 @@ export function App() {
           }}
           onTakeEdit={beginTakeEdit}
           onTakeDelete={() => deleteProtection("TAKE")}
-          averageEntryPrice={mode !== "EDITOR" && protectionPositionSide !== "Flat" ? protectionAverageEntry : null}
+          averageEntryPrice={mode === "TERMINAL" && protectionPositionSide !== "Flat" || mode === "AUTOPILOT" && robotPosition ? protectionAverageEntry : null}
+          readOnly={mode === "AUTOPILOT"}
+          positionFooter={mode === "AUTOPILOT" ? (
+            <RobotExecutionJournal
+              selectedTradeId={activeRobotTradeId}
+              markers={robotPosition && robotMarkers?.tradeId === activeRobotTradeId
+                && robotMarkers.symbol === tradingSymbol ? robotMarkers.markers : null}
+            />
+          ) : undefined}
+          robotTradeMarkers={mode === "AUTOPILOT" && robotPosition &&
+            robotMarkers?.symbol === tradingSymbol &&
+            robotMarkers.tradeId === robotPosition.robot_trade_id
+              ? robotMarkers.markers : []}
           workspaceControls={(
             <WorkspaceHeader
               instruments={instruments}
@@ -1537,8 +1815,8 @@ export function App() {
                     book={market.book}
                     centerPrice={ladderCenterPrice}
                     trades={market.trades}
-                    positionSide={positionSide}
-                    averageEntryPrice={positionAverageEntry}
+                    positionSide={mode === "AUTOPILOT" ? robotPosition?.position_side ?? "Flat" : positionSide}
+                    averageEntryPrice={mode === "AUTOPILOT" ? (robotPosition?.average_entry === null || !robotPosition ? null : Number(robotPosition.average_entry)) : positionAverageEntry}
                     currentPrice={liveMidPrice}
                     compression={domCompression}
                     viewportGeometry={domViewportGeometry}
@@ -1547,7 +1825,9 @@ export function App() {
                     book={market.book}
                     centerPrice={ladderCenterPrice}
                     onCenterPriceChange={setLadderCenterPrice}
-                    ownOrders={domOwnOrders}
+                    ownOrders={mode === "AUTOPILOT" && !robotPosition ? [] : domOwnOrders}
+                    ownOrdersReadOnly={mode === "AUTOPILOT"}
+                    positionSummary={mode === "AUTOPILOT" ? robotPosition : null}
                     onOwnOrderCancel={(orderId) => {
                       void cancelPaperLimit(orderId).catch(() => {});
                     }}
@@ -1564,6 +1844,10 @@ export function App() {
         <ModePanel
           mode={mode}
           onModeChange={setMode}
+          onRobotPositionsLoaded={setRobotPositions}
+          robotLivePositions={robotPositions}
+          verifiedRobotPosition={robotPosition}
+          verifiedRobotOrigin={robotGeometry.origin}
           symbol={tradingSymbol}
           paperState={currentPaperState}
           activeLimitOrders={
@@ -1643,6 +1927,10 @@ export function App() {
           accountOpen={accountOpen}
           onAccountToggle={() => setAccountOpen((open) => !open)}
           accountWorkspaceProjection={accountProjection}
+          refreshMain={modeAccountSelection.refreshMain}
+          modeAccountId={selectedModeAccountId}
+          onModeAccountSelect={modeAccountSelection.selectAccount}
+          modeAccountError={modeAccountSelection.error}
           mutationsAllowed={mutationsAllowed}
           liveMarketAllowed={liveMarketAllowed}
           liveLimitAllowed={liveLimitAllowed}

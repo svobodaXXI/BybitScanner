@@ -2,6 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { marketApiRoutes } from "../marketData/apiRoutes";
 import { accountWorkspaceStore } from "../accountWorkspace/accountWorkspaceStore";
 import type { AccountWorkspaceProjection } from "../accountWorkspace/accountWorkspaceStore";
+import { manualMainReadProjection } from "../accountWorkspace/manualMainReadProjection";
+import type { AccountMode, ModeAccountDescriptor } from "../accountWorkspace/modeAccountSelection";
+import { LiveAccountInventory } from "./LiveAccountInventory";
 import {
   dismissPopupFromBackdrop,
   shieldPopupClickInteraction,
@@ -50,14 +53,25 @@ function validCatalog(value: unknown): value is AccountCatalog {
 
 export function AccountMenu({
   open, onToggle, workspaceProjection = null, onActiveAccountChange,
+  mode, selectedAccountId, onSelectAccount, modeAccountError,
 }: {
   open: boolean;
   onToggle: () => void;
   workspaceProjection?: AccountWorkspaceProjection | null;
   onActiveAccountChange?: (account: { id: string; name: string } | null) => void;
+  mode?: AccountMode;
+  selectedAccountId?: string | null;
+  onSelectAccount?: (mode: AccountMode, account: ModeAccountDescriptor) => Promise<void>;
+  modeAccountError?: string | null;
 }) {
   const [catalog, setCatalog] = useState<AccountCatalog | null>(null);
   const [catalogError, setCatalogError] = useState(false);
+  const [manualMain, setManualMain] = useState<AccountDescriptor[]>([]);
+  const [manualMainUnavailable, setManualMainUnavailable] = useState(false);
+  const [mainInventory, setMainInventory] = useState<{ name: string; projection: AccountWorkspaceProjection } | null>(null);
+  const [mainInventoryError, setMainInventoryError] = useState("");
+  const [mainInventoryLoading, setMainInventoryLoading] = useState<string | null>(null);
+  const mainInventoryRequest = useRef(0);
   const [addOpen, setAddOpen] = useState(false);
   const [name, setName] = useState("");
   const [apiKey, setApiKey] = useState("");
@@ -90,6 +104,44 @@ export function AccountMenu({
     return request;
   };
 
+  const refreshManualMain = async () => {
+    try {
+      const response = await fetch(marketApiRoutes.manualMainAccounts, { cache: "no-store" });
+      if (!response.ok) throw new Error("manual_main_unavailable");
+      const result = await response.json() as { ok?: boolean; accounts?: AccountDescriptor[] };
+      if (result.ok !== true || !Array.isArray(result.accounts)
+        || result.accounts.some((a) => a.provider !== "BYBIT" || a.environment !== "MAINNET")) {
+        throw new Error("invalid_main_catalog");
+      }
+      setManualMain(result.accounts);
+      setManualMainUnavailable(false);
+    } catch {
+      setManualMain([]);
+      setManualMainUnavailable(true);
+    }
+  };
+
+  const openMainInventory = async (account: AccountDescriptor) => {
+    const request = ++mainInventoryRequest.current;
+    setMainInventory(null);
+    setMainInventoryError("");
+    setMainInventoryLoading(account.id);
+    try {
+      const refreshed = await fetch(marketApiRoutes.manualMainRefresh(account.id), { method: "POST" });
+      if (!refreshed.ok) throw new Error("main_refresh_failed");
+      const response = await fetch(marketApiRoutes.manualMainSummary(account.id), { cache: "no-store" });
+      if (!response.ok) throw new Error("main_summary_unavailable");
+      const payload = await response.json() as { ok?: boolean; summary?: unknown };
+      const projection = payload.ok === true ? manualMainReadProjection(account.id, payload.summary) : null;
+      if (!projection) throw new Error("main_snapshot_invalid");
+      if (request === mainInventoryRequest.current) setMainInventory({ name: account.display_name, projection });
+    } catch {
+      if (request === mainInventoryRequest.current) setMainInventoryError("MAIN positions unavailable. PAPER was not changed.");
+    } finally {
+      if (request === mainInventoryRequest.current) setMainInventoryLoading(null);
+    }
+  };
+
   const requestLiveAccountRefresh = async (accountId: string) => {
     const response = await fetch(marketApiRoutes.accountRefresh(accountId), { method: "POST" });
     const payload = await response.json() as { ok?: boolean; summary?: LiveAccountSummary };
@@ -105,6 +157,11 @@ export function AccountMenu({
       setCatalogError(true);
     });
   }, []);
+
+  useEffect(() => {
+    if ((open && mode !== "AUTOPILOT") || (mode === "TERMINAL" && selectedAccountId?.startsWith("bybit-")))
+      void refreshManualMain();
+  }, [open, mode, selectedAccountId]);
 
   useEffect(() => {
     if (!open || (catalog && !catalogError)) return;
@@ -124,9 +181,14 @@ export function AccountMenu({
   }, [onToggle, open]);
 
   const active = catalog?.accounts.find((account) => account.id === catalog.active_account_id) ?? null;
+  const selected = mode
+    ? [...(catalog?.accounts ?? []), ...manualMain].find((account) => account.id === selectedAccountId) ?? null
+    : active;
+  const selectedVerified = !mode || Boolean(workspaceProjection &&
+    workspaceProjection.account_id === selectedAccountId);
   useEffect(() => {
-    onActiveAccountChange?.(active ? { id: active.id, name: active.display_name } : null);
-  }, [active?.display_name, active?.id, onActiveAccountChange]);
+    onActiveAccountChange?.(selected ? { id: selected.id, name: selected.display_name } : null);
+  }, [selected?.display_name, selected?.id, onActiveAccountChange]);
   const closeAdd = () => {
     setAddOpen(false);
     setName("");
@@ -141,30 +203,27 @@ export function AccountMenu({
     setSubmitting(true);
     setSubmitError("");
     try {
-      const response = await fetch(marketApiRoutes.accounts, {
+      const response = await fetch(marketApiRoutes.manualMainAccounts, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ display_name: name.trim(), api_key: apiKey.trim(), api_secret: apiSecret }),
       });
       const payload = await response.json() as {
-        ok?: boolean; error?: string; account?: AccountDescriptor;
+        ok?: boolean; error?: string; account_id?: string;
       };
-      if (!response.ok || payload.ok !== true || !payload.account) {
+      if (!response.ok || payload.ok !== true || !payload.account_id) {
         const messages: Record<string, string> = {
           bybit_validation_failed: "Bybit rejected these credentials.",
           credential_storage_failed: "Secure credential storage is unavailable.",
           invalid_account_payload: "Complete all account fields.",
+          main_account_ineligible: "Only eligible Bybit MAINNET accounts can be connected.",
+          origin_required: "Open the authenticated HTTPS terminal before adding an account.",
         };
         setSubmitError(messages[payload.error ?? ""] ?? "Account could not be added.");
         return;
       }
       closeAdd();
-      try {
-        await refreshCatalog();
-      } catch {
-        setCatalog(null);
-        setCatalogError(true);
-      }
+      await refreshManualMain();
     } catch {
       setSubmitError("Account could not be added.");
     } finally {
@@ -192,6 +251,12 @@ export function AccountMenu({
     setSwitching(true);
     setSwitchError("");
     try {
+      if (mode) {
+        if (!onSelectAccount) throw new Error("mode_selection_unavailable");
+        await onSelectAccount(mode, confirmAccount);
+        setConfirmAccount(null);
+        return;
+      }
       if (confirmAccount.provider === "BYBIT"
         && !["READY", "READ_ONLY"].includes(confirmAccount.status)) {
         if (!["DISCONNECTED", "ERROR"].includes(confirmAccount.status)) {
@@ -243,10 +308,12 @@ export function AccountMenu({
           <span className="account-key-shaft" />
         </span> : null}
         <span className="account-switch-label">
-          <strong>{active
-            ? active.provider === "PAPER" ? "PAPER" : active.display_name
-            : catalogError ? "UNAVAILABLE" : "LOADING"}</strong>
-          <small>{active ? `${active.provider} · ${active.status}` : "ACCOUNT STATUS"}</small>
+          <strong>{selected && selectedVerified
+            ? selected.provider === "PAPER" ? "PAPER" : selected.display_name
+            : mode ? "UNAVAILABLE" : catalogError ? "UNAVAILABLE" : "LOADING"}</strong>
+          <small>{selected && selectedVerified
+            ? `${selected.provider} · ${selected.status}`
+            : mode ? "SELECTED ACCOUNT UNAVAILABLE" : "ACCOUNT STATUS"}</small>
         </span>
       </TradingControlButton>
       {balanceOpen ? (
@@ -281,22 +348,25 @@ export function AccountMenu({
               <strong>Accounts</strong>
               <button aria-label="Close Accounts" className="account-menu-close" onClick={onToggle} type="button">×</button>
             </header>
-            {catalogError || !catalog || !active ? <p role="alert">Account catalog unavailable</p> : catalog.accounts.map((account) => (
+            {catalogError || !catalog || !active ? <p role="alert">Account catalog unavailable</p> : catalog.accounts
+              .filter((account) => !mode || account.provider === "PAPER")
+              .map((account) => (
               <article
                 className={`account-card ${account.environment.toLowerCase()} status-${account.status.toLowerCase()}`}
                 key={account.id}
-                onClick={() => account.id !== catalog.active_account_id && !switching && setConfirmAccount(account)}
+                onClick={() => account.id !== (mode ? selectedAccountId : catalog.active_account_id)
+                  && !switching && setConfirmAccount(account)}
               >
                 <div className="account-card-title">
                   <strong>{account.display_name}</strong>
-                  {account.id === catalog.active_account_id ? <span
+                  {account.id === (mode ? selectedAccountId : catalog.active_account_id) ? <span
                     aria-label="Current account golden key"
                     className="account-switch-key account-current-key"
                     role="img"
                   ><span className="account-key-head" /><span className="account-key-shaft" /></span> : null}
                 </div>
                 <small>{account.provider} · {account.environment} · {account.status}</small>
-                {account.id === catalog.active_account_id ? <span>Current</span> : null}
+                {account.id === (mode ? selectedAccountId : catalog.active_account_id) ? <span>Current</span> : null}
                 {refreshError[account.id] ? <small className="account-refresh-error" role="alert">{refreshError[account.id]}</small> : null}
                 {account.provider === "BYBIT" ? <button
                   className="account-refresh-button"
@@ -306,17 +376,59 @@ export function AccountMenu({
                 >{refreshingAccount === account.id ? "Refreshing…" : account.status === "DISCONNECTED" || account.status === "ERROR" ? "Reconnect" : "Refresh"}</button> : null}
               </article>
             ))}
-            <button className="account-add-button" onClick={() => setAddOpen(true)} type="button">+ Add account</button>
+            {mode !== "AUTOPILOT" && manualMain.map((account) => (
+              <article className="account-card mainnet" key={account.id} aria-label="Manual MAIN account">
+                <strong>{account.display_name}</strong>
+                <small>BYBIT · MAINNET · {account.status} · Separate MAIN service</small>
+                <small>{workspaceProjection?.account_id === account.id && workspaceProjection.read_only === false
+                  ? "Manual MAIN trading verified for this session."
+                  : "Trading requires independent MAIN authorization; read-only until verified."}</small>
+                {mode === "TERMINAL" && account.id !== selectedAccountId ? (
+                  <button type="button" disabled={switching}
+                    onClick={() => setConfirmAccount(account)}>Select MAIN</button>
+                ) : null}
+                <button type="button" disabled={mainInventoryLoading === account.id}
+                  onClick={() => void openMainInventory(account)}>
+                  {mainInventoryLoading === account.id ? "Loading positions…" : "All MAIN positions"}
+                </button>
+                {refreshError[account.id] ? <small role="alert">{refreshError[account.id]}</small> : null}
+                <button type="button" disabled={refreshingAccount === account.id}
+                  onClick={() => void (async () => {
+                    setRefreshingAccount(account.id);
+                    try {
+                      const response = await fetch(marketApiRoutes.manualMainRefresh(account.id), { method: "POST" });
+                      if (!response.ok) throw new Error("main_refresh_failed");
+                      await refreshManualMain();
+                      setRefreshError((current) => ({ ...current, [account.id]: "" }));
+                    } catch {
+                      setRefreshError((current) => ({ ...current, [account.id]: "MAIN refresh failed." }));
+                    } finally { setRefreshingAccount(null); }
+                  })()}>Refresh MAIN</button>
+              </article>
+            ))}
+            {mainInventoryError ? <small role="alert">{mainInventoryError}</small> : null}
+            {modeAccountError ? <small role="alert">{modeAccountError}</small> : null}
+            {mode !== "AUTOPILOT" && manualMainUnavailable ? <small role="status">Separate MAIN service unavailable; PAPER unchanged.</small> : null}
+            {mode !== "AUTOPILOT" ? <button className="account-add-button" onClick={() => setAddOpen(true)} type="button">+ Add MAIN account</button> : null}
           </section>
         </div>
       ) : null}
+      {mainInventory ? <LiveAccountInventory
+        activeAccountName={mainInventory.name + (mainInventory.projection.read_only ? " · MAIN · READ ONLY" : " · MAIN · MANUAL TRADING")}
+        activeSymbol=""
+        projection={mainInventory.projection}
+        onClose={() => { ++mainInventoryRequest.current; setMainInventory(null); }}
+        onNavigate={() => { ++mainInventoryRequest.current; setMainInventory(null); }}
+      /> : null}
       {confirmAccount ? (
         <div className="account-dialog-backdrop" role="presentation">
           <section aria-label="Confirm account switch" aria-modal="true" className="account-dialog" role="dialog">
             <header><strong>Switch workspace account?</strong></header>
             <p>{confirmAccount.display_name}</p>
             <small>{confirmAccount.provider} · {confirmAccount.environment} · {confirmAccount.status}</small>
-            <p>The entire account-scoped workspace will switch. LIVE trading remains disabled.</p>
+            <p>{mode
+              ? "Only this mode's account preference changes. Manual MAIN trading requires separate verified authority."
+              : "The entire account-scoped workspace will switch. LIVE trading remains disabled."}</p>
             {switchError ? <p role="alert">{switchError}</p> : null}
             <div className="account-switch-confirm-actions">
               <button className="account-switch-confirm-accept" disabled={switching || confirmAccount.status === "RECONCILING"} onClick={() => void activateAccount()} type="button">
@@ -333,7 +445,8 @@ export function AccountMenu({
           if (event.target === event.currentTarget) closeAdd();
         }}>
           <section aria-label="Add account" aria-modal="true" className="account-dialog" role="dialog">
-            <header><strong>Add account</strong><button aria-label="Close add account" onClick={closeAdd} type="button">×</button></header>
+            <header><strong>Add Bybit MAIN account</strong><button aria-label="Close add account" onClick={closeAdd} type="button">×</button></header>
+            <small>Keys are sent only to the separate MAIN service. No real orders can be placed yet.</small>
             <label>Account name<input value={name} onChange={(event) => setName(event.target.value)} /></label>
             <label>API Key<input value={apiKey} onChange={(event) => setApiKey(event.target.value)} /></label>
             <label>API Secret<input autoComplete="new-password" type="password" value={apiSecret} onChange={(event) => setApiSecret(event.target.value)} /></label>

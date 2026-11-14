@@ -67,6 +67,9 @@ class TerminalPersistenceTests(unittest.TestCase):
         connection.execute("DROP TABLE IF EXISTS robot_reentry_campaigns")
         connection.execute("DROP TABLE IF EXISTS robot_auto_decisions")
         connection.execute("DROP TABLE IF EXISTS robot_autopilot_state")
+        connection.execute("DROP TABLE IF EXISTS box_order_ownership")
+        connection.execute("DROP TABLE IF EXISTS box_attempt_ownership")
+        connection.execute("DROP TRIGGER IF EXISTS box_plan_no_update")
 
     def create_v1_database(self):
         connection = sqlite3.connect(self.database_path)
@@ -965,9 +968,9 @@ class TerminalPersistenceTests(unittest.TestCase):
         )
         # This fixture starts from the current schema, so remove objects that
         # did not exist in v20 before replaying the real v20->current chain.
-        connection.execute("DROP TABLE box_order_ownership")
-        connection.execute("DROP TABLE box_attempt_ownership")
-        connection.execute("DROP TRIGGER box_plan_no_update")
+        connection.execute("DROP TABLE IF EXISTS box_order_ownership")
+        connection.execute("DROP TABLE IF EXISTS box_attempt_ownership")
+        connection.execute("DROP TRIGGER IF EXISTS box_plan_no_update")
         connection.execute("PRAGMA user_version = 20")
         connection.commit()
         connection.close()

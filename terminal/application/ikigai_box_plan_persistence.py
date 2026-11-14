@@ -6,6 +6,7 @@ from typing import Mapping
 
 from terminal.paper.ikigai_box_plan import IkigaiBoxPaperPlan
 from terminal.persistence.sqlite_store import RobotCandidateRecord, SQLiteStore
+from terminal.domain.models import TradingAccountId
 
 
 def _json_values(value):
@@ -38,6 +39,7 @@ def persist_ikigai_box_plan(
     stop_fee_rate: Decimal,
     structural_stop: Decimal | None,
     created_at_ms: int,
+    trading_account_id: TradingAccountId | None = None,
 ) -> tuple[RobotCandidateRecord, bool]:
     """Adapt explicit frozen source inputs and a result to contract v1.
 
@@ -65,4 +67,9 @@ def persist_ikigai_box_plan(
                    "stop_fee_rate": stop_fee_rate, "structural_stop": structural_stop},
         "plan": asdict(plan),
     })
-    return store.save_box_plan_only(snapshot=snapshot, created_at_ms=created_at_ms)
+    if trading_account_id is None:
+        return store.save_box_plan_only(snapshot=snapshot, created_at_ms=created_at_ms)
+    return store.save_box_plan_only_for_account(
+        snapshot=snapshot, trading_account_id=trading_account_id,
+        created_at_ms=created_at_ms,
+    )

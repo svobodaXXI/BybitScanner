@@ -1,0 +1,10 @@
+name = "bybitscanner-gateway"
+main = "cloudflare_proxy_worker.mjs"
+compatibility_date = "2026-11-09"
+workers_dev = true
+keep_vars = true
+
+# Fail before publishing unless the existing Cloudflare Worker has private bindings.
+# Never put secret values into this file, GitHub Actions, or logs.
+[secrets]
+required = ["GATEWAY_SHARED_SECRET", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"]

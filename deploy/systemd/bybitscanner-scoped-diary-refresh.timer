@@ -1,0 +1,14 @@
+# Deliberately opt-in; not wired into PAPER/Robot startup or deploy.
+# Enable only after standalone READ-ONLY source + isolated archive preflight.
+[Unit]
+Description=Periodic BybitScanner scoped Diary materialization (not enabled)
+
+[Timer]
+OnBootSec=5min
+OnUnitInactiveSec=5min
+AccuracySec=30s
+Persistent=false
+Unit=bybitscanner-scoped-diary-refresh.service
+
+[Install]
+WantedBy=timers.target

@@ -105,14 +105,14 @@ def _evaluate(
 
 class RobotLateAdmissionTests(unittest.TestCase):
     # RR boundary: structural STOP 99.0 (1% risk), take 97 + 0.9 * 5 = 101.5.
-    def test_rr_exactly_one_point_five_is_blocked_before_market_submission(self):
+    def test_rr_exactly_one_point_five_meets_owner_wedge_floor(self):
         decision = _evaluate(
             structural_extreme=Decimal("99.1"),
             frozen_signal_reference_price=Decimal("97"),
             frozen_scanner_target_price=Decimal("102"),
         )
 
-        self.assertEqual(decision.action, DECISION_SKIPPED_POOR_RR)
+        self.assertEqual(decision.action, DECISION_MARKET_ENTRY)
         self.assertEqual(decision.projected_vwap, Decimal("100"))
         self.assertEqual(decision.stop_price, Decimal("99.0"))
         self.assertEqual(decision.take_price, Decimal("101.5"))
@@ -128,7 +128,7 @@ class RobotLateAdmissionTests(unittest.TestCase):
         )
 
         self.assertEqual(decision.action, DECISION_SKIPPED_POOR_RR)
-        self.assertLess(decision.rr, Decimal("2"))
+        self.assertLess(decision.rr, Decimal("1.5"))
 
     def test_structural_stop_at_limit_is_kept_and_beyond_uses_fallback(self):
         at_limit = _evaluate()  # STOP 98.5, exactly 1.5%

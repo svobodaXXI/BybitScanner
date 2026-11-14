@@ -24,6 +24,20 @@ export type AutopilotModeState = {
   version: number;
 };
 
+export type RobotRuntimeState = {
+  mode: string;
+  recoveryStatus: string;
+};
+
+/** Exact canonical PAPER Robot state; day trade totals are not a runtime indicator. */
+export async function loadRobotRuntimeState(): Promise<RobotRuntimeState> {
+  const body = await getJson(marketApiRoutes.robotState);
+  if (typeof body.mode !== "string" || !body.mode ||
+      typeof body.recovery_status !== "string" || !body.recovery_status)
+    throw new Error("Canonical Robot state unavailable");
+  return { mode: body.mode, recoveryStatus: body.recovery_status };
+}
+
 export type RuntimeHealth = {
   backendOnline: boolean;
   robotAdmissionReady: boolean | null;
@@ -120,8 +134,8 @@ export function summarizeDay(
   };
 }
 
-async function getJson(url: string): Promise<Record<string, unknown>> {
-  const response = await fetch(url);
+async function getJson(url: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
+  const response = signal ? await fetch(url, { signal }) : await fetch(url);
   if (!response.ok) throw new Error(`${url} failed`);
   const body = (await response.json()) as Record<string, unknown>;
   if (body.ok !== true) throw new Error(`${url} returned ok=false`);
@@ -163,9 +177,9 @@ export async function loadProtectionHealth(): Promise<ProtectionHealth> {
   };
 }
 
-export async function loadOpenPositions(): Promise<PaperOpenPosition[]> {
+export async function loadOpenPositions(signal?: AbortSignal): Promise<PaperOpenPosition[]> {
   const body = (await getJson(
-    marketApiRoutes.openPositions,
+    marketApiRoutes.openPositions, signal,
   )) as unknown as PaperOpenPositionsResponse;
   if (!Array.isArray(body.positions)) throw new Error("positions are missing");
   return body.positions;

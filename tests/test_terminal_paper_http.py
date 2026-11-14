@@ -11,7 +11,7 @@ from dataclasses import replace
 from decimal import Decimal
 from http.server import ThreadingHTTPServer
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -944,6 +944,24 @@ def test_open_positions_get_returns_all_open_symbols_for_current_account():
             assert payload["account_id"] == "paper"
             assert [item["symbol"] for item in payload["positions"]] == [
                 "BTCUSDT", "ETHUSDT",
+            ]
+            assert [item["robot_trade_id"] for item in payload["positions"]] == [None, None]
+            # A proven association is resolved from the existing Robot ledger,
+            # not inferred from ticker, order side or arbitrary diary text.
+            with patch(
+                "terminal.persistence.sqlite_store.SQLiteStore.get_open_robot_trade_for_symbol",
+                autospec=True,
+                side_effect=lambda _store, _account, symbol: (
+                    SimpleNamespace(trade_id="robot-trade-btc")
+                    if symbol.value == "BTCUSDT" else None
+                ),
+            ):
+                with urllib.request.urlopen(
+                    f"http://127.0.0.1:{server.server_port}/api/open-positions"
+                ) as response:
+                    robot_attribution = json.load(response)
+            assert [item["robot_trade_id"] for item in robot_attribution["positions"]] == [
+                "robot-trade-btc", None,
             ]
         finally:
             server.shutdown()

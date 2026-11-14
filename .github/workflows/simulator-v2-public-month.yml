@@ -1,0 +1,34 @@
+name: Simulator V2 30-day real XRP public archive proof
+
+# Opt-in research-only external archive probe. Never rerun a ~1 GB public
+# download for every ordinary pull-request commit; offline CI is independent.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  public-trades-30day:
+    name: Real XRPUSDT 30 UTC days (SIMULATION only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - name: Checkout exact PR revision
+        uses: actions/checkout@v4
+      - name: Use Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify official public XRPUSDT trades 30-day range and offline account
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python -m research.simulator_v2.public_trade_month_smoke
+      - name: Save verified compact M1 caches, daily hashes and no-trade report
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: simulator-v2-xrp-real-30days-20260910-20261009
+          path: simulator-v2-xrp-real-30days-20260910-20261009/
+          if-no-files-found: error
+          retention-days: 7

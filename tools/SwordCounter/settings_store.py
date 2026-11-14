@@ -1,6 +1,6 @@
 """SwordCounter S3: user settings (total swords) persisted outside the Git repository.
 
-The RO cost is not a setting: it is Account Equity / total swords, read live from Bybit.
+The RO cost is not a setting: it is Wallet Balance / total swords, read live from Bybit.
 Only the number of swords is stored, as JSON in ``%APPDATA%\\SwordCounter\\settings.json``.
 API keys are never read or written here.
 """
@@ -22,7 +22,7 @@ _INTEGER = re.compile(r"^\d+$")
 
 @dataclass(frozen=True)
 class AppSettings:
-    total_swords: int = DEFAULT_TOTAL_SWORDS   # also the number of equity parts: 1 RO = equity / total
+    total_swords: int = DEFAULT_TOTAL_SWORDS   # also the number of wallet balance parts: 1 RO = wallet balance / total
 
     def __post_init__(self) -> None:
         value = self.total_swords

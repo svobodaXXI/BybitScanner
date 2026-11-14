@@ -1,6 +1,6 @@
 import type { Candle } from "../contracts/marketData";
 import type { DrawingObject } from "../chart/drawingModel";
-import type { TimestampDrawing } from "./geometryReviewDraft";
+import { isValidCachedEditorDraft, serializeReviewDrawings, type TimestampDrawing } from "./geometryReviewDraft";
 
 const expectedAnchorCount = (type: DrawingObject["type"]) =>
   ["horizontal", "horizontal-ray", "vertical"].includes(type) ? 1 : 2;
@@ -58,6 +58,91 @@ export function projectSignalGeometry(
     locked: false,
   }));
   return { referenceDrawings, editableDrawings };
+}
+
+
+/**
+ * Carry original Scanner rays and the owner's verified correction onto a chart
+ * of the SAME signal/ticker even after the source pivots age out of its bars.
+ * Reference geometry still comes exclusively from frozen UTC evidence.
+ * For rays only, derive two *display-only* points at actual chart candle times
+ * from the exact price/time line equation. Do NOT snap old pivots to new bars,
+ * move stored anchors, change trading signals, or feed the derived points back
+ * into the geometry-feedback store.
+ *
+ * The caller validates signal identity, symbol and account scope.
+ */
+export function projectVerifiedSignalOverlay(
+  source: readonly TimestampDrawing[],
+  signalCandles: readonly Candle[],
+  reviewedDrawings: readonly DrawingObject[],
+  chartCandles: readonly Candle[],
+): DrawingObject[] {
+  const frozenReference = projectSignalGeometry(source, signalCandles).referenceDrawings;
+  if (!isValidCachedEditorDraft(reviewedDrawings, frozenReference, signalCandles))
+    throw new Error("Unverified source/correction geometry");
+  if (chartCandles.length < 2)
+    throw new Error("Current chart needs two closed candles for a ray");
+
+  const currentTimes = chartCandles.map((candle) => Date.parse(candle.time));
+  if (currentTimes.some((time, index) =>
+      !Number.isSafeInteger(time) || time < 0 ||
+      (index > 0 && time <= currentTimes[index - 1])))
+    throw new Error("Invalid current chart timestamps");
+  const indexOfTime = new Map(currentTimes.map((time, index) => [time, index]));
+
+  const visible = (boundaries: readonly TimestampDrawing[]): DrawingObject[] => {
+    // All source anchors and topology are validated against the immutable
+    // historical window before any current-chart extrapolation is considered.
+    const exact = projectSignalGeometry(boundaries, signalCandles).referenceDrawings;
+    return exact.map((drawing, index) => {
+      const original = boundaries[index];
+      const indices = original.anchors.map((anchor) => indexOfTime.get(anchor.bar_open_time_ms));
+      if (indices.every((at) => at !== undefined)) {
+        return { ...drawing, anchors: drawing.anchors.map((anchor, i) => ({
+          ...anchor, logical: indices[i]!,
+        })) };
+      }
+      if (drawing.type === "horizontal") {
+        return { ...drawing, anchors: [{ logical: 0, price: original.anchors[0].price }] };
+      }
+      if (drawing.type === "horizontal-ray") {
+        const first = currentTimes.findIndex((time) => time >= original.anchors[0].bar_open_time_ms);
+        if (first < 0) throw new Error("Source ray begins after the current chart");
+        return { ...drawing, anchors: [{ logical: first, price: original.anchors[0].price }] };
+      }
+      if (drawing.type !== "ray") {
+        // Historical finite segments and verticals must NOT be extended.
+        throw new Error("Non-ray source pivot candle absent from current chart");
+      }
+      const [a, b] = original.anchors;
+      const first = currentTimes.findIndex((time) => time >= b.bar_open_time_ms);
+      if (first < 0 || first >= currentTimes.length - 1)
+        throw new Error("Source ray has no two current candle times after its second pivot");
+      const slope = (b.price - a.price) / (b.bar_open_time_ms - a.bar_open_time_ms);
+      const prices = [currentTimes[first], currentTimes[first + 1]].map((time) =>
+        a.price + slope * (time - a.bar_open_time_ms));
+      if (prices.some((price) => !Number.isFinite(price) || price <= 0))
+        throw new Error("Source ray cannot be projected to positive chart prices");
+      return { ...drawing, anchors: [
+        { logical: first, price: prices[0] }, { logical: first + 1, price: prices[1] },
+      ] };
+    });
+  };
+
+  const reference = visible(source);
+  const corrected = visible(serializeReviewDrawings(reviewedDrawings, signalCandles));
+  // Both layers are strictly read-only observations. The source remains dashed,
+  // the owner's corrected version is solid, and both keep their original IDs.
+  return [
+    ...reference,
+    ...corrected.map((line, index) => ({
+      ...line,
+      style: { ...reviewedDrawings[index].style },
+      referenceStroke: "solid" as const,
+      locked: true,
+    })),
+  ];
 }
 
 

@@ -24,7 +24,12 @@ FEEDBACK_DIR_ENV = "BYBITSCANNER_GEOMETRY_FEEDBACK_DIR"
 # BYBITSCANNER_GEOMETRY_FEEDBACK_DIR remains an explicit independent override.
 MAX_REQUEST_BYTES = 32_768
 MAX_NOTE_LENGTH = 1024
-LABELS = frozenset({"CONFIRMED", "GEOMETRY_CORRECTED", "FALSE_POSITIVE", "UNCERTAIN"})
+LABELS = frozenset({"CONFIRMED", "GEOMETRY_CORRECTED", "PATTERN_CORRECTED", "FALSE_POSITIVE", "UNCERTAIN"})
+# Owner annotations, NOT a list of active Robot strategies or trading signals.
+CORRECTED_PATTERNS = frozenset({
+    "Rising Wedge", "Falling Wedge", "Wedge", "Ikigai Box", "Triangle",
+    "Double Top/Bottom", "Head and Shoulders", "G-Shaped",
+})
 SIGNAL_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 TOKEN_RE = re.compile(r"^[A-Za-z0-9_.:-]{16,128}$")
 
@@ -71,7 +76,8 @@ def _valid_price(raw) -> float:
 
 def _normalize(payload: dict, snapshot: dict, *, review_bars=None) -> dict:
     optional_context = {"context_as_of_ms", "context_bars_sha256"}
-    if not isinstance(payload, dict) or payload.get("schema_version") != 1 or set(payload) - {"note"} - optional_context != {
+    optional_fields = optional_context | {"corrected_pattern"}
+    if not isinstance(payload, dict) or payload.get("schema_version") != 1 or set(payload) - {"note"} - optional_fields != {
         "schema_version", "signal_id", "snapshot_revision", "bars_sha256",
         "label", "corrected_boundaries", "idempotency_key",
     }:
@@ -106,6 +112,14 @@ def _normalize(payload: dict, snapshot: dict, *, review_bars=None) -> dict:
     label = payload.get("label")
     if label not in LABELS:
         raise GeometryFeedbackError("invalid_review_label")
+    has_pattern = "corrected_pattern" in payload
+    if has_pattern and (type(payload["corrected_pattern"]) is not str
+                        or payload["corrected_pattern"] not in CORRECTED_PATTERNS):
+        raise GeometryFeedbackError("invalid_corrected_pattern")
+    if label == "PATTERN_CORRECTED" and not has_pattern:
+        raise GeometryFeedbackError("missing_corrected_pattern")
+    if has_pattern and label not in {"GEOMETRY_CORRECTED", "PATTERN_CORRECTED"}:
+        raise GeometryFeedbackError("unexpected_corrected_pattern")
     corrected = payload.get("corrected_boundaries")
     if not isinstance(corrected, list):
         raise GeometryFeedbackError("missing_corrected_boundaries")
@@ -155,6 +169,7 @@ def _normalize(payload: dict, snapshot: dict, *, review_bars=None) -> dict:
         "snapshot_revision": payload["snapshot_revision"],
         "bars_sha256": payload["bars_sha256"],
         "label": label,
+        **({"corrected_pattern": payload["corrected_pattern"]} if has_pattern else {}),
         "note": note,
         "idempotency_key": token,
         "corrected_boundaries": normalized,
