@@ -73,6 +73,8 @@ export type PaperEpisodeFacts = {
   side: "LONG" | "SHORT";
   opened_at_ms: number;
   closed_at_ms: number;
+  realized_price_pnl_usdt: string;
+  known_execution_fees_usdt: string;
   pnl_usdt: string;
   execution_allocations: PaperAllocation[];
   setup_context?: PaperD2Context;
@@ -364,6 +366,7 @@ export function parsePaperEpisodeFacts(input: unknown): PaperEpisodeFacts {
     account_id: "paper", owner: f.owner, cohort: f.cohort as PaperEpisodeFacts["cohort"],
     source_revision: f.source_revision as number, trade_episode_id: f.trade_episode_id,
     symbol: f.symbol, side: f.side, opened_at_ms: opened, closed_at_ms: closed,
+    realized_price_pnl_usdt: realized, known_execution_fees_usdt: fees,
     pnl_usdt: pnl, execution_allocations: allocations,
     ...(f.setup_context !== undefined ? {
       setup_context: parseD2Context(f.setup_context, f.symbol, f.side, first.controller, opened),
