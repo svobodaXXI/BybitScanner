@@ -164,10 +164,21 @@ type ClosedEpisodeLocator = {
   opened_at_ms: number;
   closed_at_ms: number;
   pnl_usdt: string;
+  /** Optional exact execution-notional denominator, not leverage or margin ROI. */
+  pnl_pct?: string;
+  pnl_pct_basis?: "KNOWN_COST_PNL_OVER_EXECUTED_ENTRY_NOTIONAL";
+  entry_notional_usdt?: string;
   execution_count: number;
   cohort: "ROBOT" | "MANUAL" | "ROBOT_MANUAL_CLOSE" | "JOINT_MANAGEMENT";
   replay_evidence: "EPISODE_INDEX_ONLY";
+  opening_controller?: "ROBOT" | "MANUAL";
+  setup_context?: unknown;
+  verified_signal?: unknown;
 };
+
+type VerifiedEpisodePattern =
+  | (VerifiedEpisodeSetup & { source: "D2" })
+  | { source: "WEDGE"; pattern: string; timeframe: string; candidateId: string };
 
 type FinrezTicker = { symbol: string; pnl_usdt: string; trade_count: number };
 type FinrezResponse = {
@@ -293,6 +304,25 @@ export function displayTradePnl(value: string | null | undefined): string {
   }).format(numeric);
 }
 
+/** Returns verified source-bound percent only; unknown/mismatched basis stays missing. */
+function verifiedEntryNotionalReturn(deal: ClosedEpisodeLocator): string | null {
+  if (deal.pnl_pct_basis !== "KNOWN_COST_PNL_OVER_EXECUTED_ENTRY_NOTIONAL"
+    || typeof deal.pnl_pct !== "string" || !deal.pnl_pct.trim()
+    || typeof deal.entry_notional_usdt !== "string" || !deal.entry_notional_usdt.trim()) return null;
+  const pct = Number(deal.pnl_pct);
+  const entryNotional = Number(deal.entry_notional_usdt);
+  const pnl = Number(deal.pnl_usdt);
+  if (!Number.isFinite(pct) || !Number.isFinite(entryNotional)
+    || !Number.isFinite(pnl) || entryNotional <= 0) return null;
+  const expected = (pnl / entryNotional) * 100;
+  if (!Number.isFinite(expected)
+    || Math.abs(expected - pct) > Math.max(1e-7, Math.abs(expected) * 1e-9)) return null;
+  return (pct > 0 ? "+" : "") + displayTradePnl(deal.pnl_pct) + "%";
+}
+
+const ENTRY_RETURN_EXPLANATION =
+  "PnL после известных комиссий / сумма номиналов фактических входов × 100. Не ROI на маржу, без учёта плеча и неизвестных внешних затрат.";
+
 type PaperBridgeScope = {
   account_id: "paper";
   owner: "ROBOT" | "MANUAL";
@@ -399,6 +429,79 @@ function TradeActionButtons({ onDetails, onReplay }: {
   );
 }
 
+
+type VerifiedEpisodeSetup = {
+  pattern: string;
+  timeframe: string;
+  setupId: string;
+  strategyVersion: string;
+};
+
+/** D2 is a separate observational store, not a reconstructed Robot decision.
+ * Never infer a pattern by ticker/time or from execution-only facts.
+ */
+function exactD2Setup(facts: Record<string, unknown>, deal: ClosedEpisodeLocator): VerifiedEpisodeSetup | null {
+  const context = facts.setup_context;
+  if (!context || typeof context !== "object") return null;
+  const d2 = context as Record<string, unknown>;
+  if (d2.status !== "EXACT_D2_LINK" || d2.source !== "TRADING_DIARY_D2"
+    || d2.consistency !== "INDEPENDENT_READ_SNAPSHOT_NOT_ATOMIC_WITH_PAPER"
+    || d2.decision_scope !== "D2_OBSERVATIONS_NOT_ROBOT_RUNTIME_LOG"
+    || !d2.setup || typeof d2.setup !== "object") return null;
+  const setup = d2.setup as Record<string, unknown>;
+  const allocations = facts.execution_allocations;
+  if (!Array.isArray(allocations) || allocations.length < 1) return null;
+  const first = allocations[0];
+  if (!first || typeof first !== "object") return null;
+  const openingController = (first as Record<string, unknown>).controller;
+  if (openingController !== "ROBOT" && openingController !== "MANUAL") return null;
+  if (setup.origin !== (openingController === "ROBOT" ? "ROBOT" : "TERMINAL_MANUAL")
+    || setup.symbol !== deal.symbol || setup.direction !== deal.side
+    || typeof setup.created_at_ms !== "number" || !Number.isSafeInteger(setup.created_at_ms)
+    || setup.created_at_ms < 0 || setup.created_at_ms > deal.opened_at_ms) return null;
+  const fields = [setup.pattern, setup.timeframe, setup.setup_id, setup.strategy_version];
+  if (fields.some((value) => typeof value !== "string" || !value.trim() || value.length > 256)) return null;
+  return {
+    pattern: setup.pattern as string, timeframe: setup.timeframe as string,
+    setupId: setup.setup_id as string, strategyVersion: setup.strategy_version as string,
+  };
+}
+
+/** Only the backend's exact-ID Robot Wedge proof may supply this label.
+ * Candidate metadata is not original geometry or a D2 setup/decision.
+ */
+function verifiedWedgeSignal(deal: ClosedEpisodeLocator, report: FinrezResponse): VerifiedEpisodePattern | null {
+  if (report.account_id !== "paper" || report.owner !== "ROBOT" || deal.cohort !== "ROBOT"
+    || !/^te_[0-9a-f]{24}$/.test(deal.trade_episode_id)) return null;
+  const value = deal.verified_signal;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const signal = value as Record<string, unknown>;
+  if (signal.status !== "PROVEN"
+    || signal.evidence_scope !== "EXACT_WEDGE_CANDIDATE_ENTRY_ORDER_EXECUTION_EPISODE"
+    || signal.provenance !== "DURABLE_ROBOT_TRADE_METADATA_NOT_ORIGINAL_GEOMETRY"
+    || signal.trade_episode_id !== deal.trade_episode_id
+    || signal.source_revision !== report.source_revision
+    || !["Falling Wedge", "Rising Wedge"].includes(String(signal.pattern))
+    || typeof signal.candidate_id !== "string"
+    || !signal.candidate_id.trim() || signal.candidate_id.length > 256
+    || typeof signal.source_timeframe !== "string"
+    || !signal.source_timeframe.trim() || signal.source_timeframe.length > 40) return null;
+  return {
+    source: "WEDGE", pattern: signal.pattern as string,
+    timeframe: signal.source_timeframe, candidateId: signal.candidate_id,
+  };
+}
+
+function verifiedIndexedPattern(deal: ClosedEpisodeLocator, report: FinrezResponse): VerifiedEpisodePattern | null {
+  if (deal.opening_controller === "ROBOT" || deal.opening_controller === "MANUAL") {
+    const setup = exactD2Setup({
+      setup_context: deal.setup_context,
+      execution_allocations: [{ controller: deal.opening_controller }],
+    }, deal);
+    if (setup) return { ...setup, source: "D2" };
+  }
+  return verifiedWedgeSignal(deal, report);
+}
 
 type TradeExecutionPoint = { at: number; price: number };
 
@@ -874,21 +977,61 @@ const dealLabels: Record<ClosedEpisodeLocator["cohort"], string> = {
   JOINT_MANAGEMENT: "Робот + ручное управление",
 };
 
-function ClosedDealsView({ report, symbolFilter, onClearSymbolFilter }: {
-  report: FinrezResponse; symbolFilter: string | null; onClearSymbolFilter: () => void;
+function ClosedDealsView({ report, symbolFilter, patternFilter, lossOnly, onClearSymbolFilter }: {
+  report: FinrezResponse; symbolFilter: string; patternFilter: string;
+  lossOnly: boolean; onClearSymbolFilter: () => void;
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const deals = useMemo(() => (report.closed_episodes ?? []).filter((deal) =>
-    symbolFilter === null || deal.symbol === symbolFilter,
-  ), [report.closed_episodes, symbolFilter]);
-  const selected = deals.find((deal) => deal.trade_episode_id === selectedId);
+  const tickerQuery = symbolFilter.trim().toUpperCase();
+  const patternQuery = patternFilter.trim().toLocaleLowerCase("ru-RU");
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState("");
+  const [verifiedExport, setVerifiedExport] = useState<{ episodeId: string; json: string } | null>(null);
+  const [copyNotice, setCopyNotice] = useState("");
+  const [showExportText, setShowExportText] = useState(false);
   const [filmNotice, setFilmNotice] = useState("");
 
   const [executionPoints, setExecutionPoints] = useState<TradeExecutionPoint[]>([]);
+  const [verifiedSetups, setVerifiedSetups] = useState<Record<string, VerifiedEpisodeSetup | null>>({});
+  const indexedVerifiedSetups = useMemo(() => {
+    const proven: Record<string, VerifiedEpisodeSetup> = {};
+    for (const deal of report.closed_episodes ?? []) {
+      if (deal.opening_controller !== "ROBOT" && deal.opening_controller !== "MANUAL") continue;
+      const setup = exactD2Setup({
+        setup_context: deal.setup_context,
+        execution_allocations: [{ controller: deal.opening_controller }],
+      }, deal);
+      if (setup) proven[deal.trade_episode_id] = setup;
+    }
+    return proven;
+  }, [report.closed_episodes]);
+  const setupFor = (episodeId: string): VerifiedEpisodeSetup | null =>
+    Object.prototype.hasOwnProperty.call(verifiedSetups, episodeId)
+      ? verifiedSetups[episodeId] : indexedVerifiedSetups[episodeId] ?? null;
+  const patternFor = (deal: ClosedEpisodeLocator): VerifiedEpisodePattern | null => {
+    const d2 = setupFor(deal.trade_episode_id);
+    return d2 ? { ...d2, source: "D2" } : verifiedWedgeSignal(deal, report);
+  };
+  const deals = useMemo(() => (report.closed_episodes ?? []).filter((deal) => {
+    if (!deal.symbol.includes(tickerQuery)) return false;
+    if (lossOnly && Number(deal.pnl_usdt) >= 0) return false;
+    if (!patternQuery) return true;
+    const setup = Object.prototype.hasOwnProperty.call(verifiedSetups, deal.trade_episode_id)
+      ? verifiedSetups[deal.trade_episode_id]
+      : indexedVerifiedSetups[deal.trade_episode_id];
+    const pattern = setup?.pattern ?? verifiedWedgeSignal(deal, report)?.pattern;
+    return !!pattern?.toLocaleLowerCase("ru-RU").includes(patternQuery);
+  }).sort((a, b) => {
+    if (!lossOnly) return 0; // Preserve the API's established ordering in "all deals".
+    const aPnl = Number(a.pnl_usdt), bPnl = Number(b.pnl_usdt);
+    if (aPnl < bPnl) return -1;
+    if (aPnl > bPnl) return 1;
+    return b.closed_at_ms - a.closed_at_ms || a.trade_episode_id.localeCompare(b.trade_episode_id);
+  }), [report.closed_episodes, report.source_revision, report.owner, tickerQuery, patternQuery, lossOnly, verifiedSetups, indexedVerifiedSetups]);
+  const selected = deals.find((deal) => deal.trade_episode_id === selectedId);
+  const selectedPattern = selected ? patternFor(selected) : null;
   useEffect(() => {
-    const deal = deals.find((entry) => entry.trade_episode_id === selectedId);
+    const deal = report.closed_episodes?.find((entry) => entry.trade_episode_id === selectedId);
     setExecutionPoints([]);
     if (!deal) return;
     let active = true;
@@ -928,18 +1071,27 @@ function ClosedDealsView({ report, symbolFilter, onClearSymbolFilter }: {
               at < deal.opened_at_ms || at > deal.closed_at_ms) return null;
           points.push({ price, at });
         }
-        return points;
+        return { points, setup: exactD2Setup(facts, deal) };
       })
-      .then((points) => { if (active && points) setExecutionPoints(points); })
+      .then((result) => {
+        if (!active || !result) return;
+        setExecutionPoints(result.points);
+        setVerifiedSetups((prior) => ({
+          ...prior, [deal.trade_episode_id]: result.setup,
+        }));
+      })
       .catch(() => { /* No synthetic market data on archive errors. */ });
     return () => { active = false; };
-  }, [selectedId, report.account_id, report.owner, report.source_revision, deals]);
+  }, [selectedId, report.account_id, report.owner, report.source_revision, report.closed_episodes]);
 
 
   async function downloadFacts(deal: ClosedEpisodeLocator) {
     if (downloading) return;
     setDownloading(true);
     setDownloadError("");
+    setVerifiedExport(null);
+    setCopyNotice("");
+    setShowExportText(false);
     try {
       const response = await fetch(marketApiRoutes.diaryEpisodeFacts(
         report.account_id, report.owner, deal.trade_episode_id, report.source_revision,
@@ -966,7 +1118,9 @@ function ClosedDealsView({ report, symbolFilter, onClearSymbolFilter }: {
           || typeof item.execution_price !== "string"
         )) throw new Error("История сделки не совпала с выбранным эпизодом.");
 
-      const blob = new Blob([JSON.stringify(facts, null, 2) + "\n"], { type: "application/json" });
+      const json = JSON.stringify(facts, null, 2) + "\n";
+      setVerifiedExport({ episodeId: deal.trade_episode_id, json });
+      const blob = new Blob([json], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       try {
         const anchor = document.createElement("a");
@@ -1001,8 +1155,36 @@ function ClosedDealsView({ report, symbolFilter, onClearSymbolFilter }: {
             <div><dt>Открыта</dt><dd>{formatDate(selected.opened_at_ms)}</dd></div>
             <div><dt>Закрыта</dt><dd>{formatDate(selected.closed_at_ms)}</dd></div>
             <div><dt>Исполнений</dt><dd>{selected.execution_count}</dd></div>
-            <div><dt>PnL после комиссий</dt><dd title={selected.pnl_usdt}>{displayTradePnl(selected.pnl_usdt)} USDT</dd></div>
+            <div><dt>PnL после комиссий</dt><dd title={selected.pnl_usdt}>{formatFinrezPnl(selected.pnl_usdt)}</dd></div>
+            <div><dt>PnL % от номинала входа</dt><dd title={ENTRY_RETURN_EXPLANATION}>
+              {verifiedEntryNotionalReturn(selected) ?? "—"}
+            </dd></div>
+            {verifiedEntryNotionalReturn(selected) ? (
+              <div><dt>Фактический номинал входов</dt><dd title={selected.entry_notional_usdt}>
+                {displayTradePnl(selected.entry_notional_usdt)} USDT
+              </dd></div>
+            ) : null}
           </dl>
+        </section>
+        <section className="diary-detail-section" aria-label="Связь сделки с паттерном">
+          <h3>Сетап и паттерн</h3>
+          {selectedPattern ? (
+            <dl>
+              <div><dt>Паттерн</dt><dd>{selectedPattern.pattern}</dd></div>
+              <div><dt>Таймфрейм</dt><dd>{selectedPattern.timeframe}</dd></div>
+              {selectedPattern.source === "D2" ? (
+                <>
+                  <div><dt>ID сетапа</dt><dd>{selectedPattern.setupId}</dd></div>
+                  <div><dt>Версия стратегии</dt><dd>{selectedPattern.strategyVersion}</dd></div>
+                </>
+              ) : (
+                <div><dt>ID кандидата Robot</dt><dd>{selectedPattern.candidateId}</dd></div>
+              )}
+            </dl>
+          ) : <p className="diary-finrez-basis">Связь с паттерном по точному ID не подтверждена.</p>}
+          <small>{selectedPattern?.source === "WEDGE"
+            ? "Источник: точная цепочка Robot candidate → order → execution → episode. Не D2, без исходной геометрии и журнала решений."
+            : "Источник при наличии D2-связи: отдельные наблюдения Trading Diary D2, не полный журнал решений Робота."}</small>
         </section>
         <TradeExecutionPriceChart points={executionPoints} />
         <SimulatorLaunchAction episodeId={selected.trade_episode_id}
@@ -1014,6 +1196,27 @@ function ClosedDealsView({ report, symbolFilter, onClearSymbolFilter }: {
           {downloading ? "Выгружаю факты…" : "Скачать JSON исполнений"}
         </button>
         {downloadError ? <p className="diary-finrez-coverage" role="alert">{downloadError}</p> : null}
+        {verifiedExport?.episodeId === selected.trade_episode_id ? (
+          <div className="diary-detail-section">
+            <p>Если Telegram не сохранил файл, скопируйте проверенный JSON сделки.</p>
+            <button className="diary-detail-back" type="button" onClick={() => {
+              setCopyNotice("");
+              void (async () => {
+                try {
+                  if (!navigator.clipboard?.writeText) throw new Error("clipboard unavailable");
+                  await navigator.clipboard.writeText(verifiedExport.json);
+                  setCopyNotice("JSON скопирован в буфер обмена.");
+                } catch {
+                  setShowExportText(true);
+                  setCopyNotice("Копирование недоступно. Выделите JSON ниже и скопируйте вручную.");
+                }
+              })();
+            }}>Скопировать JSON</button>
+            {copyNotice ? <p role="status">{copyNotice}</p> : null}
+            {showExportText ? <textarea readOnly aria-label="Проверенный JSON сделки"
+              value={verifiedExport.json} rows={8} style={{ width: "100%" }} /> : null}
+          </div>
+        ) : null}
         <p className="diary-finrez-basis" role="status">
           Это не воспроизведение. JSON содержит только реальные зарегистрированные исполнения. Свечи, решения робота
           и полное воспроизведение в локальном Симуляторе пока не подключены.
@@ -1023,10 +1226,12 @@ function ClosedDealsView({ report, symbolFilter, onClearSymbolFilter }: {
   }
   return (
     <div className="diary-detail" aria-label="Закрытые сделки по эпизодам">
-      {symbolFilter !== null ? (
+      {tickerQuery !== "" ? (
         <div className="diary-finrez-filter">
-          <button type="button" className="diary-detail-back" onClick={onClearSymbolFilter}>← Все сделки</button>
-          <span>Сделки по {symbolFilter}</span>
+          <button type="button" className="diary-detail-back" onClick={onClearSymbolFilter}>
+            {patternQuery ? "← Все тикеры" : "← Все сделки"}
+          </button>
+          <span>Сделки по {tickerQuery}</span>
         </div>
       ) : null}
       {report.attribution_coverage.status === "PARTIAL" ? (
@@ -1035,21 +1240,39 @@ function ClosedDealsView({ report, symbolFilter, onClearSymbolFilter }: {
           с неизвестным источником исполнений.
         </p>
       ) : null}
-      {deals.length === 0 ? <p className="diary-state">Нет подтверждённых закрытых сделок за выбранный период</p> : (
+      {deals.length === 0 ? <p className="diary-state">
+        {lossOnly ? "Нет убыточных сделок по выбранным фильтрам"
+          : patternQuery ? "По выбранным фильтрам сделок нет"
+          : "Нет подтверждённых закрытых сделок за выбранный период"}
+      </p> : (
         <div className="diary-trades-list">
           {deals.map((deal) => (
             <div className={`diary-trade-entry ${deal.side.toLowerCase()}`} key={deal.trade_episode_id}>
               <button className={`diary-trade-row ${deal.side.toLowerCase()}`}
                 type="button" onClick={() => setSelectedId(deal.trade_episode_id)}>
               <div className="diary-trade-heading">
-                <strong>{deal.symbol}</strong><span>{sideLabel(deal.side)}</span><span>{dealLabels[deal.cohort]}</span>
+                <strong>{deal.symbol}</strong>
+                <span className="diary-deal-pattern"
+                  title={patternFor(deal)?.source === "D2"
+                    ? "Точная связь эпизода с наблюдательным сетапом Diary D2"
+                    : patternFor(deal)?.source === "WEDGE"
+                      ? "Доказанное происхождение Wedge по точным идентификаторам Robot, не D2"
+                      : "Связь сделки с паттерном пока не подтверждена"}>
+                  {"Паттерн: " + (patternFor(deal)?.pattern ?? "не установлен")}
+                </span>
+                <span>{sideLabel(deal.side)}</span><span>{dealLabels[deal.cohort]}</span>
               </div>
               <div className="diary-trade-times">
                 <span>{formatDate(deal.opened_at_ms)}</span><span>→</span><span>{formatDate(deal.closed_at_ms)}</span>
               </div>
               <div className="diary-trade-metrics">
                 <span className={Number(deal.pnl_usdt) > 0 ? "profit" : Number(deal.pnl_usdt) < 0 ? "loss" : ""}
-                  title={deal.pnl_usdt}>PnL {displayTradePnl(deal.pnl_usdt)} USDT</span>
+                  title={deal.pnl_usdt}>PnL {formatFinrezPnl(deal.pnl_usdt)}</span>
+                <span title={verifiedEntryNotionalReturn(deal)
+                    ? ENTRY_RETURN_EXPLANATION
+                    : "Процент недоступен без подтверждённой базы расчёта"}>
+                  PnL %: {verifiedEntryNotionalReturn(deal) ?? "—"}
+                </span>
                 <span>Исполнений: {deal.execution_count}</span>
               </div>
               </button>
@@ -1071,9 +1294,159 @@ function ClosedDealsView({ report, symbolFilter, onClearSymbolFilter }: {
   );
 }
 
-function FinrezView({ report, onSelectTicker }: {
-  report: FinrezResponse; onSelectTicker: (symbol: string) => void;
+function formatFinrezPnl(value: string): string {
+  // Presentation only: exact source PnL stays unchanged.
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return "—";
+  if (amount === 0) return "0 USDT";
+  const sign = amount > 0 ? "+" : "-";
+  const magnitude = Math.abs(amount);
+  const digits = magnitude < 0.01 ? 6 : 4;
+  if (magnitude < 10 ** -digits) {
+    return `${sign}<${new Intl.NumberFormat("ru-RU", { minimumFractionDigits: digits }).format(10 ** -digits)} USDT`;
+  }
+  return `${sign}${new Intl.NumberFormat("ru-RU", {
+    minimumFractionDigits: 2, maximumFractionDigits: digits,
+  }).format(magnitude)} USDT`;
+}
+
+function FinrezTickerRow({ ticker, onSelectTicker }: {
+  ticker: FinrezTicker; onSelectTicker: (symbol: string) => void;
 }) {
+  return (
+    <div className="diary-finrez-row">
+      <strong title={ticker.symbol}>{ticker.symbol}</strong>
+      <span title={`${ticker.pnl_usdt} USDT`}
+        className={Number(ticker.pnl_usdt) > 0 ? "profit" : Number(ticker.pnl_usdt) < 0 ? "loss" : ""}>
+        {formatFinrezPnl(ticker.pnl_usdt)}
+      </span>
+      <button type="button" className="diary-finrez-list-button"
+        aria-label={`Показать сделки по ${ticker.symbol}`}
+        title="Показать отдельные сделки по тикеру"
+        onClick={() => onSelectTicker(ticker.symbol)}>
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01" />
+        </svg>
+      </button>
+    </div>
+  );
+}
+
+
+/** Exact decimal aggregation for presentation; original immutable PnL is unchanged. */
+function sumVerifiedPnl(values: string[]): string | null {
+  const parts = values.map((value) => {
+    const match = /^([+-]?)(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/.exec(value.trim());
+    if (!match) return null;
+    const fraction = match[3] ?? "";
+    const exponent = Number(match[4] ?? "0");
+    if (!Number.isSafeInteger(exponent) || Math.abs(exponent) > 100
+      || (match[2] + fraction).length > 100) return null;
+    let scale = fraction.length - exponent;
+    if (Math.abs(scale) > 100) return null;
+    let coefficient = BigInt((match[1] === "-" ? "-" : "") + match[2] + fraction);
+    if (scale < 0) {
+      coefficient *= 10n ** BigInt(-scale);
+      scale = 0;
+    }
+    return { coefficient, scale };
+  });
+  if (parts.some((part) => part === null)) return null;
+  const parsed = parts as Array<{ coefficient: bigint; scale: number }>;
+  const scale = parsed.reduce((max, part) => Math.max(max, part.scale), 0);
+  const total = parsed.reduce((sum, part) =>
+    sum + part.coefficient * 10n ** BigInt(scale - part.scale), 0n);
+  const digits = (total < 0n ? -total : total).toString().padStart(scale + 1, "0");
+  const integer = scale ? digits.slice(0, -scale) : digits;
+  const fraction = scale ? digits.slice(-scale).replace(/0+$/, "") : "";
+  return (total < 0n ? "-" : "") + integer + (fraction ? "." + fraction : "");
+}
+
+function PatternsView({ report, symbolFilter, onSelectPattern }: {
+  report: FinrezResponse; symbolFilter: string; onSelectPattern: (pattern: string) => void;
+}) {
+  const tickerQuery = symbolFilter.trim().toUpperCase();
+  const episodes = (report.closed_episodes ?? []).filter((deal) => deal.symbol.includes(tickerQuery));
+  const groups = new Map<string, {
+    pattern: string; cohort: ClosedEpisodeLocator["cohort"]; deals: ClosedEpisodeLocator[];
+    d2Count: number; wedgeCount: number;
+  }>();
+  let provenCount = 0;
+  for (const deal of episodes) {
+    const pattern = verifiedIndexedPattern(deal, report);
+    if (!pattern) continue;
+    provenCount += 1;
+    const key = JSON.stringify([pattern.pattern, deal.cohort]);
+    const group = groups.get(key);
+    if (group) {
+      group.deals.push(deal);
+      if (pattern.source === "D2") group.d2Count += 1;
+      else group.wedgeCount += 1;
+    } else groups.set(key, {
+      pattern: pattern.pattern, cohort: deal.cohort, deals: [deal],
+      d2Count: pattern.source === "D2" ? 1 : 0,
+      wedgeCount: pattern.source === "WEDGE" ? 1 : 0,
+    });
+  }
+  const rows = [...groups.values()].sort((a, b) =>
+    a.pattern.localeCompare(b.pattern, "ru") || a.cohort.localeCompare(b.cohort));
+  return (
+    <section className="diary-finrez" aria-label="Паттерны по подтверждённым сделкам">
+      <p className="diary-finrez-basis">
+        Только точные D2-связи и доказанные Wedge-сигналы Robot. Wedge-lineage не заменяет D2 и не подтверждает журнал решений или исходную геометрию.
+        Категории управления не объединяются; суммы ниже — только по подтверждённым эпизодам.
+      </p>
+      <p className="diary-finrez-coverage" role="status">
+        Паттерн подтверждён для {provenCount} из {episodes.length} закрытых сделок по выбранному тикеру и периоду.
+        Остальные сделки не считаются нулевыми или убыточными.
+        {report.attribution_coverage.status === "PARTIAL"
+          ? " Сам финансовый отчёт также имеет неполное покрытие атрибуции."
+          : ""}
+      </p>
+      {rows.length === 0 ? <p className="diary-state">
+        Нет сделок с подтверждённым паттерном за выбранный период
+      </p> : (
+        <>
+          <p className="diary-finrez-basis">
+            Кнопка списка открывает все подтверждённые сделки с паттерном, включая другие категории управления.
+          </p>
+          <div className="diary-finrez-list">
+            {rows.map((row) => {
+              const pnl = sumVerifiedPnl(row.deals.map((deal) => deal.pnl_usdt));
+              const numeric = pnl === null ? NaN : Number(pnl);
+              const wins = row.deals.filter((deal) => Number(deal.pnl_usdt) > 0).length;
+              const losses = row.deals.filter((deal) => Number(deal.pnl_usdt) < 0).length;
+              return <div className="diary-finrez-row" key={JSON.stringify([row.pattern, row.cohort])}>
+                <div className="diary-pattern-label">
+                  <strong title={row.pattern}>{row.pattern}</strong>
+                  <small>{dealLabels[row.cohort]} · сделок: {row.deals.length} · прибыльных: {wins} · убыточных: {losses} · D2: {row.d2Count} · Wedge: {row.wedgeCount}</small>
+                </div>
+                <span title={pnl === null ? "Точная сумма недоступна" : pnl + " USDT"}
+                  className={numeric > 0 ? "profit" : numeric < 0 ? "loss" : ""}>
+                  {pnl === null ? "—" : formatFinrezPnl(pnl)}
+                </span>
+                <button type="button" className="diary-finrez-list-button"
+                  aria-label={`Показать все сделки по паттерну ${row.pattern}`}
+                  title="Перейти к сделкам с подтверждённым паттерном"
+                  onClick={() => onSelectPattern(row.pattern)}>
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01" />
+                  </svg>
+                </button>
+              </div>;
+            })}
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+function FinrezView({ report, symbolFilter, onSelectTicker }: {
+  report: FinrezResponse; symbolFilter: string; onSelectTicker: (symbol: string) => void;
+}) {
+  const tickerQuery = symbolFilter.trim().toUpperCase();
+  const matchesTicker = (ticker: FinrezTicker) => ticker.symbol.includes(tickerQuery);
   return (
     <div className="diary-finrez" aria-label="Финансовый результат по тикерам">
       <p className="diary-finrez-basis">
@@ -1088,23 +1461,18 @@ function FinrezView({ report, onSelectTicker }: {
           атрибутированным сделкам, не полный результат за период.
         </p>
       ) : null}
-      {report.tickers.length === 0 ? (
+      {report.tickers.filter(matchesTicker).length === 0 ? (
         <p className="diary-state">
-          {report.attribution_coverage.status === "PARTIAL"
-            ? "Нет достоверно атрибутированных закрытых сделок этого типа за выбранный период"
-            : "Нет закрытых сделок этого типа за выбранный период"}
+          {report.tickers.length > 0
+            ? "По заданному тикеру результатов нет"
+            : report.attribution_coverage.status === "PARTIAL"
+              ? "Нет достоверно атрибутированных закрытых сделок этого типа за выбранный период"
+              : "Нет закрытых сделок этого типа за выбранный период"}
         </p>
       ) : (
         <div className="diary-finrez-list">
-          {report.tickers.map((ticker) => (
-            <button type="button" className="diary-finrez-row diary-finrez-row-action"
-                key={ticker.symbol} aria-label={`Показать сделки по ${ticker.symbol}`}
-                title="Показать отдельные сделки по тикеру" onClick={() => onSelectTicker(ticker.symbol)}>
-              <strong>{ticker.symbol}</strong>
-              <span className={Number(ticker.pnl_usdt) > 0 ? "profit" : Number(ticker.pnl_usdt) < 0 ? "loss" : ""}>
-                {Number(ticker.pnl_usdt) > 0 ? "+" : ""}{displayTradePnl(ticker.pnl_usdt)} USDT
-              </span>
-            </button>
+          {report.tickers.filter(matchesTicker).map((ticker) => (
+            <FinrezTickerRow key={ticker.symbol} ticker={ticker} onSelectTicker={onSelectTicker} />
           ))}
         </div>
       )}
@@ -1116,16 +1484,9 @@ function FinrezView({ report, onSelectTicker }: {
             В PnL полностью роботизированных сделок не включён.
           </p>
           <div className="diary-finrez-list">
-            {report.manual_interventions.map((ticker) => (
-              <button type="button" className="diary-finrez-row diary-finrez-row-action"
-                key={ticker.symbol} aria-label={`Показать сделки по ${ticker.symbol}`}
-                title="Показать отдельные сделки по тикеру" onClick={() => onSelectTicker(ticker.symbol)}>
-                <strong>{ticker.symbol}</strong>
-                <span className={Number(ticker.pnl_usdt) > 0 ? "profit" : Number(ticker.pnl_usdt) < 0 ? "loss" : ""}>
-                  {Number(ticker.pnl_usdt) > 0 ? "+" : ""}{displayTradePnl(ticker.pnl_usdt)} USDT
-                </span>
-              </button>
-            ))}
+            {report.manual_interventions.filter(matchesTicker).map((ticker) => (
+            <FinrezTickerRow key={ticker.symbol} ticker={ticker} onSelectTicker={onSelectTicker} />
+          ))}
           </div>
         </section>
       ) : null}
@@ -1137,16 +1498,9 @@ function FinrezView({ report, onSelectTicker }: {
             Не входит в итоги ROBOT или MANUAL. Одинаковый результат показан в обоих разделах — не складывайте его дважды.
           </p>
           <div className="diary-finrez-list">
-            {report.joint_management.map((ticker) => (
-              <button type="button" className="diary-finrez-row diary-finrez-row-action"
-                key={ticker.symbol} aria-label={`Показать сделки по ${ticker.symbol}`}
-                title="Показать отдельные сделки по тикеру" onClick={() => onSelectTicker(ticker.symbol)}>
-                <strong>{ticker.symbol}</strong>
-                <span className={Number(ticker.pnl_usdt) > 0 ? "profit" : Number(ticker.pnl_usdt) < 0 ? "loss" : ""}>
-                  {Number(ticker.pnl_usdt) > 0 ? "+" : ""}{displayTradePnl(ticker.pnl_usdt)} USDT
-                </span>
-              </button>
-            ))}
+            {report.joint_management.filter(matchesTicker).map((ticker) => (
+            <FinrezTickerRow key={ticker.symbol} ticker={ticker} onSelectTicker={onSelectTicker} />
+          ))}
           </div>
         </section>
       ) : null}
@@ -1177,7 +1531,10 @@ export function DiaryOverlay({
   const [statistics, setStatistics] = useState<DiaryStatistics | null>(null);
   const [finrez, setFinrez] = useState<FinrezResponse | null>(null);
   const [finrezPeriod, setFinrezPeriod] = useState<FinrezPeriod>("DAY");
-  const [finrezSymbolFilter, setFinrezSymbolFilter] = useState<string | null>(null);
+  const [finrezSymbolFilter, setFinrezSymbolFilter] = useState("");
+  const [finrezPatternFilter, setFinrezPatternFilter] = useState("");
+  const [finrezLossOnly, setFinrezLossOnly] = useState(false);
+  const [pendingFinrezTicker, setPendingFinrezTicker] = useState<string | null>(null);
   const [mirrorLevels, setMirrorLevels] = useState<MirrorLevelRow[]>([]);
   const [tradeFilter, setTradeFilter] = useState<DiaryFilter>("ALL");
   const [setupFilter, setSetupFilter] = useState<SetupFilter>("ALL");
@@ -1197,9 +1554,9 @@ export function DiaryOverlay({
     setLoading(true);
     setLoadError(false);
     if (section === "STATISTICS") setStatistics(null);
-    if (section === "FINREZ" || section === "DEALS") setFinrez(null);
+    if (section === "FINREZ" || section === "PATTERNS" || section === "DEALS") setFinrez(null);
     try {
-      if (section === "FINREZ" || section === "DEALS") {
+      if (section === "FINREZ" || section === "PATTERNS" || section === "DEALS") {
         if (!statisticsScope) throw new Error("finrez scope required");
         const response = await fetch(marketApiRoutes.diaryTickerFinrez(
           statisticsScope.accountId, statisticsScope.owner, finrezPeriod,
@@ -1253,13 +1610,10 @@ export function DiaryOverlay({
             || typeof row.pnl_usdt !== "string" || !row.pnl_usdt.trim()
             || !Number.isFinite(Number(row.pnl_usdt))
             || !Number.isSafeInteger(row.trade_count) || row.trade_count < 1
-          ) || (section === "DEALS" && !validClosedEpisodes(result))) throw new Error("finrez scope/data mismatch");
+          ) || ((section === "DEALS" || section === "PATTERNS") && !validClosedEpisodes(result))) throw new Error("finrez scope/data mismatch");
         setRequestedTradeMissing(false);
         setFinrez(result);
         setAccountId(result.account_id);
-      } else if (section === "PATTERNS") {
-        // Pattern tab intentionally deferred until owner visual acceptance.
-        setRequestedTradeMissing(false);
       } else if (section === "TRADES") {
         const response = await fetch(marketApiRoutes.diaryTrades);
         if (!response.ok) throw new Error("diary request failed");
@@ -1379,15 +1733,34 @@ export function DiaryOverlay({
                 ["MONTH", "Месяц"], ["YEAR", "Год"], ["ALL", "Всё время"],
               ] as const).map(([period, label]) => (
                 <button key={period} aria-pressed={finrezPeriod === period} type="button"
-                  onClick={() => { setFinrezSymbolFilter(null); setFinrezPeriod(period); }}>{label}</button>
+                  onClick={() => { setPendingFinrezTicker(null); setFinrezPeriod(period); }}>{label}</button>
               ))}
             </nav>
           ) : null}
           <nav className="diary-primary-nav" aria-label="Разделы статистики">
-            <button aria-current={section === "FINREZ" || section === "STATISTICS" ? "page" : undefined} onClick={() => { setSelectedTradeId(null); setFinrezSymbolFilter(null); setSection("FINREZ"); }} type="button">Финрез</button>
-            <button aria-current={section === "PATTERNS" || section === "SETUPS" ? "page" : undefined} onClick={() => { setSelectedTradeId(null); setSection("PATTERNS"); }} type="button">Паттерны</button>
-            <button aria-current={section === "DEALS" || section === "TRADES" ? "page" : undefined} onClick={() => { setSelectedTradeId(null); setFinrezSymbolFilter(null); setSection("DEALS"); }} type="button">Сделки</button>
+            <button aria-current={section === "FINREZ" || section === "STATISTICS" ? "page" : undefined} onClick={() => { setSelectedTradeId(null); setPendingFinrezTicker(null); setSection("FINREZ"); }} type="button">Финрез</button>
+            <button aria-current={section === "PATTERNS" || section === "SETUPS" ? "page" : undefined} onClick={() => { setSelectedTradeId(null); setPendingFinrezTicker(null); setSection("PATTERNS"); }} type="button">Паттерны</button>
+            <button aria-current={section === "DEALS" || section === "TRADES" ? "page" : undefined} onClick={() => { setSelectedTradeId(null); setPendingFinrezTicker(null); setSection("DEALS"); }} type="button">Сделки</button>
           </nav>
+          {(section === "FINREZ" || section === "PATTERNS" || section === "DEALS") ? (
+            <div className="diary-ticker-search">
+              <input aria-label="Поиск по тикеру" type="search" placeholder="Поиск тикера"
+                value={finrezSymbolFilter}
+                onChange={(event) => setFinrezSymbolFilter(event.target.value.toUpperCase())} />
+              {section === "DEALS" ? (
+                <>
+                  <input aria-label="Поиск по паттерну" type="search"
+                    placeholder="Поиск паттерна" value={finrezPatternFilter}
+                    onChange={(event) => setFinrezPatternFilter(event.target.value)} />
+                  <button className="diary-loss-toggle" aria-pressed={finrezLossOnly}
+                    title="Только сделки с отрицательным реализованным PnL, начиная с наибольшего убытка"
+                    type="button" onClick={() => setFinrezLossOnly((prior) => !prior)}>
+                    Убыточные
+                  </button>
+                </>
+              ) : null}
+            </div>
+          ) : null}
           {!selectedTrade && (section === "TRADES" || section === "SETUPS") ? (
             <div className="diary-filter-bar" aria-label={section === "TRADES" ? "Фильтры сделок" : "Фильтры сетапов"}>
               {(section === "TRADES" ? tradeFilters : setupFilters).map((candidate) => {
@@ -1403,6 +1776,21 @@ export function DiaryOverlay({
         </div>
 
         <div className="diary-content">
+          {pendingFinrezTicker !== null ? (
+            <div className="diary-finrez-confirm" role="alertdialog" aria-label="Переход к сделкам">
+              <p>Открыть все сделки по {pendingFinrezTicker} за выбранный период?</p>
+              <div>
+                <button type="button" onClick={() => {
+                  setFinrezSymbolFilter(pendingFinrezTicker);
+                  setFinrezPatternFilter("");
+                  setFinrezLossOnly(false);
+                  setPendingFinrezTicker(null);
+                  setSection("DEALS");
+                }}>Открыть сделки</button>
+                <button type="button" onClick={() => setPendingFinrezTicker(null)}>Отмена</button>
+              </div>
+            </div>
+          ) : null}
           {loading ? <p className="diary-state">Загрузка...</p> : null}
           {!loading && loadError ? (
             <div className="diary-state">
@@ -1412,11 +1800,19 @@ export function DiaryOverlay({
           ) : null}
 
           {!loading && !loadError && !selectedTrade && section === "FINREZ" && finrez ? <FinrezView report={finrez}
-            onSelectTicker={(symbol) => { setFinrezSymbolFilter(symbol); setSection("DEALS"); }} /> : null}
-          {!loading && !loadError && !selectedTrade && section === "PATTERNS" ? <p className="diary-state">Паттерны — второй этап после визуальной приёмки «Финреза»</p> : null}
+            symbolFilter={finrezSymbolFilter} onSelectTicker={setPendingFinrezTicker} /> : null}
+          {!loading && !loadError && !selectedTrade && section === "PATTERNS" && finrez ? (
+            <PatternsView report={finrez} symbolFilter={finrezSymbolFilter}
+              onSelectPattern={(pattern) => {
+                setFinrezPatternFilter(pattern);
+                setFinrezLossOnly(false);
+                setSection("DEALS");
+              }} />
+          ) : null}
           {!loading && !loadError && !selectedTrade && section === "DEALS" && finrez ? (
-            <ClosedDealsView key={`${finrez.account_id}:${finrez.owner}:${finrez.period}:${finrez.source_revision}:${finrezSymbolFilter ?? "ALL"}`}
-              report={finrez} symbolFilter={finrezSymbolFilter} onClearSymbolFilter={() => setFinrezSymbolFilter(null)} />
+            <ClosedDealsView key={`${finrez.account_id}:${finrez.owner}:${finrez.period}:${finrez.source_revision}:${finrezSymbolFilter}:${finrezPatternFilter}`}
+              report={finrez} symbolFilter={finrezSymbolFilter} patternFilter={finrezPatternFilter}
+              lossOnly={finrezLossOnly} onClearSymbolFilter={() => setFinrezSymbolFilter("")} />
           ) : null}
           {!loading && !loadError && selectedTrade ? <TradeDetailsView trade={selectedTrade} onBack={() => { setRequestedTradeMissing(false); setSelectedTradeId(null); }} /> : null}
           {!loading && !loadError && requestedTradeMissing && section === "TRADES" ? <p className="diary-state">Сделка недоступна в текущем дневнике</p> : null}

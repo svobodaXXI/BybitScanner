@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { initialSourceGeometryRange, projectSignalGeometry, restoreSavedSignalCorrection } from "./signalChartBridge";
+import { initialSourceGeometryRange, projectSignalGeometry, projectVerifiedSignalOverlay, restoreSavedSignalCorrection } from "./signalChartBridge";
 import { serializeReviewDrawings } from "./geometryReviewDraft";
 
 const candles = [
@@ -78,6 +78,76 @@ describe("read-only Terminal signal projection on live candles", () => {
     expect(projectSignalGeometry(source, currentCandles).editableDrawings)
       .not.toBe(drawn);
     expect(() => projectSignalGeometry(source, currentCandles.slice(1))).toThrow(/absent/);
+  });
+});
+
+
+describe("verified same-signal geometry on current and Terminal charts", () => {
+  it("keeps both source and corrected rays with their original styles and UTC anchors", () => {
+    const correction = projectSignalGeometry(source, candles).editableDrawings;
+    correction[0].anchors[1].price = 15;
+    const earlier = { time: "2026-10-18T23:55:00.000Z", open: 10, high: 11, low: 9, close: 10 };
+    const later = { time: "2026-10-19T00:15:00.000Z", open: 11, high: 12, low: 10, close: 11 };
+    const projected = projectVerifiedSignalOverlay(source, candles, correction, [earlier, ...candles, later]);
+    expect(projected.map(d => d.id)).toEqual(["upper", "lower", "editable:upper", "editable:lower"]);
+    expect(projected.map(d => d.anchors.map(a => a.logical))).toEqual([
+      [1, 3], [1, 3], [1, 3], [1, 3],
+    ]);
+    expect(projected[0].style.color).toBe("#8195aa");
+    expect(projected[2].style.color).toBe("#e0b45b");
+    expect(projected[2].referenceStroke).toBe("solid");
+    expect(projected[0].referenceStroke).toBeUndefined();
+    expect(projected[2].anchors[1].price).toBe(15);
+    expect(projected.every(d => d.locked && !d.hidden)).toBe(true);
+    expect(correction[0].locked).toBe(false);
+    projected[2].anchors[1].price = 7;
+    expect(correction[0].anchors[1].price).toBe(15);
+  });
+
+  it("extends only verified old source rays by exact UTC slope on a later timeframe", () => {
+    const correction = projectSignalGeometry(source, candles).editableDrawings;
+    correction[0].anchors[1].price = 15;
+    // These hourly bars contain neither original 5m pivot. No pivot snapping.
+    const later = [
+      { time: "2026-10-19T01:00:00.000Z", open: 25, high: 30, low: 20, close: 27 },
+      { time: "2026-10-19T02:00:00.000Z", open: 27, high: 35, low: 23, close: 32 },
+    ];
+    const result = projectVerifiedSignalOverlay(source, candles, correction, later);
+    expect(result.map(line => line.id)).toEqual([
+      "upper", "lower", "editable:upper", "editable:lower",
+    ]);
+    expect(result[0].anchors).toEqual([
+      { logical: 0, price: 24 }, { logical: 1, price: 36 },
+    ]);
+    expect(result[2].anchors).toEqual([
+      { logical: 0, price: 30 }, { logical: 1, price: 48 },
+    ]);
+    expect(result[0].referenceStroke).toBeUndefined();
+    expect(result[2].referenceStroke).toBe("solid");
+    expect(result.every(line => line.locked && !line.hidden)).toBe(true);
+    expect(source[0].anchors[0].bar_open_time_ms).toBe(Date.parse(candles[0].time));
+    expect(correction[0].anchors[1].price).toBe(15);
+  });
+
+  it("fails closed without verified source lines or enough later chart timestamps", () => {
+    const correction = projectSignalGeometry(source, candles).editableDrawings;
+    expect(() => projectVerifiedSignalOverlay(source, candles, correction, candles.slice(1)))
+      .toThrow(/two current candle times/);
+    expect(() => projectVerifiedSignalOverlay(source, candles,
+      [{ ...correction[0], id: "editable:other" }, correction[1]], candles))
+      .toThrow(/Unverified/);
+    const invalid = [
+      { time: "2026-10-19T01:00:00.000Z", open: 25, high: 30, low: 20, close: 27 },
+      { time: "2026-10-19T01:00:00.000Z", open: 27, high: 35, low: 23, close: 32 },
+    ];
+    expect(() => projectVerifiedSignalOverlay(source, candles, correction, invalid))
+      .toThrow(/Invalid current chart timestamps/);
+    const finite = [{ ...source[0], type: "trend" as const }];
+    const finiteCorrection = projectSignalGeometry(finite, candles).editableDrawings;
+    expect(() => projectVerifiedSignalOverlay(finite, candles, finiteCorrection, [
+      { time: "2026-10-19T01:00:00.000Z", open: 25, high: 30, low: 20, close: 27 },
+      { time: "2026-10-19T02:00:00.000Z", open: 27, high: 35, low: 23, close: 32 },
+    ])).toThrow(/Non-ray/);
   });
 });
 

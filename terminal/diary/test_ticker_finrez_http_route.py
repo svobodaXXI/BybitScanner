@@ -25,8 +25,8 @@ def test_finrez_route_reuses_attributed_paper_diary_source(tmp_path: Path, monke
     calls = []
     snapshot = object()
 
-    def read_source(path):
-        calls.append(("source", path))
+    def read_source(path, *, include_wedge_evidence=False):
+        calls.append(("source", path, include_wedge_evidence))
         return snapshot
 
     def project(source, *, account_id, owner, period, now_ms):
@@ -43,6 +43,9 @@ def test_finrez_route_reuses_attributed_paper_diary_source(tmp_path: Path, monke
 
     monkeypatch.setattr(paper_http_server, "load_paper_source_snapshot", read_source)
     monkeypatch.setattr(paper_http_server, "project_paper_ticker_pnl", project)
+    # This narrow route fixture does not model episode/fill evidence.
+    monkeypatch.setattr(paper_http_server, "attach_verified_entry_notional_returns", lambda snapshot, report: report)
+    monkeypatch.setattr(paper_http_server, "attach_verified_episode_patterns", lambda snapshot, report, **kwargs: report)
     server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
     server.diary_source_db_path = source_path
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -59,7 +62,7 @@ def test_finrez_route_reuses_attributed_paper_diary_source(tmp_path: Path, monke
             assert payload["tickers"][0]["pnl_usdt"] == "2.5"
             assert payload["manual_interventions"] == []
 
-        assert calls[0] == ("source", source_path)
+        assert calls[0] == ("source", source_path, True)
         assert calls[1] == ("project", snapshot, "paper", "ROBOT", "TODAY")
         for query in (
             "", "?account_id=paper&owner=ROBOT",
@@ -77,6 +80,59 @@ def test_finrez_route_reuses_attributed_paper_diary_source(tmp_path: Path, monke
         server.server_close()
         thread.join(timeout=2)
 
+
+
+def test_finrez_verified_signal_separate_from_setup_context(tmp_path: Path, monkeypatch):
+    source = tmp_path / "paper.sqlite3"
+    calls = []
+    def read(path, *, include_wedge_evidence=False):
+        calls.append(include_wedge_evidence)
+        return object()
+    def project(s, *, account_id, owner, period, now_ms):
+        return {
+            "account_id": account_id, "owner": owner, "period": period,
+            "source_revision": 5, "tickers": [{"symbol": "BTCUSDT", "pnl_usdt": "2"}],
+            "closed_episodes": [{
+                "trade_episode_id": "te_" + "a" * 24, "pnl_usdt": "2",
+                "cohort": owner, "setup_context": {"status": "NO_EXACT_EPISODE_LINK"},
+            }],
+        }
+    def attach(s, report):
+        if report["owner"] != "ROBOT":
+            return report
+        rows = [{**row, "verified_signal": {
+            "trade_episode_id": row["trade_episode_id"], "source_revision": 5,
+            "candidate_id": "candidate", "pattern": "Falling Wedge",
+            "source_timeframe": "M5", "status": "PROVEN",
+            "provenance": "DURABLE_ROBOT_TRADE_METADATA_NOT_ORIGINAL_GEOMETRY",
+        }} for row in report["closed_episodes"]]
+        return {**report, "closed_episodes": rows}
+    monkeypatch.setattr(paper_http_server, "load_paper_source_snapshot", read)
+    monkeypatch.setattr(paper_http_server, "project_paper_ticker_pnl", project)
+    monkeypatch.setattr(paper_http_server, "attach_verified_entry_notional_returns", lambda s, r: r)
+    monkeypatch.setattr(paper_http_server, "attach_verified_episode_patterns", lambda s, r, **k: r)
+    monkeypatch.setattr(paper_http_server, "attach_verified_wedge_signals", attach)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+    server.diary_source_db_path = source
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        root = f"http://127.0.0.1:{server.server_address[1]}/api/diary/ticker-finrez"
+        q = "?account_id=paper&owner=ROBOT&period=ALL"
+        status, result = _get(root + q)
+        assert status == 200 and result["ok"]
+        row = result["closed_episodes"][0]
+        assert row["verified_signal"]["pattern"] == "Falling Wedge"
+        assert row["setup_context"] == {"status": "NO_EXACT_EPISODE_LINK"}
+        assert result["tickers"][0]["pnl_usdt"] == "2"
+        status, result = _get(root + q.replace("owner=ROBOT", "owner=MANUAL"))
+        assert status == 200
+        assert "verified_signal" not in result["closed_episodes"][0]
+        assert calls == [True, False]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
 
 def test_finrez_route_does_not_fabricate_zero_when_paper_source_is_missing(tmp_path: Path):
     server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
@@ -123,7 +179,7 @@ def test_episode_facts_route_rejects_invalid_scope_and_exports_only_one_selected
             "schema": "BYBITSCANNER_CLOSED_EPISODE_FACTS_V1",
             "namespace": "PAPER_READ_ONLY", "source_revision": source_revision,
             "trade_episode_id": trade_episode_id, "symbol": "BTCUSDT",
-            "side": "LONG",
+            "side": "LONG", "opened_at_ms": 1000,
             "replay_evidence": "EXECUTION_FACTS_ONLY_NO_DECISIONS_OR_CANDLES",
             "execution_allocations": [{"controller": "ROBOT"}],
         }
@@ -234,6 +290,96 @@ def test_campaign_lineage_route_requires_exact_scope_and_refuses_unproven_histor
         server.server_close()
         thread.join(timeout=2)
 
+
+
+def test_wedge_lineage_api_requires_exact_scope_and_revision(tmp_path: Path, monkeypatch):
+    from terminal.diary.wedge_lineage import WedgeLineageUnproven
+
+    source = tmp_path / "missing-paper.sqlite3"
+    episode = "te_" + "b" * 24
+    calls = []
+
+    def read(path, *, include_wedge_evidence=False):
+        assert path == source and include_wedge_evidence is True
+        calls.append("read")
+        return object()
+
+    def project(snapshot, *, account_id, owner, trade_episode_id, source_revision):
+        calls.append(("project", source_revision))
+        assert account_id == "paper" and owner == "ROBOT"
+        assert trade_episode_id == episode
+        if source_revision != 8:
+            raise WedgeLineageUnproven("wedge_paper_robot_revision_required")
+        return {
+            "schema": "BYBITSCANNER_PAPER_WEDGE_LINEAGE_V1",
+            "namespace": "PAPER_READ_ONLY",
+            "trade_episode_id": trade_episode_id,
+            "source_revision": source_revision,
+            "candidate_id": "candidate-123",
+            "signal_pattern": "Falling Wedge",
+        }
+
+    monkeypatch.setattr(paper_http_server, "load_paper_source_snapshot", read)
+    monkeypatch.setattr(paper_http_server, "project_selected_paper_wedge", project)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+    server.diary_source_db_path = source
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        root = f"http://127.0.0.1:{server.server_address[1]}/api/diary/wedge-lineage"
+        valid = f"?account_id=paper&owner=ROBOT&trade_episode_id={episode}"
+        for query, error, status_code in [
+            ("", "wedge_lineage_scope_required", 400),
+            (valid + "&source_revision=0", "wedge_lineage_identity_invalid", 400),
+            (valid + "&source_revision=01", "wedge_lineage_identity_invalid", 400),
+            (valid + "&source_revision=8&source_revision=9", "wedge_lineage_scope_required", 400),
+            (valid.replace("owner=ROBOT", "owner=MANUAL") + "&source_revision=8",
+             "wedge_lineage_scope_unavailable", 404),
+            (valid.replace("account_id=paper", "account_id=main") + "&source_revision=8",
+             "wedge_lineage_scope_unavailable", 404),
+        ]:
+            status, result = _get(root + query)
+            assert (status, result["error"]) == (status_code, error)
+        assert calls == []
+        status, document = _get(root + valid + "&source_revision=8")
+        assert status == 200 and document["ok"]
+        assert document["candidate_id"] == "candidate-123"
+        assert document["signal_pattern"] == "Falling Wedge"
+        status, document = _get(root + valid + "&source_revision=7")
+        assert (status, document["error"]) == (409, "wedge_lineage_unproven")
+        assert calls == ["read", ("project", 8), "read", ("project", 7)]
+        assert not source.exists()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def test_wedge_lineage_api_missing_exact_candidate_is_unproven(tmp_path: Path, monkeypatch):
+    from terminal.diary.wedge_lineage import WedgeLineageUnproven
+    source = tmp_path / "missing.sqlite3"
+    episode = "te_" + "c" * 24
+    def reader(path, *, include_wedge_evidence=False):
+        assert include_wedge_evidence is True
+        return object()
+    def projector(snapshot, **kwargs):
+        raise WedgeLineageUnproven("wedge_candidate_order_ambiguous")
+    monkeypatch.setattr(paper_http_server, "load_paper_source_snapshot", reader)
+    monkeypatch.setattr(paper_http_server, "project_selected_paper_wedge", projector)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+    server.diary_source_db_path = source
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        url = (f"http://127.0.0.1:{server.server_address[1]}/api/diary/wedge-lineage"
+               f"?account_id=paper&owner=ROBOT&trade_episode_id={episode}&source_revision=8")
+        status, result = _get(url)
+        assert (status, result["error"]) == (409, "wedge_lineage_unproven")
+        assert not source.exists()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
 
 def test_simulator_bridge_http_contract_has_no_trading_runtime_dependency():
     """Exercise real handler, not just relay helpers, with a loopback test server."""

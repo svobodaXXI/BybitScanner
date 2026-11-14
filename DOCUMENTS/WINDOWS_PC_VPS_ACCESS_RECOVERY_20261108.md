@@ -1,6 +1,41 @@
 # Windows PC → BybitScanner VPS: confirmed recovery and local tool setup (2026-11-08)
 
-Status: **observed operator evidence**, not a runtime/trading readiness receipt. Scope: the **desktop PC** Windows user `svobo`, not the laptop. The owner uses **Codex Desktop GUI already installed/open**, not a CLI-first workflow. Do **not** instruct the owner to launch Codex by typing `codex` in PowerShell. Command-line PowerShell is for bounded SSH access/testing when truly needed; use the already-open Desktop app for Codex tasks. Codex Desktop's direct SSH access is **NOT YET VERIFIED** (see latest failure).
+Status: **observed operator evidence**, not a runtime/trading readiness receipt. Scope: the **desktop PC** Windows user `svobo`, not the laptop. The owner uses **Codex Desktop GUI already installed/open**, not a CLI-first workflow. Do **not** instruct the owner to launch Codex by typing `codex` in PowerShell. Command-line PowerShell is for bounded SSH access/testing when truly needed; use the already-open Desktop app for Codex tasks. Codex Desktop's direct SSH access is **NOT YET VERIFIED** (see separate execution-environment caveat below).
+
+## CURRENT PRIMARY PC SSH ROUTE — reference standard (owner-verified 2026-11-14)
+
+**Main/default connection from the desktop PC (including with Happ/VPN enabled):**
+use the existing OpenSSH alias `bybitscanner-vps`. Windows `ssh -G` confirmed
+`HostName 212.193.14.116`, `User root`, and
+`IdentityFile C:/Users/svobo/.ssh/bybitscanner_vdsina_gateway_20261030`.
+On 2026-11-14 the owner ran the following **with Happ/VPN still ON** and
+observed `SSH_OK`, `v3286418.hosted-by-vdsina.ru`, `SSH_EXIT_CODE=0`:
+
+```powershell
+ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 bybitscanner-vps 'echo SSH_OK; hostname'
+"SSH_EXIT_CODE=$LASTEXITCODE"
+```
+
+**Routing priority:** This alias is the **sole first-choice interactive/administrative
+SSH transport on this PC**. Keep VPN settings unchanged by default; a VPN-off
+probe is **not required** and must not be imposed as a prerequisite.
+Do not substitute direct `root@83.217.213.181`, manually select a different
+identity, overwrite `~/.ssh/config`, or disable host-key checks. Earlier failures
+to get an SSH banner on **both** direct IP routes (while the owner had VPN on)
+do not invalidate the later authenticated alias connection. One success proves
+that connection, not permanent reachability; if a future alias attempt fails,
+stop and diagnose the actual route without retry loops.
+
+**Distinct environments:** Codex Desktop may use a separate SSH client and may
+not inherit the Windows alias. An `SSH_OK` from PC PowerShell does **not**
+prove Codex-to-VPS access. Use the same verified host/user/key/config only when
+that environment supports them; otherwise report a transport blocker without
+mutating VPS. The `bybitscanner_laptop` key and direct old-IP examples elsewhere
+in this repo are laptop-specific or **dated historical fallbacks**, not competing
+PC defaults. The historical 2026-11-11 VPN-off event is preserved below solely
+as incident evidence. SSH access is not permission for release, services,
+PAPER DB or trading mutations.
+
 
 ## What changed, and what did not
 
@@ -37,7 +72,7 @@ This is an **additional public IPv4 address, not an API endpoint or API key**:
 6. One live, non-restarting interface address addition `ip addr add 212.193.14.116/24 dev ens3` succeeded. PowerShell SSH using the existing PC key to `root@212.193.14.116` returned exit 0, before Netplan persistence.
 7. Netplan file was backed up; one addresses-list addition; `netplan generate` passed. No network restart; follow-up PowerShell via SSH alias returned exit 0. VPS Manager read-only action returned exit 0. Codex Desktop alias lookup remains the only outstanding local tool/access proof.
 
-## 2026-11-11 — SSH banner timeout during blocked PAPER update: PC fast path
+## 2026-11-11 — SSH banner timeout during blocked PAPER update: historical fallback (not current default)
 
 **Trigger and outcome (observed connectivity recovery with VPN off; no VPS runtime recovery proof):**
 - An approved one-shot monolith targeting `0879f0c490d5612461f0eeb353b0473b167a8361` returned `BLOCKED: Gitless_switch_unproven:ResumeBlocked:PAPER_unit_not_stopped`. Before that attempt the confirmed installed SHA was `82f141e2c52f834af291a97f564253cf4ea605e9`; **post-blocker installed SHA is unproven**. Preflight reported 116 Flat/synced positions, no unfinished orders/commands/obligations, Scanner/Robot STOPPED, Autopilot OFF. These are **preflight snapshots only**, not post-blocker proof.
@@ -45,7 +80,7 @@ This is an **additional public IPv4 address, not an API endpoint or API key**:
 - On the Windows **desktop PC** (`C:\Users\svobo`), the owner **disabled Happ/VPN**, then a direct PowerShell OpenSSH probe to the **old** IP `83.217.213.181` using existing key `bybitscanner_vdsina_gateway_20261030` returned `SSH_OK`, `v3286418.hosted-by-vdsina.ru`, exit 0. **The next read-only multi-command snapshot failed during SSH banner exchange (exit 255) before execution, after the owner had re-enabled VPN to use ChatGPT in Chrome.** Thus the VPN-off direct route was observed working once; its long-term stability was **not tested**. No post-blocker systemd/journal/receipt facts were obtained.
 - No further STOP/restart/deploy/recovery/SQL was attempted. The root cause of `PAPER_unit_not_stopped` remains **UNKNOWN**.
 
-**Fast route when Codex reports SSH banner timeout (owner PC only, after checking current route):**
+**Historical fallback only:** Consult the current primary alias above first. The VPN-off/old-IP sequence below records one 2026-11-11 incident and is **not** the default route when Codex reports SSH banner timeout.
 1. Do **not** treat banner timeout as an SSH key failure, failed release, or authorization to run monolith/STOP again. Before VNC, if normal remote access is blocked, consider one bounded **VPN-off** check from the *existing* PowerShell environment and trusted old IP/key (only with the owner's direct action; changing VPN can affect other work). Preserve `StrictHostKeyChecking=yes`, do not read/copy private-key contents or change SSH config.
 2. Known successful read-only probe:
    ```powershell
@@ -73,8 +108,8 @@ This is an **additional public IPv4 address, not an API endpoint or API key**:
 
 ## Routing and safety rules for future chats
 
-- **Default PC workflow:** Codex Desktop already open, BybitScanner project selected. Do **not** tell the owner to run `codex` in PowerShell or reinstall Codex. For GitHub tasks use the GitHub connector/PR workflow; for authorized VPS work use verified Codex bridge if proven, or existing PowerShell SSH alias on PC as fallback. No arbitrary VNC/manual juggling unless a specific SSH failure makes it necessary.
-- **Preferred VPS address on this PC:** `212.193.14.116`; old `83.217.213.181` is retained for continuity, not erased or assumed universally reachable. SSH configuration path and private-key path are machine-specific, do not confuse with laptop (`bybitscanner_laptop` on `SVOBODA21`).
+- **Default PC workflow:** Codex Desktop already open, BybitScanner project selected. Do **not** tell the owner to run `codex` in PowerShell or reinstall Codex. For GitHub tasks use the GitHub connector/PR workflow; for authorized VPS work use a proven Codex bridge where available; the **single canonical direct PC fallback** is `ssh bybitscanner-vps` from Windows PowerShell, without changing VPN by default. No arbitrary VNC/manual juggling unless a specific SSH failure makes it necessary.
+- **Primary VPS access on this PC:** `bybitscanner-vps` → `212.193.14.116` via the existing PC SSH config/key. This is the 2026-11-14 owner-verified route with Happ/VPN ON. Old `83.217.213.181` is historical contingency only, not a second default. Do not confuse PC key/config with laptop (`bybitscanner_laptop` on `SVOBODA21`).
 - Codex Desktop may not inherit host Windows SSH settings. Always verify its execution context and a real SSH exit 0 before claiming Desktop-to-VPS readiness.
 - Do not expose private keys, passwords, host credentials, repo tokens. Do not modify `authorized_keys` unnecessarily; do not disable host-key verification.
 - No network restart, service changes, `netplan apply`, VPS reboot, PAPER DB access/migration, live trading changes, STOP/TAKE bypass, or deployment under a mere connectivity/documentation task.

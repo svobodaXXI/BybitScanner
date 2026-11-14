@@ -5861,10 +5861,13 @@ class SQLiteStore:
             if (side != "Flat" or not value.is_finite() or value != 0
                     or sync not in ("synced", "synchronized")):
                 return False
-        # Cancelled is terminal, but a cancelled partially-filled LIMIT
-        # is NOT a never-traded candidate. Fail closed on malformed quantities.
-        for (raw_filled,) in self._connection.execute(
-            "SELECT filled_quantity FROM paper_limit_orders "
+        # Only a fully witnessed, *earlier* cancelled LIMIT may have a
+        # partial fill without belonging to this newly approved candidate.
+        # Compare durable timestamps and exact order-linked executions, never
+        # infer nonexecution from the terminal "cancelled" status alone.
+        for order_id, raw_filled, created_at, updated_at in self._connection.execute(
+            "SELECT order_id, filled_quantity, created_at_ms, updated_at_ms "
+            "FROM paper_limit_orders "
             "WHERE trading_account_id=? AND symbol=? AND status='cancelled'",
             (account, symbol),
         ):
@@ -5872,7 +5875,32 @@ class SQLiteStore:
                 filled = Decimal(str(raw_filled))
             except (InvalidOperation, ValueError, TypeError):
                 return False
-            if not filled.is_finite() or filled != 0:
+            if not filled.is_finite() or filled < 0:
+                return False
+            if filled == 0:
+                continue
+            if (type(created_at) is not int or type(updated_at) is not int
+                    or not 0 <= created_at <= updated_at < approved_at):
+                return False
+            executions = self._connection.execute(
+                "SELECT symbol, quantity, exchange_timestamp_ms FROM executions "
+                "WHERE trading_account_id=? AND order_id=?",
+                (account, order_id),
+            ).fetchall()
+            if not executions:
+                return False
+            total = Decimal("0")
+            for executed_symbol, raw_qty, executed_at in executions:
+                try:
+                    qty = Decimal(str(raw_qty))
+                except (InvalidOperation, ValueError, TypeError):
+                    return False
+                if (executed_symbol != symbol or not qty.is_finite() or qty <= 0
+                        or type(executed_at) is not int
+                        or not created_at <= executed_at < approved_at):
+                    return False
+                total += qty
+            if total != filled:
                 return False
         for table, predicate, params in (
             ("robot_trades", "candidate_id=?", (candidate.candidate_id,)),

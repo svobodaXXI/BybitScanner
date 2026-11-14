@@ -11,6 +11,7 @@ type Snapshot = {
   healthy: boolean | null;
   admission: boolean | null;
   blockers: string[];
+  complete: boolean;
 };
 
 async function readJson(url: string): Promise<Record<string, unknown>> {
@@ -29,33 +30,48 @@ export function RobotManagerPanel({ onClose }: { onClose: () => void }) {
   const [result, setResult] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (): Promise<boolean> => {
+    // Discard old observations before a new read: stale READY must not enable controls.
+    setSnapshot(null);
     try {
-    const [robot, scanner, autopilot, protection, health] = await Promise.all([
+    const results = await Promise.allSettled([
       readJson(marketApiRoutes.robotState),
       readJson(marketApiRoutes.scannerStatus),
       readJson(marketApiRoutes.robotAutopilot),
       readJson(marketApiRoutes.robotProtectionHealth),
       readJson(marketApiRoutes.health),
     ]);
-    const mode = typeof robot.mode === "string" ? robot.mode : "UNKNOWN";
-    const recovery = typeof robot.recovery_status === "string" ? robot.recovery_status : "UNKNOWN";
-    const reason = typeof robot.reason === "string" && robot.reason.trim() ? robot.reason.trim().slice(0, 200) : null;
-    const scannerMode = typeof scanner.mode === "string" ? scanner.mode : "UNKNOWN";
-    const autoMode = typeof autopilot.mode === "string" ? autopilot.mode : "UNKNOWN";
-    const healthy = typeof protection.healthy === "boolean" ? protection.healthy : null;
-    const admission = typeof health.robot_admission_ready === "boolean" ? health.robot_admission_ready : null;
+    const [robot, scanner, autopilot, protection, health] = results.map((result) =>
+      result.status === "fulfilled" ? result.value : null,
+    );
+    const unavailable = [
+      robot ? null : "Robot", scanner ? null : "Scanner",
+      autopilot ? null : "Автопилот", protection ? null : "Защита",
+      health ? null : "Допуск",
+    ].filter((name): name is string => name !== null);
+    if (unavailable.length === 5) throw new Error("Все источники диагностики недоступны");
+    const mode = typeof robot?.mode === "string" ? robot.mode : "UNKNOWN";
+    const recovery = typeof robot?.recovery_status === "string" ? robot.recovery_status : "UNKNOWN";
+    const reason = typeof robot?.reason === "string" && robot.reason.trim() ? robot.reason.trim().slice(0, 200) : null;
+    const scannerMode = typeof scanner?.mode === "string" ? scanner.mode : "UNKNOWN";
+    const autoMode = typeof autopilot?.mode === "string" ? autopilot.mode : "UNKNOWN";
+    const healthy = typeof protection?.healthy === "boolean" ? protection.healthy : null;
+    const admission = typeof health?.robot_admission_ready === "boolean" ? health.robot_admission_ready : null;
+    const complete = unavailable.length === 0 && mode !== "UNKNOWN" && recovery !== "UNKNOWN"
+      && scannerMode !== "UNKNOWN" && autoMode !== "UNKNOWN" && healthy !== null && admission !== null;
     const blockers: string[] = [];
+    if (unavailable.length) blockers.push("Недоступны источники: " + unavailable.join(", "));
     if (mode === "ROBOT_RUNNING" && !["READY", "PAUSED"].includes(recovery)) blockers.push("Robot: " + recovery);
     if (reason) blockers.push("Причина Robot: " + reason);
     if (healthy !== true) blockers.push("Защита: " + (healthy === false ? "UNHEALTHY" : "UNKNOWN"));
     if (mode === "ROBOT_RUNNING" && recovery === "READY" && admission !== true) blockers.push("Допуск: " + (admission === false ? "закрыт" : "неизвестен"));
-    if (protection.unhealthy_symbols && typeof protection.unhealthy_symbols === "object") {
+    if (protection?.unhealthy_symbols && typeof protection.unhealthy_symbols === "object") {
       const symbols = Object.keys(protection.unhealthy_symbols);
       if (symbols.length) blockers.push("Проблемные символы: " + symbols.join(", "));
     }
-    setSnapshot({ robot: mode, recovery, reason, scanner: scannerMode, autopilot: autoMode, healthy, admission, blockers });
-    setError("");
+    setSnapshot({ robot: mode, recovery, reason, scanner: scannerMode, autopilot: autoMode, healthy, admission, blockers, complete });
+    setError(complete ? "" : "Диагностика неполная. Управление заблокировано до полной проверки.");
+    return complete;
     } catch (error) {
       setSnapshot(null); // A stale READY is never authority for a new control action.
       setError("Диагностика недоступна. Состояние неизвестно.");
@@ -70,7 +86,8 @@ export function RobotManagerPanel({ onClose }: { onClose: () => void }) {
   }, [refresh]);
 
   const execute = async (action: "start" | "freeze" | "stop") => {
-    if (busy) return;
+    if (busy || !snapshot?.complete) return;
+    let accepted = false;
     setBusy(true);
     setResult("");
     try {
@@ -91,6 +108,7 @@ export function RobotManagerPanel({ onClose }: { onClose: () => void }) {
       if (!response.ok || result.ok !== true) {
         setResult("BLOCKED: " + (result.blocked_by?.join(", ") || result.error || "неизвестная причина"));
       } else {
+        accepted = true;
         setResult(action === "start" ? "Robot запущен через штатный reconciler."
           : action === "stop" ? "Robot STOPPED подтверждён. Backend не останавливался."
           : "Автоматические новые входы отключены. Robot и STOP/TAKE продолжают работать.");
@@ -98,7 +116,12 @@ export function RobotManagerPanel({ onClose }: { onClose: () => void }) {
     } catch {
       setResult("Результат операции неизвестен; повтор не выполнялся.");
     } finally {
-      try { await refresh(); } catch { setError("Не удалось подтвердить новое состояние."); }
+      let complete = false;
+      try { complete = await refresh(); } catch { /* The read-only refresh reports unknown state. */ }
+      if (!complete) {
+        setError("Не удалось подтвердить новое состояние.");
+        if (accepted) setResult("Результат операции не подтверждён; повтор не выполнялся.");
+      }
       setBusy(false);
     }
   };
@@ -121,9 +144,9 @@ export function RobotManagerPanel({ onClose }: { onClose: () => void }) {
         {result ? <p role="status">{result}</p> : null}
         <div className="robot-manager-actions">
           <button type="button" disabled={busy} onClick={() => void refresh().catch(() => setError("Диагностика недоступна."))}>Обновить</button>
-          <button type="button" disabled={busy || !snapshot} onClick={() => void execute("start")}>Запустить Robot</button>
-          <button type="button" disabled={busy || !snapshot || snapshot.autopilot === "OFF"} onClick={() => void execute("freeze")}>Отключить автовходы</button>
-          <button type="button" disabled={busy || !snapshot || snapshot.robot !== "ROBOT_RUNNING" || !["READY", "PAUSED"].includes(snapshot.recovery)} onClick={() => void execute("stop")}>Остановить Robot</button>
+          <button type="button" disabled={busy || !snapshot?.complete} onClick={() => void execute("start")}>Запустить Robot</button>
+          <button type="button" disabled={busy || !snapshot?.complete || snapshot.autopilot === "OFF"} onClick={() => void execute("freeze")}>Отключить автовходы</button>
+          <button type="button" disabled={busy || !snapshot?.complete || snapshot.robot !== "ROBOT_RUNNING" || !["READY", "PAUSED"].includes(snapshot.recovery)} onClick={() => void execute("stop")}>Остановить Robot</button>
         </div>
       </section>
     </div>

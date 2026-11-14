@@ -188,3 +188,108 @@ export function buildOwnerChartDraft(input: {
     note: input.note.trim(), idempotency_key: input.idempotencyKey,
   };
 }
+
+
+/** V3 records the movement of the formation, never an executable trade side.
+ * V1/V2 entries remain immutable and are decoded by their original schema.
+ * Manual patterns are unverified examples, not Scanner/Robot admissions.
+ */
+export const OWNER_CHART_PATTERNS_V3 = [
+  "Wedge", "Ikigai Box", "Triangle", "Double Top/Bottom",
+  "Head and Shoulders", "G-Shaped",
+] as const;
+export type OwnerChartPatternV3 = typeof OWNER_CHART_PATTERNS_V3[number];
+export type OwnerChartMovement = "UP" | "DOWN";
+export type OwnerWedgeSubtype = "SLOWDOWN" | "CORRECTION";
+export type OwnerChartDraftV3 = Omit<OwnerChartDraft,
+  "schema_version" | "pattern" | "direction"> & {
+    schema_version: 3;
+    pattern: OwnerChartPatternV3;
+    formation_movement: OwnerChartMovement;
+    wedge_subtype?: OwnerWedgeSubtype;
+  };
+
+/** The editor preserves arbitrary manual geometry as evidence. Neither the
+ * selected movement nor the wedge subtype decides an entry/exit direction.
+ */
+export function buildOwnerChartDraftV3(input: {
+  symbol: string;
+  timeframe: string;
+  pattern: OwnerChartPatternV3;
+  formationMovement: OwnerChartMovement;
+  wedgeSubtype?: OwnerWedgeSubtype;
+  drawings: readonly DrawingObject[];
+  frozenCandles: readonly Candle[];
+  note: string;
+  idempotencyKey: string;
+}): OwnerChartDraftV3 {
+  if (!OWNER_CHART_PATTERNS_V3.includes(input.pattern) ||
+      (input.formationMovement !== "UP" && input.formationMovement !== "DOWN"))
+    throw new Error("Выберите паттерн и направление движения графика");
+  if (input.pattern === "Wedge" &&
+      input.wedgeSubtype !== "SLOWDOWN" && input.wedgeSubtype !== "CORRECTION")
+    throw new Error("Выберите подтип клина");
+  if (input.pattern !== "Wedge" && input.wedgeSubtype != null)
+    throw new Error("Подтип допустим только для клина");
+  const periods: Record<string, [OwnerChartDraftV3["timeframe"], number]> = {
+    "1": ["1", 60_000], "1m": ["1", 60_000],
+    "5": ["5", 300_000], "5m": ["5", 300_000],
+    "15": ["15", 900_000], "15m": ["15", 900_000],
+    "60": ["60", 3_600_000], "1h": ["60", 3_600_000],
+    "D": ["D", 86_400_000], "1d": ["D", 86_400_000],
+  };
+  const period = periods[input.timeframe];
+  if (!period || !/^[A-Z0-9]{2,25}$/.test(input.symbol))
+    throw new Error("Недоступны инструмент или таймфрейм для нового сигнала");
+  if (input.frozenCandles.length < 20 || input.frozenCandles.length > 120)
+    throw new Error("Для примера требуется от 20 до 120 закрытых свечей");
+  const bars = input.frozenCandles.map((candle, index) => {
+    const at = Date.parse(candle.time);
+    if (!Number.isSafeInteger(at) || at < 0 || at % period[1] !== 0 ||
+        (index > 0 && at !== Date.parse(input.frozenCandles[index - 1].time) + period[1]))
+      throw new Error("Пропуск или неверное время свечи");
+    const { open, high, low, close } = candle;
+    if ([open, high, low, close].some((value) =>
+      !Number.isFinite(value) || value <= 0) ||
+      high < Math.max(open, close) || low > Math.min(open, close))
+      throw new Error("Некорректные свечи исходного графика");
+    return { open_time_ms: at, open, high, low, close };
+  });
+  if (!input.drawings.length || input.drawings.length > 8 ||
+      input.drawings.some((drawing) => drawing.hidden))
+    throw new Error("Нарисуйте от одного до восьми видимых инструментов");
+  const isBox = input.pattern === "Ikigai Box";
+  const isTwoRay = input.pattern === "Wedge" || input.pattern === "Triangle";
+  if (isBox && (input.drawings.length !== 1 || input.drawings[0].type !== "fibonacci"))
+    throw new Error("Для Коробки нарисуйте одну сетку Фибоначчи первого импульса");
+  if (isTwoRay && (input.drawings.length !== 2 ||
+      input.drawings.some((drawing) => drawing.type !== "ray")))
+    throw new Error("Для клина или треугольника нарисуйте два луча");
+  if (input.note.length > 1024)
+    throw new Error("Комментарий слишком длинный");
+  const lines = serializeReviewDrawings(input.drawings, input.frozenCandles);
+  if (lines.some((line) => line.anchors.length === 2 &&
+      line.anchors[0].bar_open_time_ms >= line.anchors[1].bar_open_time_ms))
+    throw new Error("Точки инструмента должны идти по времени вперёд");
+  const permitted = new Set(["ray", "trend", "horizontal", "horizontal-ray",
+    "vertical", "fibonacci", "ruler", "rectangle"]);
+  if (lines.some((line) => !permitted.has(line.type)))
+    throw new Error("Неподдерживаемый инструмент разметки");
+  // User-drawn IDs must stay local and can be arbitrary. Serialise stable
+  // numbered IDs for the append-only archive, not Scanner boundary IDs.
+  const proposed_boundaries = lines.map((line, i) => ({
+    id: isBox ? "first_impulse_fibonacci" : `manual_${i + 1}`,
+    type: line.type,
+    anchors: line.anchors,
+  }));
+  return {
+    schema_version: 3,
+    source_kind: "OWNER_CHART_UNVERIFIED",
+    symbol: input.symbol, timeframe: period[0],
+    pattern: input.pattern,
+    formation_movement: input.formationMovement,
+    ...(input.pattern === "Wedge" ? { wedge_subtype: input.wedgeSubtype! } : {}),
+    bars, proposed_boundaries,
+    note: input.note.trim(), idempotency_key: input.idempotencyKey,
+  };
+}

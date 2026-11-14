@@ -346,6 +346,14 @@ def _complete_stop_intent(journal_root: Path, target: str, *, uid: int) -> None:
         _trusted_file(marker, uid)
     elif _proven_stopped_backend_handoff_to(journal_root, target, uid=uid):
         pass  # A distinct, sealed one-shot handoff; no canonical STOP receipt.
+    elif any(
+        _unsealed_paused_successor_proven(
+            journal_root, marker.name.removeprefix(".stop-invoked-"),
+            root=REPO, uid=uid, target=target, require_ready=False,
+        )
+        for marker in journal_root.glob(".stop-invoked-*")
+    ):
+        pass  # Separate proven continuation, never old STOP success.
     else:
         # An exceptional prior-target handoff can install the pinned release
         # without a same-target ordinary STOP marker. Only its *own* protected
@@ -390,6 +398,90 @@ def _complete_stop_intent(journal_root: Path, target: str, *, uid: int) -> None:
         stream.flush()
         os.fsync(stream.fileno())
     _sync_directory(journal)
+
+
+_NATURAL_DRAIN_REFUSAL = (
+    "STOP BLOCKED: Robot PAUSED with OPEN trade: natural drain incomplete; "
+    "backend retained for STOP/TAKE protection"
+)
+_KNOWN_DRAIN_ALLOWED_STEPS = frozenset((
+    "autopilot:off", "scanner:stop", "robot:reconcile", "robot:pause",
+))
+
+
+def _known_drain_path(journal_root: Path, target: str, phase: str) -> Path:
+    return journal_root / (".known-natural-drain-" + phase + "-" + target)
+
+
+def _known_drain_payload(old_sha: str, target: str, phase: str) -> bytes:
+    return (f"KNOWN_NATURAL_DRAIN:{phase}:{old_sha}:{target}" + chr(10)).encode("ascii")
+
+
+def _known_drain_receipt(
+    journal_root: Path, target: str, old_sha: str, *, phase: str, uid: int,
+) -> bool:
+    """Verify protected evidence; a missing receipt is not proof of refusal."""
+    from tools.vps_gitless_release_activate import _trusted_file
+    path = _known_drain_path(journal_root, target, phase)
+    if not path.exists() and not path.is_symlink():
+        return False
+    if _trusted_file(path, uid) != _known_drain_payload(old_sha, target, phase):
+        raise ValueError("known_natural_drain_receipt_mismatch")
+    return True
+
+
+def _write_known_drain_receipt(
+    journal_root: Path, target: str, old_sha: str, *, phase: str, uid: int,
+) -> None:
+    """One protected, lock-serialized phase transition; no overwrite/retry."""
+    from tools.vps_gitless_release_activate import _trusted_file, _sync_directory
+    if phase not in ("deferred", "continuation-invoked", "completed"):
+        raise ValueError("invalid_natural_drain_phase")
+    if (not journal_root.is_dir() or journal_root.is_symlink()
+            or journal_root.stat().st_uid != uid
+            or journal_root.stat().st_mode & 0o077):
+        raise ValueError("untrusted_natural_drain_journal")
+    if _trusted_file(journal_root / (".stop-invoked-" + target), uid) != (
+        b"STOP_INVOKED; not install authorization\\n"
+    ):
+        raise ValueError("original_stop_intent_unproven")
+    confirmed = journal_root / (".stop-confirmed-" + target)
+    if confirmed.exists() or confirmed.is_symlink():
+        raise ValueError("original_stop_already_confirmed")
+    fd = os.open(journal_root / ".release.lock", os.O_RDWR | os.O_NOFOLLOW)
+    with os.fdopen(fd, "rb") as lock:
+        meta = os.fstat(lock.fileno())
+        if (not stat.S_ISREG(meta.st_mode) or meta.st_uid != uid
+                or meta.st_mode & 0o077):
+            raise ValueError("untrusted_release_lock")
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        prerequisite = (
+            "deferred" if phase == "continuation-invoked"
+            else "continuation-invoked" if phase == "completed" else None
+        )
+        if prerequisite and not _known_drain_receipt(
+            journal_root, target, old_sha, phase=prerequisite, uid=uid,
+        ):
+            raise ValueError("known_natural_drain_phase_proof_missing")
+        path = _known_drain_path(journal_root, target, phase)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(_known_drain_payload(old_sha, target, phase))
+            stream.flush()
+            os.fsync(stream.fileno())
+        _sync_directory(journal_root)
+
+
+def _known_natural_drain_failure(result: object) -> bool:
+    """Only the exact returned, non-ambiguous PAUSED drain refusal can resume."""
+    return (
+        isinstance(result, ShutdownResult)
+        and result.scope == SCOPE_ALL and result.ok is False
+        and result.runtime_stopped is False
+        and result.message == _NATURAL_DRAIN_REFUSAL
+        and isinstance(result.steps, tuple)
+        and all(step in _KNOWN_DRAIN_ALLOWED_STEPS for step in result.steps)
+    )
 
 
 def _record_one_shot_stop_intent(
@@ -514,6 +606,162 @@ def _confirmed_stop_receipt(
 
 
 
+def _owner_stop_only_target(installed_sha: str, process_id: str) -> str:
+    """Unique intent per exact installed release and observed process lifetime."""
+    return hashlib.sha256(
+        ("PAPER_OWNER_STOP_ONLY:" + installed_sha + ":" + process_id).encode("utf-8")
+    ).hexdigest()[:40]
+
+
+def _owner_stop_only_confirmed(
+    journal_root: Path, stop_id: str, *, uid: int,
+) -> bool:
+    """A standalone STOP is historical only after both successful receipts."""
+    from tools.vps_gitless_release_activate import _trusted_file
+    try:
+        receipt = _trusted_file(
+            journal_root / (".owner-stop-only-ready-" + stop_id), uid,
+        ).decode("ascii")
+        old, recorded = receipt.removesuffix("\n").split(":")
+        if (len(old) != 40 or any(c not in "0123456789abcdef" for c in old)
+                or recorded != stop_id or receipt != old + ":" + stop_id + "\n"):
+            return False
+        return _confirmed_stop_receipt(journal_root, stop_id, old, uid=uid)
+    except (OSError, ValueError, UnicodeError):
+        return False
+
+
+def _unsealed_paused_receipt_path(journal: Path, prior: str, phase: str) -> Path:
+    return journal / (".unsealed-paused-" + phase + "-" + prior)
+
+
+def _unsealed_paused_payload(old: str, prior: str, target: str) -> bytes:
+    return ("UNSEALED_PAUSED_CONTINUATION:" + old + ":" + prior + ":"
+            + target + "\n").encode("ascii")
+
+
+def _unsealed_paused_receipt(
+    journal: Path, old: str, prior: str, target: str, phase: str, uid: int,
+) -> bool:
+    from tools.vps_gitless_release_activate import _trusted_file
+    path = _unsealed_paused_receipt_path(journal, prior, phase)
+    if not path.exists() and not path.is_symlink():
+        return False
+    if _trusted_file(path, uid) != _unsealed_paused_payload(old, prior, target):
+        raise ValueError("unsealed_paused_receipt_mismatch")
+    return True
+
+
+def _write_unsealed_paused_receipt(
+    journal: Path, old: str, prior: str, target: str, phase: str, uid: int,
+) -> None:
+    """Seal an observed continuation at most once, not the old STOP outcome."""
+    from tools.vps_gitless_release_activate import _sync_directory, _trusted_file
+    if (phase not in ("invoked", "completed")
+            or not journal.is_dir() or journal.is_symlink()
+            or journal.stat().st_uid != uid or journal.stat().st_mode & 0o077
+            or _trusted_file(journal / (".stop-invoked-" + prior), uid)
+                != b"STOP_INVOKED; not install authorization\\n"):
+        raise ValueError("unsealed_paused_journal_untrusted")
+    fd = os.open(journal / ".release.lock", os.O_RDWR | os.O_NOFOLLOW)
+    with os.fdopen(fd, "rb") as lock:
+        meta = os.fstat(lock.fileno())
+        if (not stat.S_ISREG(meta.st_mode) or meta.st_uid != uid
+                or meta.st_mode & 0o077):
+            raise ValueError("unsealed_paused_release_lock_untrusted")
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if phase == "completed":
+            if not _unsealed_paused_receipt(journal, old, prior, target, "invoked", uid):
+                raise ValueError("unsealed_paused_invocation_missing")
+        # O_EXCL ensures another invocation or uncertain result cannot retry.
+        out = _unsealed_paused_receipt_path(journal, prior, phase)
+        descriptor = os.open(
+            out, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600,
+        )
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(_unsealed_paused_payload(old, prior, target))
+            stream.flush()
+            os.fsync(stream.fileno())
+        _sync_directory(journal)
+
+
+def _legacy_paused_backend_predates_stop(marker: Path) -> bool:
+    """Prove the *same running* protected Backend existed before STOP intent.
+
+    A restart after the unknown attempt, an unowned socket, or uncertain clock
+    provenance cannot justify completing the old partial shutdown.
+    """
+    from tools.flat_paper_recovery_transition import (
+        _service_pid, _process_start_token, _has_exact_local_listener,
+    )
+    try:
+        pid = _service_pid()
+        start_ticks = _process_start_token(pid)
+        if not _has_exact_local_listener(pid):
+            return False
+        boot = next(
+            int(line.split()[1]) for line in Path("/proc/stat").read_text().splitlines()
+            if line.startswith("btime ")
+        )
+        hz = os.sysconf("SC_CLK_TCK")
+        if hz <= 0 or not start_ticks.isdecimal():
+            return False
+        born_ns = boot * 1_000_000_000 + int(start_ticks) * 1_000_000_000 // hz
+        intent_time = marker.stat().st_mtime_ns
+        # A conservative margin rejects ambiguous clock/mtime boundaries.
+        if born_ns + 10_000_000_000 >= intent_time:
+            return False
+        return (_service_pid() == pid
+                and _process_start_token(pid) == start_ticks
+                and _has_exact_local_listener(pid))
+    except (OSError, ValueError, TypeError, StopIteration):
+        return False
+
+
+def _unsealed_paused_successor_proven(
+    journal: Path, prior: str, *, root: Path, uid: int,
+    target: str | None = None, require_ready: bool,
+) -> bool:
+    """Do not retire an unknown prior STOP until a separate phase is sealed."""
+    from tools.vps_gitless_release_activate import _manifest, _trusted_file
+    from tools.vps_release_identity import verify_release
+    try:
+        if len(prior) != 40 or any(ch not in "0123456789abcdef" for ch in prior):
+            return False
+        raw = _trusted_file(_unsealed_paused_receipt_path(journal, prior, "invoked"), uid)
+        parts = raw.decode("ascii").removesuffix("\n").split(":")
+        if len(parts) != 4 or parts[0] != "UNSEALED_PAUSED_CONTINUATION":
+            return False
+        _, old, original, successor = parts
+        if (original != prior or any(
+                len(v) != 40 or any(ch not in "0123456789abcdef" for ch in v)
+                for v in (old, successor))
+                or old == successor or successor == prior
+                or raw != _unsealed_paused_payload(old, prior, successor)
+                or (target is not None and successor != target)
+                or not _unsealed_paused_receipt(
+                    journal, old, prior, successor, "completed", uid,
+                )
+                or _trusted_file(journal / (".stop-invoked-" + prior), uid)
+                    != b"STOP_INVOKED; not install authorization\\n"):
+            return False
+        transaction = journal / successor
+        if (not transaction.is_dir() or transaction.is_symlink()
+                or transaction.stat().st_uid != uid
+                or transaction.stat().st_mode & 0o077):
+            return False
+        installed = _manifest(_trusted_file(transaction / "old.json", uid))
+        approved = _manifest(_trusted_file(transaction / "target.json", uid))
+        _trusted_file(transaction / "units.json", uid)
+        if installed["build_sha"] != old or approved["build_sha"] != successor:
+            return False
+        if require_ready:
+            return _trusted_file(transaction / "editor-ready", uid) == successor.encode("ascii")
+        return verify_release(root) == successor
+    except (OSError, ValueError, UnicodeError, KeyError, TypeError):
+        return False
+
+
 def _proven_prior_exceptional_completion(
     journal_root: Path, prior: str, *, root: Path, uid: int,
 ) -> bool:
@@ -527,6 +775,12 @@ def _proven_prior_exceptional_completion(
     # A confirmed STOP may be retired only by a separately sealed, one-shot
     # recovery of the exact previous EDITOR_ONLY release. Original STOP
     # receipts remain untouched and are validated by the recovery proof.
+    if _owner_stop_only_confirmed(journal_root, prior, uid=uid):
+        return True
+    if _unsealed_paused_successor_proven(
+        journal_root, prior, root=root, uid=uid, require_ready=True,
+    ):
+        return True
     from tools.paper_abandoned_stop_recovery import proven_abandoned_stop
     if proven_abandoned_stop(journal_root, prior, root=root, uid=uid, require_installed=False):
         return True
@@ -802,6 +1056,149 @@ def deploy_staged_editor_only(
             ] if journal_root.is_dir() else []
             if pending:
                 if (len(pending) == 1
+                        and pending[0].name == ".stop-invoked-" + target
+                        and isinstance(current, str)
+                        and _known_drain_receipt(
+                            journal_root, target, current,
+                            phase="deferred", uid=trusted_uid,
+                        )):
+                    # A known returned PAUSED drain timeout, not an unknown
+                    # STOP/POST outcome. While real exposure exists, leave
+                    # its protection online; do not consume continuation.
+                    (preflight or inspect_staged_release)(
+                        target, stage=stage, root=root, manifest=manifest_path,
+                        unit_dir=installed_units, uid=trusted_uid,
+                    )
+                    if _known_drain_receipt(
+                        journal_root, target, current,
+                        phase="completed", uid=trusted_uid,
+                    ):
+                        # Only this separately sealed successful continuation
+                        # can authorize install recovery. Never forge a
+                        # CANONICAL_ALL_STOP_CONFIRMED receipt for the earlier
+                        # *failed* canonical invocation.
+                        if not _known_drain_receipt(
+                            journal_root, target, current,
+                            phase="continuation-invoked", uid=trusted_uid,
+                        ):
+                            return "BLOCKED: natural_drain_completion_without_invocation"
+                        result = ShutdownResult(
+                            SCOPE_ALL, True, "Previously proven paused-drain continuation",
+                            runtime_stopped=True,
+                        )
+                    else:
+                        if _known_drain_receipt(
+                            journal_root, target, current,
+                            phase="continuation-invoked", uid=trusted_uid,
+                        ):
+                            return "BLOCKED: known_natural_drain_continuation_already_invoked; no retry"
+                        owner = RuntimeShutdown(root=root, env=_environment(env_file))
+                        try:
+                            owner.require_known_natural_drain_ready(current)
+                        except Exception as exc:
+                            return ("BLOCKED: known_natural_drain_not_quiescent:"
+                                    + type(exc).__name__ + ":"
+                                    + str(exc).replace(chr(10), " ")[:160]
+                                    + "; original STOP not replayed")
+                        _write_known_drain_receipt(
+                            journal_root, target, current,
+                            phase="continuation-invoked", uid=trusted_uid,
+                        )
+                        try:
+                            result = owner.continue_known_natural_drain(current)
+                        except Exception as exc:
+                            return ("BLOCKED: known_natural_drain_continuation_unknown:"
+                                    + type(exc).__name__
+                                    + "; no STOP replay, no retry or deployment")
+                        if not (
+                            isinstance(result, ShutdownResult)
+                            and result.ok is True and result.runtime_stopped is True
+                            and result.scope == SCOPE_ALL
+                        ):
+                            return ("BLOCKED: known_natural_drain_continuation_unproven:"
+                                    + str(getattr(result, "message", "unknown"))[:180]
+                                    + "; no STOP replay, no retry or deployment")
+                        _write_known_drain_receipt(
+                            journal_root, target, current,
+                            phase="completed", uid=trusted_uid,
+                        )
+                elif (len(pending) == 1
+                        and pending[0].name != ".stop-invoked-" + target
+                        and len(pending[0].name.removeprefix(".stop-invoked-")) == 40
+                        and all(c in "0123456789abcdef" for c in
+                                pending[0].name.removeprefix(".stop-invoked-"))
+                        and isinstance(current, str) and len(current) == 40
+                        and not confirmed_stop_only
+                        and not dual_orphan_handoff
+                        and not proven_one_flat_orphan_handoff
+                        and stop is None):
+                    # Legacy STOP intents lacked PR #1039's deferred receipt.
+                    # This never infers the old STOP's outcome: only when the
+                    # original Backend demonstrably survived that intent and
+                    # the current PAUSED/Flat state is independently quiescent
+                    # may the remaining canonical shutdown phases execute once.
+                    prior = pending[0].name.removeprefix(".stop-invoked-")
+                    if _unsealed_paused_receipt(
+                        journal_root, current, prior, target, "completed",
+                        trusted_uid,
+                    ):
+                        if not _unsealed_paused_receipt(
+                            journal_root, current, prior, target, "invoked",
+                            trusted_uid,
+                        ):
+                            return "BLOCKED: legacy_paused_completion_without_invocation"
+                        (preflight or inspect_staged_release)(
+                            target, stage=stage, root=root, manifest=manifest_path,
+                            unit_dir=installed_units, uid=trusted_uid,
+                        )
+                        result = ShutdownResult(
+                            SCOPE_ALL, True,
+                            "Previously proven separate PAUSED/Flat continuation",
+                            runtime_stopped=True,
+                        )
+                    else:
+                        if _unsealed_paused_receipt(
+                            journal_root, current, prior, target, "invoked",
+                            trusted_uid,
+                        ):
+                            return "BLOCKED: legacy_paused_continuation_already_invoked; no retry"
+                        owner = RuntimeShutdown(root=root, env=_environment(env_file))
+                        try:
+                            owner.require_known_natural_drain_ready(current)
+                            if not _legacy_paused_backend_predates_stop(pending[0]):
+                                return ("BLOCKED: prior_STOP_outcome_unproven:"
+                                        "legacy_backend_continuity_missing; no replay")
+                        except Exception as exc:
+                            return ("BLOCKED: prior_STOP_outcome_unproven:"
+                                    + type(exc).__name__ + ":"
+                                    + str(exc).replace(chr(10), " ")[:160]
+                                    + "; no replay")
+                        (preflight or inspect_staged_release)(
+                            target, stage=stage, root=root, manifest=manifest_path,
+                            unit_dir=installed_units, uid=trusted_uid,
+                        )
+                        _write_unsealed_paused_receipt(
+                            journal_root, current, prior, target, "invoked",
+                            trusted_uid,
+                        )
+                        try:
+                            result = owner.continue_known_natural_drain(current)
+                        except Exception as exc:
+                            return ("BLOCKED: legacy_paused_continuation_unknown:"
+                                    + type(exc).__name__
+                                    + "; no STOP replay or retry")
+                        if not (isinstance(result, ShutdownResult)
+                                and result.ok is True
+                                and result.runtime_stopped is True
+                                and result.scope == SCOPE_ALL):
+                            return ("BLOCKED: legacy_paused_completion_unproven:"
+                                    + str(getattr(result, "message", "unknown"))[:180]
+                                    + "; no STOP replay or retry")
+                        _write_unsealed_paused_receipt(
+                            journal_root, current, prior, target, "completed",
+                            trusted_uid,
+                        )
+                elif (len(pending) == 1
                         and pending[0].name != ".stop-invoked-" + target
                         and proven_one_flat_orphan_handoff
                         and not dual_orphan_handoff and stop is None
@@ -832,23 +1229,24 @@ def deploy_staged_editor_only(
                                 + type(exc).__name__ + ":" + str(exc)
                                 + "; no STOP replay or deployment retry")
                     return finish_frontend(status)
-                if (len(pending) != 1
-                        or pending[0].name != ".stop-invoked-" + target
-                        or not _confirmed_stop_receipt(
-                            journal_root, target, current, uid=trusted_uid,
-                        )):
-                    return "BLOCKED: prior_STOP_outcome_unproven_without_install_journal; no replay"
-                (preflight or inspect_staged_release)(
-                    target, stage=stage, root=root, manifest=manifest_path,
-                    unit_dir=installed_units, uid=trusted_uid,
-                )
-                # An fsynced receipt documents the canonical success already
-                # observed, not a guess based on missing processes. The real
-                # installer independently reattests stopped units/listeners.
-                result = ShutdownResult(
-                    SCOPE_ALL, True, "Verified prior canonical stop receipt",
-                    runtime_stopped=True,
-                )
+                else:
+                    if (len(pending) != 1
+                            or pending[0].name != ".stop-invoked-" + target
+                            or not _confirmed_stop_receipt(
+                                journal_root, target, current, uid=trusted_uid,
+                            )):
+                        return "BLOCKED: prior_STOP_outcome_unproven_without_install_journal; no replay"
+                    (preflight or inspect_staged_release)(
+                        target, stage=stage, root=root, manifest=manifest_path,
+                        unit_dir=installed_units, uid=trusted_uid,
+                    )
+                    # An fsynced receipt documents the canonical success already
+                    # observed, not a guess based on missing processes. The real
+                    # installer independently reattests stopped units/listeners.
+                    result = ShutdownResult(
+                        SCOPE_ALL, True, "Verified prior canonical stop receipt",
+                        runtime_stopped=True,
+                    )
             else:
                 if confirmed_stop_only:
                     return "BLOCKED: confirmed_stop_only_pending_intent_missing; no STOP"
@@ -891,6 +1289,16 @@ def deploy_staged_editor_only(
                             + type(exc).__name__ + "; no retry, no deployment")
                 if not (getattr(result, "ok", False) is True
                         and getattr(result, "runtime_stopped", False) is True):
+                    if _known_natural_drain_failure(result):
+                        # The old protected SHA must remain exact. Only a
+                        # *returned* refusal gets durable deferred evidence;
+                        # no inferred STOP result, no unknown POST replay.
+                        if verify_release(root, manifest_path) != current:
+                            return "BLOCKED: old_release_changed_after_known_drain; no retry"
+                        _write_known_drain_receipt(
+                            journal_root, target, current,
+                            phase="deferred", uid=trusted_uid,
+                        )
                     # Preserve the canonical refusal reason for the operator;
                     # never infer STOP success or authorize a replay from it.
                     reason = getattr(result, "message", None)
@@ -1856,6 +2264,81 @@ def _recover_active_ingress_overflow(
         return "BLOCKED: active_PAPER_recovery_preflight_or_transition_unproven; no_replay"
 
 
+def _verified_staged_module_bootstrap(
+    target: str, stage: Path, modules: tuple, *,
+    parent: Path = Path("/var/lib"), trusted_uid: int = 0,
+) -> bool:
+    """Allow target code before switch ONLY from an exact root-owned Git worktree.
+
+    The installed release remains the runtime owner. This proves the executable
+    source and all loaded project modules, not the outcome of a prior STOP.
+    """
+    from tools.vps_release_identity import (
+        ReleaseIdentityBlocked, create_manifest, verify_release,
+    )
+
+    try:
+        if (os.geteuid() != trusted_uid or len(target) != 40
+                or any(ch not in "0123456789abcdef" for ch in target)
+                or stage != parent / ("bybitscanner-stage-git-" + target)
+                or not parent.is_dir() or parent.is_symlink()
+                or not stage.is_dir() or stage.is_symlink()):
+            return False
+        for path in (parent, stage, stage / ".git"):
+            meta = path.lstat()
+            if (stat.S_ISLNK(meta.st_mode) or meta.st_uid != trusted_uid
+                    or meta.st_mode & 0o022):
+                return False
+        # This route is for the exact prepared Git worktree, not an arbitrary
+        # copied checkout or a synthetic .git directory.
+        if not (stage / ".git").is_file():
+            return False
+        installed = verify_release(REPO)
+        if installed == target:
+            return False
+        verified = create_manifest(stage, target)
+        tracked = verified["blobs"]
+        if not {"tools/paper_maintenance.py", "tools/vps_release_identity.py",
+                "tools/vps_gitless_release_activate.py",
+                "tools/stop_robot_runtime.py"}.issubset(tracked):
+            return False
+        result = subprocess.run(
+            ["git", "-C", str(stage), "remote", "get-url", "origin"],
+            capture_output=True, text=True, timeout=15, check=False,
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+        )
+        if (result.returncode or result.stdout.strip() not in (
+                "https://github.com/svobodaXXI/BybitScanner",
+                "https://github.com/svobodaXXI/BybitScanner.git",
+                "git@github.com:svobodaXXI/BybitScanner.git",
+                "ssh://git@github.com/svobodaXXI/BybitScanner.git",
+        )):
+            return False
+        for name, module in modules:
+            path = getattr(module, "__file__", None)
+            if path is None:
+                # Namespace packages must also be confined to this checkout.
+                if (name not in ("tools", "terminal")
+                        or tuple(Path(p).resolve() for p in
+                                 getattr(module, "__path__", ()))
+                            != (stage / name,)):
+                    return False
+                continue
+            origin = Path(path).resolve()
+            relative = origin.relative_to(stage).as_posix()
+            if relative not in tracked:
+                return False
+            if name in ("tools", "terminal") and hasattr(module, "__path__"):
+                if tuple(Path(p).resolve() for p in module.__path__) != (
+                    stage / name,
+                ):
+                    return False
+        return True
+    except (OSError, ValueError, KeyError, TypeError, AttributeError,
+            subprocess.SubprocessError, ReleaseIdentityBlocked):
+        return False
+
+
 def _prepare_approved_editor_stage(
     target: str, *, root: Path = REPO, parent: Path = Path("/var/lib"),
     runner=subprocess.run, trusted_uid: int = 0,
@@ -1882,12 +2365,28 @@ def _prepare_approved_editor_stage(
     if stage.is_symlink():
         raise ValueError("staged_checkout_symlink")
     if not stage.exists():
-        source = next((path for path in (
+        previous_paths = (
             parent / ("bybitscanner-stage-git-" + current),
             parent / ("bybitscanner-stage-git-" + current[:7]),
-        ) if path.is_dir() and not path.is_symlink()), None)
+        )
+        # The transport checkout is only a Git source for fetching exact
+        # approved stable, not a proof of the installed runtime. Requiring
+        # its HEAD to equal the installed SHA falsely blocks a safe update
+        # when the prior protected worktree was rotated or not retained.
+        # Never choose a user-owned checkout or mutate an existing stage.
+        protected_sources = [
+            path for path in sorted(parent.glob("bybitscanner-stage-git-*"))
+            if path not in previous_paths and path.is_dir() and not path.is_symlink()
+            and path.stat().st_uid == trusted_uid
+            and not path.stat().st_mode & 0o022
+            and len(path.name.removeprefix("bybitscanner-stage-git-")) == 40
+            and all(ch in "0123456789abcdef"
+                    for ch in path.name.removeprefix("bybitscanner-stage-git-"))
+        ]
+        source = next((path for path in (*previous_paths, *protected_sources)
+                       if path.is_dir() and not path.is_symlink()), None)
         if source is None:
-            raise ValueError("verified_previous_stage_missing")
+            raise ValueError("verified_staging_source_missing")
         git_file = source / ".git"
         for path in (source, git_file):
             if (path.is_symlink() or not path.exists()
@@ -1908,8 +2407,10 @@ def _prepare_approved_editor_stage(
                 raise ValueError("staging_git_command_failed")
             return result.stdout.strip()
 
-        if git("rev-parse", "--verify", "HEAD") != current:
-            raise ValueError("previous_staging_commit_mismatch")
+        expected_checkout = (current if source in previous_paths
+                             else source.name.removeprefix("bybitscanner-stage-git-"))
+        if git("rev-parse", "--verify", "HEAD") != expected_checkout:
+            raise ValueError("staging_source_commit_mismatch")
         origin = git("remote", "get-url", "origin")
         if origin not in (
             "https://github.com/svobodaXXI/BybitScanner",
@@ -1920,8 +2421,18 @@ def _prepare_approved_editor_stage(
             raise ValueError("untrusted_release_git_origin")
         git("fetch", "--no-tags", "--quiet", "origin",
             "refs/heads/stable/adfb50b-forward")
-        if git("rev-parse", "--verify", "FETCH_HEAD") != target:
-            raise ValueError("stable_head_changed_before_staging")
+        stable_head = git("rev-parse", "--verify", "FETCH_HEAD")
+        if (len(stable_head) != 40
+                or any(ch not in "0123456789abcdef" for ch in stable_head)):
+            raise ValueError("stable_head_identity_unproven")
+        # Owner authorizes the exact SHA, not a moving branch tip. Permit
+        # a pinned previous stable commit when later unrelated PRs advance
+        # the branch. Git itself must prove ancestry of the *fetched* stable
+        # head before preparing any stage or touching PAPER runtime.
+        try:
+            git("merge-base", "--is-ancestor", target, stable_head)
+        except ValueError as exc:
+            raise ValueError("approved_target_not_on_current_stable") from exc
         git("worktree", "add", "--detach", str(stage), target)
     if (not stage.is_dir() or stage.is_symlink()
             or stage.stat().st_uid != trusted_uid
@@ -1932,11 +2443,82 @@ def _prepare_approved_editor_stage(
     return stage
 
 
+def _installed_frontend_exact_receipt(
+    target: str, *, webroot: Path | None = None, trusted_uid: int = 0,
+) -> bool:
+    """Read-only exact frontend proof for an already installed source SHA.
+
+    An installed Backend is not proof that HTTPS static assets were published.
+    Only a trusted receipt, matching current index bytes, and all referenced
+    asset files allow the one-action UPDATE to report success without a stage.
+    """
+    from tools.vps_terminal_frontend_publish import (
+        ASSET_REF, RECEIPT, SHA256, WEBROOT, _content, _trusted_directory,
+    )
+
+    path = webroot if webroot is not None else WEBROOT
+    try:
+        if len(target) != 40 or any(ch not in "0123456789abcdef" for ch in target):
+            return False
+        _trusted_directory(path, trusted_uid)
+        receipt_path = path / RECEIPT
+        meta = receipt_path.stat()
+        if (receipt_path.is_symlink() or meta.st_uid != trusted_uid
+                or meta.st_mode & 0o022):
+            return False
+        receipt = json.loads(_content(receipt_path))
+        if (not isinstance(receipt, dict)
+                or set(receipt) != {"source_sha", "index_sha256",
+                                    "previous_index_sha256"}
+                or receipt["source_sha"] != target
+                or not isinstance(receipt["index_sha256"], str)
+                or SHA256.fullmatch(receipt["index_sha256"]) is None
+                or not isinstance(receipt["previous_index_sha256"], str)
+                or SHA256.fullmatch(receipt["previous_index_sha256"]) is None):
+            return False
+        html = _content(path / "index.html")
+        if hashlib.sha256(html).hexdigest() != receipt["index_sha256"]:
+            return False
+        references = ASSET_REF.findall(html.decode("utf-8"))
+        if not any(name.endswith(".js") for name in references):
+            return False
+        for name in references:
+            if re.fullmatch(r"assets/[A-Za-z0-9_.-]+", name) is None:
+                return False  # Never follow index-controlled relative paths.
+            asset = path / name
+            _content(asset)  # No absent files or symlinked assets.
+        return True
+    except (OSError, ValueError, TypeError, KeyError, UnicodeError):
+        return False
+
+
+def _verified_installed_frontend_stage(
+    target: str, *, parent: Path = Path("/var/lib"), trusted_uid: int = 0,
+) -> Path:
+    """Reuse an exact protected Git worktree; never build in live /opt."""
+    from tools.vps_release_identity import create_manifest
+
+    stage = parent / ("bybitscanner-stage-git-" + target)
+    git_file = stage / ".git"
+    for directory in (parent, stage):
+        if (not directory.is_dir() or directory.is_symlink()
+                or directory.stat().st_uid != trusted_uid
+                or directory.stat().st_mode & 0o022):
+            raise ValueError("installed_frontend_stage_untrusted")
+    if (not git_file.exists() or git_file.is_symlink()
+            or git_file.stat().st_uid != trusted_uid
+            or git_file.stat().st_mode & 0o022):
+        raise ValueError("installed_frontend_git_source_untrusted")
+    if create_manifest(stage, target)["build_sha"] != target:
+        raise ValueError("installed_frontend_stage_sha_unproven")
+    return stage
+
+
 def _prepare_editor_frontend_bundle(
     target: str, *, stage: Path, root: Path = REPO,
-    runner=subprocess.run,
+    runner=subprocess.run, force_build: bool = False,
 ) -> Path | None:
-    """Build a pinned UI before STOP only when tracked UI sources changed.
+    """Build a pinned UI before STOP or when recovering missing exact UI.
 
     Reuse the current Gitless manifest and static publisher; never install
     dependencies or replace an untrusted build artifact under a live runtime.
@@ -1954,7 +2536,7 @@ def _prepare_editor_frontend_bundle(
     def ui_files(release: dict) -> dict[str, str]:
         return {name: digest for name, digest in release["blobs"].items()
                 if name.startswith("terminal/frontend/")}
-    if ui_files(installed) == ui_files(approved):
+    if ui_files(installed) == ui_files(approved) and not force_build:
         return None
 
     frontend = stage / "terminal/frontend"
@@ -2017,9 +2599,93 @@ class _MaintenanceParser(argparse.ArgumentParser):
         self.exit(2, "BLOCKED: paper_maintenance_cli: " + message.replace("\n", " ")[:240] + "\n")
 
 
+
+def _stop_exact_installed_paper_once(
+    approved_sha: str, *, env_file: Path | None, trusted_uid: int = 0,
+) -> str:
+    """One canonical STOP, durably fenced before any irreversible transition.
+
+    The intent is tied to the exact installed release and current Backend
+    process lifetime, so a second authorized start can later have its own
+    STOP without replaying any unknown previous attempt.
+    """
+    from tools.runtime_intent import expected_database_identity, http_get
+    from tools.vps_gitless_release_activate import (
+        TRANSACTIONS, _sync_directory, _trusted_file,
+    )
+    from tools.vps_release_identity import ReleaseIdentityBlocked, verify_release
+
+    try:
+        if (len(approved_sha) != 40
+                or any(ch not in "0123456789abcdef" for ch in approved_sha)
+                or os.geteuid() != trusted_uid):
+            return "BLOCKED: installed_STOP_requires_exact_SHA_and_root"
+        if verify_release(REPO) != approved_sha:
+            return "BLOCKED: installed_STOP_release_mismatch"
+        if (not TRANSACTIONS.is_dir() or TRANSACTIONS.is_symlink()
+                or TRANSACTIONS.stat().st_uid != trusted_uid
+                or TRANSACTIONS.stat().st_mode & 0o077):
+            return "BLOCKED: installed_STOP_release_journal_unproven"
+
+        env = _environment(env_file)
+        identity = expected_database_identity(REPO, env)
+        reply = http_get("http://127.0.0.1:8765/api/health", 3)
+        health = reply.json()
+        if (reply.status != 200 or not isinstance(health, dict)
+                or health.get("ok") is not True
+                or health.get("component") != "paper_backend"
+                or health.get("mode") != "paper"
+                or health.get("paper_live_safe") is not True
+                or health.get("build_sha") != approved_sha
+                or health.get("database_identity") != identity
+                or not isinstance(health.get("process_instance_id"), str)
+                or not health["process_instance_id"]):
+            return "BLOCKED: installed_STOP_exact_running_owner_unproven"
+        stop_id = _owner_stop_only_target(
+            approved_sha, health["process_instance_id"],
+        )
+        # Existing release transaction owns the lock and global STOP fence.
+        # This helper seals a unique STOP_INVOKED before invoking any callback.
+        if not _record_one_shot_stop_intent(
+            TRANSACTIONS, stop_id, uid=trusted_uid, root=REPO,
+        ):
+            return "BLOCKED: installed_STOP_prior_outcome_unproven; no_replay"
+        try:
+            result = RuntimeShutdown(root=REPO, env=env).run(SCOPE_ALL)
+        except Exception as exc:
+            return ("BLOCKED: installed_STOP_outcome_unknown:"
+                    + type(exc).__name__ + "; no_retry")
+        if result.ok is not True or result.runtime_stopped is not True:
+            reason = str(getattr(result, "message", "unknown"))
+            return ("BLOCKED: canonical_PAPER_STOP_unproven: "
+                    + " ".join(reason.split())[:240] + "; no retry")
+
+        # Record only a successful canonical STOP. Never forge this receipt
+        # from an absent listener or a guessed outcome after disconnect.
+        _confirmed_stop_receipt(
+            TRANSACTIONS, stop_id, approved_sha, uid=trusted_uid, record=True,
+        )
+        seal = TRANSACTIONS / (".owner-stop-only-ready-" + stop_id)
+        payload = (approved_sha + ":" + stop_id + "\n").encode("ascii")
+        fd = os.open(
+            seal, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600,
+        )
+        with os.fdopen(fd, "wb") as out:
+            out.write(payload)
+            out.flush()
+            os.fsync(out.fileno())
+        _sync_directory(TRANSACTIONS)
+        return "READY: canonical PAPER STOP confirmed; no update or restart"
+    except (ReleaseIdentityBlocked, OSError, ValueError, TypeError, sqlite3.Error):
+        return "BLOCKED: installed_STOP_preflight_or_receipt_unproven; no STOP retry"
+
+
+
 def main(argv=None) -> int:
     parser = _MaintenanceParser(description="Fail-closed one-action PAPER maintenance")
     parser.add_argument("sha")
+    parser.add_argument("--action", choices=("stop", "start", "update", "update-and-start"),
+                        help="single owner action: canonical STOP, PAPER START, or exact stable UPDATE")
     parser.add_argument("--env-file", type=Path, default=Path("/etc/bybitscanner/paper.env"))
     parser.add_argument("--wait-seconds", type=float, default=0)
     parser.add_argument("--resume-installed-editor-only", action="store_true",
@@ -2047,9 +2713,29 @@ def main(argv=None) -> int:
     parser.add_argument("--expected-old-backend", metavar="SHA",
                         help="exact installed Backend observed at the failed STOP")
     args = parser.parse_args(argv)
+    if args.action is not None:
+        if (args.wait_seconds or args.resume_installed_editor_only
+                or args.update_editor_only_from_stable or args.staged_gitless_editor_only
+                or args.continue_confirmed_stop_only or args.start_paper_after_editor
+                or args.publish_frontend_only or args.frontend_bundle
+                or args.frontend_current_index_sha256 or args.dual_orphan_handoff_20261103
+                or args.proven_one_flat_orphan_handoff or args.resume_one_flat_from_prior_stop
+                or args.expected_old_backend):
+            parser.error("one action cannot combine with legacy lifecycle flags")
+        if args.action == "stop":
+            status = _stop_exact_installed_paper_once(args.sha, env_file=args.env_file)
+            print(status)
+            return 0 if status.startswith("READY:") else 2
+        owner_flags = (
+            ["--update-editor-only-from-stable"] if args.action.startswith("update")
+            else ["--resume-installed-editor-only"]
+        )
+        if args.action in ("start", "update-and-start"):
+            owner_flags.append("--start-paper-after-editor")
+        return main([args.sha, "--env-file", str(args.env_file), *owner_flags])
     if args.update_editor_only_from_stable:
         if (args.staged_gitless_editor_only or args.resume_installed_editor_only
-                or args.start_paper_after_editor or args.publish_frontend_only
+                or args.publish_frontend_only
                 or args.frontend_bundle or args.frontend_current_index_sha256
                 or args.dual_orphan_handoff_20261103
                 or args.proven_one_flat_orphan_handoff
@@ -2073,13 +2759,48 @@ def main(argv=None) -> int:
                 print("BLOCKED: approved_editor_frontend_preflight_unproven:"
                       + str(exc).replace(chr(10), " ")[:160] + "; no STOP attempted")
                 return 2
+        elif not _installed_frontend_exact_receipt(args.sha):
+            # A previous release may have completed Backend/Editor while
+            # frontend publication failed. Reuse the sealed exact stage to
+            # finish the already-authorized source SHA. No new STOP, Gitless
+            # install or LIVE mutation is permitted on this branch.
+            try:
+                existing_stage = _verified_installed_frontend_stage(args.sha)
+                bundle = _prepare_editor_frontend_bundle(
+                    args.sha, stage=existing_stage, force_build=True,
+                )
+                if bundle is None:
+                    raise ValueError("installed_frontend_bundle_unavailable")
+            except (OSError, ValueError) as exc:
+                print("BLOCKED: installed_frontend_recovery_preflight_unproven:"
+                      + str(exc).replace(chr(10), " ")[:160]
+                      + "; no STOP, restart or PAPER START")
+                return 2
+            if main([args.sha, "--env-file", str(args.env_file),
+                     "--resume-installed-editor-only"]) != 0:
+                return 2
+            if main([args.sha, "--env-file", str(args.env_file),
+                     "--publish-frontend-only",
+                     "--frontend-bundle", str(bundle)]) != 0:
+                return 2
+            if not _installed_frontend_exact_receipt(args.sha):
+                print("BLOCKED: installed_frontend_recovery_postcondition_unproven;"
+                      " no PAPER START")
+                return 2
+            if args.start_paper_after_editor:
+                return main([args.sha, "--env-file", str(args.env_file),
+                             "--resume-installed-editor-only",
+                             "--start-paper-after-editor"])
+            print("READY: already installed exact release and frontend restored")
+            return 0
         # Delegate to the owned monolith with the exact preflighted bundle.
         mode = (["--resume-installed-editor-only"] if stage is None
                 else ["--staged-gitless-editor-only", str(stage)])
         frontend_flags = (["--frontend-bundle", str(bundle)]
                           if bundle is not None else [])
         return main([args.sha, "--env-file", str(args.env_file),
-                     *mode, *frontend_flags])
+                     *mode, *frontend_flags,
+                     *(["--start-paper-after-editor"] if args.start_paper_after_editor else [])])
     if args.continue_confirmed_stop_only and (
         not args.staged_gitless_editor_only or args.resume_installed_editor_only
         or args.start_paper_after_editor or args.publish_frontend_only
@@ -2088,14 +2809,25 @@ def main(argv=None) -> int:
     ):
         parser.error("confirmed STOP continuation requires only exact Gitless staging")
     if args.staged_gitless_editor_only and REPO.is_dir():
-        # Fail before preflight/STOP if Python imported tools from the target
-        # staging checkout instead of the installed Gitless release.
+        # Source must be consistently loaded from the installed release OR
+        # from the exact root-owned/stable target worktree. The latter allows
+        # new recovery code to run before the old Gitless release is switched,
+        # without importing mixed code or modifying the running Backend.
         from tools import vps_gitless_release_activate, vps_release_identity
-        modules = (sys.modules[__name__], vps_gitless_release_activate,
-                   vps_release_identity)
+        project_modules = tuple(
+            (name, mod) for name, mod in sys.modules.items()
+            if (name in ("tools", "terminal")
+                or name.startswith(("tools.", "terminal.")))
+        )
+        modules = ((sys.modules[__name__], vps_gitless_release_activate,
+                    vps_release_identity))
         if any(Path(mod.__file__).resolve().parents[1] != REPO for mod in modules):
-            print("BLOCKED: wrong_Gitless_module_root; invoke installed /opt/BybitScanner")
-            return 2
+            if not _verified_staged_module_bootstrap(
+                args.sha, args.staged_gitless_editor_only,
+                (("__main__", sys.modules[__name__]),) + project_modules,
+            ):
+                print("BLOCKED: wrong_Gitless_module_root; unverified target stage")
+                return 2
     # A sealed build staged with the Gitless release belongs to the same
     # owner-approved monolith operation; it needs no second frontend command.
     if args.staged_gitless_editor_only is not None and args.frontend_bundle is None:

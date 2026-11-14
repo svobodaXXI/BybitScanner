@@ -93,6 +93,55 @@ def test_preflight_rejects_unknown_existing_manual_route(tmp_path):
     assert site.read_text() == malicious
 
 
+def test_installed_exact_main_route_adopts_bridge_without_replacing_main(tmp_path):
+    """Regression: the already-installed MAIN route is not an unknown route.
+
+    Earlier Monolith code extracts all source text between MAIN and BACKEND
+    markers. The new bridge must remain outside that exact legacy block.
+    """
+    root, ng, site, baseline = _site(tmp_path)
+    main_route = gateway._route_from_source(root)
+    bridge = gateway._simulator_bridge_from_source(root)
+    assert "simulator-bridge" not in main_route
+    assert "simulator-bridge" in bridge
+    existing_main = baseline.replace(
+        gateway.BACKEND_BLOCK, main_route + gateway.BACKEND_BLOCK, 1,
+    )
+    site.write_text(existing_main)
+    _path, old, updated = gateway.inspect_authenticated_site(
+        root=root, run=_runner(site, []), nginx_dir=ng, uid=os.geteuid(),
+    )
+    assert old.decode() == existing_main
+    assert updated.decode().count(main_route) == 1
+    assert updated.decode().count(bridge) == 1
+    assert updated.decode().count("location = /api/diary/simulator-bridge/poll {") == 1
+    assert updated.decode().count("location = /api/diary/simulator-bridge/ack {") == 1
+    assert "auth_request /_auth;" in updated.decode()
+    assert site.read_text() == existing_main
+    site.write_bytes(updated)
+    _, same, next_bytes = gateway.inspect_authenticated_site(
+        root=root, run=_runner(site, []), nginx_dir=ng, uid=os.geteuid(),
+    )
+    assert same == next_bytes
+
+
+def test_preflight_rejects_unknown_simulator_bridge_route(tmp_path):
+    root, ng, site, baseline = _site(tmp_path)
+    unknown = baseline.replace(
+        gateway.BACKEND_BLOCK,
+        "    location = /api/diary/simulator-bridge/poll {\n"
+        "        proxy_pass http://127.0.0.1:8777;\n"
+        "    }\n" + gateway.BACKEND_BLOCK,
+        1,
+    )
+    site.write_text(unknown)
+    with pytest.raises(gateway.MainGatewayBlocked, match="unknown_simulator_bridge_route"):
+        gateway.inspect_authenticated_site(
+            root=root, run=_runner(site, []), nginx_dir=ng, uid=os.geteuid(),
+        )
+    assert site.read_text() == unknown
+
+
 def test_preflight_refuses_site_escaping_trusted_nginx_tree(tmp_path):
     root, ng, site, before = _site(tmp_path)
     outside = tmp_path / "owner"
@@ -250,6 +299,8 @@ def test_gateway_install_succeeds_once_and_remains_idempotent(tmp_path):
     assert gateway.prepare_gateway("a" * 40, **params).startswith("READY:")
     assert site.read_text() != original
     assert "auth_request /_auth;" in site.read_text()
+    assert site.read_text().count("location = /api/diary/simulator-bridge/poll {") == 1
+    assert site.read_text().count("location = /api/diary/simulator-bridge/ack {") == 1
     assert calls.count(("systemctl", "start", gateway.UNIT)) == 1
     assert calls.count(("systemctl", "reload", "nginx")) == 1
     assert gateway.prepare_gateway("a" * 40, **params).startswith("READY:")

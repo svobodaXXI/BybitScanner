@@ -305,6 +305,57 @@ button {
   font-weight: 700;
   font-size: 0.85rem;
 }
+.editor-review-fields {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.3rem;
+  min-width: 0;
+  width: 100%;
+}
+.editor-review-fields > select,
+.editor-review-fields > input,
+.editor-review-fields > button {
+  width: 100%;
+  min-width: 0;
+}
+.editor-review-fields > small {
+  overflow-wrap: anywhere;
+}
+.editor-correction-export.editor-review-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 46%);
+  align-items: stretch;
+  column-gap: 0.4rem;
+  padding-right: 0.4rem;
+}
+.editor-review-layout > .editor-review-fields {
+  grid-column: 1;
+  grid-row: 1;
+  align-self: start;
+}
+.editor-review-layout > .editor-bottom-actions {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  justify-self: end;
+  align-self: end;
+  gap: 0.35rem;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  /* The two navigation icons remain at the upper-right of this panel. */
+  padding-top: 5.3rem;
+}
+.editor-review-layout > .editor-bottom-actions > button {
+  width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: center;
+}
 
 .drawing-tools-panel {
   grid-column: 1;
@@ -3771,7 +3822,7 @@ button {
   align-self: stretch;
   margin: 0.35rem 0 0;
   padding-right: 2.9rem;
-  max-height: 42dvh;
+  max-height: 46dvh;
   overflow-y: auto;
 }
 .workspace-market-row {
@@ -3894,11 +3945,33 @@ button {
     grid-row: 2;
     align-self: stretch;
     margin: 0.35rem 0 0;
-    max-height: 42dvh;
+    max-height: 46dvh;
     overflow-y: auto;
   }
   .workspace-editor .chart-stage,
   .workspace-editor .chart-engine {
     min-height: 0;
   }
+}
+
+/* Owner create mode: controls remain below the chart and Save stays visible. */
+.editor-new-signal-title {
+  display: block;
+  font-weight: 700;
+  color: #d7e0e8;
+  font-size: 0.88rem;
+  margin-top: 0.2rem;
+}
+.editor-correction-export .editor-return-to-correction {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.55rem;
+  width: 100%;
+  margin-top: 0.35rem;
+  text-align: left;
+}
+.editor-return-to-correction span {
+  font-size: 1.1rem;
+  font-weight: 700;
 }
