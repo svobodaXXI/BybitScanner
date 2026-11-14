@@ -82,7 +82,7 @@ function JournalTime({ timestamp, zone }: { timestamp: number; zone: JournalZone
     title={"Исходный timestamp: " + timestamp + " мс UTC"}>
     {clock.date} · {clock.seconds}{" "}
     <span className="replay-journal-ms" title="Миллисекунды">({clock.milliseconds})</span>
-    {" "}{zone}
+    {" "}{zone === "MSK" ? "МСК" : "UTC"}
   </time>;
 }
 
@@ -1753,7 +1753,7 @@ export function ReplayPage() {
                 <span>{journalTimeParts(item.available_at_ms, journalZone).seconds}{" "}
                   <span className="replay-journal-ms" title="Миллисекунды">
                     ({journalTimeParts(item.available_at_ms, journalZone).milliseconds})
-                  </span>{" "}{journalZone}
+                  </span>{" "}{journalZone === "MSK" ? "МСК" : "UTC"}
                   {" · "}{item.status === "FILTER_APPROVED" ? "фильтр принят"
                     : item.status === "FILTER_REJECTED" ? "фильтр отказал" : "структура подтверждена"}
                   {" · "}{item.reason}
