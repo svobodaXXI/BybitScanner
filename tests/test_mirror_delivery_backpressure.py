@@ -90,3 +90,55 @@ def test_legacy_pending_mirror_does_not_send_text_or_claim_success(monkeypatch):
     assert not state["pending_notifications"]
     assert events[-1]["delivered"] == "legacy_chart_unavailable"
     assert state["records"]["old"]["notified"][0]["result"] == "legacy_chart_unavailable"
+
+
+def test_queued_pre_policy_mirror_cards_are_retired_before_telegram(monkeypatch, tmp_path):
+    """Delayed delivery cannot resurrect forbidden sources or reverse breakouts."""
+    import mirror_event_chart
+    import telegram_bot
+    from mirror_levels.levels import LevelRegistry, line_level
+
+    monkeypatch.setitem(sys.modules, "config", SimpleNamespace(
+        TELEGRAM_ENABLED=True, TELEGRAM_TOKEN="test",
+    ))
+    monkeypatch.setattr(mirror, "_MIRROR_SEND_NEXT_AT", 0.0)
+    monkeypatch.setattr(mirror, "project_state",
+                        lambda state: [{"level_id": key} for key in state["records"]])
+
+    def forbidden(*_a, **_kw):
+        raise AssertionError("revoked MIRROR card must not be rendered or sent")
+
+    monkeypatch.setattr(mirror_event_chart, "render_mirror_chart", forbidden)
+    monkeypatch.setattr(telegram_bot, "send_photo", forbidden)
+    cases = [
+        ("Broadening", "lower", "DOWN"),
+        ("IKIGAI_BOX", "upper", "UP"),
+        ("Rising Wedge", "upper", "UP"),
+        ("Rising Wedge", "lower", "UP"),
+    ]
+    for pattern, side, direction in cases:
+        level = line_level(
+            symbol="TESTUSDT", timeframe="5", pattern=pattern, side=side,
+            first=(0, 100.0), second=(300_000, 101.0),
+            confirmed_at_ms=600_000,
+        )
+        registry = LevelRegistry()
+        registry.add(level)
+        state = mirror.empty_state("TESTUSDT", "5")
+        state["registry"] = registry.to_dict()
+        state["records"] = {
+            level.level_id: {"notified": [],
+                             "naked_retest": {"breakout": {"direction": direction}}},
+        }
+        state["pending_notifications"] = [
+            {"level_id": level.level_id, "kind": "breakout", "chart": {"legacy": True}},
+        ]
+        mirror.save_state(state, root=tmp_path)
+        assert mirror.send_mirror_notifications(
+            "TESTUSDT", "5", root=tmp_path, test_mode=True,
+        ) == 0
+        saved = mirror.load_state("TESTUSDT", "5", root=tmp_path)
+        assert saved["pending_notifications"] == []
+        assert saved["records"][level.level_id]["notified"] == [
+            {"kind": "breakout", "result": "mirror_source_policy_revoked"}
+        ]

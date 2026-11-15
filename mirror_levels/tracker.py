@@ -107,3 +107,92 @@ def track(level: MirrorLevel, candles: Sequence[Mapping], *, record: Mapping[str
     out["previous_close"] = previous_close
     out["status"] = STATUS_DATA_BLOCKED if state.get("data_blocked") else _STATUS[state["phase"]]
     return out
+
+
+def replay_research_mirror_level(
+    level: MirrorLevel, closed_candles: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Read-only historical boundary observation for a local Simulator caller.
+
+    Reuses the native MIRROR tracker and source/direction gates. The caller
+    supplies a previously confirmed native level and complete CLOSED candles
+    starting at its first usable candle; this does not detect patterns,
+    assign Scanner candidate eligibility, authorize trades or submit orders.
+    Missing initial coverage, gaps and incomplete candles fail closed.
+    """
+    from mirror_levels.levels import (
+        mirror_breakout_allowed, mirror_level_allowed, timeframe_ms,
+    )
+
+    if not mirror_level_allowed(level):
+        return {"level_id": getattr(level, "level_id", None),
+                "status": "SOURCE_POLICY_REJECTED", "breakout": None,
+                "first_retest": None, "observation_only": True}
+    if not isinstance(closed_candles, Sequence) or not closed_candles:
+        raise ValueError("MIRROR research requires closed candle history")
+    step = timeframe_ms(level.timeframe)
+    cursor = None
+    record = new_record(level)
+    for row in closed_candles:
+        if not isinstance(row, Mapping) or row.get("closed") is not True:
+            raise ValueError("MIRROR research requires authoritative closed candles")
+        opened, closed = row.get("open_time_ms"), row.get("close_time_ms")
+        if (type(opened) is not int or type(closed) is not int
+                or opened < 0 or opened % step != 0 or closed - opened != step):
+            raise ValueError("MIRROR research requires aligned native-timeframe candles")
+        if cursor is None:
+            if opened < level.confirmed_at_ms or opened - level.confirmed_at_ms >= step:
+                raise ValueError("MIRROR research missing first usable candle")
+        elif opened != cursor:
+            raise ValueError("MIRROR research candle gap or overlap")
+        record = track(level, (row,), record=record)
+        if record["status"] == STATUS_DATA_BLOCKED:
+            raise ValueError("MIRROR research history gap")
+        cursor = closed
+    breakout = record["naked_retest"].get("breakout")
+    if breakout is not None and not mirror_breakout_allowed(level, breakout):
+        return {"level_id": level.level_id, "status": "BREAKOUT_POLICY_REJECTED",
+                "breakout": None, "first_retest": None, "observation_only": True}
+    return {
+        "level_id": level.level_id, "status": record["status"],
+        "breakout": breakout,
+        "first_retest": record["naked_retest"].get("retest"),
+        "observation_only": True,
+    }
+
+
+def replay_local_simulation_mirror(
+    *, simulation_run_id: str, symbol: str, level: MirrorLevel,
+    closed_bars: Sequence[Any],
+) -> dict[str, Any]:
+    """Native Mirror observation on the existing local Simulator's closed Candles.
+
+    Accepts its verified closed-M5/M1 Candle value objects, not arbitrary OHLC
+    snapshots or prefilled Robot candidates. The caller must obtain the bars
+    from an independently verified, committed SIMULATION history feed.
+    No order, sizing, position or PAPER/Robot runtime is accessed here.
+    """
+    from research.historical_market_replay import Candle
+    from research.simulator_v2.timeline import RUN_ID_RE, SYMBOL_RE
+    from mirror_levels.levels import timeframe_ms
+
+    if (not isinstance(simulation_run_id, str)
+            or RUN_ID_RE.fullmatch(simulation_run_id) is None
+            or not isinstance(symbol, str) or SYMBOL_RE.fullmatch(symbol) is None
+            or not symbol.endswith("USDT") or level.symbol != symbol):
+        raise ValueError("MIRROR SIMULATION identity mismatch")
+    if not isinstance(closed_bars, (tuple, list)) or not closed_bars:
+        raise ValueError("MIRROR SIMULATION requires committed closed bars")
+    step = timeframe_ms(level.timeframe)
+    if any(type(bar) is not Candle or bar.interval_ms != step for bar in closed_bars):
+        raise ValueError("MIRROR SIMULATION requires native closed timeframe Candles")
+    rows = tuple({
+        "open_time_ms": bar.start_ms, "close_time_ms": bar.end_ms,
+        "open": float(bar.open), "high": float(bar.high),
+        "low": float(bar.low), "close": float(bar.close), "closed": True,
+    } for bar in closed_bars)
+    observed = replay_research_mirror_level(level, rows)
+    return {
+        "namespace": "SIMULATION", "simulation_run_id": simulation_run_id,
+        "symbol": symbol, **observed,
+    }

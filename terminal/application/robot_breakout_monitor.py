@@ -253,10 +253,16 @@ class RobotBreakoutMonitor:
         incident_dir=None,
         emergency_close_path: EmergencyClosePath | None = None,
         mirror_policy: "mirror.MirrorRobotPolicy | None" = None,
+        mirror_standalone_enabled: Callable[[], bool] | None = None,
     ) -> None:
         self._emergency_close_path = emergency_close_path
         # MIRROR RETEST overlay for Box attempts (OFF unless a policy is bound; see mirror_retest_robot).
         self._mirror_policy = mirror_policy
+        # Production retains its existing owner environment gate. Only a local
+        # isolated SIMULATION adapter may inject an explicit enable decision.
+        self._mirror_standalone_enabled = (mirror_standalone_enabled
+                                           if mirror_standalone_enabled is not None
+                                           else robot_l_shape.mirror_standalone_enabled)
         # Resting entry LIMITs become fill-capable the moment they are durable, so
         # protection coverage for the symbol must already be listening. Without a
         # bound arm this monitor never creates a resting entry LIMIT (fail closed).
@@ -1332,7 +1338,7 @@ class RobotBreakoutMonitor:
                 # Standalone MIRROR: the campaign must still be live (no entry after the first retest) and the
                 # attempt must fit the campaign's single R0 budget. The decision is made durable on its own
                 # tick, before any order exists; the LIMIT follows on the next tick.
-                if not robot_l_shape.mirror_standalone_enabled():
+                if not self._mirror_standalone_enabled():
                     self._invalidate_pre_entry_candidate(
                         record, reason="MIRROR standalone Robot is not enabled",
                     )

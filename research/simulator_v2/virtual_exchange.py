@@ -128,6 +128,24 @@ class RobotStopRequest:
 
 
 @dataclass(frozen=True)
+class RobotTakeRequest:
+    """Current Robot TAKE projection: trigger price and actual position side."""
+
+    order_id: str
+    position_side: str
+    take_price: Decimal
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.order_id, str) or not IDENTITY.fullmatch(self.order_id):
+            raise ValueError("invalid virtual TAKE identity")
+        if self.position_side not in ("LONG", "SHORT"):
+            raise ValueError("virtual TAKE needs LONG or SHORT position side")
+        if (not isinstance(self.take_price, Decimal)
+                or not self.take_price.is_finite() or self.take_price <= 0):
+            raise ValueError("positive finite virtual TAKE required")
+
+
+@dataclass(frozen=True)
 class OrderEvent:
     order_id: str
     kind: str  # SUBMITTED, AMENDED, CANCELLED, FILLED
@@ -178,6 +196,7 @@ class VirtualExchange:
         self._robot_limits: dict[str, tuple[RobotLimitRequest, int]] = {}
         self._robot_markets: dict[str, tuple[MarketRequest, int]] = {}
         self._robot_stop: RobotStopRequest | None = None
+        self._robot_take: RobotTakeRequest | None = None
 
     @property
     def virtual_time_ms(self) -> int | None:
@@ -220,6 +239,10 @@ class VirtualExchange:
     @property
     def robot_stop(self) -> RobotStopRequest | None:
         return self._robot_stop
+
+    @property
+    def robot_take(self) -> RobotTakeRequest | None:
+        return self._robot_take
 
     def submit_robot_market(
         self, request: MarketRequest, *, submitted_at_ms: int,
@@ -292,6 +315,15 @@ class VirtualExchange:
             raise ValueError("Robot STOP sync requires latest committed M1")
         self._robot_stop = request
 
+    def synchronize_robot_take(
+        self, request: RobotTakeRequest | None, *, synchronized_at_ms: int,
+    ) -> None:
+        if self._pending is not None or self._active_protection is not None:
+            raise ValueError("legacy and native Robot exchange modes cannot mix")
+        if self._last_close_ms is None or synchronized_at_ms != self._last_close_ms:
+            raise ValueError("Robot TAKE sync requires latest committed M1")
+        self._robot_take = request
+
     @staticmethod
     def _limit_resolution(request: LimitRequest, minute: Candle) -> tuple[Decimal, Decimal] | None:
         buy = request.side == "BUY"
@@ -329,6 +361,34 @@ class VirtualExchange:
                     stop.order_id, "STOP_FILLED", minute.end_ms, order_type="STOP",
                 ))
                 self._robot_stop = None
+                self._robot_take = None
+                self._robot_limits = {}
+                self._robot_markets = {}
+                return receipts, events
+
+        take = self._robot_take
+        if position and take is not None:
+            is_long = position > 0
+            if (take.position_side == "LONG") != is_long:
+                raise ValueError("native Robot TAKE side conflicts with virtual position")
+            hit = minute.high >= take.take_price if is_long else minute.low <= take.take_price
+            if hit:
+                # A TAKE is a triggered market exit in the Robot, not a maker
+                # LIMIT. The proven boundary is the conservative fill price:
+                # do not invent positive gap improvement from OHLC.
+                price = take.take_price
+                quantity = abs(position)
+                receipts.append(VirtualFill(
+                    self.account.simulation_run_id, self.account.symbol,
+                    take.order_id + "_fill", minute.end_ms,
+                    "SELL" if is_long else "BUY", quantity, price,
+                    price * quantity * self.taker_fee_rate,
+                ))
+                events.append(OrderEvent(
+                    take.order_id, "TAKE_FILLED", minute.end_ms, order_type="TAKE",
+                ))
+                self._robot_stop = None
+                self._robot_take = None
                 self._robot_limits = {}
                 self._robot_markets = {}
                 return receipts, events
@@ -549,7 +609,8 @@ class VirtualExchange:
         next_pending_protection = self._pending_protection
         next_active_protection = self._active_protection
 
-        if self._robot_limits or self._robot_markets or self._robot_stop is not None:
+        if (self._robot_limits or self._robot_markets
+                or self._robot_stop is not None or self._robot_take is not None):
             if next_pending is not None or next_active_protection is not None:
                 raise ValueError("legacy and native Robot exchange modes cannot mix")
             receipts, new_events = self._match_native_robot(minute)

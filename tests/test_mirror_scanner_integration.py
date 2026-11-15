@@ -322,7 +322,7 @@ def test_one_real_level_from_several_sources_and_repeated_scans_is_one_candidate
     state = ms.load_state("TESTUSDT", "1", root)
     assert list(state["records"]) == [swing.level_id]                      # first registered wins
     assert {s["level_id"] for s in state["records"][swing.level_id]["sources"]} == {
-        swing.level_id, box_top.level_id, l_shape.level_id}
+        swing.level_id, l_shape.level_id}
     assert summary["new_candidates"] == 1 and len(summary["pending"]) == 1
 
     # A Scanner re-fit of one sloped boundary (new second anchor, same line) is the same level.
@@ -409,6 +409,88 @@ def test_unreadable_state_is_never_overwritten_and_skips_the_symbol(root, fixed_
     assert path.read_text(encoding="utf-8") == "{not json"
     events = [json.loads(line) for line in (root / ms.EVENTS_FILE).read_text(encoding="utf-8").splitlines()]
     assert events[-1]["event"] == "mirror_state_unreadable"
+
+
+def test_persisted_standalone_handoff_requires_current_breakout_and_frozen_provenance(
+    root, config_stub, monkeypatch,
+):
+    """Saved entries cannot bypass source policy after a restart or later retest."""
+    import copy
+    from types import SimpleNamespace
+    import pattern_robot_integration as integration
+    from mirror_levels.levels import LevelRegistry
+
+    step = 5 * M
+    level = horizontal_level(
+        symbol="TESTUSDT", timeframe="5", source=SOURCE_SWING_ZONE,
+        pattern=None, side="lower", price=100.0,
+        anchor_time_ms=0, confirmed_at_ms=2 * step,
+    )
+    registry = LevelRegistry()
+    registry.add(level)
+    breakout = {
+        "direction": "DOWN", "campaign_direction": "LONG",
+        "open_time_ms": 3 * step, "close_time_ms": 4 * step,
+    }
+    confirmation_close_ms = 6 * step
+    terms = {
+        "direction": "LONG", "source_timeframe": "5",
+        "level_id": level.level_id, "level_timeframe": "5",
+        "level_source": SOURCE_SWING_ZONE, "level_pattern": None,
+        "level_side": "lower", "level_breakout_direction": "DOWN",
+        "level_breakout_close_ms": breakout["close_time_ms"],
+        "confirmation": {"close_time_ms": confirmation_close_ms},
+    }
+    entry_id = f"{level.level_id}@5@{confirmation_close_ms}"
+    state = ms.empty_state("TESTUSDT", "5")
+    state["registry"] = registry.to_dict()
+    state["records"] = {level.level_id: {
+        "candidate": True, "lifecycle": ms.LIFECYCLE_TRACKING,
+        "status": STATUS_UNTESTED, "rejection": None,
+        "naked_retest": {"breakout": breakout},
+    }}
+    state["standalone_entries"] = [{"entry_id": entry_id, "terms": terms,
+                                   "handoff": "PENDING", "candidate_id": None}]
+    attempted = []
+    monkeypatch.setattr(integration, "is_robot_executable_signal", lambda *_a, **_k: True)
+    monkeypatch.setattr(integration, "prepare_robot_handoff",
+                        lambda snapshot, **_kw: (
+                            attempted.append(snapshot),
+                            SimpleNamespace(candidate_id="fake-candidate"),
+                        )[1])
+
+    valid = copy.deepcopy(state)
+    assert ms._hand_off_standalone_entries("TESTUSDT", valid, root) == ["fake-candidate"]
+    assert valid["standalone_entries"][0]["handoff"] == "HANDED"
+    assert attempted[0]["mirror_entry"]["level_id"] == level.level_id
+
+    for defect in (
+        "forbidden_pattern", "wrong_side", "wrong_breakout", "forged_close",
+        "forged_entry_id", "retested", "no_candidate", "missing_record",
+    ):
+        attempted.clear()
+        bad = copy.deepcopy(state)
+        item = bad["standalone_entries"][0]
+        if defect == "forbidden_pattern":
+            item["terms"]["level_pattern"] = "IKIGAI_BOX"
+        elif defect == "wrong_side":
+            item["terms"]["level_side"] = "upper"
+        elif defect == "wrong_breakout":
+            bad["records"][level.level_id]["naked_retest"]["breakout"]["direction"] = "UP"
+        elif defect == "forged_close":
+            item["terms"]["level_breakout_close_ms"] += step
+        elif defect == "forged_entry_id":
+            item["entry_id"] = f"{level.level_id}@5@{confirmation_close_ms + step}"
+        elif defect == "retested":
+            bad["records"][level.level_id].update(
+                status=STATUS_RETESTED, lifecycle=ms.LIFECYCLE_DONE)
+        elif defect == "no_candidate":
+            bad["records"][level.level_id]["candidate"] = False
+        else:
+            del bad["records"][level.level_id]
+        assert ms._hand_off_standalone_entries("TESTUSDT", bad, root) == [], defect
+        assert item["handoff"] == "OFF", defect
+        assert attempted == [], defect
 
 
 # --- Telegram / Terminal surfaces ---------------------------------------------------------------------
@@ -508,7 +590,7 @@ def test_scanner_hook_feeds_5m_with_the_same_pass_1m_candles(monkeypatch, root, 
 def test_ambiguous_5m_retest_of_a_sloped_level_is_settled_by_1m_candles(root, fixed_levels):
     step = 5 * M
     # Rising line; after an UP breakout a 5m candle whose low lies between the line's open/close values.
-    level = line_level(symbol="TESTUSDT", timeframe="5", pattern="Rising Wedge", side="upper",
+    level = line_level(symbol="TESTUSDT", timeframe="5", pattern="Falling Wedge", side="upper",
                        first=(0, 100.0), second=(10 * step, 101.0), confirmed_at_ms=12 * step)
     fixed_levels["levels"] = [level]
     bars = [(p - 1.0, p - 0.6, p - 1.4, p - 1.0) for p in (100 + 0.1 * i for i in range(30))]
@@ -569,29 +651,13 @@ def test_real_horn_kncusdt_5m_boundary_breakout_through_the_full_scanner_path(ro
         ms.observe_mirror_levels("KNCUSDT", window, timeframe="5", root=root, box_source=False,
                                  horn_observation=event if end == decision + 2 else None,
                                  now_ms=int(window["time"].iloc[-1]))
-    rows = {(r["level_label"], r["status"]): r for r in ms.project_mirror_levels(root, include_waiting=True)["levels"]}
-    lower = rows[("Broadening lower", STATUS_UNTESTED)]
-    assert lower["candidate"] is True and lower["breakout"]["direction"] == "DOWN"
-    assert [list(a) for a in lower["level"]["anchors"]] == [
-        [event["lower_line"]["anchor_time_ms"], event["lower_line"]["anchor_price"]],
-        [event["lower_line"]["second_time_ms"], event["lower_line"]["second_price"]]]
-    assert lower["parent_patterns"] == [{"pattern": "Broadening", "formation_id": event["identity"]}]
-    assert lower["breakout_evidence"]["kind"] == "FULL_BODY" and lower["robot"]["executable"] is False
-    assert any(r["parent_patterns"] == [] for r in rows.values())        # swing levels without a parent
     state = ms.load_state("KNCUSDT", "5", root)
-    breakouts = [p["level_id"] for p in state["pending_notifications"] if p["kind"] == "breakout"]
-    assert len(breakouts) == len(set(breakouts))                          # one card per level, not per pass
-    # Swing zone 0.12429 and L-shape level 0.12424 broke on one candle: one MIRROR event.
-    duplicates = [(k, r) for k, r in state["records"].items()
-                  if (r.get("rejection") or "").startswith("duplicate_breakout_of:")]
-    assert len(duplicates) == 1
-    duplicate_id, duplicate = duplicates[0]
-    primary = duplicate["rejection"].split(":", 1)[1]
-    assert state["records"][primary]["candidate"] is True and primary in breakouts
-    assert duplicate_id not in breakouts
-    registered = [json.loads(line) for line in (root / ms.EVENTS_FILE).read_text(encoding="utf-8").splitlines()
-                  if '"mirror_level_registered"' in line]
-    assert len(registered) == len({e["level_id"] for e in registered}) == len(state["records"])
+    # HORN retains its own pattern strategy; no HORN boundary is eligible
+    # for MIRROR, even when a historical naked breakout exists.
+    assert all(item["pattern"] != "Broadening" for item in state["registry"]["levels"])
+    assert all(record.get("rejection") != "mirror_source_policy_revoked"
+               for record in state["records"].values())
+
 
 
 def test_real_drift_wedge_5m_boundaries_breakout_and_first_retest(root, fixed_levels, monkeypatch):
@@ -683,7 +749,7 @@ def test_real_box_cpusdt_and_l_shape_levels_come_from_the_scanner_engines(root):
     box_window = _gold_frame("CPUSDT_5m_historical_first_impulse_20260923.json").iloc[:183]
     box_levels = [lv for lv in ms.collect_levels("CPUSDT", "5", box_window.reset_index(drop=True),
                                                  box_source=True) if lv.pattern == "IKIGAI_BOX"]
-    assert {lv.side for lv in box_levels} == {"upper", "lower"} and all(lv.is_horizontal for lv in box_levels)
+    assert box_levels == []  # Box may confirm a MIRROR, not originate its boundary
     assert not [lv for lv in ms.collect_levels("CPUSDT", "5", box_window.reset_index(drop=True),
                                                box_source=False) if lv.pattern == "IKIGAI_BOX"]
 

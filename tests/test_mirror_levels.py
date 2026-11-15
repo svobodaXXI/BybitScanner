@@ -21,11 +21,16 @@ from mirror_levels.imbalance import (
 from mirror_levels.levels import (
     SOURCE_PATTERN_BOUNDARY, SOURCE_SWING_ZONE, LevelRegistry, MirrorLevel, MirrorLevelError,
     horizontal_level, level_identity, levels_from_geometry, levels_from_horn_event,
+    mirror_level_allowed, mirror_frozen_entry_allowed,
+    audit_historical_mirror_source, audit_historical_mirror_frozen_terms,
+    MIRROR_AUDIT_ALLOWED, MIRROR_AUDIT_REVOKED,
+    MIRROR_AUDIT_UNPROVEN,
     levels_from_ikigai_box, levels_from_l_shape, levels_from_wedge_candidate, line_level,
 )
 from mirror_levels.swing import confirmed_pivots, swing_levels
 from mirror_levels.tracker import (
-    STATUS_RETESTED, STATUS_UNTESTED, STATUS_WAITING, track,
+    STATUS_RETESTED, STATUS_UNTESTED, STATUS_WAITING, track, replay_research_mirror_level,
+    replay_local_simulation_mirror,
 )
 from mirror_retest_observer import boundaries_from_candidate_snapshot
 from retest_calibration import causal_atr_series
@@ -336,3 +341,296 @@ def test_real_fvg_detection_has_prefix_parity():
         assert detect_fvgs(candles[:cut], symbol="DRIFTUSDT", timeframe="1") == tuple(
             gap for gap in full if gap.formed_at_ms <= horizon)
     assert replay(full[0], candles)["phase"] in {PHASE_UNTOUCHED, PHASE_EDGE, PHASE_PARTIAL, PHASE_FULL}
+
+
+def test_owner_mirror_source_policy_blocks_wrong_wedge_sides_box_horn_and_unknown():
+    def ray(pattern, side):
+        return line_level(symbol="X", timeframe="5", pattern=pattern, side=side,
+                          first=(0, 100.0), second=(M, 101.0), confirmed_at_ms=2 * M)
+
+    allowed = (("Rising Wedge", "lower"), ("Falling Wedge", "upper"),
+               ("Triangle Compression", "upper"), ("Triangle Compression", "lower"))
+    denied = (("Rising Wedge", "upper"), ("Falling Wedge", "lower"),
+              ("Broadening", "upper"), ("Broadening", "lower"),
+              ("HORN", "upper"), ("IKIGAI_BOX", "upper"),
+              ("IKIGAI_BOX", "lower"), ("unknown", "lower"))
+    assert all(mirror_level_allowed(ray(*item)) for item in allowed)
+    assert all(not mirror_level_allowed(ray(*item)) for item in denied)
+    l_shape = horizontal_level(symbol="X", timeframe="5", source=SOURCE_PATTERN_BOUNDARY,
+                               pattern="L-shape", side="upper", price=101.0,
+                               anchor_time_ms=M, confirmed_at_ms=2 * M)
+    swing = horizontal_level(symbol="X", timeframe="5", source=SOURCE_SWING_ZONE,
+                             pattern=None, side="lower", price=101.0,
+                             anchor_time_ms=M, confirmed_at_ms=2 * M)
+    assert mirror_level_allowed(l_shape) and mirror_level_allowed(swing)
+    assert not mirror_level_allowed(horizontal_level(
+        symbol="X", timeframe="5", source=SOURCE_PATTERN_BOUNDARY,
+        pattern="IKIGAI_BOX", side="lower", price=101.0,
+        anchor_time_ms=M, confirmed_at_ms=2 * M))
+    assert not mirror_level_allowed(horizontal_level(
+        symbol="X", timeframe="5", source=SOURCE_SWING_ZONE,
+        pattern="HORN", side="upper", price=101.0,
+        anchor_time_ms=M, confirmed_at_ms=2 * M))
+
+
+def test_legacy_frozen_mirror_entries_cannot_bypass_new_robot_gate():
+    valid = {
+        "level_id": "lvl-0123456789abcdef01234567",
+        "level_source": SOURCE_PATTERN_BOUNDARY,
+        "level_pattern": "Rising Wedge",
+        "level_side": "lower",
+        "level_breakout_direction": "DOWN",
+    }
+    assert mirror_frozen_entry_allowed(valid)
+    assert not mirror_frozen_entry_allowed({**valid, "level_side": "upper"})
+    assert not mirror_frozen_entry_allowed({**valid, "level_breakout_direction": "UP"})
+    assert not mirror_frozen_entry_allowed({**valid, "level_pattern": "IKIGAI_BOX"})
+    assert not mirror_frozen_entry_allowed({**valid, "level_pattern": "Broadening"})
+    assert not mirror_frozen_entry_allowed({k: v for k, v in valid.items()
+                                            if k != "level_side"})
+    assert mirror_frozen_entry_allowed({
+        **valid, "level_source": SOURCE_SWING_ZONE,
+        "level_pattern": None, "level_side": "upper",
+        "level_breakout_direction": "UP",
+    })
+
+
+def test_historical_mirror_audit_needs_exact_episode_level_link_and_native_breakout():
+    allowed = line_level(
+        symbol="XUSDT", timeframe="5", pattern="Rising Wedge", side="lower",
+        first=(0, 100), second=(M, 101), confirmed_at_ms=2 * M,
+    )
+    revoked = line_level(
+        symbol="XUSDT", timeframe="5", pattern="Rising Wedge", side="upper",
+        first=(0, 110), second=(M, 111), confirmed_at_ms=2 * M,
+    )
+    breakout = {"open_time_ms": 2 * M, "close_time_ms": 3 * M, "direction": "DOWN"}
+    def audit(level, event=breakout, **overrides):
+        return audit_historical_mirror_source(
+            level=level, breakout=event,
+            linked_level_id=overrides.get("linked_level_id", level.level_id),
+            linked_symbol=overrides.get("linked_symbol", level.symbol),
+            linked_breakout_close_ms=overrides.get("linked_breakout_close_ms", 3 * M),
+        )
+    assert audit(allowed) == MIRROR_AUDIT_ALLOWED
+    assert audit(revoked) == MIRROR_AUDIT_REVOKED
+    assert audit(allowed, {**breakout, "direction": "UP"}) == MIRROR_AUDIT_REVOKED
+    assert audit(allowed, linked_level_id=revoked.level_id) == MIRROR_AUDIT_UNPROVEN
+    assert audit(allowed, linked_symbol="OTHERUSDT") == MIRROR_AUDIT_UNPROVEN
+    assert audit(allowed, linked_breakout_close_ms=4 * M) == MIRROR_AUDIT_UNPROVEN
+    assert audit(allowed, {**breakout, "open_time_ms": M}) == MIRROR_AUDIT_UNPROVEN
+    assert audit(allowed, {**breakout, "direction": "UNKNOWN"}) == MIRROR_AUDIT_UNPROVEN
+    assert audit_historical_mirror_source(
+        level=None, breakout=breakout, linked_level_id=None,
+        linked_breakout_close_ms=3 * M, linked_symbol="XUSDT",
+    ) == MIRROR_AUDIT_UNPROVEN
+    forged = MirrorLevel.from_dict({**allowed.to_dict(), "level_id": "lvl-forged",
+                                    "boundary": {**allowed.to_dict()["boundary"],
+                                                 "anchor_price": 100.0}})
+    # from_dict still checks that boundary ID matches level ID.
+    assert audit(forged) == MIRROR_AUDIT_UNPROVEN
+
+
+def test_historical_mirror_audit_legacy_frozen_terms_never_guess_missing_side():
+    # Old immutable Robot candidates can prove a globally banned source,
+    # but their earlier frozen contract did not include level side/direction.
+    legacy = {
+        "level_id": "lvl-0123456789abcdef01234567",
+        "level_source": SOURCE_PATTERN_BOUNDARY,
+        "level_pattern": "IKIGAI_BOX",
+    }
+    assert audit_historical_mirror_frozen_terms(legacy) == MIRROR_AUDIT_REVOKED
+    assert audit_historical_mirror_frozen_terms({
+        **legacy, "level_pattern": "Broadening",
+    }) == MIRROR_AUDIT_REVOKED
+    assert audit_historical_mirror_frozen_terms({
+        **legacy, "level_pattern": "Rising Wedge",
+    }) == MIRROR_AUDIT_UNPROVEN
+    assert audit_historical_mirror_frozen_terms({
+        **legacy, "level_pattern": "Rising Wedge",
+        "level_side": "upper", "level_breakout_direction": "UP",
+    }) == MIRROR_AUDIT_REVOKED
+    assert audit_historical_mirror_frozen_terms({
+        **legacy, "level_pattern": "Rising Wedge",
+        "level_side": "lower", "level_breakout_direction": "DOWN",
+    }) == MIRROR_AUDIT_ALLOWED
+    assert audit_historical_mirror_frozen_terms({
+        **legacy, "level_pattern": "Triangle Compression",
+        "level_side": "upper", "level_breakout_direction": "UP",
+    }) == MIRROR_AUDIT_ALLOWED
+    assert audit_historical_mirror_frozen_terms({
+        **legacy, "level_pattern": "Falling Wedge",
+        "level_side": "upper", "level_breakout_direction": "DOWN",
+    }) == MIRROR_AUDIT_REVOKED
+    assert audit_historical_mirror_frozen_terms({
+        **legacy, "level_source": SOURCE_SWING_ZONE, "level_pattern": None,
+    }) == MIRROR_AUDIT_UNPROVEN
+    assert audit_historical_mirror_frozen_terms({
+        **legacy, "level_source": SOURCE_SWING_ZONE, "level_pattern": None,
+        "level_side": "upper", "level_breakout_direction": "UP",
+    }) == MIRROR_AUDIT_ALLOWED
+    assert audit_historical_mirror_frozen_terms({
+        **legacy, "level_source": "unknown", "level_pattern": "HORN",
+    }) == MIRROR_AUDIT_UNPROVEN
+    assert audit_historical_mirror_frozen_terms(None) == MIRROR_AUDIT_UNPROVEN
+
+
+def test_research_mirror_replay_uses_native_breakout_retest_without_future_candles():
+    level = flat(1.0, 1)
+    candles = [
+        {**bar(1, 0.98, 0.99, 0.97, 0.985), "closed": True},
+        {**bar(2, 0.99, 1.02, 0.985, 1.015), "closed": True},
+        {**bar(3, 1.015, 1.03, 1.01, 1.025), "closed": True},
+        {**bar(4, 1.025, 1.03, 0.999, 1.02), "closed": True},
+    ]
+    early = replay_research_mirror_level(level, candles[:1])
+    broken = replay_research_mirror_level(level, candles[:2])
+    retested = replay_research_mirror_level(level, candles)
+    native = track(level, candles)
+    assert early["status"] == STATUS_WAITING and early["breakout"] is None
+    assert broken["status"] == STATUS_UNTESTED and broken["first_retest"] is None
+    assert retested["status"] == STATUS_RETESTED
+    assert retested["breakout"] == native["naked_retest"]["breakout"]
+    assert retested["first_retest"] == native["naked_retest"]["retest"]
+    assert retested["observation_only"] is True
+    # No trading, order identity, balance or Robot admission is produced.
+    assert set(retested) == {
+        "level_id", "status", "breakout", "first_retest", "observation_only",
+    }
+
+
+def test_research_mirror_replay_enforces_native_source_and_direction_policy():
+    candle = {**bar(1, 1.03, 1.04, 0.97, 0.98), "closed": True}
+    allowed = line_level(
+        symbol="TESTUSDT", timeframe="1", pattern="Rising Wedge", side="lower",
+        first=(0, 1.0), second=(M, 1.01), confirmed_at_ms=M,
+    )
+    assert replay_research_mirror_level(allowed, [candle])["status"] == STATUS_UNTESTED
+    wrong_side = line_level(
+        symbol="TESTUSDT", timeframe="1", pattern="Rising Wedge", side="upper",
+        first=(0, 1.0), second=(M, 1.01), confirmed_at_ms=M,
+    )
+    for forbidden in (
+        wrong_side,
+        line_level(
+            symbol="TESTUSDT", timeframe="1", pattern="Broadening", side="lower",
+            first=(0, 1.0), second=(M, 1.01), confirmed_at_ms=M,
+        ),
+        horizontal_level(
+            symbol="TESTUSDT", timeframe="1", source=SOURCE_PATTERN_BOUNDARY,
+            pattern="IKIGAI_BOX", side="lower", price=1.0,
+            anchor_time_ms=0, confirmed_at_ms=M,
+        ),
+    ):
+        result = replay_research_mirror_level(forbidden, [candle])
+        assert result["status"] == "SOURCE_POLICY_REJECTED"
+        assert result["breakout"] is None and result["first_retest"] is None
+
+    # The native tracker can record a real DOWN breakout of an upper swing,
+    # but it is not the owner-approved outward MIRROR campaign direction.
+    upper = flat(1.0, 1)
+    opposite = {**bar(1, 1.02, 1.03, 0.98, 0.99), "closed": True}
+    rejected = replay_research_mirror_level(upper, [opposite])
+    assert rejected["status"] == "BREAKOUT_POLICY_REJECTED"
+    assert rejected["breakout"] is None
+
+
+@pytest.mark.parametrize("broken_history", [
+    [],
+    [{**bar(2, 0.98, 0.99, 0.97, 0.985), "closed": True}],  # missing first candle
+    [{**bar(1, 0.98, 0.99, 0.97, 0.985), "closed": False}],  # still open
+    [{**bar(1, 0.98, 0.99, 0.97, 0.985), "closed": True},
+     {**bar(3, 1.01, 1.02, 1.0, 1.015), "closed": True}],  # gap
+    [{**bar(1, 0.98, 0.99, 0.97, 0.985, step=5*M), "closed": True}],
+])
+def test_research_mirror_replay_fails_closed_on_unproven_market_history(broken_history):
+    with pytest.raises(ValueError):
+        replay_research_mirror_level(flat(1.0, 1), broken_history)
+
+
+def test_local_simulation_mirror_replays_real_closed_m5_feed_without_trades():
+    """The actual SIMULATION M1 timeline supplies native closed M5 to Mirror."""
+    from decimal import Decimal
+    from research.historical_market_replay import Candle
+    from research.simulator_v2.timeline import IsolatedTimeline
+
+    level = horizontal_level(
+        symbol="TESTUSDT", timeframe="5", source=SOURCE_SWING_ZONE,
+        pattern=None, side="upper", price=100, anchor_time_ms=0,
+        confirmed_at_ms=0,
+    )
+    timeline = IsolatedTimeline(simulation_run_id="mirror_fixture", symbol="TESTUSDT")
+    m5 = []
+    for i in range(15):
+        if i < 5:
+            o, c = 99, 99
+        elif i < 10:
+            o, c = ((99, 100.5), (100.5, 101), (101, 101.5),
+                    (101.5, 102), (102, 102))[i - 5]
+        else:
+            o, c = ((102, 102), (102, 101.5), (101.5, 101.3),
+                    (101.3, 101.1), (101.1, 101.2))[i - 10]
+        low = 99.8 if i == 12 else min(o, c) - 0.3
+        minute = Candle(
+            start_ms=i * M, interval_ms=M,
+            open=Decimal(str(o)), high=Decimal(str(max(o, c) + 0.3)),
+            low=Decimal(str(low)), close=Decimal(str(c)), volume=Decimal("1"),
+        )
+        frame = timeline.step(minute)
+        if frame.newly_closed_5m is not None:
+            m5.append(frame.newly_closed_5m)
+            result = replay_local_simulation_mirror(
+                simulation_run_id="mirror_fixture", symbol="TESTUSDT",
+                level=level, closed_bars=tuple(m5),
+            )
+            assert result["namespace"] == "SIMULATION"
+            assert result["observation_only"] is True
+            if len(m5) == 1:
+                assert result["status"] == STATUS_WAITING
+                assert result["breakout"] is None
+            elif len(m5) == 2:
+                assert result["status"] == STATUS_UNTESTED
+                assert result["breakout"]["direction"] == "UP"
+                assert result["first_retest"] is None
+            else:
+                assert result["status"] == STATUS_RETESTED
+                assert result["first_retest"]["contact"] == "PROVEN"
+    assert len(m5) == 3
+    assert {event.source for event in timeline.events} == {"MARKET"}
+    assert timeline.virtual_time_ms == 15 * M
+
+
+def test_local_simulation_mirror_rejects_wrong_identity_source_and_history():
+    from decimal import Decimal
+    from research.historical_market_replay import Candle
+
+    level = horizontal_level(
+        symbol="TESTUSDT", timeframe="5", source=SOURCE_SWING_ZONE,
+        pattern=None, side="upper", price=100, anchor_time_ms=0,
+        confirmed_at_ms=0,
+    )
+    def candle(start=0, step=5*M):
+        return Candle(
+            start_ms=start, interval_ms=step,
+            open=Decimal("99"), high=Decimal("99.5"),
+            low=Decimal("98.5"), close=Decimal("99"), volume=Decimal("1"),
+        )
+    def observe(source=level, bars=None, **overrides):
+        return replay_local_simulation_mirror(
+            simulation_run_id=overrides.get("run", "mirror_fixture"),
+            symbol=overrides.get("symbol", "TESTUSDT"),
+            level=source, closed_bars=(candle(),) if bars is None else bars,
+        )
+    for kwargs in ({"run": "bad run"}, {"symbol": "OTHERUSDT"},
+                   {"bars": ()}, {"bars": (candle(step=M),)},
+                   {"bars": (object(),)}, {"bars": (candle(0), candle(10 * M))}):
+        with pytest.raises(ValueError):
+            observe(**kwargs)
+    invalid = horizontal_level(
+        symbol="TESTUSDT", timeframe="5", source=SOURCE_PATTERN_BOUNDARY,
+        pattern="IKIGAI_BOX", side="upper", price=100,
+        anchor_time_ms=0, confirmed_at_ms=0,
+    )
+    forbidden = observe(source=invalid)
+    assert forbidden["status"] == "SOURCE_POLICY_REJECTED"
+    assert forbidden["breakout"] is None

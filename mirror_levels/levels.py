@@ -8,11 +8,15 @@ breakout and first-retest mechanics stay the existing, tested ones) with
 provenance: symbol, timeframe, source, pattern, side, anchors, when the level
 became known (``confirmed_at_ms``) and a deterministic ``level_id``.
 
-Sources (adapters below, no new pattern detector):
-- ``pattern_boundary``: Wedge (``mirror_retest_observer.boundaries_from_candidate_snapshot``),
-  any engine geometry with index-based ``upper_line``/``lower_line`` (Triangle,
-  Broadening/HORN, channels), Ikigai Box ``box_high``/``box_low``, L-shape ``breakout_level``;
-- ``swing_zone``: confirmed pivot zones without any recognised pattern (``mirror_levels.swing``).
+Trading eligibility is a separate owner-approved fail-closed policy:
+- Rising Wedge: lower line, naked breakout DOWN only; Falling Wedge: upper
+  line, naked breakout UP only; Triangle Compression: upper/UP or lower/DOWN;
+- L-shape: its horizontal breakout line, upper/UP or lower/DOWN;
+- confirmed swing extrema: upper/UP or lower/DOWN, no parent pattern;
+- Broadening/HORN, Ikigai Box edges, unknown sources and wrong-side breakouts
+  are never MIRROR origins. Box may confirm an existing MIRROR campaign.
+Legacy adapters may still parse historical evidence, but no trade admission
+may bypass ``mirror_level_allowed`` and ``mirror_breakout_allowed``.
 
 Causality: ``Boundary.as_of_time_ms`` is the close time of the candle at which
 the source could know the level (pattern decision candle, pivot confirmation
@@ -45,6 +49,159 @@ SOURCES = frozenset({SOURCE_PATTERN_BOUNDARY, SOURCE_SWING_ZONE})
 SIDE_UPPER = "upper"
 SIDE_LOWER = "lower"
 SIDES = frozenset({SIDE_UPPER, SIDE_LOWER})
+
+# Only these pattern boundaries may originate a MIRROR breakout. The Box may
+# confirm an existing campaign but never originate its level; HORN is separate.
+MIRROR_PATTERN_SIDES = {
+    "Rising Wedge": frozenset({SIDE_LOWER}),
+    "Falling Wedge": frozenset({SIDE_UPPER}),
+    "Triangle Compression": SIDES,
+    "L-shape": SIDES,
+}
+
+
+def mirror_level_allowed(level: "MirrorLevel") -> bool:
+    """Fail-closed common source gate for Scanner, Robot and local Simulator.
+
+    Persisted pre-fix levels are checked here too; do not trust their candidate
+    flag or a matching price to silently grant a forbidden source.
+    """
+    if not isinstance(level, MirrorLevel):
+        return False
+    if level.source == SOURCE_SWING_ZONE:
+        return level.pattern is None and level.is_horizontal
+    if level.source != SOURCE_PATTERN_BOUNDARY:
+        return False
+    sides = MIRROR_PATTERN_SIDES.get(level.pattern)
+    if sides is None or level.side not in sides:
+        return False
+    if level.pattern == "L-shape":
+        return level.is_horizontal
+    # A triangle side may be horizontal; both sides are owner-approved.
+    if level.pattern == "Triangle Compression":
+        return True
+    return not level.is_horizontal
+
+
+def mirror_frozen_entry_allowed(terms: Mapping[str, Any] | None) -> bool:
+    """Reject legacy/unproven MIRROR Robot handoffs at the final frozen-terms gate.
+
+    Historic snapshots lack the new immutable side/direction provenance: refuse
+    them rather than treating a stale candidate as a newly authorized source.
+    """
+    if not isinstance(terms, Mapping):
+        return False
+    level_id = terms.get("level_id")
+    source, pattern = terms.get("level_source"), terms.get("level_pattern")
+    side, direction = terms.get("level_side"), terms.get("level_breakout_direction")
+    if not isinstance(level_id, str) or not level_id.startswith("lvl-"):
+        return False
+    if side not in SIDES or direction != ("UP" if side == SIDE_UPPER else "DOWN"):
+        return False
+    if source == SOURCE_SWING_ZONE:
+        return pattern is None
+    if source != SOURCE_PATTERN_BOUNDARY:
+        return False
+    return side in MIRROR_PATTERN_SIDES.get(pattern, ())
+
+
+def mirror_breakout_allowed(level: "MirrorLevel", breakout: Mapping[str, Any] | None) -> bool:
+    """Only outward naked breakouts of an authorized boundary may trade.
+
+    The opposite direction is a separate event, never a MIRROR realization.
+    """
+    return (
+        mirror_level_allowed(level)
+        and isinstance(breakout, Mapping)
+        and breakout.get("direction") == (("UP" if level.side == SIDE_UPPER else "DOWN"))
+    )
+
+
+
+# A historical policy classification does not attest that an execution belongs
+# to this level: the read-only Diary must first prove that exact episode link.
+MIRROR_AUDIT_ALLOWED = "ALLOWED_BY_CURRENT_POLICY"
+MIRROR_AUDIT_REVOKED = "REVOKED_BY_CURRENT_POLICY"
+MIRROR_AUDIT_UNPROVEN = "SOURCE_OR_EPISODE_LINK_UNPROVEN"
+
+
+def audit_historical_mirror_source(
+    *,
+    level: "MirrorLevel" | None,
+    breakout: Mapping[str, Any] | None,
+    linked_level_id: str | None,
+    linked_breakout_close_ms: int | None,
+    linked_symbol: str | None,
+) -> str:
+    """Audit an *exact-linked* native level/breakout; never infer a trade link.
+
+    The caller must source linked_* from the same durable Robot candidate or
+    campaign as the historical episode, not from matching ticker/time alone.
+    Neither a generic D2 setup nor unrelated archive geometry is that proof.
+    """
+    if not isinstance(level, MirrorLevel) or not isinstance(breakout, Mapping):
+        return MIRROR_AUDIT_UNPROVEN
+    if not isinstance(linked_symbol, str) or linked_symbol != level.symbol:
+        return MIRROR_AUDIT_UNPROVEN
+    if not isinstance(linked_level_id, str) or linked_level_id != level.level_id:
+        return MIRROR_AUDIT_UNPROVEN
+    if level.level_id != level_identity(
+        symbol=level.symbol, timeframe=level.timeframe, source=level.source,
+        pattern=level.pattern, side=level.side, anchors=level.anchors,
+    ):
+        return MIRROR_AUDIT_UNPROVEN
+    open_ms, close_ms = breakout.get("open_time_ms"), breakout.get("close_time_ms")
+    if (type(open_ms) is not int or type(close_ms) is not int
+            or type(linked_breakout_close_ms) is not int
+            or open_ms < level.confirmed_at_ms or close_ms <= open_ms
+            or close_ms != linked_breakout_close_ms
+            or breakout.get("direction") not in ("UP", "DOWN")):
+        return MIRROR_AUDIT_UNPROVEN
+    return (
+        MIRROR_AUDIT_ALLOWED if mirror_breakout_allowed(level, breakout)
+        else MIRROR_AUDIT_REVOKED
+    )
+
+
+def audit_historical_mirror_frozen_terms(
+    terms: Mapping[str, Any] | None,
+) -> str:
+    """Classify a *stored native candidate*, not an episode or authenticated fact.
+
+    Only the independently proven Robot-candidate -> execution -> Diary episode
+    join may attach this result to a historical trade. Older snapshots did not
+    preserve the boundary side or breakout direction, so they must not be
+    guessed from trade direction, a chart or ticker/time proximity.
+    """
+    if not isinstance(terms, Mapping):
+        return MIRROR_AUDIT_UNPROVEN
+    source, pattern = terms.get("level_source"), terms.get("level_pattern")
+    if source == SOURCE_PATTERN_BOUNDARY:
+        # These two families were forbidden as MIRROR origins on *every* side.
+        if pattern in {"Broadening", "HORN", "IKIGAI_BOX"}:
+            return MIRROR_AUDIT_REVOKED
+        if pattern not in MIRROR_PATTERN_SIDES:
+            return MIRROR_AUDIT_UNPROVEN
+    elif source == SOURCE_SWING_ZONE:
+        if pattern is not None:
+            # A non-standalone swing source with a named pattern cannot prove
+            # independent extremum provenance, even when the pattern is known.
+            return MIRROR_AUDIT_UNPROVEN
+    else:
+        return MIRROR_AUDIT_UNPROVEN
+
+    level_id = terms.get("level_id")
+    side, direction = terms.get("level_side"), terms.get("level_breakout_direction")
+    if not isinstance(level_id, str) or not level_id.startswith("lvl-"):
+        return MIRROR_AUDIT_UNPROVEN
+    if side not in SIDES or direction not in {"UP", "DOWN"}:
+        return MIRROR_AUDIT_UNPROVEN
+    if source == SOURCE_PATTERN_BOUNDARY and side not in MIRROR_PATTERN_SIDES[pattern]:
+        return MIRROR_AUDIT_REVOKED
+    if direction != ("UP" if side == SIDE_UPPER else "DOWN"):
+        return MIRROR_AUDIT_REVOKED
+    return MIRROR_AUDIT_ALLOWED
+
 
 TIMEFRAME_MS = {"1": 60_000, "5": 300_000, "15": 900_000, "60": 3_600_000, "240": 14_400_000}
 
