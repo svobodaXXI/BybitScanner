@@ -376,7 +376,7 @@ class TestWindowsVpsManager(unittest.TestCase):
             key.parent.mkdir()
             key.write_text("test placeholder", encoding="ascii")
             (root / ".ssh" / "config").write_text(
-                "Host bybitscanner-vps\\n  HostName 212.193.14.116\\n", encoding="ascii")
+                "Host bybitscanner-vps\n  HostName 212.193.14.116\n", encoding="ascii")
             with (patch.dict("tools.windows_vps_manager.os.environ",
                              {"USERPROFILE": r"C:\Users\SVOBODA21"}),
                   patch("tools.windows_vps_manager.Path.home", return_value=root)):
@@ -395,7 +395,7 @@ class TestWindowsVpsManager(unittest.TestCase):
             root = Path(home)
             (root / ".ssh").mkdir()
             (root / ".ssh" / "config").write_text(
-                "Host bybitscanner-vps\\n  HostName 212.193.14.116\\n", encoding="ascii")
+                "Host bybitscanner-vps\n  HostName 212.193.14.116\n", encoding="ascii")
             with (patch.dict("tools.windows_vps_manager.os.environ",
                              {"USERPROFILE": r"C:\Users\svobo"}),
                   patch("tools.windows_vps_manager.Path.home", return_value=root)):
