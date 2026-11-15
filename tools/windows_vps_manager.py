@@ -41,7 +41,13 @@ HOST_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
 USER_PATTERN = re.compile(r"^[a-z_][a-z0-9_-]*[$]?$")
 # Without an explicit -i, OpenSSH only tries the default id_* names, so a
 # purpose-built key such as ~/.ssh/bybitscanner_laptop is never offered.
-DEFAULT_KEY = Path.home() / ".ssh" / "bybitscanner_laptop"
+# Known operator Windows profiles only; never silently reuse a laptop key on PC.
+# This is a routing hint, not cryptographic device attestation.
+KNOWN_ROUTES = {
+    "pc": ("212.193.14.116", "root", "bybitscanner_vdsina_gateway_20261030"),
+    "laptop": ("83.217.213.181", "root", "bybitscanner_laptop"),
+}
+
 # Fixed, audited commands: no free-form shell and no trading mutations.
 ACTIONS = {
     "Состояние": (
@@ -89,6 +95,26 @@ ACTIONS = {
         "--no-pager -n 35 --output=short-iso"
     ),
 }
+# All probes are read-only. Successful command completion is evidence collection,
+# not proof of PAPER admission, Telegram delivery or a full Scanner pass.
+PREFLIGHT = (
+    "set -e; "
+    "printf '=== VERIFIED_INSTALLED_RELEASE ===\\n'; "
+    f"{VENV} -m tools.vps_release_identity verify; "
+    "printf '=== SYSTEMD_UNITS ===\\n'; "
+    "systemctl show --no-pager -p LoadState -p ActiveState -p SubState -p MainPID "
+    "bybitscanner-paper-backend.service bybitscanner-telegram.service "
+    "bybitscanner-paper-start.service bybitscanner-manual-main-read.service; "
+    "printf '=== BACKEND_HEALTH ===\\n'; "
+    f"{HEALTH}; "
+    "printf '\\n=== SCANNER_STATUS ===\\n'; "
+    "curl -fsS --connect-timeout 3 --max-time 6 http://127.0.0.1:8765/api/scanner/status; "
+    "printf '\\n=== AUTOPILOT_STATUS ===\\n'; "
+    "curl -fsS --connect-timeout 3 --max-time 6 http://127.0.0.1:8765/api/robot/autopilot; "
+    "printf '\\n=== TELEGRAM_HEALTH ===\\n'; "
+    "curl -fsS --connect-timeout 3 --max-time 6 http://127.0.0.1:8766/health; "
+    "printf '\\nPREFLIGHT_READ_ONLY_DATA_COLLECTED_NOT_ACCEPTED\\n'"
+)
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 EXACT_SHA = re.compile(r"[0-9a-f]{40}\Z")
 REQUEST_ID = re.compile(r"[0-9a-f]{32}\Z")
@@ -161,15 +187,39 @@ def ssh_command(host: str, user: str, action: str, key: str = "") -> list[str]:
             raise ValueError(f"Файл ключа SSH не найден: {path}")
         # IdentitiesOnly keeps the agent from racing ahead with other keys.
         identity = ["-o", "IdentitiesOnly=yes", "-i", str(path)]
+    # Explicit known-device routes must not be diverted by an unrelated config.
+    direct = preferred_key(host, user) == key and bool(key)
     return [
-        "ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
+        "ssh", *(["-F", "none"] if direct else []),
+        "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
         "-o", "ConnectTimeout=8", "-o", "NumberOfPasswordPrompts=0",
         "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=2",
         *identity, (f"{user}@{host}" if user else host), ACTIONS[action],
     ]
 
 
+def known_windows_device(profile: str | None = None) -> str:
+    """Identify only the two owner-confirmed Windows user profiles; else UNKNOWN."""
+    value = profile if profile is not None else os.environ.get("USERPROFILE", "")
+    normalized = value.strip().strip('"').replace("/", "\\\\").rstrip("\\\\").casefold()
+    return {
+        "c:\\\\users\\\\svobo": "pc",
+        "c:\\\\users\\\\svoboda21": "laptop",
+    }.get(normalized, "")
+
+
+def preferred_key(host: str, user: str) -> str:
+    """Only offer a pinned identity for a known device's exact VPS target."""
+    route = KNOWN_ROUTES.get(known_windows_device())
+    if route and (host, user) == route[:2]:
+        return str(Path.home() / ".ssh" / route[2])
+    return ""
+
+
 def preferred_route() -> tuple[str, str]:
+    # The laptop has no confirmed PC alias: use its separate proven profile.
+    if known_windows_device() == "laptop":
+        return KNOWN_ROUTES["laptop"][:2]
     # Existing OpenSSH alias owns the key, verified host and network route.
     config = Path.home() / ".ssh" / "config"
     try:
@@ -179,6 +229,10 @@ def preferred_route() -> tuple[str, str]:
             return "bybitscanner-vps", ""
     except (OSError, UnicodeError):
         pass
+    # On the known PC, the direct-key target is an observed safe fallback if
+    # its native alias is absent. Unknown devices retain explicit configuration.
+    if known_windows_device() == "pc":
+        return KNOWN_ROUTES["pc"][:2]
     remote = os.environ.get("BYBITSCANNER_VPS_SSH_TARGET", "")
     if re.fullmatch(r"[A-Za-z_][A-Za-z_0-9-]*@[A-Za-z0-9._-]+", remote):
         user, host = remote.split("@", 1)
@@ -187,8 +241,10 @@ def preferred_route() -> tuple[str, str]:
 
 
 def device_origin() -> str:
-    return ("win-" + re.sub(r"[^A-Za-z0-9_.-]", "-",
-                            os.environ.get("COMPUTERNAME") or "unknown"))[:64]
+    profile = known_windows_device() or "unknown"
+    computer = re.sub(r"[^A-Za-z0-9_.-]", "-",
+                      os.environ.get("COMPUTERNAME") or "unknown")
+    return ("win-" + profile + "-" + computer)[:64]
 
 
 def control_ssh_command(host: str, user: str, key: str, operation: str,
@@ -212,6 +268,9 @@ def control_ssh_command(host: str, user: str, key: str, operation: str,
         args = ["status", request_id]
     elif operation == "list":
         args = ["list"]
+    elif operation == "preflight":
+        argv[-1] = PREFLIGHT
+        return argv
     else:
         raise ValueError("Неизвестная операция")
     argv[-1] = CONTROL_MODULE + " " + " ".join(shlex.quote(part) for part in args)
@@ -223,7 +282,7 @@ def run_cli(options: argparse.Namespace) -> int:
     if not host:
         print("VPS_ROUTE_UNCONFIGURED: existing SSH alias or BYBITSCANNER_VPS_SSH_TARGET required")
         return 2
-    key = options.key or ""
+    key = options.key if options.key is not None else preferred_key(host, user)
     req = options.request_id or (uuid.uuid4().hex if options.operation in
                                   CONTROL_ACTIONS.values() else
                                   recover_last_request_id() if options.operation == "status" else "")
@@ -249,6 +308,12 @@ def run_cli(options: argparse.Namespace) -> int:
         return 2
     output = completed.stdout.strip()
     print(output)
+    if options.operation == "preflight":
+        if completed.returncode == 0 and "PREFLIGHT_READ_ONLY_DATA_COLLECTED_NOT_ACCEPTED" in output:
+            print("PREFLIGHT_OBSERVED_NOT_ACCEPTED")
+            return 0
+        print("PREFLIGHT_BLOCKED_UNPROVEN")
+        return 2
     if options.operation == "status":
         lines = set(output.splitlines())
         # systemctl-backed status uses nonzero exit codes for known states.
@@ -284,8 +349,7 @@ class VPSManager(tk.Tk):
         self.host = tk.StringVar(value=automatic[0])
         self.user = tk.StringVar(value=automatic[1])
         if key is None:
-            key = "" if automatic[0] == "bybitscanner-vps" else (
-                str(DEFAULT_KEY) if DEFAULT_KEY.is_file() else "")
+            key = preferred_key(*automatic)
         self.sha = tk.StringVar(value="")
         self.last_request_id = recover_last_request_id()
         self.origin = device_origin()
@@ -322,6 +386,7 @@ class VPSManager(tk.Tk):
             button.grid(row=index // 3, column=index % 3, padx=(0, 7), pady=3, sticky="ew")
             self.buttons.append(button)
         for index, (label, mode) in enumerate((
+            ("Автопроверка VPS (только чтение)", "preflight"),
             ("Статус последней операции", "status"),
             ("Все операции монолита", "list"),
         ), start=len(ACTIONS) + len(CONTROL_ACTIONS)):
@@ -409,6 +474,10 @@ class VPSManager(tk.Tk):
             if mode not in CONTROL_ACTIONS.values():
                 if mode == "status":
                     state = gui_owner_status(output, result.returncode, request)
+                elif mode == "preflight":
+                    state = ("observed" if result.returncode == 0 and
+                             "PREFLIGHT_READ_ONLY_DATA_COLLECTED_NOT_ACCEPTED" in output
+                             else "unproven")
                 else:
                     state = "success" if result.returncode == 0 else "failure"
                 self.events.put((state, output or "Статус не доказан"))
@@ -461,6 +530,7 @@ class VPSManager(tk.Tk):
                 self.busy = False
                 labels = {
                     "success": "Успешно · подтверждён результат",
+                    "observed": "Данные VPS получены · готовность ещё не доказана",
                     "submitted": "Отправлено / выполняется",
                     "failed": "Операция завершилась ошибкой",
                     "unproven": "Результат не доказан · проверьте статус",
@@ -481,7 +551,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--user", default="bybitscanner")
     parser.add_argument("--key", default=None)
     parser.add_argument("--operation", choices=(*CONTROL_ACTIONS.values(),
-                                                 "status", "list"), default=None)
+                                                 "status", "list", "preflight"), default=None)
     parser.add_argument("--sha", default="")
     parser.add_argument("--request-id", default="")
     args, _unknown = parser.parse_known_args(argv)
