@@ -75,6 +75,7 @@ on:
       - "tests/test_robot_l_shape.py"
       - "tests/test_l_shape_scanner.py"
       - "tests/test_signal_admission.py"
+      - "tests/test_scanner_wedge_closed_cutoff.py"
       - "tests/test_telegram_delivery.py"
       - "tests/test_signal_archive_hooks.py"
       - "geometry_feedback_store.py"
@@ -167,6 +168,7 @@ jobs:
           tests/test_robot_l_shape.py
           tests/test_l_shape_scanner.py
           tests/test_signal_admission.py
+          tests/test_scanner_wedge_closed_cutoff.py
           tests/test_telegram_delivery.py
           tests/test_scanner_control_runtime.py
           tests/test_stop_robot_runtime.py
@@ -278,6 +280,7 @@ jobs:
           tests.test_robot_admission
           tests.test_pattern_robot_integration
           tests.test_signal_admission
+          tests.test_scanner_wedge_closed_cutoff
           tests.test_telegram_delivery
           tests.test_l_shape_scanner.LShapeTelegramTests
       - name: Run Robot Autopilot shadow foundation
