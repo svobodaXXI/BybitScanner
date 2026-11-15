@@ -12,7 +12,8 @@ from unittest.mock import Mock, patch
 
 from tools.windows_vps_manager import (ACTIONS, VPSManager, control_ssh_command,
                                        preferred_route, parse_args, ssh_command,
-                                       remember_request_id, recover_last_request_id, run_cli)
+                                       remember_request_id, recover_last_request_id, run_cli,
+                                       known_windows_device, preferred_key, PREFLIGHT)
 
 
 class TestWindowsVpsManager(unittest.TestCase):
@@ -359,6 +360,92 @@ class TestWindowsVpsManager(unittest.TestCase):
                 self.assertEqual(remote.call_count, 1)
                 self.assertIn("tools.vps_owner_control status " + request,
                               remote.call_args.args[0][-1])
+
+
+    def test_known_windows_device_uses_only_exact_confirmed_profiles(self):
+        self.assertEqual(known_windows_device(r"C:\Users\svobo"), "pc")
+        self.assertEqual(known_windows_device(r"c:/users/SVOBODA21/"), "laptop")
+        self.assertEqual(known_windows_device(r"C:\Users\unexpected"), "")
+        self.assertEqual(known_windows_device(r"D:\Users\svobo"), "")
+        self.assertEqual(known_windows_device(""), "")
+
+    def test_laptop_autoroutes_without_pc_alias_and_pins_its_own_key(self):
+        with tempfile.TemporaryDirectory() as home:
+            root = Path(home)
+            key = root / ".ssh" / "bybitscanner_laptop"
+            key.parent.mkdir()
+            key.write_text("test placeholder", encoding="ascii")
+            (root / ".ssh" / "config").write_text(
+                "Host bybitscanner-vps\n  HostName 212.193.14.116\n", encoding="ascii")
+            with (patch.dict("tools.windows_vps_manager.os.environ",
+                             {"USERPROFILE": r"C:\Users\SVOBODA21"}),
+                  patch("tools.windows_vps_manager.Path.home", return_value=root)):
+                self.assertEqual(preferred_route(), ("83.217.213.181", "root"))
+                self.assertEqual(preferred_key("83.217.213.181", "root"), str(key))
+                self.assertEqual(preferred_key("212.193.14.116", "root"), "")
+                cmd = control_ssh_command(*preferred_route(), str(key), "list")
+            self.assertEqual(cmd[:3], ["ssh", "-F", "none"])
+            self.assertIn("StrictHostKeyChecking=yes", cmd)
+            self.assertEqual(cmd[cmd.index("-i") + 1], str(key))
+            self.assertEqual(cmd[-2], "root@83.217.213.181")
+            self.assertNotIn(" submit ", cmd[-1])
+
+    def test_pc_autoroutes_alias_without_laptop_identity(self):
+        with tempfile.TemporaryDirectory() as home:
+            root = Path(home)
+            (root / ".ssh").mkdir()
+            (root / ".ssh" / "config").write_text(
+                "Host bybitscanner-vps\n  HostName 212.193.14.116\n", encoding="ascii")
+            with (patch.dict("tools.windows_vps_manager.os.environ",
+                             {"USERPROFILE": r"C:\Users\svobo"}),
+                  patch("tools.windows_vps_manager.Path.home", return_value=root)):
+                self.assertEqual(preferred_route(), ("bybitscanner-vps", ""))
+                self.assertEqual(preferred_key("bybitscanner-vps", ""), "")
+            # Direct fallback is used only when the alias is genuinely absent.
+            (root / ".ssh" / "config").unlink()
+            with (patch.dict("tools.windows_vps_manager.os.environ",
+                             {"USERPROFILE": r"C:\Users\svobo"}),
+                  patch("tools.windows_vps_manager.Path.home", return_value=root)):
+                self.assertEqual(preferred_route(), ("212.193.14.116", "root"))
+                self.assertEqual(
+                    preferred_key("212.193.14.116", "root"),
+                    str(root / ".ssh" / "bybitscanner_vdsina_gateway_20261030"),
+                )
+
+    def test_preflight_is_single_read_only_command_not_runtime_acceptance(self):
+        cmd = control_ssh_command("bybitscanner-vps", "", "", "preflight")
+        self.assertEqual(cmd[-2], "bybitscanner-vps")
+        remote = cmd[-1]
+        self.assertEqual(remote, PREFLIGHT)
+        for required in (
+            "tools.vps_release_identity verify", "bybitscanner-paper-backend.service",
+            "bybitscanner-telegram.service", "bybitscanner-manual-main-read.service",
+            "/api/health", "/api/scanner/status", "/api/robot/autopilot",
+            "8766/health", "PREFLIGHT_READ_ONLY_DATA_COLLECTED_NOT_ACCEPTED",
+        ):
+            self.assertIn(required, remote)
+        for forbidden in (
+            "systemctl stop", "systemctl start", "submit ", "paper_maintenance --action",
+            "sqlite3", "git reset", "curl -X POST", "LIVE",
+        ):
+            self.assertNotIn(forbidden, remote)
+        with patch("tools.windows_vps_manager.subprocess.run",
+                   return_value=subprocess.CompletedProcess(
+                       cmd, 0, stdout="PREFLIGHT_READ_ONLY_DATA_COLLECTED_NOT_ACCEPTED\\n",
+                       stderr="")):
+            fake = SimpleNamespace(events=queue.Queue())
+            VPSManager.worker_control(fake, cmd, "preflight", "")
+        self.assertEqual(fake.events.get_nowait()[0], "observed")
+        self.assertIn("preflight", parse_args(["--operation", "preflight"]).operation)
+
+    def test_preflight_ssh_failure_never_reports_success(self):
+        cmd = control_ssh_command("bybitscanner-vps", "", "", "preflight")
+        with patch("tools.windows_vps_manager.subprocess.run",
+                   return_value=subprocess.CompletedProcess(
+                       cmd, 255, stdout="", stderr="banner timeout")):
+            fake = SimpleNamespace(events=queue.Queue())
+            VPSManager.worker_control(fake, cmd, "preflight", "")
+        self.assertEqual(fake.events.get_nowait()[0], "unproven")
 
     def test_existing_alias_detected_without_rewriting_ssh_config(self):
         with tempfile.TemporaryDirectory() as temp:
