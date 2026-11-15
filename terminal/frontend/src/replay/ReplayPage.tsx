@@ -963,25 +963,38 @@ export function ReplayPage() {
     setError(null);
     try {
       const window = validateInclusiveWindow(selectedStart, selectedEnd);
-      // The legacy read-only public market loader accepts full UTC days,
-      // maximum 7; it cannot silently turn a minute interval into whole days.
-      if (window.startMs % 86_400_000 || window.endExclusiveMs % 86_400_000 ||
-          window.minutes > 7 * 1440) {
-        throw new Error("Публичный Bybit M5: выберите полные UTC-дни, не более 7. Для точных минут используйте SIMULATION.");
+      // Public data are M5: only completely enclosed, CLOSED five-minute bars
+      // are displayed. Minutes outside M5 boundaries are not fabricated.
+      const five = 300_000;
+      const startMs = Math.ceil(window.startMs / five) * five;
+      const endMs = Math.floor(window.endExclusiveMs / five) * five;
+      if (endMs <= startMs || endMs - startMs > 7 * 86_400_000) {
+        throw new Error("Публичная история M5: нужен хотя бы один полный интервал 5м, максимум 7 дней.");
       }
+      const utcMinute = (ms: number) => new Date(ms).toISOString().slice(0, 16);
       const query = new URLSearchParams({
         symbol: selectedSymbol.trim().toUpperCase(),
-        start: new Date(window.startMs).toISOString().slice(0, 10),
-        end: new Date(window.endExclusiveMs).toISOString().slice(0, 10),
+        start: utcMinute(startMs), end: utcMinute(endMs),
       });
       const native = choices.filter(item =>
         item === "WEDGE_FALLING" || item === "WEDGE_RISING" || item === "IKIGAI_BOX");
-      if (native.length > 0) query.set("strategies", native.join(","));
+      // Native pattern study supports at most one M5 day. Never mislabel a
+      // multi-day MARKET_ONLY document as strategy-observation evidence.
+      if (native.length > 0 && endMs - startMs <= 86_400_000)
+        query.set("strategies", native.join(","));
       // Only the loopback Python viewer implements this research-only GET.
       // Never call /api: Vite's /api proxy belongs to the main PAPER backend.
-      const response = await fetch("/local-replay/history?" + query.toString(), {
-        method: "GET", cache: "no-store", signal: controller.signal,
-      });
+      // A local request may involve several bounded public Bybit pages.
+      // Client abort prevents an indefinite loading indicator.
+      const timeout = setTimeout(() => controller.abort("Public M5 request timed out"), 90_000);
+      let response: Response;
+      try {
+        response = await fetch("/local-replay/history?" + query.toString(), {
+          method: "GET", cache: "no-store", signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeout);
+      }
       // Loopback returns plain-text errors (not JSON) for 400/502.
       // A JSON.parse exception here previously concealed the actual failure.
       // Public M5 never creates the local verified M1 + risk prerequisites
@@ -1001,10 +1014,13 @@ export function ReplayPage() {
       setSimulationGraphPending(false);
       setDrawings([]); setSelectedDrawing(null); setDrawingTool("crosshair");
       setCursor(0);
-      setFileLabel("Bybit · публичные свечи · без сделок");
+      setFileLabel("Bybit · подтверждённые M5 · без сделок" +
+        (native.length > 0 && endMs - startMs > 86_400_000 ? " · без исследования паттернов" : ""));
     } catch (e) {
       if (historyRequest.current !== controller) return;
-      setError(e instanceof Error ? e.message : "Не удалось загрузить историю");
+      setError(controller.signal.aborted
+        ? "Подготовка истории M5 прервана или превысила 90 секунд. Проверьте соединение и повторите «Применить»."
+        : e instanceof Error ? e.message : "Не удалось загрузить историю");
     } finally {
       if (historyRequest.current === controller) {
         setHistoryLoading(false);
