@@ -147,5 +147,27 @@ class ScannerWedgeClosedCandleCutoffTests(unittest.TestCase):
                 self.assertEqual(actual_identity, case["expectation"]["geometry_identity"])
 
 
+    def test_forming_bar_cannot_supply_third_right_pivot(self):
+        """A near-edge pivot must not borrow its third confirmation from an open bar."""
+        from pivots import find_pivots
+
+        for timeframe in ("1", "5"):
+            with self.subTest(timeframe=timeframe):
+                fetched = _frame(timeframe)
+                edge_index = len(fetched) - 4
+                fetched.loc[edge_index, "high"] = 110.0
+
+                raw_highs, _ = find_pivots(fetched.copy())
+                self.assertIn(edge_index, [p["index"] for p in raw_highs])
+
+                with patch.object(core, "load_candles", return_value=fetched), \
+                     patch.object(core.time, "time_ns",
+                                  return_value=NOW_MS * 1_000_000):
+                    result = core.analyze_symbol("TESTUSDT", timeframe=timeframe)
+
+                self.assertNotIn(edge_index, [p["index"] for p in result["highs"]])
+                self.assertIs(result["data"], fetched)
+
+
 if __name__ == "__main__":
     unittest.main()
