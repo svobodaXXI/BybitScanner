@@ -576,20 +576,8 @@ export function ReplayPage() {
   const showTrendGeometry = selectedStrategies.selected.includes("H1_TREND");
   const showSelectedWedges = selectedStrategies.selected.includes("WEDGE_RISING") ||
     selectedStrategies.selected.includes("WEDGE_FALLING");
-  const symbolEdited = useRef(false);
-  const currentSymbol = useRef(symbol);
-  currentSymbol.current = symbol;
   const onPasteSymbol = useCallback((nextSymbol: string) => {
-    symbolEdited.current = true;
     setSymbol(nextSymbol);
-  }, []);
-  const acceptArchiveSymbol = useCallback((archiveSymbol: string): boolean => {
-    if (symbolEdited.current) return currentSymbol.current === archiveSymbol;
-    if (currentSymbol.current === "BTCUSDT") {
-      setSymbol(archiveSymbol);
-      return true;
-    }
-    return currentSymbol.current === archiveSymbol;
   }, []);
   const [historyLoading, setHistoryLoading] = useState(false);
   const historyRequest = useRef<AbortController | null>(null);
@@ -755,6 +743,18 @@ export function ReplayPage() {
     setRunLoading(false);
   }, []);
 
+  const onHistoryPreparation = useCallback((ticker: string, start: string, end: string) => {
+    bundledRequest.current?.abort(); bundledRequest.current = null;
+    historyRequest.current?.abort(); historyRequest.current = null;
+    setHistoryLoading(false);
+    setPlaying(false); setCursor(0); setError(null);
+    setDrawings([]); setSelectedDrawing(null); setDrawingTool("crosshair");
+    setFileLabel(formatRunCoordinates(ticker, start, end));
+    setSimulationGraphPending(true);
+    setPreparedRun(false);
+    setRunLoading(false);
+  }, []);
+
   const onSimulationAppend = useCallback((runId: string, events: ReplayEvent[]) => {
     setDocument(previous => previous.simulation_run_id === runId
       ? { ...previous, events: [...previous.events, ...events] }
@@ -770,7 +770,6 @@ export function ReplayPage() {
     if (replay.mode !== "STRATEGY" || replay.demo || !replay.symbol) {
       throw new Error("Новый прогон не содержит проверенной истории");
     }
-    symbolEdited.current = true;
     setSymbol(replay.symbol);
     setDocument(replay);
     setCursor(0); setTimeframe("5m");
@@ -782,7 +781,6 @@ export function ReplayPage() {
 
   function syncImportedMarketSelection(parsed: ReplayDocument) {
     if (parsed.symbol) {
-      symbolEdited.current = true;
       setSymbol(parsed.symbol);
     }
   }
@@ -1037,7 +1035,7 @@ export function ReplayPage() {
         </div>
       </header>
 
-      <RunSetupPanel symbol={symbol} onArchiveSymbol={acceptArchiveSymbol}
+      <RunSetupPanel symbol={symbol} onHistoryPreparation={onHistoryPreparation}
         onPasteSymbol={onPasteSymbol} onSimulationStart={onSimulationStart}
         onSimulationReady={onSimulationReady} onSimulationAppend={onSimulationAppend}
         onSimulationFailed={onSimulationFailed} onSimulationBusy={setRunLoading}
