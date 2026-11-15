@@ -249,6 +249,39 @@ class TestWindowsVpsManager(unittest.TestCase):
                               remote.call_args_list[1].args[0][-1])
                 self.assertNotIn(" submit ", remote.call_args_list[1].args[0][-1])
 
+    def test_cli_status_distinguishes_known_states_from_unknown_ssh(self):
+        request = "e" * 32
+        for code, response, expected, exit_code in (
+            (0, "REQUEST_ID=" + request + "\nSTATUS=FINISHED_OK\n",
+             "OPERATION_FINISHED_OK", 0),
+            (3, "REQUEST_ID=" + request + "\nSTATUS=RUNNING\n",
+             "OPERATION_RUNNING", 3),
+            (2, "REQUEST_ID=" + request + "\nSTATUS=FAILED\n",
+             "OPERATION_FAILED", 2),
+            (2, "STATUS=UNPROVEN REQUEST_ID=" + request + "\n",
+             "REMOTE_STATUS_UNPROVEN", 2),
+            (255, "REQUEST_ID=" + request + "\nSTATUS=RUNNING\n",
+             "REMOTE_STATUS_UNPROVEN", 2),
+            (3, "REQUEST_ID=" + "a" * 32 + "\nSTATUS=RUNNING\n",
+             "REMOTE_STATUS_UNPROVEN", 2),
+        ):
+            with self.subTest(code=code, expected=expected):
+                reply = subprocess.CompletedProcess(
+                    ["ssh"], code, stdout=response, stderr="")
+                with (patch("tools.windows_vps_manager.preferred_route",
+                            return_value=("bybitscanner-vps", "")),
+                      patch("tools.windows_vps_manager.subprocess.run",
+                            return_value=reply) as remote,
+                      patch("sys.stdout", new_callable=io.StringIO) as output):
+                    result = run_cli(parse_args([
+                        "--operation", "status", "--request-id", request]))
+                self.assertEqual(result, exit_code)
+                self.assertIn(expected + "; request_id=" + request,
+                              output.getvalue())
+                self.assertEqual(remote.call_count, 1)
+                self.assertIn("tools.vps_owner_control status " + request,
+                              remote.call_args.args[0][-1])
+
     def test_existing_alias_detected_without_rewriting_ssh_config(self):
         with tempfile.TemporaryDirectory() as temp:
             config = Path(temp) / ".ssh"

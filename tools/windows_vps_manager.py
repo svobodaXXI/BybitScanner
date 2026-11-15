@@ -234,7 +234,25 @@ def run_cli(options: argparse.Namespace) -> int:
     except (OSError, subprocess.TimeoutExpired):
         print("SSH_UNPROVEN; request_id=" + req + "; check status; do not resubmit")
         return 2
-    print(completed.stdout.strip())
+    output = completed.stdout.strip()
+    print(output)
+    if options.operation == "status":
+        lines = set(output.splitlines())
+        # systemctl-backed status uses nonzero exit codes for known states.
+        # Require the exact request ID and matching state/code; SSH failure
+        # or an unrelated/partial reply must remain UNPROVEN.
+        if "REQUEST_ID=" + req in lines:
+            if completed.returncode == 0 and "STATUS=FINISHED_OK" in lines:
+                print("OPERATION_FINISHED_OK; request_id=" + req)
+                return 0
+            if completed.returncode == 3 and "STATUS=RUNNING" in lines:
+                print("OPERATION_RUNNING; request_id=" + req)
+                return 3
+            if completed.returncode == 2 and "STATUS=FAILED" in lines:
+                print("OPERATION_FAILED; request_id=" + req)
+                return 2
+        print("REMOTE_STATUS_UNPROVEN; request_id=" + req)
+        return 2
     if completed.returncode != 0:
         print("REMOTE_STATUS_UNPROVEN; request_id=" + req)
         return 2
