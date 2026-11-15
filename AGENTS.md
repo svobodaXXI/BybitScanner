@@ -50,7 +50,22 @@ see `DOCUMENTS/VPS_PAPER_TELEGRAM_ONE_BUTTON_LESSONS_20261027.md` §6.
 This priority is **routing, not permission**: GitHub merge, deployment,
 PAPER DB/position, STOP/START, reconcile and trading authority remain unchanged.
 
-## VPS SSH — current primary PC route and blocked-release fast path (2026-11-14)
+## Codex Desktop SSH — CANONICAL PRIMARY ROUTE FOR THE MAIN PC (owner-confirmed 2026-11-15)
+
+**USE THIS FIRST for every Codex Desktop → VPS connection from the desktop PC** (`C:\Users\svobo`). This exact command was successfully executed from the owner's already-open Codex Desktop: `SSH_OK`, `root`, `v3286418.hosted-by-vdsina.ru`, exit `0`.
+
+```powershell
+& 'C:\Windows\System32\OpenSSH\ssh.exe' -F none -i 'C:\Users\svobo\.ssh\bybitscanner_vdsina_gateway_20261030' -o IdentitiesOnly=yes -o BatchMode=yes -o PasswordAuthentication=no -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 root@212.193.14.116 'echo SSH_OK; whoami; hostname'
+"SSH_EXIT_CODE=$LASTEXITCODE"
+```
+
+**Agent rule: do not search for another path.** Run the command directly; do not probe the key with `Test-Path`, `Get-Acl`, file reads or ACL checks first. `-F none` deliberately bypasses the user SSH config/alias; `-i` selects the existing PC key. If the sandbox blocks key access, request owner-approved trusted/out-of-sandbox execution of this same command. Never change key ACLs, print/copy the private key, change VPN/config, disable host-key checking, or substitute the laptop key `bybitscanner_laptop` / old IP `83.217.213.181`. Do not run retries in a loop.
+
+**Scope separation:** this is the Codex Desktop route for the desktop PC only. The native Windows PowerShell route `ssh bybitscanner-vps` remains separate. The laptop has its own route and identity. A successful SSH receipt proves transport only; it does not authorize VPS deployment, STOP/START, PAPER/DB or LIVE actions.
+
+Canonical details and the owner's full 2026-11-15 receipt: `DOCUMENTS/WINDOWS_PC_VPS_ACCESS_RECOVERY_20261108.md` → `PRIMARY PC CODEX DESKTOP SSH ROUTE`.
+
+## VPS SSH — native PowerShell PC route and blocked-release fast path (2026-11-14)
 
 **Current canonical PC transport:** Windows PowerShell `ssh bybitscanner-vps`,
 resolved to `root@212.193.14.116` and the existing key
@@ -66,8 +81,7 @@ For the exact command, scope and evidence, first read
 When SSH banner timeout occurs, first prefer this PC alias without changing
 VPN settings; avoid repeated failed probes or switching keys/IPs speculatively.
 The 2026-11-11 VPN-off/old-IP route is **historical contingency evidence only**,
-not an equal-priority default. Codex Desktop may not inherit the Windows alias:
-verify its environment separately instead of assuming access. For a blocked
+not an equal-priority default. Codex Desktop must use the canonical direct-key route in the immediately preceding `Codex Desktop SSH — CANONICAL PRIMARY ROUTE FOR THE MAIN PC` section; do not try the alias/config from Codex Desktop or repeat the historical path/access diagnostics. For a blocked
 release or `PAPER_unit_not_stopped`, still follow the documented protected
 receipt, four-unit, listener and fail-closed checks. A working SSH connection
 does not grant STOP/deploy/PAPER/LIVE authorization.
