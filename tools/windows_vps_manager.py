@@ -92,6 +92,35 @@ ACTIONS = {
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 EXACT_SHA = re.compile(r"[0-9a-f]{40}\Z")
 REQUEST_ID = re.compile(r"[0-9a-f]{32}\Z")
+
+
+def request_id_store() -> Path:
+    """Local, non-secret recovery pointer; never stores SSH credentials."""
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    base = Path(local_app_data) if local_app_data else Path.home() / ".config"
+    return base / "BybitScanner" / "VPSManager" / "last_request_id"
+
+
+def recover_last_request_id(path: Path | None = None) -> str:
+    target = path if path is not None else request_id_store()
+    try:
+        value = target.read_text(encoding="ascii").strip()
+    except (OSError, UnicodeError):
+        return ""
+    return value if REQUEST_ID.fullmatch(value) else ""
+
+
+def remember_request_id(request: str, path: Path | None = None) -> None:
+    """Persist before submit so an interrupted client can query status only."""
+    if REQUEST_ID.fullmatch(request) is None:
+        raise ValueError("invalid_request_id")
+    target = path if path is not None else request_id_store()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    staged = target.with_suffix(".tmp")
+    staged.write_text(request + "\n", encoding="ascii")
+    staged.replace(target)
+
+
 CONTROL_ACTIONS = {
     "Обновить EDITOR_ONLY": "update",
     "Запустить PAPER-ядро": "start",
@@ -183,7 +212,8 @@ def run_cli(options: argparse.Namespace) -> int:
         return 2
     key = options.key or ""
     req = options.request_id or (uuid.uuid4().hex if options.operation in
-                                  CONTROL_ACTIONS.values() else "")
+                                  CONTROL_ACTIONS.values() else
+                                  recover_last_request_id() if options.operation == "status" else "")
     sha = options.sha or ("installed" if options.operation in ("start", "stop") else "")
     try:
         argv = control_ssh_command(host, user, key, options.operation,
@@ -191,6 +221,13 @@ def run_cli(options: argparse.Namespace) -> int:
     except ValueError as exc:
         print("BLOCKED: " + str(exc))
         return 2
+    if options.operation in CONTROL_ACTIONS.values():
+        try:
+            remember_request_id(req)
+        except OSError:
+            print("BLOCKED: request ID cannot be preserved; no operation sent")
+            return 2
+        print("REQUEST_ID=" + req, flush=True)
     try:
         completed = subprocess.run(argv, capture_output=True, text=True,
                                    timeout=35, stdin=subprocess.DEVNULL, check=False)
@@ -219,7 +256,7 @@ class VPSManager(tk.Tk):
             key = "" if automatic[0] == "bybitscanner-vps" else (
                 str(DEFAULT_KEY) if DEFAULT_KEY.is_file() else "")
         self.sha = tk.StringVar(value="")
-        self.last_request_id = ""
+        self.last_request_id = recover_last_request_id()
         self.origin = device_origin()
         self.key = tk.StringVar(value=key)
         self.status = tk.StringVar(value="Не подключено · PAPER only")
@@ -314,6 +351,13 @@ class VPSManager(tk.Tk):
         if mode in CONTROL_ACTIONS.values():
             if not messagebox.askyesno(
                 "Подтверждение PAPER", f"Отправить на VPS действие {mode} для {sha}?"):
+                return
+            try:
+                remember_request_id(request)
+            except OSError:
+                messagebox.showerror(
+                    "VPS Manager", "Не удалось сохранить ID операции. Действие не отправлено."
+                )
                 return
             self.last_request_id = request
         self.busy = True
