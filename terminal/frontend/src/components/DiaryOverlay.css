@@ -722,3 +722,17 @@
   font-size: 0.8rem;
   color: #aab9c7;
 }
+
+/* Preserve the native source pattern beside alternate-timeframe market context. */
+.diary-trade-panel {
+  display: grid;
+  min-width: 0;
+  gap: 0.35rem;
+  margin-top: 0.4rem;
+}
+.diary-trade-panel h4 {
+  margin: 0;
+  color: #dce4eb;
+  font-size: 0.73rem;
+  font-weight: 600;
+}
