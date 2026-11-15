@@ -396,16 +396,16 @@ describe("Closed deals / exact episode index", () => {
     cohort: "JOINT_MANAGEMENT", replay_evidence: "EPISODE_INDEX_ONLY",
   };
 
-  it("filters losses by exact closed-deal PnL, prioritizes biggest losses and keeps filters across periods", async () => {
-    const episode = (id: string, symbol: string, pnl_usdt: string, closed_at_ms = 1_793_002_000_000) => ({
-      ...robotDeal, trade_episode_id: "te_" + id.repeat(24), symbol, pnl_usdt, closed_at_ms,
+  it("filters closed deals by realized result and direction, preserves selections across periods and resets on ticker drilldown", async () => {
+    const episode = (id: string, symbol: string, pnl_usdt: string, side: "LONG" | "SHORT" = "LONG") => ({
+      ...robotDeal, trade_episode_id: "te_" + id.repeat(24), symbol, pnl_usdt, side,
     });
     const deals = [
       episode("a", "ETHUSDT", "3.1"),
       episode("b", "BTCUSDT", "-0.0026140884"),
-      episode("c", "ADAUSDT", "-12.3"),
-      episode("d", "XRPUSDT", "-0.0000000004"),
-      episode("e", "DOGEUSDT", "0"),
+      episode("c", "ADAUSDT", "-12.3", "SHORT"),
+      episode("d", "XRPUSDT", "-0.0000000004", "SHORT"),
+      episode("e", "DOGEUSDT", "0", "SHORT"),
     ];
     const fetchMock = vi.fn().mockImplementation(async (url: string) => new Response(JSON.stringify({
       ...finrezResponse,
@@ -413,28 +413,50 @@ describe("Closed deals / exact episode index", () => {
       closed_episodes: deals,
     }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
-    render(<DiaryOverlay accountKey="paper:loss-sort" initialSection="DEALS"
+    render(<DiaryOverlay accountKey="paper:deal-filters" initialSection="DEALS"
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
     await screen.findByRole("button", { name: /ETHUSDT/ });
 
     const orderedSymbols = () => screen.getAllByRole("button", {
       name: /ETHUSDT|BTCUSDT|ADAUSDT|XRPUSDT|DOGEUSDT/,
     }).map((row) => row.querySelector(".diary-trade-heading strong")?.textContent);
-    const toggle = screen.getByRole("button", { name: "Убыточные" });
-    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    const controls = screen.getByRole("searchbox", { name: "Поиск по тикеру" }).closest(".diary-ticker-search");
+    expect(controls).toHaveClass("diary-ticker-search-deals");
+    expect(controls?.querySelectorAll("input, select")).toHaveLength(2);
+    expect(controls?.querySelectorAll(".diary-deal-filter-group")).toHaveLength(2);
+
+    const profit = screen.getByRole("button", { name: "Прибыльные" });
+    const loss = screen.getByRole("button", { name: "Убыточные" });
+    const long = screen.getByRole("button", { name: "LONG" });
+    const short = screen.getByRole("button", { name: "SHORT" });
+    const pattern = screen.getByRole("combobox", { name: "Выбор паттерна" });
+    expect(loss).toHaveAttribute("aria-pressed", "false");
+    expect(long).toHaveAttribute("aria-pressed", "false");
     expect(orderedSymbols()).toEqual(["ETHUSDT", "BTCUSDT", "ADAUSDT", "XRPUSDT", "DOGEUSDT"]);
 
-    fireEvent.click(toggle);
-    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(loss);
+    expect(loss).toHaveAttribute("aria-pressed", "true");
     expect(orderedSymbols()).toEqual(["ADAUSDT", "BTCUSDT", "XRPUSDT"]);
     expect(screen.getByRole("button", { name: /ADAUSDT/ })).toHaveTextContent("PnL: -12,30 USDT");
     expect(screen.getByRole("button", { name: /XRPUSDT/ })).toHaveTextContent("PnL: -<0,000001 USDT");
 
-    fireEvent.click(screen.getByRole("button", { name: /BTCUSDT/ }));
-    expect(screen.getByText(episode("b", "BTCUSDT", "-0.0026140884").trade_episode_id)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /К сделкам/ }));
+    fireEvent.click(long);
+    expect(orderedSymbols()).toEqual(["BTCUSDT"]);
+    fireEvent.click(long);
     expect(orderedSymbols()).toEqual(["ADAUSDT", "BTCUSDT", "XRPUSDT"]);
+    fireEvent.click(loss);
+    expect(orderedSymbols()).toEqual(["ETHUSDT", "BTCUSDT", "ADAUSDT", "XRPUSDT", "DOGEUSDT"]);
 
+    fireEvent.click(profit);
+    expect(orderedSymbols()).toEqual(["ETHUSDT"]);
+    fireEvent.click(short);
+    expect(screen.getByText("Нет прибыльных сделок по выбранным фильтрам")).toBeInTheDocument();
+    fireEvent.click(short);
+    expect(orderedSymbols()).toEqual(["ETHUSDT"]);
+    fireEvent.click(profit);
+    expect(orderedSymbols()).toEqual(["ETHUSDT", "BTCUSDT", "ADAUSDT", "XRPUSDT", "DOGEUSDT"]);
+
+    fireEvent.click(loss);
     fireEvent.change(screen.getByRole("searchbox", { name: "Поиск по тикеру" }), {
       target: { value: "BTC" },
     });
@@ -449,22 +471,21 @@ describe("Closed deals / exact episode index", () => {
       target: { value: "ETH" },
     });
     expect(screen.getByText("Нет убыточных сделок по выбранным фильтрам")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Убыточные" }));
+    fireEvent.click(loss);
+    expect(orderedSymbols()).toEqual(["ETHUSDT"]);
+    fireEvent.change(pattern, { target: { value: "__NO_VERIFIED_PATTERN__" } });
     expect(orderedSymbols()).toEqual(["ETHUSDT"]);
 
-    // An explicit "all deals" drilldown must not silently inherit prior loss/pattern filters.
-    fireEvent.change(screen.getByRole("searchbox", { name: "Поиск по паттерну" }), {
-      target: { value: "old search" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Убыточные" }));
+    // Explicit ticker drilldown clears every Deals-only filter.
     fireEvent.click(screen.getByRole("button", { name: "Финрез" }));
     fireEvent.click(await screen.findByRole("button", { name: "Показать сделки по ETHUSDT" }));
-    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
-    expect(screen.getByRole("searchbox", { name: "Поиск по паттерну" })).toHaveValue("");
+    expect(screen.getByRole("combobox", { name: "Выбор паттерна" })).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Прибыльные" })).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByRole("button", { name: "Убыточные" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: "LONG" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: "SHORT" })).toHaveAttribute("aria-pressed", "false");
     await screen.findByRole("button", { name: /ETHUSDT/ });
     expect(orderedSymbols()).toEqual(["ETHUSDT"]);
-    expect(screen.getByRole("button", { name: /ETHUSDT/ })).toHaveTextContent("PnL: +3,10 USDT");
   });
 
   it("keeps micro-losses visible on both closed deal rows and their details", async () => {
@@ -970,14 +991,14 @@ describe("Finrez first-screen UI", () => {
     const openWedge = screen.getAllByRole("button", { name: "Показать все сделки по паттерну Falling Wedge" });
     expect(openWedge).toHaveLength(2);
     fireEvent.click(openWedge[0]);
-    expect(screen.getByRole("searchbox", { name: "Поиск по паттерну" })).toHaveValue("Falling Wedge");
+    expect(screen.getByRole("combobox", { name: "Выбор паттерна" })).toHaveValue("Falling Wedge");
     expect(await screen.findAllByText("Клин ↘")).toHaveLength(3);
     expect(screen.queryByText("Triangle Compression")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Неделя" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=WEEK",
     ));
-    expect(screen.getByRole("searchbox", { name: "Поиск по паттерну" })).toHaveValue("Falling Wedge");
+    expect(screen.getByRole("combobox", { name: "Выбор паттерна" })).toHaveValue("Falling Wedge");
 
     fireEvent.click(screen.getByRole("button", { name: "Убыточные" }));
     expect(screen.getAllByText("Клин ↘")).toHaveLength(1);
@@ -1046,7 +1067,7 @@ describe("Finrez first-screen UI", () => {
     expect(await screen.findByText(/Нет подтверждённых закрытых сделок/)).toBeInTheDocument();
   });
 
-  it("combines ticker, period and case-insensitive verified pattern search without guessing patterns", async () => {
+  it("combines ticker, period and exact verified pattern selection without guessing patterns", async () => {
     const linked = (id: string, symbol: string, pattern: string, origin = "ROBOT") => ({
       trade_episode_id: "te_" + id.repeat(24), symbol, side: "LONG",
       opened_at_ms: 1_793_001_000_000, closed_at_ms: 1_793_002_000_000,
@@ -1073,28 +1094,27 @@ describe("Finrez first-screen UI", () => {
       closed_episodes: [btc, eth, unproven],
     }), { status: 200 }));
     vi.stubGlobal("fetch", mockFetch);
-    render(<DiaryOverlay accountKey="paper:pattern-search" initialSection="FINREZ"
+    render(<DiaryOverlay accountKey="paper:pattern-select" initialSection="FINREZ"
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
 
     expect(await screen.findByText("BTCUSDT")).toBeInTheDocument();
-    expect(screen.queryByRole("searchbox", { name: "Поиск по паттерну" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Выбор паттерна" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Сделки" }));
     expect(await screen.findByText("Клин ↘")).toBeInTheDocument();
     expect(screen.getByText("Triangle Compression")).toBeInTheDocument();
     expect(screen.getByText("не установлен")).toBeInTheDocument();
-    const pattern = screen.getByRole("searchbox", { name: "Поиск по паттерну" });
+    const pattern = screen.getByRole("combobox", { name: "Выбор паттерна" });
     const ticker = screen.getByRole("searchbox", { name: "Поиск по тикеру" });
 
-    fireEvent.change(pattern, { target: { value: "  wEdGe " } });
+    fireEvent.change(pattern, { target: { value: "Falling Wedge" } });
     expect(screen.getByText("BTCUSDT")).toBeInTheDocument();
     expect(screen.queryByText("ETHUSDT")).not.toBeInTheDocument();
     expect(screen.queryByText("XRPUSDT")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Подробности сделки" })).toBeInTheDocument();
 
     fireEvent.change(ticker, { target: { value: "eth" } });
     expect(await screen.findByText("По выбранным фильтрам сделок нет")).toBeInTheDocument();
-    expect(pattern).toHaveValue("  wEdGe ");
-    fireEvent.change(pattern, { target: { value: "TRIANGLE" } });
+    expect(pattern).toHaveValue("Falling Wedge");
+    fireEvent.change(pattern, { target: { value: "Triangle Compression" } });
     expect(screen.getByText("ETHUSDT")).toBeInTheDocument();
     expect(screen.queryByText("BTCUSDT")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Неделя" }));
@@ -1102,24 +1122,27 @@ describe("Finrez first-screen UI", () => {
       "/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=WEEK",
     ));
     expect(await screen.findByText("Triangle Compression")).toBeInTheDocument();
-    expect(pattern).toHaveValue("TRIANGLE");
+    expect(pattern).toHaveValue("Triangle Compression");
     expect(ticker).toHaveValue("ETH");
 
-    // The pattern query applies to Deals only, not the aggregated Finrez.
+    // The pattern selector is Deals-only and preserves its exact selection across sections.
     fireEvent.click(screen.getByRole("button", { name: "Финрез" }));
-    expect(screen.queryByRole("searchbox", { name: "Поиск по паттерну" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Выбор паттерна" })).not.toBeInTheDocument();
     expect(await screen.findByText("+7,20 USDT")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Сделки" }));
     expect(await screen.findByText("Triangle Compression")).toBeInTheDocument();
-    expect(screen.getByRole("searchbox", { name: "Поиск по паттерну" })).toHaveValue("TRIANGLE");
-    fireEvent.change(screen.getByRole("searchbox", { name: "Поиск по паттерну" }), {
-      target: { value: "не установлен" },
-    });
-    expect(screen.getByText("По выбранным фильтрам сделок нет")).toBeInTheDocument();
-    fireEvent.change(screen.getByRole("searchbox", { name: "Поиск по паттерну" }), {
-      target: { value: "" },
-    });
+    const reopenedPattern = screen.getByRole("combobox", { name: "Выбор паттерна" });
+    const reopenedTicker = screen.getByRole("searchbox", { name: "Поиск по тикеру" });
+    expect(reopenedPattern).toHaveValue("Triangle Compression");
+
+    fireEvent.change(reopenedTicker, { target: { value: "" } });
+    fireEvent.change(reopenedPattern, { target: { value: "__NO_VERIFIED_PATTERN__" } });
+    expect(screen.getByText("XRPUSDT")).toBeInTheDocument();
+    expect(screen.queryByText("BTCUSDT")).not.toBeInTheDocument();
+    fireEvent.change(reopenedPattern, { target: { value: "" } });
+    expect(screen.getByText("BTCUSDT")).toBeInTheDocument();
     expect(screen.getByText("ETHUSDT")).toBeInTheDocument();
+    expect(screen.getByText("XRPUSDT")).toBeInTheDocument();
     expect(mockFetch.mock.calls.filter(([url]) => String(url).includes("/episode-facts"))).toHaveLength(0);
   });
 
@@ -1682,7 +1705,7 @@ describe("Verified Wedge lineage in Statistics", () => {
     expect(screen.getByTitle("-2.5 USDT")).toHaveTextContent("-2,50 USDT");
     fireEvent.click(screen.getByRole("button", { name: "Показать все сделки по паттерну Falling Wedge" }));
     expect(await screen.findByText("Клин ↘")).toBeInTheDocument();
-    expect(screen.getByRole("searchbox", { name: "Поиск по паттерну" })).toHaveValue("Falling Wedge");
+    expect(screen.getByRole("combobox", { name: "Выбор паттерна" })).toHaveValue("Falling Wedge");
     fireEvent.click(screen.getByRole("button", { name: /BTCUSDT/ }));
     expect(screen.getByText("candidate-42")).toBeInTheDocument();
     expect(screen.getByText(/Не D2, без исходной геометрии/)).toBeInTheDocument();
