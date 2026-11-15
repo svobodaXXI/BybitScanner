@@ -127,7 +127,7 @@ CONTROL_ACTIONS = {
     "Остановить PAPER-ядро": "stop",
     "Обновить и запустить PAPER": "update-and-start",
 }
-CONTROL_MODULE = "/opt/BybitScanner/venv/bin/python -m tools.vps_owner_control"
+CONTROL_MODULE = "cd /opt/BybitScanner && /opt/BybitScanner/venv/bin/python -m tools.vps_owner_control"
 
 
 def gui_owner_status(stdout: str, returncode: int, request: str) -> str:
