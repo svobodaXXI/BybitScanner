@@ -174,6 +174,47 @@ const TIMEFRAMES = [
 ] as const;
 const utc = (ms: number) => Math.floor(ms / 1000) as UTCTimestamp;
 
+/** Draw immutable source geometry only over genuine, loaded candle timestamps.
+ * Distant anchors must never add whitespace to the chart's time scale.
+ * A higher timeframe may have fewer than two supporting candles: omit that
+ * projected segment rather than invent candles or distort the source rays.
+ */
+export function visibleOriginalBoundarySegments(
+  boundaries: readonly Boundary[], bars: readonly Bar[],
+): Array<{ boundaryId: string; points: Array<{ time: UTCTimestamp; value: number }> }> {
+  if (bars.length < 2) return [];
+  const first = bars[0].open_time_ms;
+  const last = bars[bars.length - 1].open_time_ms;
+  const projected: Array<{ boundaryId: string; points: Array<{ time: UTCTimestamp; value: number }> }> = [];
+  for (const boundary of boundaries) {
+    const a = boundary.anchors[0];
+    const b = boundary.anchors[1];
+    if (!a) continue;
+    const start = boundary.kind === "horizontal" ? first : a.bar_open_time_ms;
+    const end = boundary.kind === "segment" ? b?.bar_open_time_ms : last;
+    if (end == null || end <= start) continue;
+    const supported = bars.filter(bar => bar.open_time_ms >= start && bar.open_time_ms <= end);
+    if (supported.length < 2) continue;
+    const priceAt = (time: number) => b
+      ? a.price + (b.price - a.price) * (time - a.bar_open_time_ms)
+        / (b.bar_open_time_ms - a.bar_open_time_ms)
+      : a.price;
+    const begin = supported[0].open_time_ms;
+    const finish = supported[supported.length - 1].open_time_ms;
+    const values = [priceAt(begin), priceAt(finish)];
+    if (values.every(value => Number.isFinite(value) && value > 0)) {
+      projected.push({
+        boundaryId: boundary.boundary_id,
+        points: [
+          { time: utc(begin), value: values[0] },
+          { time: utc(finish), value: values[1] },
+        ],
+      });
+    }
+  }
+  return projected;
+}
+
 /** Same lightweight-charts engine / Moscow axis as Terminal, but without orders or drawing tools. */
 function InteractiveTradeChart({ original, bars, frame, executions, side }: {
   original: OriginalEvidence; bars: readonly Bar[]; frame: string;
@@ -185,6 +226,7 @@ function InteractiveTradeChart({ original, bars, frame, executions, side }: {
   const overlays = useRef<Array<ISeriesApi<"Line", Time>>>([]);
   const previousFrame = useRef<string | null>(null);
   const [markerCount, setMarkerCount] = useState(0);
+  const [visibleLines, setVisibleLines] = useState(0);
 
   useEffect(() => {
     if (!host.current) return;
@@ -237,8 +279,6 @@ function InteractiveTradeChart({ original, bars, frame, executions, side }: {
     })));
     for (const overlay of overlays.current) chart.removeSeries(overlay);
     overlays.current = [];
-    const last = bars[bars.length - 1].open_time_ms;
-    const first = bars[0].open_time_ms;
     const addOverlay = (points: Array<{ time: UTCTimestamp; value: number }>, color: string, marker = false) => {
       if (!points.length) return;
       const line = chart.addSeries(LineSeries, {
@@ -246,25 +286,15 @@ function InteractiveTradeChart({ original, bars, frame, executions, side }: {
         pointMarkersVisible: marker, pointMarkersRadius: marker ? 5 : 0,
         crosshairMarkerVisible: marker, lastValueVisible: false,
         priceLineVisible: false,
+        // Source projections and execution markers cannot set the candle scale.
+        autoscaleInfoProvider: () => null,
       });
       line.setData(points);
       overlays.current.push(line);
     };
-    for (const boundary of original.snapshot.boundaries) {
-      const a = boundary.anchors[0], b = boundary.anchors[1];
-      const start = boundary.kind === "horizontal" ? first : a.bar_open_time_ms;
-      const finish = boundary.kind === "segment" ? b.bar_open_time_ms
-        : Math.max(last, b?.bar_open_time_ms ?? a.bar_open_time_ms + original.intervalMs);
-      const priceAt = (time: number) => b
-        ? a.price + (b.price - a.price) * (time - a.bar_open_time_ms)
-          / (b.bar_open_time_ms - a.bar_open_time_ms)
-        : a.price;
-      if (finish > start && [priceAt(start), priceAt(finish)].every(value =>
-        Number.isFinite(value) && value > 0)) addOverlay([
-        { time: utc(start), value: priceAt(start) },
-        { time: utc(finish), value: priceAt(finish) },
-      ], "#e1b653");
-    }
+    const lines = visibleOriginalBoundarySegments(original.snapshot.boundaries, bars);
+    setVisibleLines(lines.length);
+    for (const line of lines) addOverlay(line.points, "#e1b653");
     const candleTimes = new Set(bars.map(bar => bar.open_time_ms));
     const period = frameMs(frame)!;
     let found = 0;
@@ -295,6 +325,10 @@ function InteractiveTradeChart({ original, bars, frame, executions, side }: {
     <div className="diary-original-signal-plot">
       <div ref={host} className="diary-interactive-trade-chart" role="application"
         aria-label="Интерактивный свечной график сделки" />
+      {visibleLines === 0 && <small role="status">
+        Исходные линии не попадают минимум на две загруженные свечи этого ТФ.
+        Для точной геометрии откройте исходный ТФ; свечи не дорисовываются.
+      </small>}
       <div className="diary-trade-chart-controls">
         <span>Жёлтые линии: исходная геометрия · МСК</span>
         <button type="button" onClick={() => api.current?.timeScale().fitContent()}>
