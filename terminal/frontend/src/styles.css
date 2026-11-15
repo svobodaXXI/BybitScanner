@@ -327,6 +327,11 @@ button {
   border-color: #ff7373;
   font-weight: 700;
 }
+.editor-correction-export .editor-review-fields > button.editor-owner-signal-save-success {
+  color: #43d67b;
+  border-color: #43d67b;
+  font-weight: 700;
+}
 .editor-correction-export .editor-review-fields > .editor-owner-signal-error-detail {
   display: block;
   width: 100%;

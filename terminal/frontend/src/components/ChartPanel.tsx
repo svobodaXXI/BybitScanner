@@ -1134,7 +1134,8 @@ export function ChartPanel({
                   placeholder="Комментарий (необязательно)" maxLength={1024}
                   value={proposalNote} onChange={(event) => { setProposalNote(event.target.value); setProposalStatus(""); }} />
                 <button type="button"
-                  className={proposalStatus.startsWith("Не удалось сохранить:") ? "editor-owner-signal-save-error" : undefined}
+                  className={proposalStatus.startsWith("Не удалось сохранить:") ? "editor-owner-signal-save-error" :
+                    proposalStatus.startsWith("Пример ") ? "editor-owner-signal-save-success" : undefined}
                   disabled={proposalPending || (onSubmitOwnerChart
                     ? !proposalPattern || !proposalDirection || (proposalPattern === "Wedge" && !proposalWedgeSubtype)
                     : !onSubmitOwnerSignal || !proposalDirection || proposalPattern !== "Wedge")}
