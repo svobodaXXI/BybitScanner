@@ -185,6 +185,30 @@ class TestWindowsVpsManager(unittest.TestCase):
                       control_ssh_command("bybitscanner-vps", "", "", "status",
                                           request_id=request)[-1])
 
+    def test_every_owner_command_enters_repository_before_module_import(self):
+        request = "1" * 32
+        for mode, sha in (
+            ("update", "a" * 40),
+            ("start", "installed"),
+            ("stop", "installed"),
+            ("update-and-start", "a" * 40),
+            ("status", ""),
+            ("list", ""),
+        ):
+            with self.subTest(mode=mode):
+                command = control_ssh_command(
+                    "bybitscanner-vps", "", "", mode, sha=sha,
+                    request_id=request if mode != "list" else "",
+                )
+                self.assertEqual(command[-2], "bybitscanner-vps")
+                self.assertTrue(
+                    command[-1].startswith(
+                        "cd /opt/BybitScanner && "
+                        "/opt/BybitScanner/venv/bin/python -m tools.vps_owner_control "
+                    ),
+                    command[-1],
+                )
+
     def test_owner_control_blocks_injection_and_unapproved_target(self):
         for name, args in (
             ("missing_sha", dict(operation="update", sha="", request_id="1"*32)),
