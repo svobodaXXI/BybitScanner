@@ -126,7 +126,6 @@ class ScannerWedgeClosedCandleCutoffTests(unittest.TestCase):
                      patch.object(core, "evaluate_signal", return_value={}), \
                      patch.object(core, "create_signal_payload", return_value={}), \
                      patch.object(core, "project_frozen_geometry_to_robot_1m", return_value={}), \
-                     patch.object(core, "build_scanner_geometry_cursor_anchor", return_value={}), \
                      patch.object(core, "create_chart"), \
                      patch.object(core, "create_report"), \
                      patch.object(core.time, "time_ns",
@@ -145,6 +144,15 @@ class ScannerWedgeClosedCandleCutoffTests(unittest.TestCase):
                     int(geometry["end_index"]),
                 ]
                 self.assertEqual(actual_identity, case["expectation"]["geometry_identity"])
+                # Keep the real Scanner-to-Robot cursor tied to the closed decision bar.
+                source_time = int(closed["time"].iloc[-1])
+                self.assertEqual(actual["result"]["scanner_source_candle_time_ms"], source_time)
+                self.assertEqual(actual["result"]["scanner_geometry_cursor"], {
+                    "version": "1.0", "timeframe": "1",
+                    "geometry_index": len(closed) - 1,
+                    "source_candle_time_ms": source_time,
+                })
+                self.assertTrue(actual["result"]["robot_handoff_ready"])
 
 
     def test_forming_bar_cannot_supply_third_right_pivot(self):
