@@ -67,9 +67,9 @@ const extension = {
 const secondPage = {
   ...extension,
   as_of_ms: t + 41 * interval,
-  bars: extension.bars.map(bar => ({
+  bars: [...extension.bars, ...extension.bars.map(bar => ({
     ...bar, open_time_ms: bar.open_time_ms + 20 * interval,
-  })),
+  }))],
 };
 afterEach(() => { vi.unstubAllGlobals(); });
 
@@ -96,7 +96,9 @@ describe("original signal on a closed deal", () => {
 
   it("rejects public continuation gaps, wrong revisions, wrong source IDs and old windows", () => {
     const source = parseOriginalTradeSignal(archived, identity)!;
-    expect(parseOriginalTradeContinuation(extension, source, t + interval)).toHaveLength(20);
+    const first = parseOriginalTradeContinuation(extension, source, t + interval)!;
+    expect(first).toHaveLength(20);
+    const accepted = [...source.snapshot.bars, ...first];
     expect(parseOriginalTradeContinuation({
       ...extension, source_revision: "b".repeat(64),
     }, source, t + interval)).toBeNull();
@@ -107,14 +109,18 @@ describe("original signal on a closed deal", () => {
       ...extension, bars: extension.bars.slice(1),
     }, source, t + interval)).toBeNull();
     expect(parseOriginalTradeContinuation(extension, source, t + 22 * interval)).toBeNull();
-    expect(parseOriginalTradeContinuation(secondPage, source, t + 21 * interval)).toHaveLength(20);
-    expect(parseOriginalTradeContinuation(secondPage, source, t + 20 * interval)).toBeNull();
+    expect(parseOriginalTradeContinuation(secondPage, source, t + 21 * interval, accepted)).toHaveLength(20);
+    expect(parseOriginalTradeContinuation(secondPage, source, t + 21 * interval)).toBeNull();
+    expect(parseOriginalTradeContinuation(secondPage, source, t + 20 * interval, accepted)).toBeNull();
     expect(parseOriginalTradeContinuation({
       ...secondPage, bars: secondPage.bars.slice(1),
-    }, source, t + 21 * interval)).toBeNull();
+    }, source, t + 21 * interval, accepted)).toBeNull();
+    expect(parseOriginalTradeContinuation({
+      ...secondPage, bars: [{ ...extension.bars[0], high: 999 }, ...secondPage.bars.slice(1)],
+    }, source, t + 21 * interval, accepted)).toBeNull(); // Changed historical overlap.
     expect(parseOriginalTradeContinuation({
       ...secondPage, as_of_ms: t + 40 * interval,
-    }, source, t + 21 * interval)).toBeNull();
+    }, source, t + 21 * interval, accepted)).toBeNull();
   });
 
   it("loads 20 closed candles only on each click and keeps original lines unchanged", async () => {
@@ -141,6 +147,8 @@ describe("original signal on a closed deal", () => {
     fireEvent.click(screen.getByRole("button", { name: "Показать следующие свечи" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
     expect(fetchMock).toHaveBeenCalledWith(secondUrl, expect.any(Object));
+    await waitFor(() => expect(screen.getByText("Следующие закрытые свечи добавлены."))
+      .toBeInTheDocument());
     expect(screen.queryByText(/123456/)).not.toBeInTheDocument();
   });
 
