@@ -7,6 +7,14 @@ at `DOCUMENTS/AGENT_GUIDE_FULL.md`, authoritative for its applicable contracts.
 Current owner instruction and actual repository/host evidence outrank dated
 historical task snapshots; normative safety and approval contracts still apply.
 
+**Coordination of existing BybitScanner chats (owner 2026-11-15):** read
+[`DOCUMENTS/WORKSTREAM_COORDINATION.md`](DOCUMENTS/WORKSTREAM_COORDINATION.md)
+and the relevant latest comments in [GitHub issue #1077](https://github.com/svobodaXXI/BybitScanner/issues/1077).
+Until the owner finalizes the three-chat reorganization, the three existing
+specialist chats finish **only their active bounded task**, record a handoff and
+report READY_FOR_ARCHIVE or an exact blocker; do not start the proposed next
+workstreams. This is routing, not a new approval or trading authority.
+
 ## Owner time and trust — mandatory at every new task
 
 **Overarching owner priority (reconfirmed 2026-11-04): maximize saved owner time**, including the shortest safe, efficient, autonomous development workflow. Technical BACKLOG P0 describes the current engineering task, **not** the project's overriding priority. Prefer end-to-end delivery with minimal owner interventions, approvals only at required boundaries, and observed outcomes over process/PR churn. This priority is **fixed across quests, backlogs, releases, and chats**: do not rename, replace, demote, or reinterpret it because the current technical P0 changes. Only a new **explicit owner instruction specifically changing this overarching priority** may revise it; ordinary task requests, planning, documents, and automation cannot. All trading/runtime safety gates and owner approvals remain binding.
