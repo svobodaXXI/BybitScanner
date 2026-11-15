@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import {
   OriginalEpisodeSignalChart, parseOriginalTradeSignal, parseOriginalTradeContinuation,
-  parseOriginalTradeTimeframe,
+  parseOriginalTradeTimeframe, visibleOriginalBoundarySegments,
 } from "./OriginalEpisodeSignalChart";
 
 
@@ -185,6 +185,34 @@ describe("original signal on a closed deal", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "M5" }))
       .toHaveAttribute("aria-pressed", "true"));
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("projects rays only onto loaded candle times, without phantom whitespace", () => {
+    const future = Array.from({ length: 20 }, (_, index) => ({
+      ...snapshot.bars[0], open_time_ms: t + (index + 5) * interval,
+    }));
+    const lines = visibleOriginalBoundarySegments(snapshot.boundaries, future);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].boundaryId).toBe("lower-ray");
+    expect(lines[0].points).toEqual([
+      { time: (t + 5 * interval) / 1000, value: 100 },
+      { time: (t + 24 * interval) / 1000, value: 103.8 },
+    ]);
+    // No original t/t+5m point may expand the 20-candle X axis.
+    const oldSegment = [{
+      ...snapshot.boundaries[0], kind: "segment" as const,
+    }];
+    expect(visibleOriginalBoundarySegments(oldSegment, future)).toEqual([]);
+  });
+
+  it("does not show lines in empty space when a higher timeframe has one supporting candle", () => {
+    const highBars = [
+      { ...snapshot.bars[0], open_time_ms: t - 4 * interval },
+      { ...snapshot.bars[0], open_time_ms: t + 4 * interval },
+    ];
+    expect(visibleOriginalBoundarySegments(snapshot.boundaries, highBars)).toEqual([]);
+    expect(visibleOriginalBoundarySegments(snapshot.boundaries, snapshot.bars)[0].points)
+      .toHaveLength(2);
   });
 
   it("never requests unrelated source geometry without an exact candidate", async () => {
