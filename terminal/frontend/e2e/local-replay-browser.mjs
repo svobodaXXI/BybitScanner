@@ -279,7 +279,8 @@ try {
   });
   await readySetup.getByRole("checkbox", { name: "Все стратегии" }).check();
   await readySetup.getByRole("button", { name: "Применить" }).click();
-  assert.match(await readySetup.innerText(), /Пока доступны только/);
+  assert.match(await readySetup.innerText(), /торговый запуск пока поддерживает только два клина/);
+  assert.equal(await appliedPlay.isDisabled(), true, "unsupported virtual selection cannot start trades");
   assert.equal(posted.length, 1, "unsupported strategies never cause a backend POST");
   assert.equal(requests.filter(url => url.includes("/api/") || url.includes("/v5/")).length, 0);
 
