@@ -89,9 +89,56 @@ def _write_day(directory: Path, symbol: str, day: int, rows: dict[int, Candle]) 
         temporary.unlink(missing_ok=True)
 
 
+def _read_verified_report(path: Path | None, symbol: str) -> dict[int, Candle]:
+    """Reuse only the known locally bundled public MARKET_ONLY JSON format.
+
+    Never search arbitrary owner directories or treat trade reports as candles.
+    An unsupported/malformed archive contributes zero bars, not fake evidence.
+    """
+    if path is None or not path.is_file() or path.is_symlink():
+        return {}
+    try:
+        if path.stat().st_size > 24 * 1024 * 1024:
+            return {}
+        raw = json.loads(path.read_bytes())
+        if (not isinstance(raw, dict) or raw.get("source") != "SIMULATION"
+                or raw.get("mode") != "MARKET_ONLY" or raw.get("symbol") != symbol
+                or raw.get("timeframe") != "5m"
+                or raw.get("market_data_source") not in (
+                    "BYBIT_PUBLIC_KLINE", "BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M"
+                )):
+            return {}
+        events = raw.get("events")
+        if not isinstance(events, list) or not 1 <= len(events) <= 100_000:
+            return {}
+        rows: dict[int, Candle] = {}
+        previous = -1
+        for event in events:
+            if not isinstance(event, dict) or event.get("kind") != "CANDLE_CLOSED":
+                return {}
+            bar = event.get("candle")
+            if not isinstance(bar, dict):
+                return {}
+            t = bar.get("start_ms")
+            if type(t) is not int or t <= previous or t % FIVE_MINUTES_MS:
+                return {}
+            if bar.get("end_ms") != t + FIVE_MINUTES_MS:
+                return {}
+            item = Candle(
+                start_ms=t, interval_ms=FIVE_MINUTES_MS,
+                open=bar.get("open"), high=bar.get("high"),
+                low=bar.get("low"), close=bar.get("close"), volume=bar.get("volume"),
+            )
+            rows[t] = item
+            previous = t
+        return rows
+    except (OSError, ValueError, TypeError, OverflowError, KeyError):
+        return {}
+
+
 def complete_history_fetch(
     *, symbol: str, start_ms: int, end_ms: int, directory: Path,
-    upstream_fetch,
+    upstream_fetch, bundled_report: Path | None = None,
 ):
     """Return a feed adapter backed by verified local bars; fetch only missing spans.
 
@@ -110,6 +157,14 @@ def complete_history_fetch(
         days = {day: _read_day(directory, symbol, day)
                 for day in range(first_day, last_day + 1)}
         known = {t: candle for rows in days.values() for t, candle in rows.items()}
+        seeded = _read_verified_report(bundled_report, symbol)
+        changed = set()
+        for t, candle in seeded.items():
+            if start_ms <= t < end_ms and t not in known:
+                known[t] = candle
+                day = t // DAY_MS
+                days[day][t] = candle
+                changed.add(day)
         missing = [t for t in range(start_ms, end_ms, FIVE_MINUTES_MS) if t not in known]
         spans = []
         for t in missing:
@@ -117,7 +172,6 @@ def complete_history_fetch(
                 spans[-1] = (spans[-1][0], t + FIVE_MINUTES_MS)
             else:
                 spans.append((t, t + FIVE_MINUTES_MS))
-        changed = set()
         for lo, hi in spans:
             fetched = load_closed_five_minute_history(
                 symbol=symbol, start_ms=lo, end_ms=hi, fetch_candles=upstream_fetch,
