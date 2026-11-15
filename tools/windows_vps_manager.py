@@ -98,7 +98,7 @@ ACTIONS = {
 # All probes are read-only. Successful command completion is evidence collection,
 # not proof of PAPER admission, Telegram delivery or a full Scanner pass.
 PREFLIGHT = (
-    "set -e; "
+    "set -e; cd /opt/BybitScanner; "
     "printf '=== VERIFIED_INSTALLED_RELEASE ===\\n'; "
     f"{VENV} -m tools.vps_release_identity verify; "
     "printf '=== SYSTEMD_UNITS ===\\n'; "
