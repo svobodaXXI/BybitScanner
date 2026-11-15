@@ -1,6 +1,7 @@
 """Safety regression tests for standalone Windows VPS Manager commands."""
 from __future__ import annotations
 
+import io
 import queue
 import subprocess
 import tempfile
@@ -10,7 +11,8 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from tools.windows_vps_manager import (ACTIONS, VPSManager, control_ssh_command,
-                                       preferred_route, parse_args, ssh_command)
+                                       preferred_route, parse_args, ssh_command,
+                                       remember_request_id, recover_last_request_id, run_cli)
 
 
 class TestWindowsVpsManager(unittest.TestCase):
@@ -207,6 +209,45 @@ class TestWindowsVpsManager(unittest.TestCase):
             VPSManager.worker_control(fake, ["ssh", "submit"], "update", request)
         self.assertEqual(run.call_count, 2)
         self.assertEqual(fake.events.get_nowait()[0], "submitted")
+
+    def test_request_id_persisted_and_validated_without_secrets(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "VPSManager" / "last_request_id"
+            request = "f" * 32
+            remember_request_id(request, path)
+            self.assertEqual(recover_last_request_id(path), request)
+            self.assertEqual(path.read_text(encoding="ascii"), request + "\n")
+            path.write_text("invalid or malicious ID", encoding="ascii")
+            self.assertEqual(recover_last_request_id(path), "")
+            with self.assertRaises(ValueError):
+                remember_request_id("invalid", path)
+
+    def test_cli_unknown_ssh_reply_recovers_status_without_resubmission(self):
+        with tempfile.TemporaryDirectory() as folder:
+            cached = Path(folder) / "last_request_id"
+            request = "f" * 32
+            with (patch("tools.windows_vps_manager.request_id_store", return_value=cached),
+                  patch("tools.windows_vps_manager.preferred_route",
+                        return_value=("bybitscanner-vps", "")),
+                  patch("tools.windows_vps_manager.subprocess.run",
+                        side_effect=[
+                            subprocess.TimeoutExpired("ssh", 35),
+                            subprocess.CompletedProcess(["ssh"], 0,
+                                                        stdout="REQUEST_ID=" + request
+                                                        + "\nSTATUS=FINISHED_OK\n", stderr=""),
+                        ]) as remote,
+                  patch("sys.stdout", new_callable=io.StringIO) as stdout):
+                self.assertEqual(run_cli(parse_args([
+                    "--operation", "stop", "--request-id", request])), 2)
+                self.assertEqual(recover_last_request_id(cached), request)
+                self.assertIn("REQUEST_ID=" + request, stdout.getvalue())
+                self.assertEqual(run_cli(parse_args(["--operation", "status"])), 0)
+                self.assertEqual(remote.call_count, 2)
+                self.assertIn("tools.vps_owner_control submit stop installed",
+                              remote.call_args_list[0].args[0][-1])
+                self.assertIn("tools.vps_owner_control status " + request,
+                              remote.call_args_list[1].args[0][-1])
+                self.assertNotIn(" submit ", remote.call_args_list[1].args[0][-1])
 
     def test_existing_alias_detected_without_rewriting_ssh_config(self):
         with tempfile.TemporaryDirectory() as temp:
