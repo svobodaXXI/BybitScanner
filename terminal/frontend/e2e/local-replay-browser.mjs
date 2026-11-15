@@ -62,6 +62,11 @@ try {
       }),
     });
   });
+  // Earlier Apply checks do not exercise real public networking.
+  // A later fixture overrides this route to test failure then success.
+  await page.route("**/local-replay/history?*", async route => {
+    await route.fulfill({ status: 502, contentType: "text/plain", body: "Mock public M5 unavailable" });
+  });
   await page.goto(localUrl, { waitUntil: "networkidle" });
   await page.getByRole("heading", { name: "Машина времени" }).waitFor();
   assert.equal(await page.locator(".replay-badge").count(), 0,
@@ -106,7 +111,9 @@ try {
   }
   assert.equal(await page.locator(".replay-history-controls").count(), 0,
     "obsolete second ticker/date/Bybit panel must never reappear");
-  assert.equal(await setup.getByRole("button", { name: "Загрузить Bybit (без сделок)" }).count(), 1);
+  assert.equal(await setup.getByRole("button", { name: "Загрузить Bybit (без сделок)" }).count(), 0);
+  assert.equal(await setup.getByRole("textbox", { name: "Координаты прогона" }).getAttribute("placeholder"), "",
+    "the input has no misleading fake XRP date");
   assert.equal(await endUtc.inputValue(), "2026-10-02T12:33");
   const duration = setup.getByRole("status", { name: "Продолжительность прогона" });
   assert.match(await duration.innerText(), /1 день/);
@@ -140,7 +147,8 @@ try {
   const copyableSource = (await page.locator(".replay-meta strong").first().innerText()).trim();
   await coordinates.fill(copyableSource);
   await setup.getByRole("button", { name: "Применить" }).click();
-  assert.equal(await setup.getByRole("alert").count(), 0, "copied Source must be accepted");
+  assert.equal(await setup.getByRole("alert").filter({ hasText: "координат" }).count(), 0,
+    "copied Source must be accepted");
   assert.equal(await startUtc.inputValue(), "2026-09-11T00:00");
   assert.equal(await endUtc.inputValue(), "2026-09-11T23:59");
   assert.equal(await page.locator(".replay-chart canvas").count(), 0,
@@ -473,18 +481,17 @@ try {
   // The actual local Python server uses text/plain for HTTP 502 failures.
   // Show the true failed boundary instead of a misleading JSON.parse error,
   // without silently replacing the selected ticker/history by demo candles.
-  await bounds.getByRole("button", { name: "Загрузить Bybit (без сделок)" }).click();
   const marketError = page.getByRole("alert").filter({ hasText: "Публичный Bybit M5 недоступен (HTTP 502)" });
   await marketError.waitFor();
   assert.match(await marketError.innerText(), /архив M1 и профиль риска/);
   assert.equal(await page.locator(".replay-chart-shell").count(), 0,
     "failed public market download cannot resurrect old market candles");
   await bounds.getByRole("checkbox", { name: "Ikigai Box" }).check();
-  await bounds.getByRole("button", { name: "Загрузить Bybit (без сделок)" }).click();
+  await bounds.getByRole("button", { name: "Применить" }).click();
   await page.getByText("РЕАЛЬНЫЕ СВЕЧИ BYBIT", { exact: false }).waitFor();
   assert.equal(publicMarketAttempts, 2);
   const marketSource = await page.locator(".replay-meta").innerText();
-  assert.match(marketSource, /Bybit · публичные свечи · без сделок/,
+  assert.match(marketSource, /Bybit · подтверждённые M5 · без сделок/,
     "public market-only source must be visible in the retained Source card");
   assert.doesNotMatch(marketSource, /SYNTHETIC_DEMO|Прогон \/ рынок/,
     "deleted synthetic run card must not be resurrected");
