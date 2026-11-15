@@ -130,6 +130,19 @@ CONTROL_ACTIONS = {
 CONTROL_MODULE = "/opt/BybitScanner/venv/bin/python -m tools.vps_owner_control"
 
 
+def gui_owner_status(stdout: str, returncode: int, request: str) -> str:
+    """Only an exact UUID and matching server status can color a GUI result."""
+    lines = stdout.strip().splitlines()
+    states = [line for line in lines if line.startswith("STATUS=")]
+    if "REQUEST_ID=" + request not in lines or len(states) != 1:
+        return "unproven"
+    return {
+        (0, "STATUS=FINISHED_OK"): "success",
+        (3, "STATUS=RUNNING"): "submitted",
+        (2, "STATUS=FAILED"): "failed",
+    }.get((returncode, states[0]), "unproven")
+
+
 
 def ssh_command(host: str, user: str, action: str, key: str = "") -> list[str]:
     host = host.strip()
@@ -394,15 +407,21 @@ class VPSManager(tk.Tk):
                 check=False)
             output = result.stdout.strip()
             if mode not in CONTROL_ACTIONS.values():
-                state = ("success" if result.returncode == 0 else
-                         "submitted" if result.returncode == 3 else "failure")
+                if mode == "status":
+                    state = gui_owner_status(output, result.returncode, request)
+                else:
+                    state = "success" if result.returncode == 0 else "failure"
                 self.events.put((state, output or "Статус не доказан"))
                 return
             # Lost submit reply => only query the same request; never replay it.
             status_command = control_ssh_command(
                 self.host.get(), self.user.get(), self.key.get(), "status",
                 request_id=request)
-            state = "submitted"
+            state = ("submitted" if result.returncode == 0
+                     and "REQUEST_ID=" + request in output.splitlines()
+                     and any(line.startswith("SUBMISSION=ACCEPTED")
+                             for line in output.splitlines())
+                     else "unproven")
             for attempt in range(3):
                 if attempt:
                     time.sleep(2)
@@ -410,15 +429,9 @@ class VPSManager(tk.Tk):
                     status_command, capture_output=True, text=True, errors="replace",
                     timeout=20, stdin=subprocess.DEVNULL, creationflags=NO_WINDOW,
                     check=False)
-                if "STATUS=FINISHED_OK" in probe.stdout and probe.returncode == 0:
-                    state = "success"
-                    output += "\n" + probe.stdout.strip()
-                    break
-                if "STATUS=FAILED" in probe.stdout:
-                    state = "failure"
-                    output += "\n" + probe.stdout.strip()
-                    break
-                if "STATUS=RUNNING" in probe.stdout:
+                verified = gui_owner_status(probe.stdout, probe.returncode, request)
+                if verified != "unproven":
+                    state = verified
                     output += "\n" + probe.stdout.strip()
                     break
             self.events.put((state, (output or "Ответ запуска неизвестен")
@@ -446,9 +459,13 @@ class VPSManager(tk.Tk):
                 kind, result = self.events.get_nowait()
                 self.write(result)
                 self.busy = False
-                self.status.set("Успешно · подтверждён результат" if kind == "success"
-                                else "Отправлено / выполняется" if kind == "submitted"
-                                else "Ошибка / результат не доказан")
+                labels = {
+                    "success": "Успешно · подтверждён результат",
+                    "submitted": "Отправлено / выполняется",
+                    "failed": "Операция завершилась ошибкой",
+                    "unproven": "Результат не доказан · проверьте статус",
+                }
+                self.status.set(labels.get(kind, "Ошибка / результат не доказан"))
                 for button in self.buttons:
                     button.state(["!disabled"])
         except queue.Empty:
