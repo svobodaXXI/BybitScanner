@@ -68,8 +68,8 @@ ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -o Connec
 "SSH_EXIT_CODE=$LASTEXITCODE"
 ```
 
-**Routing priority:** This alias is the **sole first-choice interactive/administrative
-SSH transport on this PC**. Keep VPN settings unchanged by default; a VPN-off
+**Routing priority:** This alias is the **sole first-choice host-shell SSH
+transport from native Windows PowerShell on this PC**. Keep VPN settings unchanged by default; a VPN-off
 probe is **not required** and must not be imposed as a prerequisite.
 Do not substitute direct `root@83.217.213.181`, manually select a different
 identity, overwrite `~/.ssh/config`, or disable host-key checks. Earlier failures
