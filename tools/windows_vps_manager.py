@@ -201,10 +201,10 @@ def ssh_command(host: str, user: str, action: str, key: str = "") -> list[str]:
 def known_windows_device(profile: str | None = None) -> str:
     """Identify only the two owner-confirmed Windows user profiles; else UNKNOWN."""
     value = profile if profile is not None else os.environ.get("USERPROFILE", "")
-    normalized = value.strip().strip('"').replace("/", "\\\\").rstrip("\\\\").casefold()
+    normalized = value.strip().strip('"').replace("/", "\\").rstrip("\\").casefold()
     return {
-        "c:\\\\users\\\\svobo": "pc",
-        "c:\\\\users\\\\svoboda21": "laptop",
+        "c:\\users\\svobo": "pc",
+        "c:\\users\\svoboda21": "laptop",
     }.get(normalized, "")
 
 
