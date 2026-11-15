@@ -1640,7 +1640,7 @@ describe("shared statistics trade action standard", () => {
       expect(button).toBeDisabled();
       expect(button).toHaveAttribute("title", expect.stringContaining("нужен подтверждённый PAPER episode"));
     });
-    expect(screen.getByText(/PnL -1,8162 USDT/)).toHaveAttribute("title", "-1.81622186");
+    expect(screen.getByText(/PnL: -1,8162 USDT/)).toHaveAttribute("title", "-1.81622186");
   });
 });
 
@@ -1743,7 +1743,7 @@ describe("Verified Wedge lineage in Statistics", () => {
     expect(region).not.toHaveTextContent("-2,50 USDT");
     fireEvent.click(screen.getByRole("button", { name: "Сделки" }));
     expect(await screen.findAllByText("не установлен")).toHaveLength(7);
-    expect(screen.getAllByText("PnL -2,50 USDT")).toHaveLength(7);
+    expect(screen.getAllByText(/PnL: -2,50 USDT/)).toHaveLength(7);
   });
 
   it("does not allow a Robot verified_signal in a manual report", async () => {
