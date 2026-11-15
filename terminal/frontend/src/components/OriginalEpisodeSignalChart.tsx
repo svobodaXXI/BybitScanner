@@ -230,6 +230,7 @@ function InteractiveTradeChart({ original, bars, frame, executions, side, showGe
   const series = useRef<ISeriesApi<"Candlestick", Time> | null>(null);
   const overlays = useRef<Array<ISeriesApi<"Line", Time>>>([]);
   const previousFrame = useRef<string | null>(null);
+  const focusedExecutions = useRef(false);
   const [markerCount, setMarkerCount] = useState(0);
   const [visibleLines, setVisibleLines] = useState(0);
 
@@ -269,6 +270,7 @@ function InteractiveTradeChart({ original, bars, frame, executions, side, showGe
       series.current = null;
       api.current = null;
       previousFrame.current = null;
+      focusedExecutions.current = false;
       chart.remove();
     };
   }, []);
@@ -277,6 +279,7 @@ function InteractiveTradeChart({ original, bars, frame, executions, side, showGe
     const chart = api.current, candles = series.current;
     if (!chart || !candles || !bars.length) return;
     const sameFrame = previousFrame.current === frame;
+    if (!sameFrame) focusedExecutions.current = false;
     const viewport = sameFrame ? chart.timeScale().getVisibleLogicalRange() : null;
     candles.setData(bars.map(bar => ({
       time: utc(bar.open_time_ms),
@@ -318,7 +321,17 @@ function InteractiveTradeChart({ original, bars, frame, executions, side, showGe
       found++;
     });
     setMarkerCount(found);
-    if (viewport) {
+    // Focus a proven trade only after its actual execution candles are loaded.
+    // Never invent bars, and preserve subsequent owner panning/zoom.
+    if (executions.length > 0 && found === executions.length && !focusedExecutions.current) {
+      const firstFill = Math.floor(Math.min(...executions.map(fill => fill.at)) / period) * period;
+      const lastFill = Math.floor(Math.max(...executions.map(fill => fill.at)) / period) * period;
+      const from = Math.max(bars[0].open_time_ms, firstFill - 8 * period);
+      const to = Math.min(bars[bars.length - 1].open_time_ms, lastFill + 8 * period);
+      if (from < to) chart.timeScale().setVisibleRange({ from: utc(from), to: utc(to) });
+      else chart.timeScale().fitContent();
+      focusedExecutions.current = true;
+    } else if (viewport) {
       chart.timeScale().setVisibleLogicalRange(viewport);
     } else {
       const visible = bars.slice(-Math.min(bars.length, 80));
@@ -350,7 +363,7 @@ function InteractiveTradeChart({ original, bars, frame, executions, side, showGe
 }
 
 export function OriginalEpisodeSignalChart(props: OriginalSignalChartProps) {
-  const { candidateId, symbol, timeframe, pattern, openedAtMs, executions, side } = props;
+  const { candidateId, symbol, timeframe, pattern, openedAtMs, closedAtMs, executions, side } = props;
   const [original, setOriginal] = useState<OriginalEvidence | null>(null);
   const [barsByFrame, setBarsByFrame] = useState<Record<string, Bar[]>>({});
   const [frame, setFrame] = useState("");
@@ -385,13 +398,25 @@ export function OriginalEpisodeSignalChart(props: OriginalSignalChartProps) {
         setOriginal(evidence);
         setBarsByFrame({ [evidence.snapshot.timeframe]: evidence.snapshot.bars });
         setFrame(evidence.snapshot.timeframe);
-        setMessage("Исходный сигнал подтверждён. Следующие 20 закрытых свечей — по кнопке.");
+        setLoading(true);
+        setMessage("Подгружаю реальные закрытые свечи до завершения сделки…");
+        const loaded = await loadThroughClose(evidence, evidence.snapshot.timeframe,
+          evidence.snapshot.bars, evidence.snapshot.bars[evidence.snapshot.bars.length - 1].open_time_ms);
+        if (!active) return;
+        setBarsByFrame({ [evidence.snapshot.timeframe]: loaded.bars });
+        setMessage(loaded.complete
+          ? "Рыночные свечи до завершения сделки подтверждены."
+          : "До завершения сделки загружена только часть проверенных свечей. Можно продолжить кнопкой.");
+        setLoading(false);
       } catch {
-        if (active) setMessage("Исходная геометрия недоступна или не совпадает с сигналом сделки.");
+        if (active) {
+          setLoading(false);
+          setMessage("Исходная геометрия недоступна или не совпадает с сигналом сделки.");
+        }
       }
     })();
-    return () => { active = false; controller.abort(); };
-  }, [candidateId, symbol, timeframe, pattern, openedAtMs]);
+    return () => { active = false; activeRequest.current?.abort(); controller.abort(); };
+  }, [candidateId, symbol, timeframe, pattern, openedAtMs, closedAtMs]);
 
   async function fetchTradeBars(
     evidence: OriginalEvidence, selected: string, afterMs: number,
@@ -416,6 +441,29 @@ export function OriginalEpisodeSignalChart(props: OriginalSignalChartProps) {
     return rows;
   }
 
+  /** At most five authenticated, contiguous 20-candle pages per interaction.
+   * Unavailable or inconsistent market history remains visible as a partial window.
+   */
+  async function loadThroughClose(
+    evidence: OriginalEvidence, selected: string, initial: readonly Bar[], afterMs: number,
+  ): Promise<{ bars: Bar[]; complete: boolean }> {
+    const period = frameMs(selected)!;
+    const target = Math.floor(closedAtMs / period) * period;
+    let bars = [...initial];
+    let last = bars.length ? bars[bars.length - 1].open_time_ms : afterMs;
+    for (let page = 0; page < 5 && last < target && bars.length < 2000; page++) {
+      try {
+        const next = await fetchTradeBars(evidence, selected, last, bars);
+        if (!next.length || bars.length + next.length > 2000) break;
+        bars = [...bars, ...next];
+        last = bars[bars.length - 1].open_time_ms;
+      } catch {
+        break; // Never fill gaps with interpolated or synthetic candles.
+      }
+    }
+    return { bars, complete: last >= target };
+  }
+
   async function selectFrame(next: string) {
     if (!original || loading || !frameMs(next) || next === frame) return;
     const previous = frame;
@@ -428,14 +476,19 @@ export function OriginalEpisodeSignalChart(props: OriginalSignalChartProps) {
     setLoading(true);
     setMessage("Загружаю проверенные свечи " + TIMEFRAMES.find(x => x.id === next)?.label + "…");
     const period = frameMs(next)!;
-    const sourceLastClose = original.snapshot.bars[original.snapshot.bars.length - 1].open_time_ms
-      + original.intervalMs;
-    const lastBeforeEntry = Math.floor(sourceLastClose / period) * period - period;
-    const afterMs = lastBeforeEntry - 20 * period;
+    // The former 20-candle page ended BEFORE the Robot entry: 0/2 executions.
+    // Start eight genuine candles before entry, then advance only to the close.
+    const firstAllowed = Math.max(0,
+      Math.floor(original.snapshot.bars[0].open_time_ms / period) * period - 40 * period);
+    const afterMs = Math.max(firstAllowed,
+      Math.floor(openedAtMs / period) * period - 8 * period);
     try {
-      const rows = await fetchTradeBars(original, next, afterMs);
-      setBarsByFrame(prior => ({ ...prior, [next]: rows }));
-      setMessage("Закрытые свечи получены; для следующих 20 нажмите кнопку.");
+      const loaded = await loadThroughClose(original, next, [], afterMs);
+      if (!loaded.bars.length) throw new Error("verified_candles_unavailable");
+      setBarsByFrame(prior => ({ ...prior, [next]: loaded.bars }));
+      setMessage(loaded.complete
+        ? "Рыночные свечи до завершения сделки подтверждены."
+        : "До завершения сделки загружена только часть проверенных свечей. Можно продолжить кнопкой.");
     } catch {
       setFrame(previous);
       setMessage("Для этого таймфрейма проверенные свечи пока недоступны.");
@@ -506,7 +559,8 @@ export function OriginalEpisodeSignalChart(props: OriginalSignalChartProps) {
       {original && alternateFrame && (
         <div className="diary-trade-panel" role="region" aria-label="Исходная фигура сделки">
           <h4>Исходная фигура · {timeframeLabel(original.snapshot.timeframe)}</h4>
-          <InteractiveTradeChart original={original} bars={original.snapshot.bars}
+          <InteractiveTradeChart original={original}
+            bars={barsByFrame[original.snapshot.timeframe] ?? original.snapshot.bars}
             frame={original.snapshot.timeframe} executions={executions} side={side}
             chartLabel="Исходный график сигнала" />
         </div>
