@@ -12,8 +12,7 @@ from unittest.mock import Mock, patch
 
 from tools.windows_vps_manager import (ACTIONS, VPSManager, control_ssh_command,
                                        preferred_route, parse_args, ssh_command,
-                                       remember_request_id, recover_last_request_id, run_cli,
-                                       gui_owner_status)
+                                       remember_request_id, recover_last_request_id, run_cli)
 
 
 class TestWindowsVpsManager(unittest.TestCase):
