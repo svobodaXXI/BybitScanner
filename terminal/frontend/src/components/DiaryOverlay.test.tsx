@@ -427,8 +427,8 @@ describe("Closed deals / exact episode index", () => {
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-pressed", "true");
     expect(orderedSymbols()).toEqual(["ADAUSDT", "BTCUSDT", "XRPUSDT"]);
-    expect(screen.getByRole("button", { name: /ADAUSDT/ })).toHaveTextContent("PnL -12,30 USDT");
-    expect(screen.getByRole("button", { name: /XRPUSDT/ })).toHaveTextContent("PnL -<0,000001 USDT");
+    expect(screen.getByRole("button", { name: /ADAUSDT/ })).toHaveTextContent("PnL: -12,30 USDT");
+    expect(screen.getByRole("button", { name: /XRPUSDT/ })).toHaveTextContent("PnL: -<0,000001 USDT");
 
     fireEvent.click(screen.getByRole("button", { name: /BTCUSDT/ }));
     expect(screen.getByText(episode("b", "BTCUSDT", "-0.0026140884").trade_episode_id)).toBeInTheDocument();
@@ -459,14 +459,12 @@ describe("Closed deals / exact episode index", () => {
     fireEvent.click(screen.getByRole("button", { name: "Убыточные" }));
     fireEvent.click(screen.getByRole("button", { name: "Финрез" }));
     fireEvent.click(await screen.findByRole("button", { name: "Показать сделки по ETHUSDT" }));
-    expect(screen.getByRole("alertdialog", { name: "Переход к сделкам" }))
-      .toHaveTextContent("Открыть все сделки по ETHUSDT");
-    fireEvent.click(screen.getByRole("button", { name: "Открыть сделки" }));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     expect(screen.getByRole("searchbox", { name: "Поиск по паттерну" })).toHaveValue("");
     expect(screen.getByRole("button", { name: "Убыточные" })).toHaveAttribute("aria-pressed", "false");
     await screen.findByRole("button", { name: /ETHUSDT/ });
     expect(orderedSymbols()).toEqual(["ETHUSDT"]);
-    expect(screen.getByRole("button", { name: /ETHUSDT/ })).toHaveTextContent("PnL +3,10 USDT");
+    expect(screen.getByRole("button", { name: /ETHUSDT/ })).toHaveTextContent("PnL: +3,10 USDT");
   });
 
   it("keeps micro-losses visible on both closed deal rows and their details", async () => {
@@ -485,10 +483,10 @@ describe("Closed deals / exact episode index", () => {
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
 
     const row = await screen.findByRole("button", { name: /BTCUSDT/ });
-    expect(row).toHaveTextContent("PnL -0,002614 USDT");
+    expect(row).toHaveTextContent("PnL: -0,002614 USDT");
     expect(screen.getByTitle("-0.0026140884")).toBeInTheDocument();
     const tinyRow = screen.getByRole("button", { name: /XRPUSDT/ });
-    expect(tinyRow).toHaveTextContent("PnL -<0,000001 USDT");
+    expect(tinyRow).toHaveTextContent("PnL: -<0,000001 USDT");
     expect(screen.getByTitle("-0.0000000004")).toBeInTheDocument();
 
     fireEvent.click(row);
@@ -917,8 +915,8 @@ describe("Finrez first-screen UI", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<DiaryOverlay accountKey="paper:mass-patterns" initialSection="DEALS"
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
-    expect(await screen.findByText("Паттерн: Falling Wedge")).toBeInTheDocument();
-    expect(screen.getByText("Паттерн: не установлен")).toBeInTheDocument();
+    expect(await screen.findByText("Клин ↘")).toBeInTheDocument();
+    expect(screen.getByText("не установлен")).toBeInTheDocument();
     expect(screen.queryByText("Wrong Pattern")).not.toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "Подробности сделки" })).toHaveLength(2);
     expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/episode-facts")))
@@ -927,7 +925,7 @@ describe("Finrez first-screen UI", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=WEEK",
     ));
-    expect(await screen.findByText("Паттерн: Falling Wedge")).toBeInTheDocument();
+    expect(await screen.findByText("Клин ↘")).toBeInTheDocument();
   });
 
   it("groups exact D2 patterns separately by management cohort and opens filtered deals", async () => {
@@ -973,8 +971,8 @@ describe("Finrez first-screen UI", () => {
     expect(openWedge).toHaveLength(2);
     fireEvent.click(openWedge[0]);
     expect(screen.getByRole("searchbox", { name: "Поиск по паттерну" })).toHaveValue("Falling Wedge");
-    expect(await screen.findAllByText("Паттерн: Falling Wedge")).toHaveLength(3);
-    expect(screen.queryByText("Паттерн: Triangle Compression")).not.toBeInTheDocument();
+    expect(await screen.findAllByText("Клин ↘")).toHaveLength(3);
+    expect(screen.queryByText("Triangle Compression")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Неделя" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=WEEK",
@@ -982,14 +980,14 @@ describe("Finrez first-screen UI", () => {
     expect(screen.getByRole("searchbox", { name: "Поиск по паттерну" })).toHaveValue("Falling Wedge");
 
     fireEvent.click(screen.getByRole("button", { name: "Убыточные" }));
-    expect(screen.getAllByText("Паттерн: Falling Wedge")).toHaveLength(1);
+    expect(screen.getAllByText("Клин ↘")).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "Паттерны" }));
     await screen.findByRole("region", { name: "Паттерны по подтверждённым сделкам" });
     fireEvent.click(screen.getAllByRole("button", {
       name: "Показать все сделки по паттерну Falling Wedge",
     })[0]);
     expect(screen.getByRole("button", { name: "Убыточные" })).toHaveAttribute("aria-pressed", "false");
-    expect(await screen.findAllByText("Паттерн: Falling Wedge")).toHaveLength(3);
+    expect(await screen.findAllByText("Клин ↘")).toHaveLength(3);
   });
 
   it("never shows an unknown pattern as a zero result and respects ticker filtering", async () => {
@@ -1081,9 +1079,9 @@ describe("Finrez first-screen UI", () => {
     expect(await screen.findByText("BTCUSDT")).toBeInTheDocument();
     expect(screen.queryByRole("searchbox", { name: "Поиск по паттерну" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Сделки" }));
-    expect(await screen.findByText("Паттерн: Falling Wedge")).toBeInTheDocument();
-    expect(screen.getByText("Паттерн: Triangle Compression")).toBeInTheDocument();
-    expect(screen.getByText("Паттерн: не установлен")).toBeInTheDocument();
+    expect(await screen.findByText("Клин ↘")).toBeInTheDocument();
+    expect(screen.getByText("Triangle Compression")).toBeInTheDocument();
+    expect(screen.getByText("не установлен")).toBeInTheDocument();
     const pattern = screen.getByRole("searchbox", { name: "Поиск по паттерну" });
     const ticker = screen.getByRole("searchbox", { name: "Поиск по тикеру" });
 
@@ -1103,7 +1101,7 @@ describe("Finrez first-screen UI", () => {
     await waitFor(() => expect(mockFetch).toHaveBeenCalledWith(
       "/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=WEEK",
     ));
-    expect(await screen.findByText("Паттерн: Triangle Compression")).toBeInTheDocument();
+    expect(await screen.findByText("Triangle Compression")).toBeInTheDocument();
     expect(pattern).toHaveValue("TRIANGLE");
     expect(ticker).toHaveValue("ETH");
 
@@ -1112,7 +1110,7 @@ describe("Finrez first-screen UI", () => {
     expect(screen.queryByRole("searchbox", { name: "Поиск по паттерну" })).not.toBeInTheDocument();
     expect(await screen.findByText("+7,20 USDT")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Сделки" }));
-    expect(await screen.findByText("Паттерн: Triangle Compression")).toBeInTheDocument();
+    expect(await screen.findByText("Triangle Compression")).toBeInTheDocument();
     expect(screen.getByRole("searchbox", { name: "Поиск по паттерну" })).toHaveValue("TRIANGLE");
     fireEvent.change(screen.getByRole("searchbox", { name: "Поиск по паттерну" }), {
       target: { value: "не установлен" },
@@ -1148,20 +1146,14 @@ describe("Finrez first-screen UI", () => {
     expect(screen.getByText("-2,5012 USDT")).toBeInTheDocument();
     expect(screen.queryByText(/2\.5012345678/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Показать сделки по BTCUSDT" }));
-    expect(screen.getByRole("alertdialog", { name: "Переход к сделкам" }))
-      .toHaveTextContent("Открыть все сделки по BTCUSDT за выбранный период?");
-    expect(screen.queryByText("Сделки по BTCUSDT")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Показать сделки по BTCUSDT" }));
-    fireEvent.click(screen.getByRole("button", { name: "Открыть сделки" }));
     expect(await screen.findByText("Сделки по BTCUSDT")).toBeInTheDocument();
     expect(screen.getByRole("searchbox", { name: "Поиск по тикеру" })).toHaveValue("BTCUSDT");
     expect(screen.getByText("BTCUSDT")).toBeInTheDocument();
     expect(screen.queryByText("ETHUSDT")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Подробности сделки" })).toBeInTheDocument();
-    expect(screen.getByText("Паттерн: не установлен")).toBeInTheDocument();
-    expect(screen.getByText("PnL %: —")).toBeInTheDocument();
+    expect(screen.getByText("не установлен")).toBeInTheDocument();
+    expect(screen.getByText("(—)")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "← Все сделки" }));
     expect(screen.getByText("ETHUSDT")).toBeInTheDocument();
     expect(screen.queryByText("Сделки по BTCUSDT")).not.toBeInTheDocument();
@@ -1198,7 +1190,6 @@ describe("Finrez first-screen UI", () => {
     ));
     expect(search).toHaveValue("BTC");
     fireEvent.click(screen.getByRole("button", { name: "Показать сделки по BTCUSDT" }));
-    fireEvent.click(screen.getByRole("button", { name: "Открыть сделки" }));
     await screen.findByText("Сделки по BTCUSDT");
     expect(screen.getByRole("button", { name: "Всё время" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByText("ETHUSDT")).not.toBeInTheDocument();
@@ -1351,6 +1342,53 @@ describe("Finrez first-screen UI", () => {
 });
 
 describe("shared statistics trade action standard", () => {
+  it("compacts wedge cards with independent direction and profit colors", async () => {
+    const makeDeal = (id: string, symbol: string, side: "LONG" | "SHORT",
+      pattern: "Falling Wedge" | "Rising Wedge", pnl_usdt: string,
+      pnl_pct: string, entry_notional_usdt: string) => ({
+      trade_episode_id: "te_" + id.repeat(24), symbol, side,
+      opened_at_ms: 1_793_001_000_000, closed_at_ms: 1_793_002_000_000,
+      pnl_usdt, pnl_pct, entry_notional_usdt,
+      pnl_pct_basis: "KNOWN_COST_PNL_OVER_EXECUTED_ENTRY_NOTIONAL",
+      execution_count: 8, cohort: "ROBOT", opening_controller: "ROBOT",
+      replay_evidence: "EPISODE_INDEX_ONLY",
+      setup_context: {
+        status: "EXACT_D2_LINK", source: "TRADING_DIARY_D2",
+        consistency: "INDEPENDENT_READ_SNAPSHOT_NOT_ATOMIC_WITH_PAPER",
+        decision_scope: "D2_OBSERVATIONS_NOT_ROBOT_RUNTIME_LOG",
+        setup: {
+          setup_id: "candidate-" + id, symbol, direction: side, origin: "ROBOT",
+          pattern, timeframe: "5", strategy_version: "robot-v2",
+          created_at_ms: 1_793_000_000_000,
+        },
+      },
+    });
+    const longLoss = makeDeal("a", "BEATUSDT", "LONG", "Falling Wedge",
+      "-0.2727", "-0.63", "43.285714285714286");
+    const shortProfit = makeDeal("b", "TESTUSDT", "SHORT", "Rising Wedge",
+      "1.1684", "0.62", "188.4516129032258");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ...finrezResponse, closed_episodes: [longLoss, shortProfit],
+    }), { status: 200 })));
+    render(<DiaryOverlay accountKey="paper:compact-deals" initialSection="DEALS"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+
+    const longRow = await screen.findByRole("button", { name: /BEATUSDT/ });
+    expect(longRow).toHaveClass("diary-closed-deal-row", "pnl-negative");
+    expect(longRow.querySelector(".diary-trade-heading")).toHaveTextContent("Клин ↘");
+    expect(longRow.querySelector(".diary-trade-side.long")).toHaveTextContent("LONG");
+    expect(longRow.querySelector(".diary-trade-meta")).toHaveTextContent(/Робот.*→/);
+    expect(longRow).toHaveTextContent("PnL: -0,2727 USDT (-0,63%)");
+    expect(longRow).toHaveTextContent("Исполнений: 8");
+    expect(longRow).not.toHaveTextContent("Паттерн:");
+
+    const shortRow = screen.getByRole("button", { name: /TESTUSDT/ });
+    expect(shortRow).toHaveClass("diary-closed-deal-row", "pnl-positive");
+    expect(shortRow.querySelector(".diary-trade-heading")).toHaveTextContent("Клин ↗");
+    expect(shortRow.querySelector(".diary-trade-side.short")).toHaveTextContent("SHORT");
+    expect(shortRow).toHaveTextContent("PnL: +1,1684 USDT (+0,62%)");
+  });
+
   it("renders source-verified entry-notional return, not guessed leveraged ROI", async () => {
     const base = {
       trade_episode_id: "te_" + "a".repeat(24), symbol: "BTCUSDT", side: "LONG",
@@ -1373,11 +1411,11 @@ describe("shared statistics trade action standard", () => {
     }), { status: 200 })));
     render(<DiaryOverlay accountKey="paper:percent" initialSection="DEALS"
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
-    expect(await screen.findByText("PnL %: +2,40%")).toBeInTheDocument();
-    expect(screen.getByText("PnL %: —")).toHaveAttribute(
+    expect(await screen.findByText("(+2,40%)")).toBeInTheDocument();
+    expect(screen.getByText("(—)")).toHaveAttribute(
       "title", "Процент недоступен без подтверждённой базы расчёта",
     );
-    expect(screen.getByText("PnL %: +2,40%")).toHaveAttribute("title",
+    expect(screen.getByText("(+2,40%)")).toHaveAttribute("title",
       expect.stringContaining("Не ROI на маржу"));
     fireEvent.click(screen.getByRole("button", { name: /BTCUSDT/ }));
     expect(screen.getByText("PnL % от номинала входа")).toBeInTheDocument();
@@ -1426,7 +1464,7 @@ describe("shared statistics trade action standard", () => {
 
     render(<DiaryOverlay accountKey="paper:exact-d2" initialSection="DEALS"
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
-    expect(await screen.findByText("Паттерн: не установлен")).toBeInTheDocument();
+    expect(await screen.findByText("не установлен")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Подробности сделки" }));
     const section = await screen.findByRole("region", { name: "Связь сделки с паттерном" });
     await waitFor(() => expect(section).toHaveTextContent("Falling Wedge"));
@@ -1434,8 +1472,8 @@ describe("shared statistics trade action standard", () => {
     expect(section).toHaveTextContent("robot-v2");
     expect(section).toHaveTextContent("не полный журнал решений Робота");
     fireEvent.click(screen.getByRole("button", { name: "← К сделкам" }));
-    expect(screen.getByText("Паттерн: Falling Wedge")).toBeInTheDocument();
-    expect(screen.getByText("PnL %: —")).toBeInTheDocument();
+    expect(screen.getByText("Клин ↘")).toBeInTheDocument();
+    expect(screen.getByText("(—)")).toBeInTheDocument();
     expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/episode-facts"))).toHaveLength(1);
   });
 
@@ -1479,7 +1517,7 @@ describe("shared statistics trade action standard", () => {
       .toBeInTheDocument();
     expect(screen.queryByText("Triangle Compression")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "← К сделкам" }));
-    expect(screen.getByText("Паттерн: не установлен")).toBeInTheDocument();
+    expect(screen.getByText("не установлен")).toBeInTheDocument();
   });
 
   it("formats only visible deal PnL to two decimal places", () => {
@@ -1643,7 +1681,7 @@ describe("Verified Wedge lineage in Statistics", () => {
     expect(region).toHaveTextContent("Робот · сделок: 1 · прибыльных: 0 · убыточных: 1");
     expect(screen.getByTitle("-2.5 USDT")).toHaveTextContent("-2,50 USDT");
     fireEvent.click(screen.getByRole("button", { name: "Показать все сделки по паттерну Falling Wedge" }));
-    expect(await screen.findByText("Паттерн: Falling Wedge")).toBeInTheDocument();
+    expect(await screen.findByText("Клин ↘")).toBeInTheDocument();
     expect(screen.getByRole("searchbox", { name: "Поиск по паттерну" })).toHaveValue("Falling Wedge");
     fireEvent.click(screen.getByRole("button", { name: /BTCUSDT/ }));
     expect(screen.getByText("candidate-42")).toBeInTheDocument();
@@ -1704,7 +1742,7 @@ describe("Verified Wedge lineage in Statistics", () => {
     expect(region).toHaveTextContent("Паттерн подтверждён для 0 из 7");
     expect(region).not.toHaveTextContent("-2,50 USDT");
     fireEvent.click(screen.getByRole("button", { name: "Сделки" }));
-    expect(await screen.findAllByText("Паттерн: не установлен")).toHaveLength(7);
+    expect(await screen.findAllByText("не установлен")).toHaveLength(7);
     expect(screen.getAllByText("PnL -2,50 USDT")).toHaveLength(7);
   });
 
@@ -1736,7 +1774,7 @@ describe("Verified Wedge lineage in Statistics", () => {
     ), { status: 200 })));
     render(<DiaryOverlay accountKey="paper:d2-priority" initialSection="DEALS"
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
-    expect(await screen.findByText("Паттерн: Triangle Compression")).toBeInTheDocument();
-    expect(screen.queryByText("Паттерн: Falling Wedge")).not.toBeInTheDocument();
+    expect(await screen.findByText("Triangle Compression")).toBeInTheDocument();
+    expect(screen.queryByText("Клин ↘")).not.toBeInTheDocument();
   });
 });
