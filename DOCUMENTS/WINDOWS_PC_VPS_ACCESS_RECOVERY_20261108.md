@@ -30,6 +30,7 @@ Use Windows PowerShell through Codex Desktop's Windows execution environment, wi
 - Preserve `StrictHostKeyChecking=yes`. Do not retry in a loop. A successful receipt is only the SSH transport proof shown above, not runtime/trading readiness or permission to mutate the VPS.
 
 **Keep device routes separate:** this section is for Codex Desktop on the main PC only. The laptop has its own independently documented route using `C:\Users\SVOBODA21\.ssh\bybitscanner_laptop` and `83.217.213.181`; never reuse those values on the PC. The PC's native Windows PowerShell alias `bybitscanner-vps` remains a separate host-shell route and is not the Codex Desktop command.
+
 ## VERIFIED LAPTOP CODEX DESKTOP SSH ROUTE — 2026-11-15
 
 **Scope: Windows 10 x64 laptop only**, user profile `C:\Users\SVOBODA21`. This is distinct from the **desktop PC** route documented below. Owner's PowerShell and Codex both confirmed access to `v3286418.hosted-by-vdsina.ru`, SSH exit code `0`. Codex used Windows OpenSSH `9.5.4.1`. This evidence proves transport only; it does **not** establish permission or readiness for VPS deployment, STOP, PAPER trading, or LIVE.
