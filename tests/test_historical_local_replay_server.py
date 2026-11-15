@@ -72,7 +72,7 @@ class PublicKlineTests(unittest.TestCase):
             counter.append((args, kwargs))
             raise AssertionError("network must not be called for invalid query")
 
-        with self.assertRaisesRegex(ValueError, "7 complete"):
+        with self.assertRaisesRegex(ValueError, "7 days"):
             local.load_public_history(
                 symbol="BTCUSDT", start="2026-01-01", end="2026-01-09",
                 fetch_candles=forbidden,
@@ -101,14 +101,15 @@ class PublicKlineTests(unittest.TestCase):
         def fake_fetch(_symbol, _interval, limit, *, end_ms):
             return [c for c in candles if c["time"] <= end_ms][-limit:][::-1]
 
-        first = local.load_public_history(
-            symbol="BTCUSDT", start="2026-01-01", end="2026-01-02",
-            fetch_candles=fake_fetch,
-        )
-        second = local.load_public_history(
-            symbol="BTCUSDT", start="2026-01-01", end="2026-01-02",
-            fetch_candles=fake_fetch,
-        )
+        with TemporaryDirectory() as cache_dir, patch.object(local, "PUBLIC_M5_CACHE", Path(cache_dir)):
+            first = local.load_public_history(
+                symbol="BTCUSDT", start="2026-01-01", end="2026-01-02",
+                fetch_candles=fake_fetch,
+            )
+            second = local.load_public_history(
+                symbol="BTCUSDT", start="2026-01-01", end="2026-01-02",
+                fetch_candles=lambda *a, **k: self.fail("cached bars must not fetch again"),
+            )
         self.assertEqual(first["mode"], "MARKET_ONLY")
         self.assertEqual(first["source"], "SIMULATION")
         self.assertEqual(len(first["events"]), 288)
