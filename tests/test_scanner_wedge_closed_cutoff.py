@@ -96,5 +96,56 @@ class ScannerWedgeClosedCandleCutoffTests(unittest.TestCase):
         self.assertEqual(len(pivots.call_args.args[0]), 60)
 
 
+    def test_gold_real_engine_ignores_forming_candle(self):
+        """Run the actual Pivot -> Geometry Engine -> Wedge path on a frozen Gold window."""
+        from tests.geometry_gold import _analyze, _load_frame, geometry_identity, load_manifest
+
+        case = next(c for c in load_manifest()["cases"]
+                    if c["case_id"] == "PONS-formation-fit-positive-anchor")
+        closed = _load_frame(case)
+        _, _, baseline = _analyze(closed)
+        self.assertEqual(geometry_identity(baseline),
+                         case["expectation"]["geometry_identity"])
+
+        interval_ms = int(closed["time"].iloc[-1] - closed["time"].iloc[-2])
+        self.assertEqual(interval_ms, int(case["timeframe"]) * 60_000)
+        decision_as_of_ms = int(closed["time"].iloc[-1]) + interval_ms
+
+        for extreme in (False, True):
+            with self.subTest(extreme=extreme):
+                forming = closed.iloc[[-1]].copy()
+                forming.loc[:, "time"] = decision_as_of_ms
+                if extreme:
+                    forming.loc[:, "high"] = float(closed["high"].max()) * 3
+                    forming.loc[:, "low"] = float(closed["low"].min()) / 3
+                fetched = pd.concat([closed, forming], ignore_index=True)
+                with patch.object(core, "load_candles", return_value=fetched), \
+                     patch.object(core, "confirm_signal", return_value={}), \
+                     patch.object(core, "calculate_final_score", return_value=0), \
+                     patch.object(core, "evaluate_quality", return_value={}), \
+                     patch.object(core, "evaluate_signal", return_value={}), \
+                     patch.object(core, "create_signal_payload", return_value={}), \
+                     patch.object(core, "project_frozen_geometry_to_robot_1m", return_value={}), \
+                     patch.object(core, "build_scanner_geometry_cursor_anchor", return_value={}), \
+                     patch.object(core, "create_chart"), \
+                     patch.object(core, "create_report"), \
+                     patch.object(core.time, "time_ns",
+                                  return_value=decision_as_of_ms * 1_000_000):
+                    actual = core.analyze_symbol(case["symbol"], timeframe=case["timeframe"])
+
+                pd.testing.assert_frame_equal(actual["wedge_decision_candles"], closed)
+                self.assertIs(actual["data"], fetched)
+                geometry = actual["result"]["geometry"]
+                actual_identity = [
+                    int(geometry["upper_line"]["anchor_index"]),
+                    int(geometry["upper_line"]["second_index"]),
+                    int(geometry["lower_line"]["anchor_index"]),
+                    int(geometry["lower_line"]["second_index"]),
+                    int(geometry["start_index"]),
+                    int(geometry["end_index"]),
+                ]
+                self.assertEqual(actual_identity, case["expectation"]["geometry_identity"])
+
+
 if __name__ == "__main__":
     unittest.main()
