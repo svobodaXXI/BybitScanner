@@ -194,10 +194,11 @@ describe("original signal on a closed deal", () => {
     const lines = visibleOriginalBoundarySegments(snapshot.boundaries, future);
     expect(lines).toHaveLength(1);
     expect(lines[0].boundaryId).toBe("lower-ray");
-    expect(lines[0].points).toEqual([
-      { time: (t + 5 * interval) / 1000, value: 100 },
-      { time: (t + 24 * interval) / 1000, value: 103.8 },
+    expect(lines[0].points.map(point => point.time)).toEqual([
+      (t + 5 * interval) / 1000, (t + 24 * interval) / 1000,
     ]);
+    expect(lines[0].points[0].value).toBeCloseTo(100);
+    expect(lines[0].points[1].value).toBeCloseTo(103.8);
     // No original t/t+5m point may expand the 20-candle X axis.
     const oldSegment = [{
       ...snapshot.boundaries[0], kind: "segment" as const,
