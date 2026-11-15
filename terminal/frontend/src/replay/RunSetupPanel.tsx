@@ -196,7 +196,8 @@ export function RunSetupPanel({
       setStart(request.start_utc); setEnd(request.end_utc_inclusive);
       setPreset(null); setPeriodError(""); setCoordinateError(""); setRunError("");
       setReport(null);
-      onSimulationStart(request); // Prepare Source and clear old chart; POST waits for ▶.
+      onSimulationStart(request); // Virtual POST still requires ▶ and verified SIMULATION prerequisites.
+      onPublicHistoryRequest(request.symbol, request.start_utc, request.end_utc_inclusive, selection.selected);
     } catch (error) {
       setCoordinateError(error instanceof Error ? error.message : "Неверные координаты прогона");
     }
@@ -276,12 +277,15 @@ export function RunSetupPanel({
           <div className="replay-run-coordinates">
             <label>Вставить тикер и даты · UTC
               <input aria-label="Координаты прогона" type="text" value={coordinateText}
-                placeholder="XRPUSDT | 2026-09-11T00:00 | 2026-09-11T23:59"
+                placeholder=""
                 onChange={e => { setCoordinateText(e.target.value); setCoordinateError(""); }} />
             </label>
             <div className="replay-run-coordinate-actions">
               <button type="button" onClick={() => void pasteCoordinates()}>Вставить из буфера</button>
-              <button type="button" onClick={() => applyCoordinates(coordinateText)}>Применить</button>
+              <button type="button" disabled={publicHistoryLoading}
+                onClick={() => applyCoordinates(coordinateText)}>
+                {publicHistoryLoading ? "Загружаю свечи…" : "Применить"}
+              </button>
             </div>
             {coordinateError && <p role="alert" className="replay-run-error">{coordinateError}</p>}
           </div>
@@ -320,12 +324,7 @@ export function RunSetupPanel({
             <p role="status" className="replay-run-summary">
               {parsed.window?.minutes.toLocaleString("ru-RU")} минут M1 · конечная минута включена
             </p>}
-          <div className="replay-run-public-history">
-            <button type="button" disabled={publicHistoryLoading || !parsed.window}
-              onClick={() => onPublicHistoryRequest(symbol, start, end, selection.selected)}>
-              {publicHistoryLoading ? "Загружаю историю…" : "Загрузить Bybit (без сделок)"}
-            </button>
-          </div>
+
         </fieldset>
       </div>
       <div className="replay-run-account">
