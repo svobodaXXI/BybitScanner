@@ -172,6 +172,10 @@ const TIMEFRAMES = [
   { id: "60", label: "H1" }, { id: "15", label: "M15" },
   { id: "5", label: "M5" }, { id: "1", label: "M1" },
 ] as const;
+function timeframeLabel(frame: string): string {
+  return TIMEFRAMES.find(option => frameMs(option.id) === frameMs(frame))?.label ?? frame;
+}
+
 const utc = (ms: number) => Math.floor(ms / 1000) as UTCTimestamp;
 
 /** Draw immutable source geometry only over genuine, loaded candle timestamps.
@@ -216,9 +220,10 @@ export function visibleOriginalBoundarySegments(
 }
 
 /** Same lightweight-charts engine / Moscow axis as Terminal, but without orders or drawing tools. */
-function InteractiveTradeChart({ original, bars, frame, executions, side }: {
+function InteractiveTradeChart({ original, bars, frame, executions, side, showGeometry = true, chartLabel }: {
   original: OriginalEvidence; bars: readonly Bar[]; frame: string;
   executions: readonly Execution[]; side: OriginalSignalChartProps["side"];
+  showGeometry?: boolean; chartLabel?: string;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const api = useRef<IChartApi | null>(null);
@@ -292,7 +297,11 @@ function InteractiveTradeChart({ original, bars, frame, executions, side }: {
       line.setData(points);
       overlays.current.push(line);
     };
-    const lines = visibleOriginalBoundarySegments(original.snapshot.boundaries, bars);
+    // Only the native source interval has sufficient temporal resolution to
+    // represent the original pattern faithfully. Alternate frames are market
+    // context, not reconstructed detector geometry.
+    const lines = showGeometry
+      ? visibleOriginalBoundarySegments(original.snapshot.boundaries, bars) : [];
     setVisibleLines(lines.length);
     for (const line of lines) addOverlay(line.points, "#e1b653");
     const candleTimes = new Set(bars.map(bar => bar.open_time_ms));
@@ -319,18 +328,17 @@ function InteractiveTradeChart({ original, bars, frame, executions, side }: {
       else chart.timeScale().fitContent();
     }
     previousFrame.current = frame;
-  }, [original, bars, frame, executions, side]);
+  }, [original, bars, frame, executions, side, showGeometry]);
 
   return (
     <div className="diary-original-signal-plot">
       <div ref={host} className="diary-interactive-trade-chart" role="application"
-        aria-label="Интерактивный свечной график сделки" />
-      {visibleLines === 0 && <small role="status">
-        Исходные линии не попадают минимум на две загруженные свечи этого ТФ.
-        Для точной геометрии откройте исходный ТФ; свечи не дорисовываются.
+        aria-label={chartLabel ?? "Интерактивный свечной график сделки"} />
+      {showGeometry && visibleLines === 0 && <small role="status">
+        Исходная геометрия недоступна на загруженных свечах; линии не дорисовываются.
       </small>}
       <div className="diary-trade-chart-controls">
-        <span>Жёлтые линии: исходная геометрия · МСК</span>
+        <span>{showGeometry ? "Жёлтые линии: исходная геометрия · МСК" : "Закрытые свечи выбранного ТФ · МСК"}</span>
         <button type="button" onClick={() => api.current?.timeScale().fitContent()}>
           Весь график
         </button>
@@ -469,6 +477,7 @@ export function OriginalEpisodeSignalChart(props: OriginalSignalChartProps) {
   const lastClosed = period ? (Math.floor(Date.now() / period) - 1) * period : 0;
   const canExtend = !!original && !!candles.length && !loading
     && candles.length < 2000 && candles[candles.length - 1].open_time_ms < lastClosed;
+  const alternateFrame = !!original && !!frame && frameMs(frame) !== frameMs(original.snapshot.timeframe);
   return (
     <section className="diary-detail-section" aria-label="Исходный сигнал сделки">
       <h3>Свечной график · исходный сигнал Робота</h3>
@@ -479,8 +488,29 @@ export function OriginalEpisodeSignalChart(props: OriginalSignalChartProps) {
             onClick={() => void selectFrame(option.id)}>{option.label}</button>)}
         </div>
       )}
-      {original && candles.length > 0 && <InteractiveTradeChart original={original}
-        bars={candles} frame={frame} executions={executions} side={side} />}
+      {original && alternateFrame && <p className="diary-finrez-basis">
+        Выбранный {timeframeLabel(frame)} показывает реальные свечи для контекста.
+        Исходная фигура сохраняется отдельно на {timeframeLabel(original.snapshot.timeframe)}:
+        перенос её линий на другой масштаб изменил бы смысл исходных координат.
+      </p>}
+      {original && candles.length > 0 && (
+        <div className="diary-trade-panel" role="region"
+          aria-label={alternateFrame ? "Рыночный контекст " + timeframeLabel(frame) : "График исходного сигнала"}>
+          {alternateFrame && <h4>Рыночный контекст · {timeframeLabel(frame)}</h4>}
+          <InteractiveTradeChart original={original} bars={candles} frame={frame}
+            executions={executions} side={side}
+            showGeometry={!alternateFrame}
+            chartLabel={alternateFrame ? "Рыночный контекст " + timeframeLabel(frame) : undefined} />
+        </div>
+      )}
+      {original && alternateFrame && (
+        <div className="diary-trade-panel" role="region" aria-label="Исходная фигура сделки">
+          <h4>Исходная фигура · {timeframeLabel(original.snapshot.timeframe)}</h4>
+          <InteractiveTradeChart original={original} bars={original.snapshot.bars}
+            frame={original.snapshot.timeframe} executions={executions} side={side}
+            chartLabel="Исходный график сигнала" />
+        </div>
+      )}
       {original && (
         <button className="diary-detail-back" type="button" disabled={!canExtend}
           onClick={() => void addMore()}>
