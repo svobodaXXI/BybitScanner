@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import mimetypes
+import os
 from pathlib import Path
 import re
 from secrets import token_hex
@@ -35,7 +36,8 @@ from research.historical_candle_feed import FIVE_MINUTES_MS
 from research.local_replay_viewer.public_m5_cache import complete_history_fetch
 
 MAX_LOCAL_BARS = 2016  # 7 days of VISIBLE candles
-PUBLIC_M5_CACHE = HERE / "public-m5-cache"
+PUBLIC_M5_CACHE = (Path(os.environ["LOCALAPPDATA"]) / "BybitScanner" / "MachineTime" /
+                   "public-m5-cache") if os.environ.get("LOCALAPPDATA") else HERE / "public-m5-cache"
 GEOMETRY_PRELOAD_BARS = 864  # 72h of earlier CLOSED context; never shown as replay
 BYBIT_PUBLIC_KLINE = "https://api.bybit.com/v5/market/kline"
 STATIC_DIR = HERE / "dist"
@@ -276,6 +278,7 @@ def load_public_history(
     cached_fetch = complete_history_fetch(
         symbol=symbol, start_ms=preload_start, end_ms=end_ms,
         directory=PUBLIC_M5_CACHE, upstream_fetch=fetch_candles,
+        bundled_report=HERE / "real-h1-august.json",
     )
     from secrets import token_hex
     doc = build_market_only_document(
