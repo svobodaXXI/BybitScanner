@@ -240,6 +240,7 @@ def test_exact_box_exit_handoff_trade_and_immutable_order_prove_robot(tmp_path):
     "UPDATE robot_trades SET entry_time_ms=2500",
     "UPDATE paper_limit_orders SET side='Buy'",
     "DELETE FROM paper_limit_actions",
+    "INSERT INTO paper_limit_actions VALUES ('box-exit-order','create')",
     "UPDATE robot_candidates SET signal_snapshot_json='{}' WHERE candidate_id='box-robot-a'",
     "UPDATE robot_candidates SET status='BOX_PLAN_ONLY' WHERE candidate_id='box-robot-a'",
 ])
