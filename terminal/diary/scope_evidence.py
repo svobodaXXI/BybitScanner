@@ -121,8 +121,6 @@ def load_order_origins_from_connection(
                      ON p.trading_account_id=e.trading_account_id
                     AND p.order_id=e.order_id AND p.symbol=e.symbol
                     AND p.side=e.side
-                   JOIN paper_limit_actions action
-                     ON action.order_id=p.order_id AND action.operation='create'
                    JOIN box_order_ownership owned
                      ON owned.trading_account_id=e.trading_account_id
                     AND owned.order_id=e.order_id
@@ -152,6 +150,9 @@ def load_order_origins_from_connection(
                      AND owned.role='EXIT' AND owned.slot BETWEEN 1 AND 4
                      AND ((trade.direction='LONG' AND e.side='Sell')
                        OR (trade.direction='SHORT' AND e.side='Buy'))
+                     AND (SELECT COUNT(*) FROM paper_limit_actions action
+                          WHERE action.order_id=p.order_id
+                            AND action.operation='create')=1
                      AND p.created_at_ms<=e.exchange_timestamp_ms
                      AND trade.entry_time_ms<=e.exchange_timestamp_ms
                      AND (trade.exit_time_ms IS NULL
