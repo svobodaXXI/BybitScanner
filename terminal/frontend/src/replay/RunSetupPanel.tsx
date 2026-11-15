@@ -21,13 +21,12 @@ const STEPS: Array<{ id: PeriodIncrement; name: string }> = [
 
 /** Local-only Wedge execution via loopback: never production /api or PAPER. */
 export function RunSetupPanel({
-  symbol, onArchiveSymbol, onPasteSymbol, onSimulationStart, onSimulationReady,
+  symbol, onPasteSymbol, onSimulationStart, onSimulationReady,
   onSimulationAppend, onSimulationFailed, onSimulationBusy, playRequestId, showReport,
   onPublicHistoryRequest, publicHistoryLoading, onStrategySelectionChange, onHistoryPreparation,
   onEpisodeLookup,
 }: {
   symbol: string;
-  onArchiveSymbol: (archiveSymbol: string) => boolean;
   onPasteSymbol: (symbol: string) => void;
   onSimulationStart: (request: WedgeRunRequest) => void;
   onSimulationBusy: (busy: boolean) => void;
@@ -99,7 +98,7 @@ export function RunSetupPanel({
       }
     })();
     return () => controller.abort();
-  }, [onArchiveSymbol]);
+  }, []);
 
   const runWedges = useCallback(async (request: WedgeRunRequest, seq: number) => {
     if (running.current) return; // No duplicate Scanner/Robot computation.
