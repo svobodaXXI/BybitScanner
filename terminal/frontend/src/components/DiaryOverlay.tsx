@@ -926,6 +926,13 @@ const dealLabels: Record<ClosedEpisodeLocator["cohort"], string> = {
   JOINT_MANAGEMENT: "Робот + ручное управление",
 };
 
+/** Compact label only; original verified pattern remains available in detail/title. */
+function compactDealPattern(pattern: string | null): string {
+  if (pattern === "Falling Wedge") return "Клин ↘";
+  if (pattern === "Rising Wedge") return "Клин ↗";
+  return pattern ?? "не установлен";
+}
+
 function ClosedDealsView({ report, symbolFilter, patternFilter, lossOnly, onClearSymbolFilter }: {
   report: FinrezResponse; symbolFilter: string; patternFilter: string;
   lossOnly: boolean; onClearSymbolFilter: () => void;
@@ -1203,33 +1210,36 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, lossOnly, onClea
         <div className="diary-trades-list">
           {deals.map((deal) => (
             <div className={`diary-trade-entry ${deal.side.toLowerCase()}`} key={deal.trade_episode_id}>
-              <button className={`diary-trade-row ${deal.side.toLowerCase()}`}
+              <button className={`diary-trade-row diary-closed-deal-row ${deal.side.toLowerCase()} ${Number(deal.pnl_usdt) > 0 ? "pnl-positive" : Number(deal.pnl_usdt) < 0 ? "pnl-negative" : "pnl-flat"}`}
                 type="button" onClick={() => setSelectedId(deal.trade_episode_id)}>
-              <div className="diary-trade-heading">
-                <strong>{deal.symbol}</strong>
-                <span className="diary-deal-pattern"
-                  title={patternFor(deal)?.source === "D2"
-                    ? "Точная связь эпизода с наблюдательным сетапом Diary D2"
-                    : patternFor(deal)?.source === "WEDGE"
-                      ? "Доказанное происхождение Wedge по точным идентификаторам Robot, не D2"
-                      : "Связь сделки с паттерном пока не подтверждена"}>
-                  {"Паттерн: " + (patternFor(deal)?.pattern ?? "не установлен")}
-                </span>
-                <span>{sideLabel(deal.side)}</span><span>{dealLabels[deal.cohort]}</span>
-              </div>
-              <div className="diary-trade-times">
-                <span>{formatDate(deal.opened_at_ms)}</span><span>→</span><span>{formatDate(deal.closed_at_ms)}</span>
-              </div>
-              <div className="diary-trade-metrics">
-                <span className={Number(deal.pnl_usdt) > 0 ? "profit" : Number(deal.pnl_usdt) < 0 ? "loss" : ""}
-                  title={deal.pnl_usdt}>PnL {formatFinrezPnl(deal.pnl_usdt)}</span>
-                <span title={verifiedEntryNotionalReturn(deal)
-                    ? ENTRY_RETURN_EXPLANATION
-                    : "Процент недоступен без подтверждённой базы расчёта"}>
-                  PnL %: {verifiedEntryNotionalReturn(deal) ?? "—"}
-                </span>
-                <span>Исполнений: {deal.execution_count}</span>
-              </div>
+                <div className="diary-trade-heading">
+                  <strong>{deal.symbol}</strong>
+                  <span className="diary-deal-pattern"
+                    title={patternFor(deal)?.source === "D2"
+                      ? "Точная связь эпизода с наблюдательным сетапом Diary D2"
+                      : patternFor(deal)?.source === "WEDGE"
+                        ? "Доказанное происхождение Wedge по точным идентификаторам Robot, не D2"
+                        : "Связь сделки с паттерном пока не подтверждена"}>
+                    {compactDealPattern(patternFor(deal)?.pattern ?? null)}
+                  </span>
+                  <span className={`diary-trade-side ${deal.side.toLowerCase()}`}>{deal.side}</span>
+                </div>
+                <div className="diary-trade-meta">
+                  <span>{dealLabels[deal.cohort]}</span>
+                  <span>{formatDate(deal.opened_at_ms)} → {formatDate(deal.closed_at_ms)}</span>
+                </div>
+                <div className="diary-trade-metrics">
+                  <span className={Number(deal.pnl_usdt) > 0 ? "profit" : Number(deal.pnl_usdt) < 0 ? "loss" : ""}
+                    title={deal.pnl_usdt}>
+                    PnL: {formatFinrezPnl(deal.pnl_usdt)}{" "}
+                    <span title={verifiedEntryNotionalReturn(deal)
+                      ? ENTRY_RETURN_EXPLANATION
+                      : "Процент недоступен без подтверждённой базы расчёта"}>
+                      ({verifiedEntryNotionalReturn(deal) ?? "—"})
+                    </span>
+                  </span>
+                  <span>Исполнений: {deal.execution_count}</span>
+                </div>
               </button>
               <TradeActionButtons onDetails={() => setSelectedId(deal.trade_episode_id)}
                 onReplay={/^te_[0-9a-f]{24}$/.test(deal.trade_episode_id) && report.account_id === "paper"
@@ -1487,7 +1497,6 @@ export function DiaryOverlay({
   const [finrezSymbolFilter, setFinrezSymbolFilter] = useState("");
   const [finrezPatternFilter, setFinrezPatternFilter] = useState("");
   const [finrezLossOnly, setFinrezLossOnly] = useState(false);
-  const [pendingFinrezTicker, setPendingFinrezTicker] = useState<string | null>(null);
   const [mirrorLevels, setMirrorLevels] = useState<MirrorLevelRow[]>([]);
   const [tradeFilter, setTradeFilter] = useState<DiaryFilter>("ALL");
   const [setupFilter, setSetupFilter] = useState<SetupFilter>("ALL");
@@ -1686,14 +1695,14 @@ export function DiaryOverlay({
                 ["MONTH", "Месяц"], ["YEAR", "Год"], ["ALL", "Всё время"],
               ] as const).map(([period, label]) => (
                 <button key={period} aria-pressed={finrezPeriod === period} type="button"
-                  onClick={() => { setPendingFinrezTicker(null); setFinrezPeriod(period); }}>{label}</button>
+                  onClick={() => setFinrezPeriod(period)}>{label}</button>
               ))}
             </nav>
           ) : null}
           <nav className="diary-primary-nav" aria-label="Разделы статистики">
-            <button aria-current={section === "FINREZ" || section === "STATISTICS" ? "page" : undefined} onClick={() => { setSelectedTradeId(null); setPendingFinrezTicker(null); setSection("FINREZ"); }} type="button">Финрез</button>
-            <button aria-current={section === "PATTERNS" || section === "SETUPS" ? "page" : undefined} onClick={() => { setSelectedTradeId(null); setPendingFinrezTicker(null); setSection("PATTERNS"); }} type="button">Паттерны</button>
-            <button aria-current={section === "DEALS" || section === "TRADES" ? "page" : undefined} onClick={() => { setSelectedTradeId(null); setPendingFinrezTicker(null); setSection("DEALS"); }} type="button">Сделки</button>
+            <button aria-current={section === "FINREZ" || section === "STATISTICS" ? "page" : undefined} onClick={() => { setSelectedTradeId(null); setSection("FINREZ"); }} type="button">Финрез</button>
+            <button aria-current={section === "PATTERNS" || section === "SETUPS" ? "page" : undefined} onClick={() => { setSelectedTradeId(null); setSection("PATTERNS"); }} type="button">Паттерны</button>
+            <button aria-current={section === "DEALS" || section === "TRADES" ? "page" : undefined} onClick={() => { setSelectedTradeId(null); setSection("DEALS"); }} type="button">Сделки</button>
           </nav>
           {(section === "FINREZ" || section === "PATTERNS" || section === "DEALS") ? (
             <div className="diary-ticker-search">
@@ -1729,21 +1738,6 @@ export function DiaryOverlay({
         </div>
 
         <div className="diary-content">
-          {pendingFinrezTicker !== null ? (
-            <div className="diary-finrez-confirm" role="alertdialog" aria-label="Переход к сделкам">
-              <p>Открыть все сделки по {pendingFinrezTicker} за выбранный период?</p>
-              <div>
-                <button type="button" onClick={() => {
-                  setFinrezSymbolFilter(pendingFinrezTicker);
-                  setFinrezPatternFilter("");
-                  setFinrezLossOnly(false);
-                  setPendingFinrezTicker(null);
-                  setSection("DEALS");
-                }}>Открыть сделки</button>
-                <button type="button" onClick={() => setPendingFinrezTicker(null)}>Отмена</button>
-              </div>
-            </div>
-          ) : null}
           {loading ? <p className="diary-state">Загрузка...</p> : null}
           {!loading && loadError ? (
             <div className="diary-state">
@@ -1753,7 +1747,12 @@ export function DiaryOverlay({
           ) : null}
 
           {!loading && !loadError && !selectedTrade && section === "FINREZ" && finrez ? <FinrezView report={finrez}
-            symbolFilter={finrezSymbolFilter} onSelectTicker={setPendingFinrezTicker} /> : null}
+            symbolFilter={finrezSymbolFilter} onSelectTicker={(symbol) => {
+              setFinrezSymbolFilter(symbol);
+              setFinrezPatternFilter("");
+              setFinrezLossOnly(false);
+              setSection("DEALS");
+            }} /> : null}
           {!loading && !loadError && !selectedTrade && section === "PATTERNS" && finrez ? (
             <PatternsView report={finrez} symbolFilter={finrezSymbolFilter}
               onSelectPattern={(pattern) => {
