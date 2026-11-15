@@ -181,10 +181,55 @@ describe("original signal on a closed deal", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(intervalUrl, expect.any(Object)));
     await waitFor(() => expect(screen.getByRole("button", { name: "M1" }))
       .toHaveAttribute("aria-pressed", "true"));
+    expect(screen.getByRole("region", { name: "Рыночный контекст M1" }))
+      .toHaveTextContent("Рыночный контекст · M1");
+    expect(screen.getByRole("region", { name: "Исходная фигура сделки" }))
+      .toHaveTextContent("Исходная фигура · M5");
+    expect(screen.getByRole("application", { name: "Рыночный контекст M1" })).toBeInTheDocument();
+    expect(screen.getByRole("application", { name: "Исходный график сигнала" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "M5" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "M5" }))
       .toHaveAttribute("aria-pressed", "true"));
+    expect(screen.queryByRole("region", { name: "Исходная фигура сделки" }))
+      .not.toBeInTheDocument();
+    expect(screen.getByRole("application", {
+      name: "Интерактивный свечной график сделки",
+    })).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ["240", 14_400_000, "H4"],
+    ["D", 86_400_000, "D1"],
+  ])("keeps source M5 pattern independently of coarse %s market candles", async (selected, period, label) => {
+    const sourceLastClose = t + 2 * interval;
+    const lastBeforeEntry = Math.floor(sourceLastClose / period) * period - period;
+    const afterMs = lastBeforeEntry - 20 * period;
+    const url = "/api/workspace/signal-geometry/candles?signal_id=candidate-42&interval="
+      + selected + "&after_ms=" + afterMs;
+    const payload = {
+      ok: true, signal_id: "candidate-42", source_revision: "a".repeat(64),
+      interval: selected, as_of_ms: lastBeforeEntry,
+      bars: Array.from({ length: 20 }, (_, index) => ({
+        open_time_ms: afterMs + (index + 1) * period,
+        open: 100, high: 102, low: 98, close: 100.5,
+      })),
+    };
+    const fetchMock = vi.fn(async (request: string) =>
+      new Response(JSON.stringify(request === url ? payload : archived), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<OriginalEpisodeSignalChart {...props} />);
+    await screen.findByRole("application", { name: "Интерактивный свечной график сделки" });
+    fireEvent.click(screen.getByRole("button", { name: label }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(url, expect.any(Object)));
+    await waitFor(() => expect(screen.getByRole("application", {
+      name: "Рыночный контекст " + label,
+    })).toBeInTheDocument());
+    expect(screen.getByRole("application", { name: "Исходный график сигнала" }))
+      .toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Исходная фигура сделки" }))
+      .toHaveTextContent("Исходная фигура · M5");
+    expect(screen.queryByText(/Исходные линии не попадают минимум/)).not.toBeInTheDocument();
   });
 
   it("projects rays only onto loaded candle times, without phantom whitespace", () => {
