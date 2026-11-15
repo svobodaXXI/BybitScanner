@@ -112,27 +112,39 @@ export function parseOriginalTradeSignal(
   };
 }
 
-/** Continuations are publicly fetched, closed candles; they never alter source rays. */
+/** The existing Editor API returns ALL candles since the immutable source,
+ * not a page. Verify its overlap against already displayed history and append
+ * only the new, consecutive 20-candle increment.
+ */
 export function parseOriginalTradeContinuation(
   raw: unknown, original: OriginalEvidence, lastRequestedMs: number,
+  displayed: readonly Bar[] = original.snapshot.bars,
 ): Bar[] | null {
   if (!raw || typeof raw !== "object") return null;
   const payload = raw as Record<string, unknown>;
   if (payload.ok !== true || payload.signal_id !== original.snapshot.signal_id
       || payload.source_revision !== original.revision
       || !Array.isArray(payload.bars) || !payload.bars.length || payload.bars.length > 1000) return null;
-  const lastSource = original.snapshot.bars[original.snapshot.bars.length - 1].open_time_ms;
+  const source = original.snapshot.bars;
+  const lastSource = source[source.length - 1].open_time_ms;
+  const elapsed = lastRequestedMs - lastSource;
   if (!Number.isSafeInteger(lastRequestedMs) || lastRequestedMs < lastSource
-      || (lastRequestedMs - lastSource) % original.intervalMs !== 0) return null;
+      || elapsed % original.intervalMs !== 0
+      || displayed.length !== source.length + elapsed / original.intervalMs) return null;
+  const sameBar = (a: Bar, b: Bar) => a.open_time_ms === b.open_time_ms
+    && a.open === b.open && a.high === b.high && a.low === b.low && a.close === b.close;
+  if (!source.every((bar, index) => sameBar(bar, displayed[index]))) return null;
+  const prior = displayed.slice(source.length);
   const bars: Bar[] = [];
   for (const item of payload.bars) {
     const bar = asBar(item);
-    if (!bar || bar.open_time_ms !== lastRequestedMs + (bars.length + 1) * original.intervalMs) return null;
+    if (!bar || bar.open_time_ms !== lastSource + (bars.length + 1) * original.intervalMs) return null;
     bars.push(bar);
   }
   if (payload.as_of_ms !== bars[bars.length - 1].open_time_ms
-      || bars[bars.length - 1].open_time_ms <= lastRequestedMs) return null;
-  return bars;
+      || bars.length <= prior.length || bars.length - prior.length > 20
+      || !prior.every((bar, index) => sameBar(bar, bars[index]))) return null;
+  return bars.slice(prior.length);
 }
 
 /** Secondary timeframe uses genuine Bybit OHLC; never subdivide source M5 to fake M1. */
@@ -339,7 +351,10 @@ export function OriginalEpisodeSignalChart(props: OriginalSignalChartProps) {
     return () => { active = false; controller.abort(); };
   }, [candidateId, symbol, timeframe, pattern, openedAtMs]);
 
-  async function fetchTradeBars(evidence: OriginalEvidence, selected: string, afterMs: number) {
+  async function fetchTradeBars(
+    evidence: OriginalEvidence, selected: string, afterMs: number,
+    displayed: readonly Bar[] = evidence.snapshot.bars,
+  ) {
     const controller = new AbortController();
     activeRequest.current = controller;
     const source = selected === evidence.snapshot.timeframe;
@@ -353,7 +368,7 @@ export function OriginalEpisodeSignalChart(props: OriginalSignalChartProps) {
     if (!response.ok) throw new Error("verified_candles_unavailable");
     const raw: unknown = await response.json();
     const rows = source
-      ? parseOriginalTradeContinuation(raw, evidence, afterMs)
+      ? parseOriginalTradeContinuation(raw, evidence, afterMs, displayed)
       : parseOriginalTradeTimeframe(raw, evidence, selected, afterMs);
     if (!rows) throw new Error("invalid_verified_candles");
     return rows;
@@ -400,7 +415,7 @@ export function OriginalEpisodeSignalChart(props: OriginalSignalChartProps) {
     setLoading(true);
     setMessage("Загружаю следующие 20 закрытых свечей…");
     try {
-      const rows = await fetchTradeBars(original, frame, last);
+      const rows = await fetchTradeBars(original, frame, last, existing);
       if (existing.length + rows.length > 2000) throw new Error("trade_chart_bar_limit");
       setBarsByFrame(prior => {
         const current = prior[frame] ?? [];
