@@ -283,6 +283,10 @@ try {
   assert.equal(await appliedPlay.isDisabled(), true, "unsupported virtual selection cannot start trades");
   assert.equal(posted.length, 1, "unsupported strategies never cause a backend POST");
   assert.equal(requests.filter(url => url.includes("/api/") || url.includes("/v5/")).length, 0);
+  // Unsupported virtual strategy Apply correctly clears previous replay.
+  // Restore the explicit synthetic fixture for the independent player tests.
+  await readySetup.getByRole("button", { name: "Только клинья" }).click();
+  await page.getByRole("button", { name: "Пример", exact: true }).click();
 
   // The entire replay control surface belongs beside the M5/H1 switch,
   // never in the file-import row above the chart.
