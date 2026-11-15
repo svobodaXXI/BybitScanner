@@ -991,9 +991,10 @@ describe("Finrez first-screen UI", () => {
     const openWedge = screen.getAllByRole("button", { name: "Показать все сделки по паттерну Falling Wedge" });
     expect(openWedge).toHaveLength(2);
     fireEvent.click(openWedge[0]);
-    expect(screen.getByRole("combobox", { name: "Выбор паттерна" })).toHaveValue("Falling Wedge");
     expect(await screen.findAllByText("Клин ↘")).toHaveLength(3);
-    expect(screen.queryByText("Triangle Compression")).not.toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Выбор паттерна" })).toHaveValue("Falling Wedge");
+    expect(screen.getAllByRole("button", { name: /BTCUSDT/ })
+      .every((row) => !row.textContent?.includes("Triangle Compression"))).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Неделя" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=WEEK",
@@ -1101,7 +1102,7 @@ describe("Finrez first-screen UI", () => {
     expect(screen.queryByRole("combobox", { name: "Выбор паттерна" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Сделки" }));
     expect(await screen.findByText("Клин ↘")).toBeInTheDocument();
-    expect(screen.getByText("Triangle Compression")).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Triangle Compression" })).toBeInTheDocument();
     expect(screen.getByText("не установлен")).toBeInTheDocument();
     const pattern = screen.getByRole("combobox", { name: "Выбор паттерна" });
     const ticker = screen.getByRole("searchbox", { name: "Поиск по тикеру" });
@@ -1121,7 +1122,8 @@ describe("Finrez first-screen UI", () => {
     await waitFor(() => expect(mockFetch).toHaveBeenCalledWith(
       "/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=WEEK",
     ));
-    expect(await screen.findByText("Triangle Compression")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /ETHUSDT/ })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Triangle Compression" })).toBeInTheDocument();
     expect(pattern).toHaveValue("Triangle Compression");
     expect(ticker).toHaveValue("ETH");
 
@@ -1130,7 +1132,7 @@ describe("Finrez first-screen UI", () => {
     expect(screen.queryByRole("combobox", { name: "Выбор паттерна" })).not.toBeInTheDocument();
     expect(await screen.findByText("+7,20 USDT")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Сделки" }));
-    expect(await screen.findByText("Triangle Compression")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /ETHUSDT/ })).toBeInTheDocument();
     const reopenedPattern = screen.getByRole("combobox", { name: "Выбор паттерна" });
     const reopenedTicker = screen.getByRole("searchbox", { name: "Поиск по тикеру" });
     expect(reopenedPattern).toHaveValue("Triangle Compression");
@@ -1797,7 +1799,8 @@ describe("Verified Wedge lineage in Statistics", () => {
     ), { status: 200 })));
     render(<DiaryOverlay accountKey="paper:d2-priority" initialSection="DEALS"
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
-    expect(await screen.findByText("Triangle Compression")).toBeInTheDocument();
-    expect(screen.queryByText("Клин ↘")).not.toBeInTheDocument();
+    const row = await screen.findByRole("button", { name: /BTCUSDT/ });
+    expect(row.querySelector(".diary-deal-pattern")).toHaveTextContent("Triangle Compression");
+    expect(row).not.toHaveTextContent("Клин ↘");
   });
 });
