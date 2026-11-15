@@ -61,6 +61,7 @@ export function RunSetupPanel({
   const running = useRef(false);
   const requestController = useRef<AbortController | null>(null);
   const parsed = useMemo(() => {
+    if (!start || !end) return { window: null, error: "" };
     try {
       return { window: validateInclusiveWindow(start, end), error: "" };
     } catch (error) {
