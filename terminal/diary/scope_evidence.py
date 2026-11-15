@@ -102,6 +102,80 @@ def load_order_origins_from_connection(
             if key in results and results[key] != Origin.ROBOT:
                 raise StatisticsScopeError("conflicting_robot_execution_ownership")
             results[key] = Origin.ROBOT
+
+        # An owned Box TAKE/partial EXIT is a PAPER LIMIT, not a Robot
+        # protection obligation or an ENTRY. Its immutable source candidate
+        # ownership can prove the Robot controller only together with the
+        # exact handoff and the durable IKIGAI_BOX Robot trade. A name prefix,
+        # same-symbol trade, or standalone Box plan is never sufficient.
+        box_tables = {
+            "paper_limit_orders", "paper_limit_actions",
+            "box_order_ownership", "box_attempt_ownership",
+            "robot_candidates", "robot_trades",
+        }
+        if box_tables <= tables and account_id == "paper":
+            box_rows = connection.execute(
+                """SELECT e.trading_account_id, e.category, e.exec_id
+                   FROM executions e
+                   JOIN paper_limit_orders p
+                     ON p.trading_account_id=e.trading_account_id
+                    AND p.order_id=e.order_id AND p.symbol=e.symbol
+                    AND p.side=e.side
+                   JOIN box_order_ownership owned
+                     ON owned.trading_account_id=e.trading_account_id
+                    AND owned.order_id=e.order_id
+                   JOIN box_attempt_ownership baseline
+                     ON baseline.trading_account_id=owned.trading_account_id
+                    AND baseline.candidate_id=owned.candidate_id
+                    AND baseline.symbol=e.symbol
+                   JOIN robot_candidates source
+                     ON source.candidate_id=baseline.candidate_id
+                    AND source.trading_account_id=e.trading_account_id
+                    AND source.symbol=e.symbol AND source.status='BOX_PLAN_ONLY'
+                   JOIN robot_candidates handoff
+                     ON handoff.candidate_id='box-robot-' || substr(source.candidate_id, 10)
+                    AND handoff.trading_account_id=e.trading_account_id
+                    AND handoff.symbol=e.symbol AND handoff.status!='BOX_PLAN_ONLY'
+                    AND json_extract(handoff.signal_snapshot_json,
+                                     '$.source_box_candidate_id')=source.candidate_id
+                   JOIN robot_trades trade
+                     ON trade.candidate_id=handoff.candidate_id
+                    AND trade.trading_account_id=e.trading_account_id
+                    AND trade.symbol=e.symbol AND trade.pattern='IKIGAI_BOX'
+                   WHERE e.trading_account_id=? AND e.category=?
+                     AND source.candidate_id LIKE 'box-plan-%'
+                     AND json_extract(source.signal_snapshot_json, '$.pattern')='IKIGAI_BOX'
+                     AND json_extract(source.signal_snapshot_json, '$.environment')='PAPER'
+                     AND json_extract(source.signal_snapshot_json, '$.identity.direction')=trade.direction
+                     AND owned.role='EXIT' AND owned.slot BETWEEN 1 AND 4
+                     AND ((trade.direction='LONG' AND e.side='Sell')
+                       OR (trade.direction='SHORT' AND e.side='Buy'))
+                     AND (SELECT COUNT(*) FROM paper_limit_actions action
+                          WHERE action.order_id=p.order_id
+                            AND action.operation='create')=1
+                     AND p.created_at_ms<=e.exchange_timestamp_ms
+                     AND trade.entry_time_ms<=e.exchange_timestamp_ms
+                     AND (trade.exit_time_ms IS NULL
+                       OR e.exchange_timestamp_ms<=trade.exit_time_ms)""",
+                (account_id, Category.LINEAR.value),
+            ).fetchall()
+            for box_row in box_rows:
+                key = ExecutionDedupKey(
+                    TradingAccountId(box_row["trading_account_id"]),
+                    Category.LINEAR, ExecutionId(box_row["exec_id"]),
+                )
+                matching_commands = observed.get(key, [])
+                if len(matching_commands) != 1:
+                    raise StatisticsScopeError("ambiguous_execution_command_ownership")
+                command = matching_commands[0]
+                if command["command_id"] is not None and (
+                    command["origin"], command["controller"]
+                ) != (Origin.ROBOT.value, "robot"):
+                    raise StatisticsScopeError("conflicting_robot_execution_ownership")
+                if key in results and results[key] != Origin.ROBOT:
+                    raise StatisticsScopeError("conflicting_robot_execution_ownership")
+                results[key] = Origin.ROBOT
+
         return results
     except sqlite3.Error as exc:
         raise StatisticsScopeError("execution_source_unavailable") from exc

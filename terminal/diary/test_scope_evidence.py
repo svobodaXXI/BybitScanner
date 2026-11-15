@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 
 import pytest
@@ -154,4 +155,112 @@ def test_conflicting_manual_command_and_robot_attestation_blocks_origin(tmp_path
     con.commit()
     con.close()
     with pytest.raises(StatisticsScopeError, match="conflicting"):
+        load_order_origins_read_only(db, account_id="paper")
+
+
+def _box_exit_source(path):
+    """One exact Robot Box TAKE fill; no trading command/entry/STOP evidence."""
+    con = sqlite3.connect(path)
+    con.executescript("""
+        CREATE TABLE executions (
+            trading_account_id TEXT, category TEXT, exec_id TEXT, order_id TEXT,
+            symbol TEXT, side TEXT, exchange_timestamp_ms INTEGER
+        );
+        CREATE TABLE trading_commands (
+            command_id TEXT, trading_account_id TEXT, exchange_order_id TEXT,
+            origin TEXT, controller TEXT
+        );
+        CREATE TABLE paper_limit_orders (
+            order_id TEXT, trading_account_id TEXT, symbol TEXT, side TEXT,
+            created_at_ms INTEGER
+        );
+        CREATE TABLE paper_limit_actions (order_id TEXT, operation TEXT);
+        CREATE TABLE box_order_ownership (
+            trading_account_id TEXT, order_id TEXT, candidate_id TEXT,
+            role TEXT, slot INTEGER
+        );
+        CREATE TABLE box_attempt_ownership (
+            candidate_id TEXT, trading_account_id TEXT, symbol TEXT
+        );
+        CREATE TABLE robot_candidates (
+            candidate_id TEXT, trading_account_id TEXT, symbol TEXT,
+            status TEXT, signal_snapshot_json TEXT
+        );
+        CREATE TABLE robot_trades (
+            candidate_id TEXT, trading_account_id TEXT, symbol TEXT,
+            pattern TEXT, direction TEXT, entry_time_ms INTEGER, exit_time_ms INTEGER
+        );
+        INSERT INTO executions VALUES ('paper','linear','box-exec','box-exit-order',
+            'BTCUSDT','Sell',2000);
+        INSERT INTO paper_limit_orders VALUES ('box-exit-order','paper','BTCUSDT','Sell',1500);
+        INSERT INTO paper_limit_actions VALUES ('box-exit-order','create');
+        INSERT INTO box_order_ownership VALUES (
+            'paper','box-exit-order','box-plan-a','EXIT',1);
+        INSERT INTO box_attempt_ownership VALUES ('box-plan-a','paper','BTCUSDT');
+        INSERT INTO robot_trades VALUES (
+            'box-robot-a','paper','BTCUSDT','IKIGAI_BOX','LONG',1000,2100);
+    """)
+    con.executemany(
+        "INSERT INTO robot_candidates VALUES (?,?,?,?,?)",
+        [
+            ("box-plan-a", "paper", "BTCUSDT", "BOX_PLAN_ONLY", json.dumps({
+                "pattern": "IKIGAI_BOX", "environment": "PAPER",
+                "identity": {"direction": "LONG"},
+            })),
+            ("box-robot-a", "paper", "BTCUSDT", "CLOSED", json.dumps({
+                "source_box_candidate_id": "box-plan-a",
+            })),
+        ],
+    )
+    con.commit()
+    return con
+
+
+def test_exact_box_exit_handoff_trade_and_immutable_order_prove_robot(tmp_path):
+    db = tmp_path / "source.sqlite3"
+    con = _box_exit_source(db)
+    con.close()
+    origins = load_order_origins_read_only(db, account_id="paper")
+    assert {key.exec_id.value: value for key, value in origins.items()} == {
+        "box-exec": Origin.ROBOT,
+    }
+    assert load_order_origins_read_only(db, account_id="bybit-main") == {}
+
+
+@pytest.mark.parametrize("mutation", [
+    "DELETE FROM box_order_ownership",
+    "UPDATE box_order_ownership SET role='ENTRY'",
+    "UPDATE box_order_ownership SET slot=0",
+    "UPDATE box_order_ownership SET candidate_id='unrelated'",
+    "DELETE FROM box_attempt_ownership",
+    "UPDATE box_attempt_ownership SET symbol='ETHUSDT'",
+    "DELETE FROM robot_trades",
+    "UPDATE robot_trades SET symbol='ETHUSDT'",
+    "UPDATE robot_trades SET direction='SHORT'",
+    "UPDATE robot_trades SET entry_time_ms=2500",
+    "UPDATE paper_limit_orders SET side='Buy'",
+    "DELETE FROM paper_limit_actions",
+    "INSERT INTO paper_limit_actions VALUES ('box-exit-order','create')",
+    "UPDATE robot_candidates SET signal_snapshot_json='{}' WHERE candidate_id='box-robot-a'",
+    "UPDATE robot_candidates SET status='BOX_PLAN_ONLY' WHERE candidate_id='box-robot-a'",
+])
+def test_box_exit_missing_or_conflicting_link_never_guesses_robot(tmp_path, mutation):
+    db = tmp_path / "source.sqlite3"
+    con = _box_exit_source(db)
+    con.execute(mutation)
+    con.commit()
+    con.close()
+    assert load_order_origins_read_only(db, account_id="paper") == {}
+
+
+def test_box_exit_conflicting_manual_command_blocks_attribution(tmp_path):
+    db = tmp_path / "source.sqlite3"
+    con = _box_exit_source(db)
+    con.execute(
+        "INSERT INTO trading_commands VALUES (?,?,?,?,?)",
+        ("manual", "paper", "box-exit-order", "terminal_manual", "manual"),
+    )
+    con.commit()
+    con.close()
+    with pytest.raises(StatisticsScopeError, match="conflicting_robot_execution_ownership"):
         load_order_origins_read_only(db, account_id="paper")
