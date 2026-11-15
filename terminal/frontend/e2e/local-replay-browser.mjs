@@ -62,6 +62,11 @@ try {
       }),
     });
   });
+  // Earlier Apply checks do not exercise real public networking.
+  // A later fixture overrides this route to test failure then success.
+  await page.route("**/local-replay/history?*", async route => {
+    await route.fulfill({ status: 502, contentType: "text/plain", body: "Mock public M5 unavailable" });
+  });
   await page.goto(localUrl, { waitUntil: "networkidle" });
   await page.getByRole("heading", { name: "Машина времени" }).waitFor();
   assert.equal(await page.locator(".replay-badge").count(), 0,
@@ -106,7 +111,9 @@ try {
   }
   assert.equal(await page.locator(".replay-history-controls").count(), 0,
     "obsolete second ticker/date/Bybit panel must never reappear");
-  assert.equal(await setup.getByRole("button", { name: "Загрузить Bybit (без сделок)" }).count(), 1);
+  assert.equal(await setup.getByRole("button", { name: "Загрузить Bybit (без сделок)" }).count(), 0);
+  assert.equal(await setup.getByRole("textbox", { name: "Координаты прогона" }).getAttribute("placeholder"), "",
+    "the input has no misleading fake XRP date");
   assert.equal(await endUtc.inputValue(), "2026-10-02T12:33");
   const duration = setup.getByRole("status", { name: "Продолжительность прогона" });
   assert.match(await duration.innerText(), /1 день/);
@@ -140,7 +147,8 @@ try {
   const copyableSource = (await page.locator(".replay-meta strong").first().innerText()).trim();
   await coordinates.fill(copyableSource);
   await setup.getByRole("button", { name: "Применить" }).click();
-  assert.equal(await setup.getByRole("alert").count(), 0, "copied Source must be accepted");
+  assert.equal(await setup.getByRole("alert").filter({ hasText: "координат" }).count(), 0,
+    "copied Source must be accepted");
   assert.equal(await startUtc.inputValue(), "2026-09-11T00:00");
   assert.equal(await endUtc.inputValue(), "2026-09-11T23:59");
   assert.equal(await page.locator(".replay-chart canvas").count(), 0,
@@ -271,9 +279,14 @@ try {
   });
   await readySetup.getByRole("checkbox", { name: "Все стратегии" }).check();
   await readySetup.getByRole("button", { name: "Применить" }).click();
-  assert.match(await readySetup.innerText(), /Пока доступны только/);
+  assert.match(await readySetup.innerText(), /торговый запуск пока поддерживает только два клина/);
+  assert.equal(await appliedPlay.isDisabled(), true, "unsupported virtual selection cannot start trades");
   assert.equal(posted.length, 1, "unsupported strategies never cause a backend POST");
   assert.equal(requests.filter(url => url.includes("/api/") || url.includes("/v5/")).length, 0);
+  // Unsupported virtual strategy Apply correctly clears previous replay.
+  // Restore the explicit synthetic fixture for the independent player tests.
+  await readySetup.getByRole("button", { name: "Только клинья" }).click();
+  await page.getByRole("button", { name: "Пример", exact: true }).click();
 
   // The entire replay control surface belongs beside the M5/H1 switch,
   // never in the file-import row above the chart.
@@ -473,18 +486,17 @@ try {
   // The actual local Python server uses text/plain for HTTP 502 failures.
   // Show the true failed boundary instead of a misleading JSON.parse error,
   // without silently replacing the selected ticker/history by demo candles.
-  await bounds.getByRole("button", { name: "Загрузить Bybit (без сделок)" }).click();
   const marketError = page.getByRole("alert").filter({ hasText: "Публичный Bybit M5 недоступен (HTTP 502)" });
   await marketError.waitFor();
   assert.match(await marketError.innerText(), /архив M1 и профиль риска/);
   assert.equal(await page.locator(".replay-chart-shell").count(), 0,
     "failed public market download cannot resurrect old market candles");
   await bounds.getByRole("checkbox", { name: "Ikigai Box" }).check();
-  await bounds.getByRole("button", { name: "Загрузить Bybit (без сделок)" }).click();
+  await bounds.getByRole("button", { name: "Применить" }).click();
   await page.getByText("РЕАЛЬНЫЕ СВЕЧИ BYBIT", { exact: false }).waitFor();
   assert.equal(publicMarketAttempts, 2);
   const marketSource = await page.locator(".replay-meta").innerText();
-  assert.match(marketSource, /Bybit · публичные свечи · без сделок/,
+  assert.match(marketSource, /Bybit · подтверждённые M5 · без сделок/,
     "public market-only source must be visible in the retained Source card");
   assert.doesNotMatch(marketSource, /SYNTHETIC_DEMO|Прогон \/ рынок/,
     "deleted synthetic run card must not be resurrected");
@@ -708,12 +720,11 @@ try {
   await page.mouse.move(620, 660); // Crosshair must not create DMI dots.
   await page.screenshot({ path: join(screenshotDir, "machine-time-browser.png"), fullPage: true });
 
-  // The deliberate HTTP 502 fixture triggers exactly one browser
-  // "Failed to load resource" console message. Permit ONLY that observed
-  // response, never unrelated JS/runtime or additional network failures.
+  // Each Apply can request public history. Only the deliberately mocked
+  // HTTP 502 errors are allowed; unrelated runtime failures are forbidden.
   const public502 = "Failed to load resource: the server responded with a status of 502 (Bad Gateway)";
-  assert.equal(errors.filter(message => message === public502).length, 1,
-    "exactly one intentional failed public-market request");
+  assert.ok(errors.filter(message => message === public502).length >= 1,
+    "intentional public-market failure must remain visible");
   assert.deepEqual(errors.filter(message => message !== public502), [],
     "Unexpected browser runtime errors: " + errors.join("; "));
   assert.ok(requests.every((u) => {

@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import mimetypes
+import os
 from pathlib import Path
 import re
 from secrets import token_hex
@@ -32,8 +33,11 @@ from research.export_historical_replay import (
     build_market_only_document, parse_date_utc, SYMBOL_RE,
 )
 from research.historical_candle_feed import FIVE_MINUTES_MS
+from research.local_replay_viewer.public_m5_cache import complete_history_fetch
 
 MAX_LOCAL_BARS = 2016  # 7 days of VISIBLE candles
+PUBLIC_M5_CACHE = (Path(os.environ["LOCALAPPDATA"]) / "BybitScanner" / "MachineTime" /
+                   "public-m5-cache") if os.environ.get("LOCALAPPDATA") else HERE / "public-m5-cache"
 GEOMETRY_PRELOAD_BARS = 864  # 72h of earlier CLOSED context; never shown as replay
 BYBIT_PUBLIC_KLINE = "https://api.bybit.com/v5/market/kline"
 STATIC_DIR = HERE / "dist"
@@ -247,9 +251,19 @@ def load_public_history(
     """Closed public M5; optionally run native research detectors, no trades."""
     if not SYMBOL_RE.fullmatch(symbol) or not symbol.endswith("USDT"):
         raise ValueError("Select a linear USDT symbol, e.g. BTCUSDT")
-    start_ms, end_ms = parse_date_utc(start), parse_date_utc(end)
+    def instant(value: str) -> int:
+        if len(value) == 10:
+            return parse_date_utc(value)
+        if len(value) != 16 or value[10] != "T":
+            raise ValueError("Expected UTC date or YYYY-MM-DDTHH:MM")
+        return int(datetime.strptime(value, "%Y-%m-%dT%H:%M").replace(
+            tzinfo=timezone.utc).timestamp() * 1000)
+
+    start_ms, end_ms = instant(start), instant(end)
+    if start_ms % FIVE_MINUTES_MS or end_ms % FIVE_MINUTES_MS:
+        raise ValueError("Public M5 start/end must align to five-minute candles")
     if end_ms <= start_ms or end_ms - start_ms > MAX_LOCAL_BARS * FIVE_MINUTES_MS:
-        raise ValueError("Select 1 to 7 complete UTC days")
+        raise ValueError("Public M5 supports up to 7 days")
     # Reject unsupported research scan windows BEFORE downloading public data.
     # Plain MARKET_ONLY still supports the pre-existing seven-day window.
     if strategies and end_ms - start_ms > 288 * FIVE_MINUTES_MS:
@@ -259,11 +273,17 @@ def load_public_history(
     ) * FIVE_MINUTES_MS
     if end_ms > end_of_last_closed:
         raise ValueError("Future/incomplete candles are not available")
-    # The response remains entirely in RAM; no overwrite of PAPER or SIM files.
+    # Only verified public M5 cache; never PAPER or SIM files.
+    preload_start = max(0, start_ms - GEOMETRY_PRELOAD_BARS * FIVE_MINUTES_MS)
+    cached_fetch = complete_history_fetch(
+        symbol=symbol, start_ms=preload_start, end_ms=end_ms,
+        directory=PUBLIC_M5_CACHE, upstream_fetch=fetch_candles,
+        bundled_report=HERE / "real-h1-august.json",
+    )
     from secrets import token_hex
     doc = build_market_only_document(
         symbol=symbol, start_ms=start_ms, end_ms=end_ms,
-        run_id="local_" + token_hex(8), fetch_candles=fetch_candles,
+        run_id="local_" + token_hex(8), fetch_candles=cached_fetch,
         geometry_warmup_bars=GEOMETRY_PRELOAD_BARS,
     )
     if strategies:

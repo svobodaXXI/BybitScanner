@@ -75,6 +75,8 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/machine-time/research"
           cp ../../research/local_replay_viewer/server.py "$RUNNER_TEMP/machine-time/server.py"
+          mkdir -p "$RUNNER_TEMP/machine-time/research/local_replay_viewer"
+          cp ../../research/local_replay_viewer/public_m5_cache.py "$RUNNER_TEMP/machine-time/research/local_replay_viewer/public_m5_cache.py"
           cp ../../research/local_replay_viewer/START_LOCAL.cmd "$RUNNER_TEMP/machine-time/START_LOCAL.cmd"
           cp ../../research/local_replay_viewer/README.txt "$RUNNER_TEMP/machine-time/README.txt"
           cp ../../research/local_replay_viewer/smoke_package.py "$RUNNER_TEMP/machine-time/smoke_package.py"

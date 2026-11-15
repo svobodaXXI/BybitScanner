@@ -13,7 +13,6 @@ import {
 import "./runSetup.css";
 
 type WedgeRunRequest = ReturnType<typeof makeWedgeRunRequest>;
-const INITIAL_START = new Date(Date.now() - 3 * 86_400_000).toISOString().slice(0, 16);
 const STEPS: Array<{ id: PeriodIncrement; name: string }> = [
   { id: "HOUR", name: "1 час" },
   { id: "DAY", name: "1 день" },
@@ -22,13 +21,12 @@ const STEPS: Array<{ id: PeriodIncrement; name: string }> = [
 
 /** Local-only Wedge execution via loopback: never production /api or PAPER. */
 export function RunSetupPanel({
-  symbol, onArchiveSymbol, onPasteSymbol, onSimulationStart, onSimulationReady,
+  symbol, onPasteSymbol, onSimulationStart, onSimulationReady,
   onSimulationAppend, onSimulationFailed, onSimulationBusy, playRequestId, showReport,
-  onPublicHistoryRequest, publicHistoryLoading, onStrategySelectionChange,
+  onPublicHistoryRequest, publicHistoryLoading, onStrategySelectionChange, onHistoryPreparation,
   onEpisodeLookup,
 }: {
   symbol: string;
-  onArchiveSymbol: (archiveSymbol: string) => boolean;
   onPasteSymbol: (symbol: string) => void;
   onSimulationStart: (request: WedgeRunRequest) => void;
   onSimulationBusy: (busy: boolean) => void;
@@ -38,13 +36,14 @@ export function RunSetupPanel({
   onSimulationAppend: (runId: string, events: ReplayEvent[]) => void;
   onSimulationFailed: () => void;
   onPublicHistoryRequest: (symbol: string, start: string, endInclusive: string, selected: readonly StrategyId[]) => void;
+  onHistoryPreparation: (symbol: string, start: string, endInclusive: string) => void;
   publicHistoryLoading: boolean;
   onStrategySelectionChange: (selection: RunSelection) => void;
   onEpisodeLookup: (episodeId: string) => Promise<void>;
 }) {
   const [selection, setSelection] = useState<RunSelection>(onlyWedges);
-  const [start, setStart] = useState(INITIAL_START);
-  const [end, setEnd] = useState(() => presetEndInclusive(INITIAL_START, "DAY"));
+  const [start, setStart] = useState("");
+  const [end, setEnd] = useState("");
   const [preset, setPreset] = useState<PeriodPreset | null>("DAY");
   const [openMirror, setOpenMirror] = useState(true);
   const [balance, setBalance] = useState("1000");
@@ -62,6 +61,7 @@ export function RunSetupPanel({
   const running = useRef(false);
   const requestController = useRef<AbortController | null>(null);
   const parsed = useMemo(() => {
+    if (!start || !end) return { window: null, error: "" };
     try {
       return { window: validateInclusiveWindow(start, end), error: "" };
     } catch (error) {
@@ -89,14 +89,8 @@ export function RunSetupPanel({
         const next = parseWedgeStatus(await response.json() as unknown);
         if (!controller.signal.aborted) {
           setStatus(next);
-          // A manifest hint is NOT proof of the cache or instrument terms.
-          // Do not overwrite an owner-selected ticker or period.
-          if (next.archive_hint && !datesEdited.current &&
-              onArchiveSymbol(next.archive_hint.symbol)) {
-            setStart(next.archive_hint.start_utc);
-            setEnd(next.archive_hint.end_utc_inclusive);
-            setPreset("DAY");
-          }
+          // A manifest hint is NOT owner selection; keep the period blank
+          // until actual input or a verified owner-selected archive is opened.
         }
       } catch (error) {
         if (!controller.signal.aborted) setStatusError(
@@ -105,7 +99,7 @@ export function RunSetupPanel({
       }
     })();
     return () => controller.abort();
-  }, [onArchiveSymbol]);
+  }, []);
 
   const runWedges = useCallback(async (request: WedgeRunRequest, seq: number) => {
     if (running.current) return; // No duplicate Scanner/Robot computation.
@@ -182,9 +176,14 @@ export function RunSetupPanel({
     try {
       const coords = value.trim() ? parseRunCoordinates(value) :
         { symbol, start_utc: start, end_utc_inclusive: end };
-      const request = makeWedgeRunRequest(
-        selection, coords.symbol, coords.start_utc, coords.end_utc_inclusive, balance,
-      );
+      const ticker = coords.symbol.trim().toUpperCase();
+      if (!/^[A-Z0-9]{2,25}USDT$/.test(ticker))
+        throw new Error("Укажите один USDT-тикер");
+      const window = validateInclusiveWindow(coords.start_utc, coords.end_utc_inclusive);
+      if (window.minutes > 90 * 1440) throw new Error("Максимальный прогон — 90 дней");
+      const request = runnableWedgeSelection(selection)
+        ? makeWedgeRunRequest(selection, ticker, coords.start_utc, coords.end_utc_inclusive, balance)
+        : null;
       requestController.current?.abort();
       requestController.current = null;
       running.current = false;
@@ -192,11 +191,13 @@ export function RunSetupPanel({
       generation.current++;
       preparedRun.current = request;
       datesEdited.current = true;
-      onPasteSymbol(request.symbol);
-      setStart(request.start_utc); setEnd(request.end_utc_inclusive);
+      onPasteSymbol(ticker);
+      setStart(coords.start_utc); setEnd(coords.end_utc_inclusive);
       setPreset(null); setPeriodError(""); setCoordinateError(""); setRunError("");
       setReport(null);
-      onSimulationStart(request); // Prepare Source and clear old chart; POST waits for ▶.
+      if (request) onSimulationStart(request); // Virtual POST still requires ▶ and verified prerequisites.
+      else onHistoryPreparation(ticker, coords.start_utc, coords.end_utc_inclusive);
+      onPublicHistoryRequest(ticker, coords.start_utc, coords.end_utc_inclusive, selection.selected);
     } catch (error) {
       setCoordinateError(error instanceof Error ? error.message : "Неверные координаты прогона");
     }
@@ -276,12 +277,15 @@ export function RunSetupPanel({
           <div className="replay-run-coordinates">
             <label>Вставить тикер и даты · UTC
               <input aria-label="Координаты прогона" type="text" value={coordinateText}
-                placeholder="XRPUSDT | 2026-09-11T00:00 | 2026-09-11T23:59"
+                placeholder=""
                 onChange={e => { setCoordinateText(e.target.value); setCoordinateError(""); }} />
             </label>
             <div className="replay-run-coordinate-actions">
               <button type="button" onClick={() => void pasteCoordinates()}>Вставить из буфера</button>
-              <button type="button" onClick={() => applyCoordinates(coordinateText)}>Применить</button>
+              <button type="button" disabled={publicHistoryLoading}
+                onClick={() => applyCoordinates(coordinateText)}>
+                {publicHistoryLoading ? "Загружаю свечи…" : "Применить"}
+              </button>
             </div>
             {coordinateError && <p role="alert" className="replay-run-error">{coordinateError}</p>}
           </div>
@@ -320,12 +324,7 @@ export function RunSetupPanel({
             <p role="status" className="replay-run-summary">
               {parsed.window?.minutes.toLocaleString("ru-RU")} минут M1 · конечная минута включена
             </p>}
-          <div className="replay-run-public-history">
-            <button type="button" disabled={publicHistoryLoading || !parsed.window}
-              onClick={() => onPublicHistoryRequest(symbol, start, end, selection.selected)}>
-              {publicHistoryLoading ? "Загружаю историю…" : "Загрузить Bybit (без сделок)"}
-            </button>
-          </div>
+
         </fieldset>
       </div>
       <div className="replay-run-account">
