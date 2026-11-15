@@ -503,9 +503,11 @@
   padding: 0.4rem 0.55rem;
   border-bottom: 1px solid #27313b;
 }
-.diary-ticker-search input {
+.diary-ticker-search input,
+.diary-ticker-search select {
   box-sizing: border-box;
   width: 100%;
+  min-width: 0;
   padding: 0.5rem 0.65rem;
   border: 1px solid #394653;
   border-radius: 0.32rem;
@@ -514,24 +516,48 @@
   font: inherit;
   font-size: 0.83rem;
 }
-.diary-loss-toggle {
-  padding: 0.5rem 0.65rem;
+.diary-ticker-search-deals {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: stretch;
+}
+.diary-ticker-search-deals select {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.diary-deal-filter-group {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.3rem;
+  min-width: 0;
+}
+.diary-deal-filter-button {
+  min-width: 0;
+  min-height: 2.3rem;
+  padding: 0.38rem 0.22rem;
   border: 1px solid #394653;
   border-radius: 0.32rem;
-  background: #151d26;
-  color: #e4eaf0;
+  background: #151d24;
+  color: #aeb9c3;
   font: inherit;
-  font-size: 0.83rem;
+  font-size: 0.7rem;
+  white-space: nowrap;
   cursor: pointer;
 }
-.diary-loss-toggle[aria-pressed="true"] {
+.diary-deal-filter-button:focus-visible {
+  outline: 2px solid #859bb1;
+  outline-offset: 2px;
+}
+.diary-deal-filter-button.profit[aria-pressed="true"],
+.diary-deal-filter-button.long[aria-pressed="true"] {
+  border-color: #37c88e;
+  background: #172e29;
+  color: #8ae2bd;
+}
+.diary-deal-filter-button.loss[aria-pressed="true"],
+.diary-deal-filter-button.short[aria-pressed="true"] {
   border-color: #f07178;
   background: #342026;
   color: #ffd1d4;
-}
-.diary-loss-toggle:focus-visible {
-  outline: 2px solid #859bb1;
-  outline-offset: 2px;
 }
 .diary-deal-pattern {
   color: #aab9c7;
@@ -635,6 +661,11 @@
   fill: none;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+.diary-trade-icon .diary-filmstrip-icon {
+  width: 1.4rem;
+  height: 1.32rem;
+  stroke-width: 1.7;
 }
 .diary-trade-icon:disabled {
   opacity: 0.35;

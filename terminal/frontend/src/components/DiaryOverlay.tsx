@@ -8,6 +8,9 @@ export type DiarySection = "FINREZ" | "PATTERNS" | "DEALS" | "TRADES" | "SETUPS"
 export type DiaryAccountMenuProps = Pick<ComponentProps<typeof AccountMenu>,
   "workspaceProjection" | "mode" | "selectedAccountId" | "onSelectAccount" | "modeAccountError">;
 type FinrezPeriod = "DAY" | "WEEK" | "MONTH" | "YEAR" | "ALL";
+type FinrezPnlFilter = "ALL" | "PROFIT" | "LOSS";
+type FinrezSideFilter = "ALL" | "LONG" | "SHORT";
+const NO_VERIFIED_PATTERN_FILTER = "__NO_VERIFIED_PATTERN__";
 type DiaryFilter = "ALL" | "OPEN" | "CLOSED" | "ATTENTION";
 type SetupFilter = "ALL" | "ATTENTION";
 
@@ -374,9 +377,15 @@ function TradeActionButtons({ onDetails, onReplay }: {
           ? "Открыть локальный Симулятор по ID без передачи свечей и решений"
           : "Для открытия по ID нужен подтверждённый PAPER episode te_…"}
         disabled={!onReplay} onClick={onReplay}>
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <rect x="3.5" y="3" width="17" height="18" rx="1.5" />
-          <path d="M8 3v18M16 3v18M3.5 8h4.5M3.5 15h4.5M16 8h4.5M16 15h4.5" />
+        <svg className="diary-filmstrip-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="2.2" y="4" width="19.6" height="16" rx="1.5" />
+          <path d="M2.2 8h19.6M2.2 16h19.6" />
+          <rect x="5" y="5" width="2" height="2" rx=".35" />
+          <rect x="11" y="5" width="2" height="2" rx=".35" />
+          <rect x="17" y="5" width="2" height="2" rx=".35" />
+          <rect x="5" y="17" width="2" height="2" rx=".35" />
+          <rect x="11" y="17" width="2" height="2" rx=".35" />
+          <rect x="17" y="17" width="2" height="2" rx=".35" />
         </svg>
       </button>
     </div>
@@ -933,13 +942,12 @@ function compactDealPattern(pattern: string | null): string {
   return pattern ?? "не установлен";
 }
 
-function ClosedDealsView({ report, symbolFilter, patternFilter, lossOnly, onClearSymbolFilter }: {
+function ClosedDealsView({ report, symbolFilter, patternFilter, pnlFilter, sideFilter, onClearSymbolFilter }: {
   report: FinrezResponse; symbolFilter: string; patternFilter: string;
-  lossOnly: boolean; onClearSymbolFilter: () => void;
+  pnlFilter: FinrezPnlFilter; sideFilter: FinrezSideFilter; onClearSymbolFilter: () => void;
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const tickerQuery = symbolFilter.trim().toUpperCase();
-  const patternQuery = patternFilter.trim().toLocaleLowerCase("ru-RU");
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState("");
   const [verifiedExport, setVerifiedExport] = useState<{ episodeId: string; json: string } | null>(null);
@@ -971,20 +979,24 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, lossOnly, onClea
   };
   const deals = useMemo(() => (report.closed_episodes ?? []).filter((deal) => {
     if (!deal.symbol.includes(tickerQuery)) return false;
-    if (lossOnly && Number(deal.pnl_usdt) >= 0) return false;
-    if (!patternQuery) return true;
+    const pnl = Number(deal.pnl_usdt);
+    if (pnlFilter === "PROFIT" && pnl <= 0) return false;
+    if (pnlFilter === "LOSS" && pnl >= 0) return false;
+    if (sideFilter !== "ALL" && deal.side !== sideFilter) return false;
     const setup = Object.prototype.hasOwnProperty.call(verifiedSetups, deal.trade_episode_id)
       ? verifiedSetups[deal.trade_episode_id]
       : indexedVerifiedSetups[deal.trade_episode_id];
-    const pattern = setup?.pattern ?? verifiedWedgeSignal(deal, report)?.pattern;
-    return !!pattern?.toLocaleLowerCase("ru-RU").includes(patternQuery);
+    const pattern = setup?.pattern ?? verifiedWedgeSignal(deal, report)?.pattern ?? null;
+    if (patternFilter === NO_VERIFIED_PATTERN_FILTER) return pattern === null;
+    if (patternFilter && pattern !== patternFilter) return false;
+    return true;
   }).sort((a, b) => {
-    if (!lossOnly) return 0; // Preserve the API's established ordering in "all deals".
+    if (pnlFilter === "ALL") return 0; // Preserve API ordering when no result filter is active.
     const aPnl = Number(a.pnl_usdt), bPnl = Number(b.pnl_usdt);
-    if (aPnl < bPnl) return -1;
-    if (aPnl > bPnl) return 1;
+    if (aPnl < bPnl) return pnlFilter === "LOSS" ? -1 : 1;
+    if (aPnl > bPnl) return pnlFilter === "LOSS" ? 1 : -1;
     return b.closed_at_ms - a.closed_at_ms || a.trade_episode_id.localeCompare(b.trade_episode_id);
-  }), [report.closed_episodes, report.source_revision, report.owner, tickerQuery, patternQuery, lossOnly, verifiedSetups, indexedVerifiedSetups]);
+  }), [report.closed_episodes, report.source_revision, report.owner, tickerQuery, patternFilter, pnlFilter, sideFilter, verifiedSetups, indexedVerifiedSetups]);
   const selected = deals.find((deal) => deal.trade_episode_id === selectedId);
   const selectedPattern = selected ? patternFor(selected) : null;
   useEffect(() => {
@@ -1191,7 +1203,7 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, lossOnly, onClea
       {tickerQuery !== "" ? (
         <div className="diary-finrez-filter">
           <button type="button" className="diary-detail-back" onClick={onClearSymbolFilter}>
-            {patternQuery ? "← Все тикеры" : "← Все сделки"}
+            {patternFilter ? "← Все тикеры" : "← Все сделки"}
           </button>
           <span>Сделки по {tickerQuery}</span>
         </div>
@@ -1203,9 +1215,10 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, lossOnly, onClea
         </p>
       ) : null}
       {deals.length === 0 ? <p className="diary-state">
-        {lossOnly ? "Нет убыточных сделок по выбранным фильтрам"
-          : patternQuery ? "По выбранным фильтрам сделок нет"
-          : "Нет подтверждённых закрытых сделок за выбранный период"}
+        {pnlFilter === "LOSS" ? "Нет убыточных сделок по выбранным фильтрам"
+          : pnlFilter === "PROFIT" ? "Нет прибыльных сделок по выбранным фильтрам"
+            : patternFilter || sideFilter !== "ALL" ? "По выбранным фильтрам сделок нет"
+              : "Нет подтверждённых закрытых сделок за выбранный период"}
       </p> : (
         <div className="diary-trades-list">
           {deals.map((deal) => (
@@ -1496,7 +1509,8 @@ export function DiaryOverlay({
   const [finrezPeriod, setFinrezPeriod] = useState<FinrezPeriod>("DAY");
   const [finrezSymbolFilter, setFinrezSymbolFilter] = useState("");
   const [finrezPatternFilter, setFinrezPatternFilter] = useState("");
-  const [finrezLossOnly, setFinrezLossOnly] = useState(false);
+  const [finrezPnlFilter, setFinrezPnlFilter] = useState<FinrezPnlFilter>("ALL");
+  const [finrezSideFilter, setFinrezSideFilter] = useState<FinrezSideFilter>("ALL");
   const [mirrorLevels, setMirrorLevels] = useState<MirrorLevelRow[]>([]);
   const [tradeFilter, setTradeFilter] = useState<DiaryFilter>("ALL");
   const [setupFilter, setSetupFilter] = useState<SetupFilter>("ALL");
@@ -1665,6 +1679,14 @@ export function DiaryOverlay({
   const visibleTrades = useMemo(() => trades.filter((trade) => matchesTradeFilter(trade, tradeFilter)), [tradeFilter, trades]);
   const visibleSetups = useMemo(() => setups.filter((setup) => setupFilter === "ALL" || setup.needs_attention), [setupFilter, setups]);
   const selectedTrade = useMemo(() => trades.find((trade) => trade.trade_episode_id === selectedTradeId) ?? null, [selectedTradeId, trades]);
+  const finrezPatternOptions = useMemo(() => {
+    const patterns = new Set<string>();
+    for (const deal of finrez?.closed_episodes ?? []) {
+      const pattern = finrez ? verifiedIndexedPattern(deal, finrez)?.pattern : undefined;
+      if (pattern) patterns.add(pattern);
+    }
+    return [...patterns].sort((left, right) => left.localeCompare(right, "ru-RU"));
+  }, [finrez]);
 
   return (
     <div className="diary-backdrop" role="presentation">
@@ -1705,20 +1727,42 @@ export function DiaryOverlay({
             <button aria-current={section === "DEALS" || section === "TRADES" ? "page" : undefined} onClick={() => { setSelectedTradeId(null); setSection("DEALS"); }} type="button">Сделки</button>
           </nav>
           {(section === "FINREZ" || section === "PATTERNS" || section === "DEALS") ? (
-            <div className="diary-ticker-search">
+            <div className={`diary-ticker-search ${section === "DEALS" ? "diary-ticker-search-deals" : ""}`}>
               <input aria-label="Поиск по тикеру" type="search" placeholder="Поиск тикера"
                 value={finrezSymbolFilter}
                 onChange={(event) => setFinrezSymbolFilter(event.target.value.toUpperCase())} />
               {section === "DEALS" ? (
                 <>
-                  <input aria-label="Поиск по паттерну" type="search"
-                    placeholder="Поиск паттерна" value={finrezPatternFilter}
-                    onChange={(event) => setFinrezPatternFilter(event.target.value)} />
-                  <button className="diary-loss-toggle" aria-pressed={finrezLossOnly}
-                    title="Только сделки с отрицательным реализованным PnL, начиная с наибольшего убытка"
-                    type="button" onClick={() => setFinrezLossOnly((prior) => !prior)}>
-                    Убыточные
-                  </button>
+                  <select aria-label="Выбор паттерна" value={finrezPatternFilter}
+                    onChange={(event) => setFinrezPatternFilter(event.target.value)}>
+                    <option value="">Все паттерны</option>
+                    {finrezPatternOptions.map((pattern) => (
+                      <option key={pattern} value={pattern}>{pattern}</option>
+                    ))}
+                    <option value={NO_VERIFIED_PATTERN_FILTER}>Без подтверждённого паттерна</option>
+                  </select>
+                  <div className="diary-deal-filter-group" role="group" aria-label="Фильтр результата">
+                    <button className="diary-deal-filter-button profit" aria-pressed={finrezPnlFilter === "PROFIT"}
+                      title="Только сделки с положительным реализованным PnL"
+                      type="button" onClick={() => setFinrezPnlFilter((prior) => prior === "PROFIT" ? "ALL" : "PROFIT")}>
+                      Прибыльные
+                    </button>
+                    <button className="diary-deal-filter-button loss" aria-pressed={finrezPnlFilter === "LOSS"}
+                      title="Только сделки с отрицательным реализованным PnL, начиная с наибольшего убытка"
+                      type="button" onClick={() => setFinrezPnlFilter((prior) => prior === "LOSS" ? "ALL" : "LOSS")}>
+                      Убыточные
+                    </button>
+                  </div>
+                  <div className="diary-deal-filter-group" role="group" aria-label="Фильтр направления">
+                    <button className="diary-deal-filter-button long" aria-pressed={finrezSideFilter === "LONG"}
+                      type="button" onClick={() => setFinrezSideFilter((prior) => prior === "LONG" ? "ALL" : "LONG")}>
+                      LONG
+                    </button>
+                    <button className="diary-deal-filter-button short" aria-pressed={finrezSideFilter === "SHORT"}
+                      type="button" onClick={() => setFinrezSideFilter((prior) => prior === "SHORT" ? "ALL" : "SHORT")}>
+                      SHORT
+                    </button>
+                  </div>
                 </>
               ) : null}
             </div>
@@ -1750,21 +1794,24 @@ export function DiaryOverlay({
             symbolFilter={finrezSymbolFilter} onSelectTicker={(symbol) => {
               setFinrezSymbolFilter(symbol);
               setFinrezPatternFilter("");
-              setFinrezLossOnly(false);
+              setFinrezPnlFilter("ALL");
+              setFinrezSideFilter("ALL");
               setSection("DEALS");
             }} /> : null}
           {!loading && !loadError && !selectedTrade && section === "PATTERNS" && finrez ? (
             <PatternsView report={finrez} symbolFilter={finrezSymbolFilter}
               onSelectPattern={(pattern) => {
                 setFinrezPatternFilter(pattern);
-                setFinrezLossOnly(false);
+                setFinrezPnlFilter("ALL");
+                setFinrezSideFilter("ALL");
                 setSection("DEALS");
               }} />
           ) : null}
           {!loading && !loadError && !selectedTrade && section === "DEALS" && finrez ? (
             <ClosedDealsView key={`${finrez.account_id}:${finrez.owner}:${finrez.period}:${finrez.source_revision}:${finrezSymbolFilter}:${finrezPatternFilter}`}
               report={finrez} symbolFilter={finrezSymbolFilter} patternFilter={finrezPatternFilter}
-              lossOnly={finrezLossOnly} onClearSymbolFilter={() => setFinrezSymbolFilter("")} />
+              pnlFilter={finrezPnlFilter} sideFilter={finrezSideFilter}
+              onClearSymbolFilter={() => setFinrezSymbolFilter("")} />
           ) : null}
           {!loading && !loadError && selectedTrade ? <TradeDetailsView trade={selectedTrade} onBack={() => { setRequestedTradeMissing(false); setSelectedTradeId(null); }} /> : null}
           {!loading && !loadError && requestedTradeMissing && section === "TRADES" ? <p className="diary-state">Сделка недоступна в текущем дневнике</p> : null}
