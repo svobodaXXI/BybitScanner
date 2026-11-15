@@ -34,7 +34,7 @@ const snapshot = {
     { open_time_ms: t + interval, open: 100.5, high: 102, low: 99, close: 101 },
   ],
   boundaries: [{
-    boundary_id: "lower-ray", kind: "ray",
+    boundary_id: "lower-ray", kind: "ray" as const,
     anchors: [
       { bar_open_time_ms: t, price: 99 },
       { bar_open_time_ms: t + interval, price: 99.2 },
