@@ -13,7 +13,6 @@ import {
 import "./runSetup.css";
 
 type WedgeRunRequest = ReturnType<typeof makeWedgeRunRequest>;
-const INITIAL_START = new Date(Date.now() - 3 * 86_400_000).toISOString().slice(0, 16);
 const STEPS: Array<{ id: PeriodIncrement; name: string }> = [
   { id: "HOUR", name: "1 час" },
   { id: "DAY", name: "1 день" },
@@ -24,7 +23,7 @@ const STEPS: Array<{ id: PeriodIncrement; name: string }> = [
 export function RunSetupPanel({
   symbol, onArchiveSymbol, onPasteSymbol, onSimulationStart, onSimulationReady,
   onSimulationAppend, onSimulationFailed, onSimulationBusy, playRequestId, showReport,
-  onPublicHistoryRequest, publicHistoryLoading, onStrategySelectionChange,
+  onPublicHistoryRequest, publicHistoryLoading, onStrategySelectionChange, onHistoryPreparation,
   onEpisodeLookup,
 }: {
   symbol: string;
@@ -38,13 +37,14 @@ export function RunSetupPanel({
   onSimulationAppend: (runId: string, events: ReplayEvent[]) => void;
   onSimulationFailed: () => void;
   onPublicHistoryRequest: (symbol: string, start: string, endInclusive: string, selected: readonly StrategyId[]) => void;
+  onHistoryPreparation: (symbol: string, start: string, endInclusive: string) => void;
   publicHistoryLoading: boolean;
   onStrategySelectionChange: (selection: RunSelection) => void;
   onEpisodeLookup: (episodeId: string) => Promise<void>;
 }) {
   const [selection, setSelection] = useState<RunSelection>(onlyWedges);
-  const [start, setStart] = useState(INITIAL_START);
-  const [end, setEnd] = useState(() => presetEndInclusive(INITIAL_START, "DAY"));
+  const [start, setStart] = useState("");
+  const [end, setEnd] = useState("");
   const [preset, setPreset] = useState<PeriodPreset | null>("DAY");
   const [openMirror, setOpenMirror] = useState(true);
   const [balance, setBalance] = useState("1000");
@@ -89,14 +89,8 @@ export function RunSetupPanel({
         const next = parseWedgeStatus(await response.json() as unknown);
         if (!controller.signal.aborted) {
           setStatus(next);
-          // A manifest hint is NOT proof of the cache or instrument terms.
-          // Do not overwrite an owner-selected ticker or period.
-          if (next.archive_hint && !datesEdited.current &&
-              onArchiveSymbol(next.archive_hint.symbol)) {
-            setStart(next.archive_hint.start_utc);
-            setEnd(next.archive_hint.end_utc_inclusive);
-            setPreset("DAY");
-          }
+          // A manifest hint is NOT owner selection; keep the period blank
+          // until actual input or a verified owner-selected archive is opened.
         }
       } catch (error) {
         if (!controller.signal.aborted) setStatusError(
@@ -182,9 +176,14 @@ export function RunSetupPanel({
     try {
       const coords = value.trim() ? parseRunCoordinates(value) :
         { symbol, start_utc: start, end_utc_inclusive: end };
-      const request = makeWedgeRunRequest(
-        selection, coords.symbol, coords.start_utc, coords.end_utc_inclusive, balance,
-      );
+      const ticker = coords.symbol.trim().toUpperCase();
+      if (!/^[A-Z0-9]{2,25}USDT$/.test(ticker))
+        throw new Error("Укажите один USDT-тикер");
+      const window = validateInclusiveWindow(coords.start_utc, coords.end_utc_inclusive);
+      if (window.minutes > 90 * 1440) throw new Error("Максимальный прогон — 90 дней");
+      const request = runnableWedgeSelection(selection)
+        ? makeWedgeRunRequest(selection, ticker, coords.start_utc, coords.end_utc_inclusive, balance)
+        : null;
       requestController.current?.abort();
       requestController.current = null;
       running.current = false;
@@ -192,12 +191,13 @@ export function RunSetupPanel({
       generation.current++;
       preparedRun.current = request;
       datesEdited.current = true;
-      onPasteSymbol(request.symbol);
-      setStart(request.start_utc); setEnd(request.end_utc_inclusive);
+      onPasteSymbol(ticker);
+      setStart(coords.start_utc); setEnd(coords.end_utc_inclusive);
       setPreset(null); setPeriodError(""); setCoordinateError(""); setRunError("");
       setReport(null);
-      onSimulationStart(request); // Virtual POST still requires ▶ and verified SIMULATION prerequisites.
-      onPublicHistoryRequest(request.symbol, request.start_utc, request.end_utc_inclusive, selection.selected);
+      if (request) onSimulationStart(request); // Virtual POST still requires ▶ and verified prerequisites.
+      else onHistoryPreparation(ticker, coords.start_utc, coords.end_utc_inclusive);
+      onPublicHistoryRequest(ticker, coords.start_utc, coords.end_utc_inclusive, selection.selected);
     } catch (error) {
       setCoordinateError(error instanceof Error ? error.message : "Неверные координаты прогона");
     }
