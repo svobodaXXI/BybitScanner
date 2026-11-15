@@ -488,9 +488,9 @@ export function OriginalEpisodeSignalChart(props: OriginalSignalChartProps) {
             onClick={() => void selectFrame(option.id)}>{option.label}</button>)}
         </div>
       )}
-      {alternateFrame && <p className="diary-finrez-basis">
+      {original && alternateFrame && <p className="diary-finrez-basis">
         Выбранный {timeframeLabel(frame)} показывает реальные свечи для контекста.
-        Исходная фигура сохраняется отдельно на {timeframeLabel(original!.snapshot.timeframe)}:
+        Исходная фигура сохраняется отдельно на {timeframeLabel(original.snapshot.timeframe)}:
         перенос её линий на другой масштаб изменил бы смысл исходных координат.
       </p>}
       {original && candles.length > 0 && (
