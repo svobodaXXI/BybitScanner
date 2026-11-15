@@ -65,7 +65,7 @@ PAPER DB/position, STOP/START, reconcile and trading authority remain unchanged.
 
 Canonical details and the owner's full 2026-11-15 receipt: `DOCUMENTS/WINDOWS_PC_VPS_ACCESS_RECOVERY_20261108.md` → `PRIMARY PC CODEX DESKTOP SSH ROUTE`.
 
-## VPS SSH — current primary PC route and blocked-release fast path (2026-11-14)
+## VPS SSH — native PowerShell PC route and blocked-release fast path (2026-11-14)
 
 **Current canonical PC transport:** Windows PowerShell `ssh bybitscanner-vps`,
 resolved to `root@212.193.14.116` and the existing key
