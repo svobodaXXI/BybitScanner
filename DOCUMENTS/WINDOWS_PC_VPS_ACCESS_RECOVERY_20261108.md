@@ -1,7 +1,35 @@
 # Windows PC → BybitScanner VPS: confirmed recovery and local tool setup (2026-11-08)
 
-Status: **observed operator evidence**, not a runtime/trading readiness receipt. Scope: the **desktop PC** Windows user `svobo`, not the laptop. The owner uses **Codex Desktop GUI already installed/open**, not a CLI-first workflow. Do **not** instruct the owner to launch Codex by typing `codex` in PowerShell. Command-line PowerShell is for bounded SSH access/testing when truly needed; use the already-open Desktop app for Codex tasks. Codex Desktop's direct SSH access is **NOT YET VERIFIED** (see separate execution-environment caveat below).
+Status: **observed operator evidence**, not a runtime/trading readiness receipt. Scope: the **desktop PC** Windows user `svobo`, not the laptop. The owner uses **Codex Desktop GUI already installed/open**, not a CLI-first workflow. Do **not** instruct the owner to launch Codex by typing `codex` in PowerShell. Command-line PowerShell is for bounded SSH access/testing when truly needed; use the already-open Desktop app for Codex tasks. **Codex Desktop access from this PC is now VERIFIED (2026-11-15)**. Its canonical route is the explicit Windows OpenSSH command in the first section below; do not try the PC alias, user SSH config, or laptop identity from Codex Desktop.
 
+## PRIMARY PC CODEX DESKTOP SSH ROUTE — USE FIRST (owner-confirmed 2026-11-15)
+
+**This is the canonical, primary SSH route for Codex Desktop on the desktop PC** (`C:\Users\svobo`). The owner executed this exact route in the already-open Codex Desktop and confirmed:
+
+```text
+SSH_OK
+root
+v3286418.hosted-by-vdsina.ru
+SSH_EXIT_CODE=0
+```
+
+Use Windows PowerShell through Codex Desktop's Windows execution environment, with the literal Windows OpenSSH executable, the existing **PC** key path, and the VPS's current PC address:
+
+```powershell
+& 'C:\Windows\System32\OpenSSH\ssh.exe' -F none -i 'C:\Users\svobo\.ssh\bybitscanner_vdsina_gateway_20261030' -o IdentitiesOnly=yes -o BatchMode=yes -o PasswordAuthentication=no -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 root@212.193.14.116 'echo SSH_OK; whoami; hostname'
+"SSH_EXIT_CODE=$LASTEXITCODE"
+```
+
+**Agent discovery / routing rule — do not path-hunt:**
+- Read and use this section first for every Codex Desktop → VPS connection from the desktop PC.
+- Run the SSH command directly. Do **not** preflight the private-key file with `Test-Path`, `Get-Item`, `Get-Acl`, file reads, or permission probes; a sandbox path-access denial is not evidence that SSH authentication will fail.
+- `-F none` is intentional: it bypasses the Windows user SSH config and aliases, which are not the Codex Desktop route.
+- `-i` must point to the existing PC key above. Never substitute the laptop key `bybitscanner_laptop`, create/copy/print a key, or change its ACL.
+- Do not try `bybitscanner-vps`, `-F C:\Users\svobo\.ssh\config`, the old VPS IP `83.217.213.181`, alternate SSH binaries, SSH-agent diagnosis, VNC, or VPN changes as competing first attempts.
+- If the Codex sandbox itself blocks this exact command from accessing the key, request the normal owner-approved trusted/out-of-sandbox execution for **the same command**; do not change filesystem permissions or SSH configuration to work around it.
+- Preserve `StrictHostKeyChecking=yes`. Do not retry in a loop. A successful receipt is only the SSH transport proof shown above, not runtime/trading readiness or permission to mutate the VPS.
+
+**Keep device routes separate:** this section is for Codex Desktop on the main PC only. The laptop has its own independently documented route using `C:\Users\SVOBODA21\.ssh\bybitscanner_laptop` and `83.217.213.181`; never reuse those values on the PC. The PC's native Windows PowerShell alias `bybitscanner-vps` remains a separate host-shell route and is not the Codex Desktop command.
 ## VERIFIED LAPTOP CODEX DESKTOP SSH ROUTE — 2026-11-15
 
 **Scope: Windows 10 x64 laptop only**, user profile `C:\Users\SVOBODA21`. This is distinct from the **desktop PC** route documented below. Owner's PowerShell and Codex both confirmed access to `v3286418.hosted-by-vdsina.ru`, SSH exit code `0`. Codex used Windows OpenSSH `9.5.4.1`. This evidence proves transport only; it does **not** establish permission or readiness for VPS deployment, STOP, PAPER trading, or LIVE.
@@ -26,7 +54,7 @@ On subsequent sessions, try this **known-good route once**. If the Windows ssh-a
 
 **Acceptance boundary:** Codex authenticated successfully to the expected VPS with exit code `0`; no STOP, deployment, release journal, systemd operation, PAPER DB or trading mutation was performed. Keep the *laptop* route separate from the PC's `ssh bybitscanner-vps` alias targeting `212.193.14.116`.
 
-## CURRENT PRIMARY PC SSH ROUTE — reference standard (owner-verified 2026-11-14)
+## WINDOWS POWERSHELL PC SSH ROUTE — separate host-shell route (owner-verified 2026-11-14)
 
 **Main/default connection from the desktop PC (including with Happ/VPN enabled):**
 use the existing OpenSSH alias `bybitscanner-vps`. Windows `ssh -G` confirmed
@@ -50,16 +78,15 @@ do not invalidate the later authenticated alias connection. One success proves
 that connection, not permanent reachability; if a future alias attempt fails,
 stop and diagnose the actual route without retry loops.
 
-**Distinct environments:** Codex Desktop may use a separate SSH client and may
-not inherit the Windows alias. An `SSH_OK` from PC PowerShell does **not**
-prove Codex-to-VPS access. Use the same verified host/user/key/config only when
-that environment supports them; otherwise report a transport blocker without
-mutating VPS. The `bybitscanner_laptop` key and direct old-IP examples elsewhere
-in this repo are laptop-specific or **dated historical fallbacks**, not competing
-PC defaults. The historical 2026-11-11 VPN-off event is preserved below solely
-as incident evidence. SSH access is not permission for release, services,
-PAPER DB or trading mutations.
-
+**Distinct environments:** this section defines the native Windows PowerShell
+host-shell route only. Codex Desktop on this PC has its own separately proven,
+canonical direct-key route in `PRIMARY PC CODEX DESKTOP SSH ROUTE` above;
+always use that route in Codex Desktop rather than assuming the alias/config is
+inherited. The `bybitscanner_laptop` key and direct old-IP examples elsewhere
+in this repo are laptop-specific or **dated historical fallbacks**, not
+competing PC defaults. The historical 2026-11-11 VPN-off event is preserved
+below solely as incident evidence. SSH access is not permission for release,
+services, PAPER DB or trading mutations.
 
 ## What changed, and what did not
 
@@ -80,7 +107,7 @@ This is an **additional public IPv4 address, not an API endpoint or API key**:
 - Working historical private SSH identity (file path only, **do not read, print, commit, or copy its contents**): `C:\Users\svobo\.ssh\bybitscanner_vdsina_gateway_20261030`. The older `bybitscanner_vdsina_2026` key also exists; no new key needed for the successful connection.
 - Windows OpenSSH config `C:\Users\svobo\.ssh\config` was **created/appended** with `Host bybitscanner-vps`, `HostName 212.193.14.116`, `User root`, the existing key as `IdentityFile`, `IdentitiesOnly yes`, `BatchMode yes`, `StrictHostKeyChecking yes`, `ConnectTimeout 10`. Do not replace existing config or duplicate aliases without reading it.
 - **PowerShell acceptance observed**: `ssh bybitscanner-vps 'whoami; hostname; echo SSH_OK'` returned `root`, `v3286418.hosted-by-vdsina.ru`, `SSH_OK`, exit 0. Host key for additional IP had first been accepted into `known_hosts`. Maintain host-key checks; never use `StrictHostKeyChecking=no`.
-- **Codex Desktop acceptance NOT observed**: the initial Desktop agent attempt `ssh bybitscanner-vps ...` returned `ssh: Could not resolve hostname bybitscanner-vps: Этот хост неизвестен.`, exit 1. It did not modify anything. This is consistent with its SSH execution environment **not reading the Windows SSH alias** or using a different SSH binary/config; do not assume it is a broken key or server. Next bounded non-mutating diagnosis: inside Codex Desktop use the explicit Windows OpenSSH executable/config (`C:\Windows\System32\OpenSSH\ssh.exe -F C:\Users\svobo\.ssh\config bybitscanner-vps`) **only if its execution environment can access those Windows paths**, and otherwise stop/report its OS and actual SSH path. Do not change protected environment, keys, or server just to make a test pass.
+- **Historical Codex Desktop failures (superseded 2026-11-15):** the earlier alias lookup returned unknown-host and a later attempt to read `C:\Users\svobo\.ssh\config` returned Access denied. Those failures are the reason the canonical Codex route above uses `-F none` plus the explicit PC key. They are not current blockers and must not trigger another alias/config/path-permission diagnostic loop. The exact direct-key command above has since authenticated successfully from Codex Desktop on this PC with `SSH_OK`, `root`, the expected VPS hostname and exit code 0.
 - **VPS Manager** installed from GitHub Actions run `42374701807`, artifact `BybitScanner-VPS-Manager-Windows`, expected source SHA `844ffc74635c663a9633d1a3b55acd3b8fa7199b`, EXE `C:\Users\svobo\AppData\Local\BybitScanner\VPSManager\release-42374701807\BybitScanner-VPS-Manager.exe`. Shortcut `C:\Users\svobo\OneDrive\Рабочий стол\BybitScanner VPS Manager - новый IP.lnk` supplies `--host 212.193.14.116 --user root --key <existing local key path>`. Owner screenshot confirmed **Состояние → Успешно, Exit code 0** and a read-only service output. This is **not evidence of a safe trading state**.
 - VPS Manager screenshot `Состояние` showed three `ActiveState=inactive / SubState=dead` groups; implementation context identifies those status probes as PAPER backend, Telegram, paper-start. Treat this as **status at that observation time**, not global current runtime truth; there was no verification of Scanner/Robot/protection/positions. Do not start/restart anything as a consequence.
 - **Машина времени** Windows research-only local simulator installed: `C:\Users\svobo\AppData\Local\BybitScanner\MachineTime\release-42430357426` from GitHub run `42430357426` (artifact `machine-time-windows-h017-real-history`, source SHA `173333546613b6ea0c55eaf1b7529c28c83523b9`). `LOCAL_REPLAY_PACKAGE_OK` and `WINDOWS_LOCAL_REPLAY_SMOKE_OK` observed (loopback, HTML, JS, forbidden routes), Windows shortcut created; launcher request issued. This is local SIMULATION, not PAPER or LIVE.
@@ -132,9 +159,9 @@ This is an **additional public IPv4 address, not an API endpoint or API key**:
 
 ## Routing and safety rules for future chats
 
-- **Default PC workflow:** Codex Desktop already open, BybitScanner project selected. Do **not** tell the owner to run `codex` in PowerShell or reinstall Codex. For GitHub tasks use the GitHub connector/PR workflow; for authorized VPS work use a proven Codex bridge where available; the **single canonical direct PC fallback** is `ssh bybitscanner-vps` from Windows PowerShell, without changing VPN by default. No arbitrary VNC/manual juggling unless a specific SSH failure makes it necessary.
-- **Primary VPS access on this PC:** `bybitscanner-vps` → `212.193.14.116` via the existing PC SSH config/key. This is the 2026-11-14 owner-verified route with Happ/VPN ON. Old `83.217.213.181` is historical contingency only, not a second default. Do not confuse PC key/config with laptop (`bybitscanner_laptop` on `SVOBODA21`).
-- Codex Desktop may not inherit host Windows SSH settings. Always verify its execution context and a real SSH exit 0 before claiming Desktop-to-VPS readiness.
+- **Default PC Codex workflow:** for every Codex Desktop → VPS connection use **PRIMARY PC CODEX DESKTOP SSH ROUTE** at the start of this document: Windows OpenSSH `ssh.exe -F none -i C:\Users\svobo\.ssh\bybitscanner_vdsina_gateway_20261030` → `root@212.193.14.116`. This was owner-confirmed from Codex Desktop on 2026-11-15 with SSH exit 0. Do not try the alias/config, laptop key, old IP, or key-path permission probes first.
+- **Separate native PowerShell workflow:** `ssh bybitscanner-vps` → `212.193.14.116` remains the owner-verified Windows host-shell route (2026-11-14, Happ/VPN ON). It is not the Codex Desktop connection command.
+- Do **not** tell the owner to run `codex` in PowerShell or reinstall Codex. For GitHub tasks use the GitHub connector/PR workflow. Keep the laptop route separate (`bybitscanner_laptop` on `SVOBODA21`) and old `83.217.213.181` as historical contingency only.
 - Do not expose private keys, passwords, host credentials, repo tokens. Do not modify `authorized_keys` unnecessarily; do not disable host-key verification.
 - No network restart, service changes, `netplan apply`, VPS reboot, PAPER DB access/migration, live trading changes, STOP/TAKE bypass, or deployment under a mere connectivity/documentation task.
 - Expensive extra IPv4 continues billing at 6.30 RUB/day until cancelled; deleting it before routing and dependent services are migrated may remove working access. Owner approval required for any cancellation/change.
