@@ -662,6 +662,11 @@
   stroke-linecap: round;
   stroke-linejoin: round;
 }
+.diary-trade-icon .diary-filmstrip-icon {
+  width: 1.4rem;
+  height: 1.32rem;
+  stroke-width: 1.7;
+}
 .diary-trade-icon:disabled {
   opacity: 0.35;
   cursor: not-allowed;

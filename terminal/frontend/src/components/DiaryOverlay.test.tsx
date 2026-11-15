@@ -1664,6 +1664,12 @@ describe("shared statistics trade action standard", () => {
     replay.forEach((button) => {
       expect(button).toBeDisabled();
       expect(button).toHaveAttribute("title", expect.stringContaining("нужен подтверждённый PAPER episode"));
+      const filmstrip = button.querySelector("svg.diary-filmstrip-icon");
+      expect(filmstrip).toHaveAttribute("viewBox", "0 0 24 24");
+      expect(filmstrip?.querySelector("rect")).toHaveAttribute("width", "19.6");
+      expect(filmstrip?.querySelector("rect")).toHaveAttribute("height", "16");
+      expect(filmstrip?.querySelectorAll("rect")).toHaveLength(7);
+      expect(filmstrip?.querySelectorAll("path")).toHaveLength(1);
     });
     expect(screen.getByText(/PnL: -1,8162 USDT/)).toHaveAttribute("title", "-1.81622186");
   });

@@ -377,9 +377,15 @@ function TradeActionButtons({ onDetails, onReplay }: {
           ? "Открыть локальный Симулятор по ID без передачи свечей и решений"
           : "Для открытия по ID нужен подтверждённый PAPER episode te_…"}
         disabled={!onReplay} onClick={onReplay}>
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <rect x="3.5" y="3" width="17" height="18" rx="1.5" />
-          <path d="M8 3v18M16 3v18M3.5 8h4.5M3.5 15h4.5M16 8h4.5M16 15h4.5" />
+        <svg className="diary-filmstrip-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="2.2" y="4" width="19.6" height="16" rx="1.5" />
+          <path d="M2.2 8h19.6M2.2 16h19.6" />
+          <rect x="5" y="5" width="2" height="2" rx=".35" />
+          <rect x="11" y="5" width="2" height="2" rx=".35" />
+          <rect x="17" y="5" width="2" height="2" rx=".35" />
+          <rect x="5" y="17" width="2" height="2" rx=".35" />
+          <rect x="11" y="17" width="2" height="2" rx=".35" />
+          <rect x="17" y="17" width="2" height="2" rx=".35" />
         </svg>
       </button>
     </div>
