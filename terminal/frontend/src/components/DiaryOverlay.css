@@ -533,31 +533,6 @@
   outline: 2px solid #859bb1;
   outline-offset: 2px;
 }
-.diary-finrez-confirm {
-  display: grid;
-  gap: 0.4rem;
-  margin-bottom: 0.65rem;
-  padding: 0.7rem;
-  border: 1px solid #617e99;
-  border-radius: 0.35rem;
-  background: #1a2632;
-}
-.diary-finrez-confirm p {
-  margin: 0;
-}
-.diary-finrez-confirm > div {
-  display: flex;
-  gap: 0.4rem;
-  flex-wrap: wrap;
-}
-.diary-finrez-confirm button {
-  padding: 0.45rem 0.7rem;
-  border: 1px solid #617e99;
-  border-radius: 0.3rem;
-  background: #25384a;
-  color: #e4eaf0;
-  cursor: pointer;
-}
 .diary-deal-pattern {
   color: #aab9c7;
   font-size: 0.7rem;
@@ -597,6 +572,41 @@
 }
 .diary-trade-entry > .diary-trade-row {
   min-width: 0;
+}
+/* Closed episodes: three compact lines; outcome color is independent of LONG/SHORT. */
+.diary-closed-deal-row {
+  gap: 0.25rem;
+  padding: 0.42rem 0.55rem;
+}
+.diary-closed-deal-row.pnl-positive {
+  border-left-color: var(--trade-buy);
+}
+.diary-closed-deal-row.pnl-negative {
+  border-left-color: var(--trade-sell);
+}
+.diary-closed-deal-row.pnl-flat {
+  border-left-color: #53616e;
+}
+.diary-closed-deal-row .diary-trade-heading,
+.diary-closed-deal-row .diary-trade-metrics {
+  gap: 0.2rem 0.48rem;
+}
+.diary-closed-deal-row .diary-trade-side {
+  font-weight: 700;
+}
+.diary-closed-deal-row .diary-trade-side.long {
+  color: var(--trade-buy);
+}
+.diary-closed-deal-row .diary-trade-side.short {
+  color: var(--trade-sell);
+}
+.diary-closed-deal-row .diary-trade-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.18rem 0.48rem;
+  color: #8996a3;
+  font-size: 0.68rem;
 }
 .diary-trade-actions {
   display: flex;
