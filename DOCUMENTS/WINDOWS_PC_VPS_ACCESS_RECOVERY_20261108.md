@@ -2,6 +2,52 @@
 
 Status: **observed operator evidence**, not a runtime/trading readiness receipt. Scope: the **desktop PC** Windows user `svobo`, not the laptop. The owner uses **Codex Desktop GUI already installed/open**, not a CLI-first workflow. Do **not** instruct the owner to launch Codex by typing `codex` in PowerShell. Command-line PowerShell is for bounded SSH access/testing when truly needed; use the already-open Desktop app for Codex tasks. Codex Desktop's direct SSH access is **NOT YET VERIFIED** (see separate execution-environment caveat below).
 
+## VERIFIED MULTI-DEVICE ACCESS SUMMARY — 2026-11-15
+
+The records below describe **observed owner/Codex acceptance**, not an ongoing health guarantee, a grant to mutate runtime, or proof of LIVE safety. The desktop-PC route is different from the Windows-10 laptop route; never interchange their keys or assume an SSH alias exists on both.
+
+| Device / application | Verified transport | Identity and access | Evidence / scope |
+| --- | --- | --- | --- |
+| Desktop PC (`C:\Users\svobo`), Windows PowerShell | `ssh bybitscanner-vps` → `212.193.14.116:22` | `root`; existing `C:\Users\svobo\.ssh\bybitscanner_vdsina_gateway_20261030` | 2026-11-14: `SSH_OK`, VPS hostname, exit 0, with Happ/VPN ON; see PC section below. Codex Desktop on this PC **not independently accepted**. |
+| Windows 10 x64 laptop (`C:\Users\SVOBODA21`), PowerShell and Codex Desktop | explicit Windows OpenSSH → `83.217.213.181:22` | `root`; `C:\Users\SVOBODA21\.ssh\bybitscanner_laptop`; existing unlocked Windows `ssh-agent` | Both owner PowerShell and Codex authenticated with the expected hostname and exit 0. **No `bybitscanner-vps` alias on laptop.** See exact executable/options below. |
+| Laptop, Windows VPS Manager GUI/CLI | `83.217.213.181:22`, existing laptop private-key **path only** | `root` and `bybitscanner_laptop` via Windows ssh-agent | Updated GUI visually confirmed; new EXE CLI `--operation list` returned SSH exit 0. Read-only only. |
+| Android phone, Termius | saved SSH host `212.193.14.116:22` | `root`; distinct Termius-generated ED25519 key `BybitScanner Phone` | Host key verified against live VPS; Termius authenticated, reached `root@v3286418` shell and ran `tools.vps_owner_control list` with no output/error before returning to shell. Read-only only. |
+
+### Laptop VPS Manager: installed and observed
+
+- GitHub Actions run `43638751408`, artifact ID `14131292675`, artifact name `BybitScanner-VPS-Manager-Windows`, source head `929fceddd242bb730e47691bfa257b12091eb734`.
+- Artifact digest (GitHub metadata): `sha256:ca410154f0b654e508b89be2f37f8bd796a37846ddb3ab3fad86ae8c58729cca`. Installed **EXE file** SHA256 (separate hash): `9b42683e297e1df475976ae60efafc8f4684f08624740680c43bdc8cf3f58bdc`. PE FileVersion/ProductVersion fields were absent, so use these provenance receipts rather than invent a version.
+- Installed EXE: `C:\Users\SVOBODA21\AppData\Local\BybitScanner\VPSManager\release-43638751408\BybitScanner-VPS-Manager.exe`.
+- Active desktop shortcut: `C:\Users\SVOBODA21\Desktop\BybitScanner VPS Manager — исправленный.lnk`, configured for `root@83.217.213.181` and `C:\Users\SVOBODA21\.ssh\bybitscanner_laptop`; previous installation and shortcut backup preserved.
+- Owner screenshot confirmed new buttons for EDITOR_ONLY update, PAPER START/STOP, update-and-start, status/list plus target SHA and the expected SSH settings. Codex's automated Tkinter window capture timed out, **but owner visual acceptance succeeded independently**.
+- Manager CLI `--operation list` using Windows OpenSSH completed exit 0; no operations existed at that observation. Backend, Telegram, manual-main-read read-service were active, paper-start inactive. No mutating GUI control was exercised.
+
+### Android Termius: accepted SSH identity, public key and server trust
+
+**Do not conflate the phone's public key with the VPS host key.** Host entry created in Termius: `212.193.14.116`, port `22`, user `root`; existing obsolete host `91.84.98.100` was left intact. Termius key is named `BybitScanner Phone` and uses **ED25519**. The following is the **public** key the owner exported from Termius (not a secret):
+
+```text
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILCPNq7yaiR6wwYKqa2X7ETHeZj2lJcP64dumgtM98rD
+```
+
+Codex added that exact public key **once** to `/root/.ssh/authorized_keys` on the VPS: `MATCH_COUNT=1`; fingerprint reported `SHA256:zggBjklOjc5S4Yh8IrfHHL9N5syGWV901dk7rW2ezTw`. Existing `authorized_keys` entries preserved; `/root/.ssh` permissions `700`, `authorized_keys` owner `root:root`, mode `600`. Laptop administrative SSH was rechecked successfully. **Never store/copy private key or passphrase in the repository, ChatGPT or Codex task output.** A Termius saved passphrase is a device-local convenience/security decision; protect phone/Termius with OS/app lock and consider the consequences of syncing SSH keys.
+
+The VPS **ECDSA host** public-key fingerprint, independently checked by Codex with `ssh-keygen -lf /etc/ssh/ssh_host_ecdsa_key.pub -E sha256`, exactly matched the Termius first-connection prompt:
+
+```text
+SHA256:AuQZgQf5pXal/3H+RbMNU4/+cOyUoI/ee2lIXxEQlys
+```
+
+The first Termius connection showed `Host "212.193.14.116":"22" is unknown` / end of file after fingerprint approval; **Start over** then successfully opened `root@v3286418:~#`. Do not treat that transient first failure as an SSH-key or server failure; do not disable host verification. Actual accepted read-only command (shell returned to the prompt with no visible errors):
+
+```sh
+cd /opt/BybitScanner && /opt/BybitScanner/venv/bin/python -m tools.vps_owner_control list
+```
+
+No UPDATE/START/STOP submission from Termius was exercised. The exact release installed by Codex on VPS, per its separate full protected release/health report, was `c857ad07d82d5b0cec429d5af5b020b99bb47b02` in EDITOR_ONLY, with PAPER trade engines stopped; **do not treat that point-in-time report as current mutable runtime state**.
+
+**Operations boundary:** Windows GUI/CLI, PowerShell and Termius address the same server-side `tools.vps_owner_control` / canonical `tools.paper_maintenance`. Actual detached update/START/STOP controls have not been end-to-end accepted from all three entrypoints. In particular `list` returning no entries is expected and proves reachability, not that a trading-changing operation completed. A submitted request requires status by request ID and the canonical runtime postconditions; never repeat a request after uncertain submission, and never use these access receipts to bypass PAPER STOP/TAKE, admission, or LIVE prohibition.
+
 ## VERIFIED LAPTOP CODEX DESKTOP SSH ROUTE — 2026-11-15
 
 **Scope: Windows 10 x64 laptop only**, user profile `C:\Users\SVOBODA21`. This is distinct from the **desktop PC** route documented below. Owner's PowerShell and Codex both confirmed access to `v3286418.hosted-by-vdsina.ru`, SSH exit code `0`. Codex used Windows OpenSSH `9.5.4.1`. This evidence proves transport only; it does **not** establish permission or readiness for VPS deployment, STOP, PAPER trading, or LIVE.

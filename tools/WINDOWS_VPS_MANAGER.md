@@ -61,6 +61,16 @@ SUBMISSION=ACCEPTED означает **только передачу**. Моно
 ## Граница готовности
 
 GitHub CI покрывает сборку Windows EXE и изолированные контракты запроса.
-Реальный проход из GUI, PowerShell и Termius до VPS не считается доказанным
-без отдельной приёмки на установленной версии. До разрешённого merge/deploy
-этот интерфейс нельзя использовать для рабочего VPS.
+На 15.11.2026 доказано: ноутбучный Codex/PowerShell SSH; обновлённый Windows
+VPS Manager (GUI визуально, CLI `--operation list` с SSH exit 0); Termius на
+Android с отдельным ED25519-ключом и `tools.vps_owner_control list` без
+ошибки. Установленный серверный монолит `c857ad07d82d5b0cec429d5af5b020b99bb47b02`
+ранее прошёл отдельную релизную приёмку EDITOR_ONLY.
+
+**Только read-only сквозная приёмка интерфейсов:** START, STOP, UPDATE,
+update-and-start через GUI/CLI/Termius не проверялись в реальной работе;
+`SUBMISSION=ACCEPTED` не означает завершение. Не считать полный цикл
+управления принятым без отдельного разрешённого опыта, статуса по ID и
+защищённых runtime postconditions. Ключи/проверенные маршруты и фактическая
+приёмка по каждому устройству: `DOCUMENTS/WINDOWS_PC_VPS_ACCESS_RECOVERY_20261108.md`
+→ `VERIFIED MULTI-DEVICE ACCESS SUMMARY`.
