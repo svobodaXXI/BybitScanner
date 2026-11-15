@@ -12,7 +12,8 @@ from unittest.mock import Mock, patch
 
 from tools.windows_vps_manager import (ACTIONS, VPSManager, control_ssh_command,
                                        preferred_route, parse_args, ssh_command,
-                                       remember_request_id, recover_last_request_id, run_cli)
+                                       remember_request_id, recover_last_request_id, run_cli,
+                                       gui_owner_status)
 
 
 class TestWindowsVpsManager(unittest.TestCase):
@@ -81,7 +82,9 @@ class TestWindowsVpsManager(unittest.TestCase):
         self.assertIn("TimeoutExpired", output)
 
     def test_status_bar_distinguishes_failures_from_success(self) -> None:
-        for kind, expected in (("failure", "Ошибка"), ("success", "Успешно")):
+        for kind, expected in (("failure", "Ошибка"), ("success", "Успешно"),
+                               ("failed", "Операция завершилась ошибкой"),
+                               ("unproven", "Результат не доказан")):
             with self.subTest(kind=kind):
                 status = Mock()
                 button = Mock()
@@ -209,6 +212,58 @@ class TestWindowsVpsManager(unittest.TestCase):
             VPSManager.worker_control(fake, ["ssh", "submit"], "update", request)
         self.assertEqual(run.call_count, 2)
         self.assertEqual(fake.events.get_nowait()[0], "submitted")
+
+    def test_gui_status_never_claims_success_without_matching_request(self):
+        request = "1" * 32
+        for code, response, expected in (
+            (0, "REQUEST_ID=" + request + "\nSTATUS=FINISHED_OK\n", "success"),
+            (3, "REQUEST_ID=" + request + "\nSTATUS=RUNNING\n", "submitted"),
+            (2, "REQUEST_ID=" + request + "\nSTATUS=FAILED\n", "failed"),
+            (0, "", "unproven"),
+            (0, "REQUEST_ID=" + "2" * 32 + "\nSTATUS=FINISHED_OK\n", "unproven"),
+            (255, "REQUEST_ID=" + request + "\nSTATUS=FINISHED_OK\n", "unproven"),
+            (0, "REQUEST_ID=" + request +
+             "\nSTATUS=FINISHED_OK\nSTATUS=FAILED\n", "unproven"),
+        ):
+            with self.subTest(code=code, expected=expected):
+                fake = SimpleNamespace(events=queue.Queue())
+                response_obj = subprocess.CompletedProcess(
+                    ["ssh"], code, stdout=response, stderr="")
+                with patch("tools.windows_vps_manager.subprocess.run",
+                           return_value=response_obj):
+                    VPSManager.worker_control(fake, ["ssh", "status"], "status", request)
+                self.assertEqual(fake.events.get_nowait()[0], expected)
+
+    def test_gui_submit_unknown_response_is_not_success_or_resubmitted(self):
+        request = "1" * 32
+        fake = SimpleNamespace(events=queue.Queue(), host=Mock(), user=Mock(), key=Mock())
+        fake.host.get.return_value = "bybitscanner-vps"
+        fake.user.get.return_value = ""
+        fake.key.get.return_value = ""
+        for submit_code, submit_output, expected in (
+            (255, "", "unproven"),
+            (0, "REQUEST_ID=" + request + "\nSUBMISSION=ACCEPTED\n", "submitted"),
+        ):
+            with self.subTest(expected=expected):
+                replies = [
+                    subprocess.CompletedProcess(["ssh"], submit_code,
+                                                stdout=submit_output, stderr="")
+                ] + [
+                    subprocess.CompletedProcess(["ssh"], 0,
+                                                stdout="REQUEST_ID=" + "2" * 32 +
+                                                "\nSTATUS=FINISHED_OK\n", stderr="")
+                    for _ in range(3)
+                ]
+                with (patch("tools.windows_vps_manager.subprocess.run",
+                            side_effect=replies) as remote,
+                      patch("tools.windows_vps_manager.time.sleep")):
+                    VPSManager.worker_control(fake, ["ssh", "submit"], "stop", request)
+                self.assertEqual(fake.events.get_nowait()[0], expected)
+                self.assertEqual(remote.call_count, 4)
+                self.assertTrue(all(
+                    "tools.vps_owner_control status " + request in call.args[0][-1]
+                    for call in remote.call_args_list[1:]
+                ))
 
     def test_request_id_persisted_and_validated_without_secrets(self):
         with tempfile.TemporaryDirectory() as folder:
