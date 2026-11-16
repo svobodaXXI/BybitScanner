@@ -11,6 +11,9 @@ on:
       - "research/wilder_dmi.py"
       - "research/causal_trend_geometry.py"
       - "research/local_replay_viewer/**"
+      - "research/simulator_v2/public_m5_scan.py"
+      - "research/simulator_v2/public_m5_parallel_smoke.py"
+      - "tests/test_simulator_v2_public_m5_scan.py"
       - "research/export_historical_replay.py"
       - "research/simulation_runs/.gitignore"
       - "tests/test_historical_replay_export.py"
@@ -161,6 +164,10 @@ jobs:
           if (Test-Path terminal/exchange -PathType Container) { throw 'Private exchange adapter leaked into SIMULATION ZIP' }
           if (Test-Path terminal/persistence/credential_store.py -PathType Leaf) { throw 'Credential store leaked into SIMULATION ZIP' }
           python -c "from terminal.paper.ikigai_box_plan import plan_approved_first_ikigai_box; from research.simulator_v2.ikigai_plan_preview import preview_box_plan; print('LOCAL_IKIGAI_NATIVE_PLANNER_IMPORT_OK')"
+      - name: Prove bounded native Wedge M5 multiprocessing on Windows package
+        shell: pwsh
+        working-directory: machine-time
+        run: python -B -m research.simulator_v2.public_m5_parallel_smoke
           python -c "from server import local_simulation_status; s=local_simulation_status(); assert s['wedge_engine_available'] and s['python_dependencies_available']; assert not s['can_attempt']; print('LOCAL_WEDGE_ENGINE_GATED_UNTIL_ARCHIVE_AND_RISK_OK')"
           python -c "from research.simulator_v2.session import VirtualReplaySession; from research.simulator_v2.wedge_observer import WedgeScannerConfig; from research.historical_market_replay import Candle; from decimal import Decimal as D; s=VirtualReplaySession(simulation_run_id='package-m5',symbol='BTCUSDT',initial_balance=D('1000'),wedge_scanner_config=WedgeScannerConfig(window_bars=50,mode='hunter',min_score=50)); [s.step(Candle(start_ms=i*60000,interval_ms=60000,open=D('100'),high=D('101'),low=D('99'),close=D('100'),volume=D('1'))) for i in range(250)]; assert s.wedge_scanner.closed_m5_count == 50 and s.account.fills == (); print('LOCAL_WEDGE_PACKAGED_ORIGINAL_SCANNER_M5_OK')"
 
