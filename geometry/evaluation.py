@@ -36,6 +36,7 @@ def evaluate_candidate_pair(
     current_index=None,
     candles=None,
     atr_series=None,
+    touch_cache=None,
 ):
     """
     Оценивает пару линий
@@ -126,6 +127,7 @@ def evaluate_candidate_pair(
         lower_points,
         candles=candles,
         atr_series=atr_series,
+        touch_cache=touch_cache,
     )
 
     #
