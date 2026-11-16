@@ -4339,7 +4339,8 @@ class PaperRuntime:
         intent always precedes the ONLY dispatch attempt. On restart, an
         existing intent must be reconciled, never resubmitted.
         """
-        self.require_paper_mutations()
+        # Robot-owned PAPER authority is the durable Robot runtime gate,
+        # not the currently selected Terminal UI account.
         candidate = self.store.get_robot_candidate(candidate_id)
         if (
             candidate is None or candidate.status != "OPEN"
@@ -4434,6 +4435,18 @@ class PaperRuntime:
         if not levels:
             raise RuntimeError("BE executable quote unavailable")
         price = levels[0].price.value
+        # The candle high/low reaching +2R is not enough if the current
+        # executable quote already fell back below that threshold.
+        risk = abs(trade.average_entry - trade.stop_price)
+        if (
+            (trade.direction == "LONG" and price < trade.average_entry + risk * 2)
+            or (trade.direction == "SHORT" and price > trade.average_entry - risk * 2)
+        ):
+            return CommandResult(
+                "be-retraced-" + candidate.candidate_id,
+                CommandResultStatus.BLOCKED, "be_quote_retraced",
+                "Current executable price is no longer at +2R",
+            )
         partial = robot_protection.plan_wedge_partial_at_two_r(
             trade.direction, pattern=trade.pattern,
             average_entry=trade.average_entry, initial_stop=trade.stop_price,
@@ -4497,7 +4510,8 @@ class PaperRuntime:
         is checked against confirmed projection, never blindly resubmitted.
         Source/owner ambiguity leaves the old armed STOP/TAKE unchanged.
         """
-        self.require_paper_mutations()
+        # Robot-owned PAPER authority is the durable Robot runtime gate,
+        # not the currently selected Terminal UI account.
         candidate = self.store.get_robot_candidate(candidate_id)
         if (
             candidate is None or candidate.status != "OPEN"
@@ -4505,6 +4519,12 @@ class PaperRuntime:
             or not isinstance(candidate.robot_state, Mapping)
         ):
             raise RuntimeError("BE reconciliation lacks OPEN PAPER candidate")
+        robot_state = self.store.get_robot_runtime_state(self._paper_account_id)
+        if (
+            robot_state is None or robot_state.mode != ROBOT_RUNNING
+            or robot_state.recovery_status != READY
+        ):
+            raise RuntimeError("BE STOP mutation requires READY PAPER Robot")
         execution = dict(candidate.robot_state.get("execution") or {})
         intent = execution.get("wedge_be_partial_intent")
         if not isinstance(intent, Mapping):
