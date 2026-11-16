@@ -232,8 +232,8 @@ class TestWindowsVpsManager(unittest.TestCase):
         VPSManager.write_result(fake, second)
         self.assertEqual(fake._copy_seq, 2)
         self.assertEqual(fake.log.tag_bind.call_count, 2)
-        self.assertIn(first, str(fake.log.insert.call_args_list))
-        self.assertIn(second, str(fake.log.insert.call_args_list))
+        self.assertEqual(fake.log.insert.call_args_list[1].args[1], first + "\n\n")
+        self.assertEqual(fake.log.insert.call_args_list[3].args[1], second + "\n\n")
         self.assertNotEqual(
             fake.log.tag_bind.call_args_list[0].args[0],
             fake.log.tag_bind.call_args_list[1].args[0],
