@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Callable, Mapping
 
 from terminal.api.rest import TerminalCommandApi
+import robot_protection
 from terminal.application.command_identity import CommandIdentityCandidate
 from terminal.application.robot_trade_ledger import prove_robot_open_trade_ledger
 from terminal.api.models import (
@@ -4230,6 +4231,152 @@ class PaperRuntime:
             )
         )
         return result
+
+
+    def _robot_wedge_be_partial_once(
+        self, candidate_id: str, *,
+        candle_open_ms: int, candle_end_ms: int,
+        candle_high: Decimal, candle_low: Decimal,
+        book: NormalizedOrderBook,
+    ) -> CommandResult:
+        """Guarded one-shot Wedge partial on the serialized PAPER owner.
+
+        FullCloseCommandRequest(quantity=...) uses the canonical
+        ExactQuantityIntent -> reduce_only Market guard. This is deliberately
+        not wired to a live producer: owner invocation must be explicit until
+        causal replay and protected recovery have been accepted. The durable
+        intent always precedes the ONLY dispatch attempt. On restart, an
+        existing intent must be reconciled, never resubmitted.
+        """
+        self.require_paper_mutations()
+        candidate = self.store.get_robot_candidate(candidate_id)
+        if (
+            candidate is None or candidate.status != "OPEN"
+            or candidate.trading_account_id != self._paper_account_id
+            or not isinstance(candidate.robot_state, Mapping)
+            or candidate.signal_snapshot.get("pattern") not in ("Falling Wedge", "Rising Wedge")
+        ):
+            raise RuntimeError("BE requires one OPEN PAPER Wedge candidate")
+        trade = self.store.get_open_robot_trade_for_symbol(
+            self._paper_account_id, candidate.symbol,
+        )
+        if (
+            trade is None or trade.candidate_id != candidate.candidate_id
+            or trade.pattern != candidate.signal_snapshot.get("pattern")
+            or trade.entry_quantity is None or trade.entry_quantity <= 0
+            or trade.entry_position_version is None
+            or trade.direction not in ("LONG", "SHORT")
+        ):
+            raise RuntimeError("BE trade ownership unproven")
+        execution = dict(candidate.robot_state.get("execution") or {})
+        if "wedge_be_partial_intent" in execution:
+            return CommandResult(
+                "be-latched-" + candidate.candidate_id,
+                CommandResultStatus.UNKNOWN, "be_partial_latched",
+                "Previously latched BE partial requires reconciliation, not retry",
+                None, True,
+            )
+        runtime = self.store.get_robot_runtime_state(self._paper_account_id)
+        if runtime is None or runtime.mode != ROBOT_RUNNING or runtime.recovery_status != READY:
+            raise RuntimeError("BE Robot not READY")
+        if active_robot_owner_candidate_ids(
+            self.store, self._paper_account_id, candidate.symbol,
+            excluding_candidate_id=candidate.candidate_id,
+        ):
+            raise RuntimeError("BE competing Robot candidate owner")
+        if (
+            self.store.load_active_paper_limits(self._paper_account_id, candidate.symbol)
+            or self.store.load_unresolved_paper_protection_obligations(self._paper_account_id)
+            or any(
+                cmd.trading_account_id == self._paper_account_id and cmd.symbol == candidate.symbol
+                for cmd in self.store.load_unfinished_commands()
+            )
+        ):
+            raise RuntimeError("BE active LIMIT, obligation or unresolved command")
+        key = PositionKey(self._paper_account_id, Category.LINEAR, candidate.symbol, 0)
+        position = self.store.get_position_projection(key)
+        protection = self.store.get_protection_projection(key)
+        side = PositionSide.LONG if trade.direction == "LONG" else PositionSide.SHORT
+        if (
+            position is None or position.side is not side
+            or position.quantity.value != trade.entry_quantity
+            or position.version != trade.entry_position_version
+            or position.sync_state not in ("synced", "synchronized")
+            or protection is None or protection.status != "confirmed_active"
+            or protection.pending_command_id is not None
+            or protection.stop_loss != trade.stop_price
+            or protection.take_profit != trade.take_price
+        ):
+            raise RuntimeError("BE owned position and STOP/TAKE not proven")
+        entries = robot_entry_order_ids(
+            self.store, self._paper_account_id, candidate, execution,
+            entry_path=trade.entry_path,
+        )
+        fills = tuple(
+            fill for order_id in entries
+            for fill in self.store.load_executions_for_order(self._paper_account_id, order_id)
+        )
+        if (
+            not fills or any(f.fee < 0 for f in fills)
+            or sum((f.quantity.value for f in fills), Decimal(0)) != trade.entry_quantity
+            or len({f.dedup_key.exec_id.value for f in fills}) != len(fills)
+        ):
+            raise RuntimeError("BE exact entry fills unavailable")
+        self._market_executor.validate_book(candidate.symbol, book)
+        levels = book.bids if trade.direction == "LONG" else book.asks
+        if not levels:
+            raise RuntimeError("BE executable quote unavailable")
+        price = levels[0].price.value
+        partial = robot_protection.plan_wedge_partial_at_two_r(
+            trade.direction, pattern=trade.pattern,
+            average_entry=trade.average_entry, initial_stop=trade.stop_price,
+            active_stop=protection.stop_loss, active_take=protection.take_profit,
+            original_quantity=trade.entry_quantity,
+            remaining_quantity=position.quantity.value,
+            quantity_step=self._instrument_provider(candidate.symbol.value).quantity_step,
+            entry_fill_ms=max(f.exchange_timestamp_ms for f in fills),
+            candle_open_ms=candle_open_ms, candle_end_ms=candle_end_ms,
+            candle_high=candle_high, candle_low=candle_low,
+            available_at_ms=book.received_at_ms,
+        )
+        if partial is None:
+            return CommandResult(
+                "be-no-trigger-" + candidate.candidate_id,
+                CommandResultStatus.BLOCKED, "be_not_triggered",
+                "Closed M1 did not prove an unambiguous +2R partial",
+            )
+        if (
+            (trade.direction == "LONG" and not (protection.stop_loss < price < protection.take_profit))
+            or (trade.direction == "SHORT" and not (protection.take_profit < price < protection.stop_loss))
+        ):
+            raise RuntimeError("BE fresh quote crosses original STOP/TAKE")
+        intent = robot_protection.build_wedge_be_partial_intent(
+            account_id=self._paper_account_id.value, trade_id=trade.trade_id,
+            candidate_id=candidate.candidate_id, symbol=candidate.symbol.value,
+            direction=trade.direction, original_quantity=trade.entry_quantity,
+            remaining_quantity=position.quantity.value, partial_quantity=partial,
+            executable_price=price, trigger_candle_end_ms=candle_end_ms,
+        )
+        state = dict(candidate.robot_state)
+        execution["wedge_be_partial_intent"] = intent
+        state["execution"] = execution
+        self.store.save_robot_candidate_state(
+            candidate.candidate_id, status="OPEN", robot_state=state,
+            expected_revision=candidate.state_revision,
+            updated_at_ms=max(candidate.updated_at_ms, int(time.time() * 1000)),
+        )
+        # A later UNKNOWN result is never replayed. Guard classifies this
+        # exact quantity as REDUCE and sets reduce_only=True at execution.
+        return self._robot_api.full_close(
+            FullCloseCommandRequest(
+                ClientActionId(intent["client_action_id"]),
+                candidate.symbol.value, quantity=partial,
+            ),
+            identity=CommandIdentityCandidate(
+                CommandId(intent["command_id"]), intent["order_link_id"],
+            ),
+            market_book=book,
+        )
 
     def _robot_prepare_manual_close(
         self, candidate, request: FullCloseCommandRequest,
