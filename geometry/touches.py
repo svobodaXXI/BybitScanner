@@ -27,6 +27,7 @@ tolerance, preserving prior behavior for callers that do not supply
 candles.
 """
 
+from copy import deepcopy
 from confirmation import calculate_atr
 
 
@@ -358,6 +359,7 @@ def analyze_touches(
     lows,
     candles=None,
     atr_series=None,
+    touch_cache=None,
 ):
     """
     Полный анализ касаний
@@ -373,20 +375,28 @@ def analyze_touches(
     if atr_series is None:
         atr_series = _atr_series(candles)
 
-    upper_result = count_touches(
-        upper_line,
-        highs,
-        candles=candles,
-        atr_series=atr_series,
-    )
+    def one_line_result(line, points):
+        if touch_cache is None:
+            return count_touches(
+                line, points, candles=candles, atr_series=atr_series,
+            )
+        # Touch classification depends only on this line, its own pivots
+        # and the exact ATR for this CLOSED window; the opposite line does
+        # not affect it. Content keys remain correct even if candidates are
+        # different objects or a caller mutates input between evaluations.
+        key = (
+            line["slope"], line["intercept"],
+            tuple((point["index"], point["price"]) for point in points),
+        )
+        if key not in touch_cache:
+            touch_cache[key] = count_touches(
+                line, points, candles=candles, atr_series=atr_series,
+            )
+        # Preserve distinct mutable result ownership per GeometryModel.
+        return deepcopy(touch_cache[key])
 
-
-    lower_result = count_touches(
-        lower_line,
-        lows,
-        candles=candles,
-        atr_series=atr_series,
-    )
+    upper_result = one_line_result(upper_line, highs)
+    lower_result = one_line_result(lower_line, lows)
 
 
     upper_touches = upper_result["count"]
