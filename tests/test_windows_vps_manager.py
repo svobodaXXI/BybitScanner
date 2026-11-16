@@ -90,7 +90,7 @@ class TestWindowsVpsManager(unittest.TestCase):
                 status = Mock()
                 button = Mock()
                 fake = SimpleNamespace(
-                    events=queue.Queue(), write=Mock(), status=status,
+                    events=queue.Queue(), write_result=Mock(), status=status,
                     buttons=[button], after=Mock(), drain=Mock(), busy=True,
                 )
                 fake.events.put((kind, "diagnostic output"))
@@ -98,7 +98,7 @@ class TestWindowsVpsManager(unittest.TestCase):
                 self.assertFalse(fake.busy)
                 self.assertTrue(status.set.call_args.args[0].startswith(expected))
                 button.state.assert_called_with(["!disabled"])
-                fake.write.assert_called_once_with("diagnostic output")
+                fake.write_result.assert_called_once_with("diagnostic output")
 
     def test_git_actions_are_safe_directory_scoped(self) -> None:
         for action, remote in ACTIONS.items():
@@ -223,6 +223,35 @@ class TestWindowsVpsManager(unittest.TestCase):
             with self.subTest(name=name):
                 with self.assertRaises(ValueError):
                     control_ssh_command("bybitscanner-vps", "", "", **args)
+
+    def test_completed_journal_entries_have_independent_copy_targets(self):
+        fake = SimpleNamespace(log=Mock(), _copy_seq=0, copy_result=Mock())
+        first = "PREFLIGHT_READ_ONLY_DATA_COLLECTED_NOT_ACCEPTED\\nfirst"
+        second = "REQUEST_ID=abc\\nSTATUS=FINISHED_OK\\nsecond"
+        VPSManager.write_result(fake, first)
+        VPSManager.write_result(fake, second)
+        self.assertEqual(fake._copy_seq, 2)
+        self.assertEqual(fake.log.tag_bind.call_count, 2)
+        self.assertEqual(fake.log.insert.call_args_list[1].args[1], first + "\n\n")
+        self.assertEqual(fake.log.insert.call_args_list[3].args[1], second + "\n\n")
+        self.assertNotEqual(
+            fake.log.tag_bind.call_args_list[0].args[0],
+            fake.log.tag_bind.call_args_list[1].args[0],
+        )
+        fake.log.tag_bind.call_args_list[0].args[2](None)
+        fake.log.tag_bind.call_args_list[1].args[2](None)
+        self.assertEqual([c.args[0] for c in fake.copy_result.call_args_list],
+                         [first, second])
+
+    def test_copy_result_uses_only_one_result_and_no_remote_call(self):
+        fake = SimpleNamespace(
+            clipboard_clear=Mock(), clipboard_append=Mock(),
+            update_idletasks=Mock())
+        output = "Preflight\\nline 1\\nline 2\\nfull output"
+        VPSManager.copy_result(fake, output)
+        fake.clipboard_clear.assert_called_once_with()
+        fake.clipboard_append.assert_called_once_with(output)
+        fake.update_idletasks.assert_called_once_with()
 
     def test_gui_automatically_watches_same_uuid_until_terminal_success(self):
         req = "9" * 32
