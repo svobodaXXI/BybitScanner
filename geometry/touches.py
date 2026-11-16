@@ -27,6 +27,7 @@ tolerance, preserving prior behavior for callers that do not supply
 candles.
 """
 
+from copy import deepcopy
 from confirmation import calculate_atr
 
 
@@ -157,7 +158,8 @@ def count_touches(
     violation_atr_multiplier=VIOLATION_TOLERANCE_ATR_MULTIPLIER,
     outlier_allowance=OUTLIER_ALLOWANCE_PER_LINE,
     legacy_tolerance_percent=LEGACY_TOUCH_TOLERANCE_PERCENT,
-    atr_period=ATR_PERIOD
+    atr_period=ATR_PERIOD,
+    atr_series=None,
 ):
     """
     Graduated, ATR-normalized touch evaluation for one trendline.
@@ -208,10 +210,13 @@ def count_touches(
             "violation_count": 0,
         }
 
-    atr_series = _atr_series(
-        candles,
-        period=atr_period
-    )
+    # Reuse ATR computed for this immutable CLOSED candle window.
+    # Standalone callers keep the original calculation and fallback rules.
+    if atr_series is None:
+        atr_series = _atr_series(
+            candles,
+            period=atr_period
+        )
 
     details = []
     count = 0
@@ -352,7 +357,9 @@ def analyze_touches(
     lower_line,
     highs,
     lows,
-    candles=None
+    candles=None,
+    atr_series=None,
+    touch_cache=None,
 ):
     """
     Полный анализ касаний
@@ -365,18 +372,31 @@ def analyze_touches(
     """
 
 
-    upper_result = count_touches(
-        upper_line,
-        highs,
-        candles=candles
-    )
+    if atr_series is None:
+        atr_series = _atr_series(candles)
 
+    def one_line_result(line, points):
+        if touch_cache is None:
+            return count_touches(
+                line, points, candles=candles, atr_series=atr_series,
+            )
+        # Touch classification depends only on this line, its own pivots
+        # and the exact ATR for this CLOSED window; the opposite line does
+        # not affect it. Content keys remain correct even if candidates are
+        # different objects or a caller mutates input between evaluations.
+        key = (
+            line["slope"], line["intercept"],
+            tuple((point["index"], point["price"]) for point in points),
+        )
+        if key not in touch_cache:
+            touch_cache[key] = count_touches(
+                line, points, candles=candles, atr_series=atr_series,
+            )
+        # Preserve distinct mutable result ownership per GeometryModel.
+        return deepcopy(touch_cache[key])
 
-    lower_result = count_touches(
-        lower_line,
-        lows,
-        candles=candles
-    )
+    upper_result = one_line_result(upper_line, highs)
+    lower_result = one_line_result(lower_line, lows)
 
 
     upper_touches = upper_result["count"]

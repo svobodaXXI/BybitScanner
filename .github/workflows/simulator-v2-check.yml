@@ -8,6 +8,10 @@ on:
       - 'research/simulator_v2/**'
       - 'tests/test_simulator_v2_*.py'
       - 'robot_protection.py'
+      - 'geometry/engine.py'
+      - 'geometry/evaluation.py'
+      - 'geometry/touches.py'
+      - 'tests/test_wick_aware_touch_fitting.py'
       - 'tests/test_robot_protection.py'
       - 'tests/test_robot_breakout_monitor.py'
       - 'tests/test_robot_late_admission.py'
@@ -19,6 +23,10 @@ on:
       - 'research/simulator_v2/**'
       - 'tests/test_simulator_v2_*.py'
       - 'robot_protection.py'
+      - 'geometry/engine.py'
+      - 'geometry/evaluation.py'
+      - 'geometry/touches.py'
+      - 'tests/test_wick_aware_touch_fitting.py'
       - 'tests/test_robot_protection.py'
       - 'tests/test_robot_breakout_monitor.py'
       - 'tests/test_robot_late_admission.py'
@@ -49,6 +57,13 @@ jobs:
         env:
           PYTHONDONTWRITEBYTECODE: '1'
         run: python -m unittest discover -s tests -p 'test_simulator_v2_*.py' -v
+      - name: Verify exact ATR reuse and original Wedge geometry contracts
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: >-
+          python -m unittest
+          tests.test_wick_aware_touch_fitting
+          tests.test_geometry_universal_wedge_anchor -v
       - name: Verify shared Robot Wedge STOP TAKE and RR regression
         env:
           PYTHONDONTWRITEBYTECODE: '1'
