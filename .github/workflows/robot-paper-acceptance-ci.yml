@@ -218,6 +218,7 @@ jobs:
           tests/test_box_first_fill_frozen_stop.py
           tests/test_robot_protection_close_no_rest.py
           tests/test_robot_protection.py
+          tests/test_robot_be_partial_owner_paper.py
       - name: Verify bounded owner, ingress and WS incident evidence
         run: >-
           python -m unittest -v
