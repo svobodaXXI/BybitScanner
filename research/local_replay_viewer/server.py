@@ -247,6 +247,7 @@ def load_public_history(
     *, symbol: str, start: str, end: str,
     fetch_candles: Callable[..., object] = fetch_public_klines,
     strategies: tuple[str, ...] = (),
+    on_ready: Callable[[dict[str, object], int, list[dict[str, object]]], None] | None = None,
 ) -> dict[str, object]:
     """Closed public M5; optionally run native research detectors, no trades."""
     if not SYMBOL_RE.fullmatch(symbol) or not symbol.endswith("USDT"):
@@ -294,21 +295,63 @@ def load_public_history(
                 or len(set(strategies)) != len(strategies)
                 or any(x not in SELECTABLE for x in strategies)):
             raise ValueError("Public research Scanner: one UTC day, only Wedge/Ikigai Box")
+        doc["scanner_research"] = {
+            "scope": "PUBLIC_M5_OBSERVATIONS_NO_ROBOT_EXECUTION",
+            "detectors": list(strategies),
+            "configuration": "RESEARCH_HUNTER_SCORE50_NATIVE_WEDGE_AND_BOX",
+        }
         try:
-            observations = scan_public_closed_m5(doc, strategies)
+            observations = scan_public_closed_m5(
+                doc, strategies,
+                on_ready=(lambda count, observed: on_ready(doc, count, observed))
+                if on_ready is not None else None,
+            )
         except (ImportError, ModuleNotFoundError, ValueError):
             raise
         except Exception as exc:
             raise NativeScannerStudyUnavailable(
                 "Native Scanner study failed; no pattern/Robot claims published"
             ) from exc
-        doc["scanner_research"] = {
-            "scope": "PUBLIC_M5_OBSERVATIONS_NO_ROBOT_EXECUTION",
-            "detectors": list(strategies),
-            "configuration": "RESEARCH_HUNTER_SCORE50_NATIVE_WEDGE_AND_BOX",
-        }
         doc["scanner_observations"] = observations
+    elif on_ready is not None:
+        for count in range(1, len(doc["events"]) + 1):
+            on_ready(doc, count, [])
     return doc
+
+
+
+def ready_public_market_snapshot(
+    document: dict[str, object], count: int,
+    observations: list[dict[str, object]],
+) -> dict[str, object]:
+    """Publish only a causally completed closed-M5 prefix, never future layers.
+
+    One original market document and one original Scanner evaluation supply
+    each prefix. This is a presentation projection, NOT a second detector.
+    """
+    events = document["events"]
+    if not isinstance(events, list) or not 1 <= count <= len(events):
+        raise ValueError("invalid public M5 readiness frontier")
+    frontier = events[count - 1]["time_ms"]
+    result = {**document, "events": events[:count]}
+    for name, clock in (
+        ("geometry", "available_at_ms"),
+        ("hourly_prior_updates", "available_at_ms"),
+        ("hourly_prior_breaks", "confirmed_at_ms"),
+        ("reference_5m_retirements", "time_ms"),
+        ("observations", "time_ms"),
+        ("h017_blue_risk_previews", "time_ms"),
+    ):
+        if name in document:
+            result[name] = [row for row in document[name] if row[clock] <= frontier]
+    if "dmi_5m" in document:
+        result["dmi_5m"] = {**document["dmi_5m"],
+                            "points": document["dmi_5m"]["points"][:count]}
+    if "scanner_research" in document:
+        result["scanner_observations"] = [
+            row for row in observations if row["available_at_ms"] <= frontier
+        ]
+    return result
 
 
 def handler_factory(static_dir: Path = STATIC_DIR,
