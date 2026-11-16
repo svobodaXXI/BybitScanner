@@ -27,9 +27,14 @@ from robot_protection import (
     stop_within_limit,
     tighten_stop,
     fee_aware_break_even_stop,
+    summarize_attested_robot_partial,
     plan_wedge_partial_at_two_r,
 )
 from robot_state_machine import DIRECTION_LONG, DIRECTION_SHORT
+from terminal.domain.models import (
+    Category, Execution, ExecutionDedupKey, ExecutionId,
+    OrderId, OrderSide, Price, Quantity, Symbol, TradingAccountId,
+)
 
 
 def _candidate(pattern="Falling Wedge"):
@@ -593,6 +598,120 @@ class WedgePartialCausalPlanTests(unittest.TestCase):
             original_quantity=Decimal("0.3"),
             remaining_quantity=Decimal("0.3"),
         ))
+
+
+
+class AttestedPartialEconomicsTests(unittest.TestCase):
+    def _fill(self, tag, oid, side, qty, price, fee, ms,
+              account="PAPER", symbol="TESTUSDT"):
+        return Execution(
+            dedup_key=ExecutionDedupKey(
+                TradingAccountId(account), Category.LINEAR, ExecutionId(tag),
+            ),
+            order_id=OrderId(oid), symbol=Symbol(symbol),
+            side=side, quantity=Quantity(Decimal(qty)),
+            price=Price(Decimal(price)), fee=Decimal(fee),
+            exchange_timestamp_ms=ms,
+        )
+
+    def _source(self, direction="LONG", **overrides):
+        own_side = OrderSide.BUY if direction == "LONG" else OrderSide.SELL
+        exit_side = OrderSide.SELL if direction == "LONG" else OrderSide.BUY
+        inputs = dict(
+            trading_account_id=TradingAccountId("PAPER"),
+            symbol=Symbol("TESTUSDT"),
+            entry_order_ids=("entry-a", "entry-b"),
+            partial_order_id="partial-1",
+            entry_executions=(
+                self._fill("entry-exec-a", "entry-a", own_side, "6", "99", "0.36", 1000),
+                self._fill("entry-exec-b", "entry-b", own_side, "4", "101.5", "0.24", 1001),
+            ),
+            partial_executions=(
+                self._fill("partial-exec-a", "partial-1", exit_side, "1", "104", "0.0624", 2000),
+                self._fill("partial-exec-b", "partial-1", exit_side, "1.5", "105", "0.0945", 2001),
+            ),
+            actual_remaining_quantity=Decimal("7.5"),
+        )
+        inputs.update(overrides)
+        return summarize_attested_robot_partial(direction, **inputs)
+
+    def test_long_exact_two_entry_and_two_partial_fills(self):
+        facts = self._source()
+        self.assertEqual(facts.original_quantity, Decimal("10"))
+        self.assertEqual(facts.closed_quantity, Decimal("2.5"))
+        self.assertEqual(facts.remaining_quantity, Decimal("7.5"))
+        self.assertEqual(facts.average_entry, Decimal("100"))
+        self.assertEqual(facts.realized_gross_pnl, Decimal("11.5"))
+        self.assertEqual(facts.total_entry_fees, Decimal("0.60"))
+        self.assertEqual(facts.realized_exit_fees, Decimal("0.1569"))
+        stop = fee_aware_break_even_stop(
+            "LONG", average_entry=facts.average_entry,
+            original_quantity=facts.original_quantity,
+            closed_quantity=facts.closed_quantity,
+            remaining_quantity=facts.remaining_quantity,
+            realized_gross_pnl=facts.realized_gross_pnl,
+            total_entry_fees=facts.total_entry_fees,
+            realized_exit_fees=facts.realized_exit_fees,
+            stop_exit_fee_rate=Decimal("0.001"),
+            tick_size=Decimal("0.01"), current_stop=Decimal("98"),
+            executable_price=Decimal("105"),
+            worst_case_slippage_ticks=2,
+        )
+        self.assertGreater(stop, Decimal("98"))
+
+    def test_short_exact_partial_has_short_gross_sign(self):
+        entry_side = OrderSide.SELL
+        exit_side = OrderSide.BUY
+        entries = (
+            self._fill("short-in-1", "entry-a", entry_side, "6", "99", "0.36", 1000),
+            self._fill("short-in-2", "entry-b", entry_side, "4", "101.5", "0.24", 1001),
+        )
+        exits = (
+            self._fill("short-out-1", "partial-1", exit_side, "2.5", "96", "0.144", 2000),
+        )
+        facts = self._source(
+            "SHORT", entry_executions=entries, partial_executions=exits,
+        )
+        self.assertEqual(facts.realized_gross_pnl, Decimal("10"))
+        self.assertEqual(facts.latest_partial_fill_ms, 2000)
+
+    def test_foreign_ambiguous_duplicate_or_incomplete_evidence_fails_closed(self):
+        own = self._fill(
+            "partial-exec-a", "partial-1", OrderSide.SELL,
+            "1", "104", "0.0624", 2000,
+        )
+        cases = (
+            {"partial_executions": (own, own)},
+            {"partial_executions": (self._fill(
+                "foreign-account", "partial-1", OrderSide.SELL,
+                "2.5", "104", "0.1", 2000, account="OTHER",
+            ),)},
+            {"partial_executions": (self._fill(
+                "wrong-side", "partial-1", OrderSide.BUY, "2.5", "104", "0.1", 2000,
+            ),)},
+            {"partial_executions": (self._fill(
+                "wrong-symbol", "partial-1", OrderSide.SELL, "2.5",
+                "104", "0.1", 2000, symbol="OTHERUSDT",
+            ),)},
+            {"partial_executions": (self._fill(
+                "wrong-order", "foreign-exit", OrderSide.SELL,
+                "2.5", "104", "0.1", 2000,
+            ),)},
+            {"partial_executions": (self._fill(
+                "out-of-order", "partial-1", OrderSide.SELL,
+                "2.5", "104", "0.1", 999,
+            ),)},
+            {"entry_order_ids": ("entry-a", "entry-b", "unfilled-order")},
+            {"entry_order_ids": ("entry-a", "entry-a")},
+            {"partial_order_id": "entry-b"},
+            {"actual_remaining_quantity": Decimal("7.6")},
+            {"actual_remaining_quantity": Decimal("0")},
+            {"partial_executions": ()},
+        )
+        for updates in cases:
+            with self.subTest(updates=updates):
+                with self.assertRaises(RobotProtectionError):
+                    self._source(**updates)
 
 
 class FeeAwareBreakEvenPlannerTests(unittest.TestCase):

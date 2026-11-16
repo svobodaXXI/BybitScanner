@@ -16,6 +16,7 @@ import os
 from typing import Any, Mapping, Protocol
 
 from robot_state_machine import DIRECTION_LONG, DIRECTION_SHORT
+from terminal.domain.models import Execution, OrderSide, TradingAccountId, Symbol
 from terminal.api.models import (
     ClientActionId,
     FullCloseCommandRequest,
@@ -362,6 +363,111 @@ def plan_wedge_partial_at_two_r(
         original_quantity * Decimal("0.25") / quantity_step
     ).to_integral_value(rounding=ROUND_FLOOR) * quantity_step
     return proposed if Decimal(0) < proposed < remaining_quantity else None
+
+
+@dataclass(frozen=True, slots=True)
+class AttestedPartialEconomics:
+    """Fill arithmetic only; an owner must independently attest order ownership."""
+
+    average_entry: Decimal
+    original_quantity: Decimal
+    closed_quantity: Decimal
+    remaining_quantity: Decimal
+    realized_gross_pnl: Decimal
+    total_entry_fees: Decimal
+    realized_exit_fees: Decimal
+    first_entry_ms: int
+    latest_partial_fill_ms: int
+
+
+def summarize_attested_robot_partial(
+    direction: str, *,
+    trading_account_id: TradingAccountId,
+    symbol: Symbol,
+    entry_order_ids: tuple[str, ...],
+    partial_order_id: str,
+    entry_executions: tuple[Execution, ...],
+    partial_executions: tuple[Execution, ...],
+    actual_remaining_quantity: Decimal,
+) -> AttestedPartialEconomics:
+    """Strictly aggregate exact-ID fills to feed the break-even STOP planner.
+
+    The serialized PAPER owner must FIRST attest that each entry order is
+    Robot-owned by this exact trade and that partial_order_id is its one
+    durable reduce-only EXIT intent; the independently observed remaining
+    position must still belong solely to that trade. A foreign/ambiguous
+    execution is not usable. This function submits no commands and never
+    itself grants partial-close or STOP-amend authority.
+    """
+    direction = str(direction).strip().upper()
+    if direction not in (DIRECTION_LONG, DIRECTION_SHORT):
+        raise RobotProtectionError("unsupported partial direction")
+    if not isinstance(trading_account_id, TradingAccountId) or not isinstance(symbol, Symbol):
+        raise RobotProtectionError("partial account/symbol identity unavailable")
+    if (
+        not isinstance(entry_order_ids, tuple) or not entry_order_ids
+        or not all(isinstance(x, str) and x.strip() and x == x.strip() for x in entry_order_ids)
+        or len(set(entry_order_ids)) != len(entry_order_ids)
+        or not isinstance(partial_order_id, str) or not partial_order_id.strip()
+        or partial_order_id in entry_order_ids
+        or not isinstance(entry_executions, tuple) or not entry_executions
+        or not isinstance(partial_executions, tuple) or not partial_executions
+        or not isinstance(actual_remaining_quantity, Decimal)
+        or not actual_remaining_quantity.is_finite()
+        or actual_remaining_quantity <= 0
+    ):
+        raise RobotProtectionError("partial evidence or exact order identity unavailable")
+    entry_side = OrderSide.BUY if direction == DIRECTION_LONG else OrderSide.SELL
+    exit_side = OrderSide.SELL if direction == DIRECTION_LONG else OrderSide.BUY
+    seen: set[str] = set()
+
+    def check(fills: tuple[Execution, ...], side: OrderSide, allowed: set[str]) -> None:
+        for fill in fills:
+            if not isinstance(fill, Execution):
+                raise RobotProtectionError("unproven execution type")
+            exec_id = fill.dedup_key.exec_id.value
+            if (
+                fill.dedup_key.trading_account_id != trading_account_id
+                or fill.symbol != symbol
+                or fill.dedup_key.category.value != "linear"
+                or fill.side is not side
+                or fill.order_id.value not in allowed
+                or exec_id in seen
+                or fill.fee < 0
+            ):
+                raise RobotProtectionError("foreign, duplicate or invalid Robot partial fill")
+            seen.add(exec_id)
+
+    check(entry_executions, entry_side, set(entry_order_ids))
+    check(partial_executions, exit_side, {partial_order_id})
+    # Every asserted entry order must have an actual fill; otherwise a
+    # claimed complete source order-set has no corroboration here.
+    if set(entry_order_ids) != {fill.order_id.value for fill in entry_executions}:
+        raise RobotProtectionError("an entry order lacks execution evidence")
+    last_entry = max(fill.exchange_timestamp_ms for fill in entry_executions)
+    first_partial = min(fill.exchange_timestamp_ms for fill in partial_executions)
+    if first_partial <= last_entry:
+        raise RobotProtectionError("partial execution precedes completed entry")
+    original = sum((fill.quantity.value for fill in entry_executions), Decimal(0))
+    closed = sum((fill.quantity.value for fill in partial_executions), Decimal(0))
+    if closed <= 0 or closed >= original or original - closed != actual_remaining_quantity:
+        raise RobotProtectionError("partial fills do not match exact remaining Robot exposure")
+    notional = sum((fill.quantity.value * fill.price.value for fill in entry_executions), Decimal(0))
+    average = notional / original
+    sign = Decimal(1) if direction == DIRECTION_LONG else Decimal(-1)
+    gross = sum(
+        ((fill.price.value - average) * sign * fill.quantity.value for fill in partial_executions),
+        Decimal(0),
+    )
+    return AttestedPartialEconomics(
+        average_entry=average, original_quantity=original,
+        closed_quantity=closed, remaining_quantity=actual_remaining_quantity,
+        realized_gross_pnl=gross,
+        total_entry_fees=sum((fill.fee for fill in entry_executions), Decimal(0)),
+        realized_exit_fees=sum((fill.fee for fill in partial_executions), Decimal(0)),
+        first_entry_ms=min(fill.exchange_timestamp_ms for fill in entry_executions),
+        latest_partial_fill_ms=max(fill.exchange_timestamp_ms for fill in partial_executions),
+    )
 
 
 def fee_aware_break_even_stop(
