@@ -456,6 +456,12 @@ try {
     ],
   };
   let publicMarketAttempts = 0;
+  // Keep the second HTTP response pending to verify Apply remains available
+  // while the background Scanner has not yet delivered its next M5.
+  let releaseSecondMarketResponse = () => {};
+  const secondMarketResponseGate = new Promise(resolve => {
+    releaseSecondMarketResponse = resolve;
+  });
   await page.route("**/local-replay/history-stream?*", async (route) => {
     publicMarketAttempts++;
     const requested = new URL(route.request().url()).searchParams.get("strategies")?.split(",") ?? [];
@@ -493,6 +499,7 @@ try {
       ...[1, 3, 40].map(count => ({ type: "snapshot", ready_count: count, document: prefix(count) })),
       { type: "complete", simulation_run_id: history.simulation_run_id, ready_count: 40 },
     ];
+    if (publicMarketAttempts === 2) await secondMarketResponseGate;
     await route.fulfill(publicMarketAttempts === 1 ? {
       status: 502, contentType: "text/plain",
       body: "Public Bybit history unavailable; nothing was simulated",
@@ -516,8 +523,14 @@ try {
   assert.equal(await page.locator(".replay-chart-shell").count(), 0,
     "failed public market download cannot resurrect old market candles");
   await bounds.getByRole("checkbox", { name: "Ikigai Box" }).check();
-  await bounds.getByRole("button", { name: "Применить" }).click();
+  const applyMarket = bounds.getByRole("button", { name: "Применить", exact: true });
+  await applyMarket.click();
+  assert.equal(await applyMarket.isEnabled(), true,
+    "Apply must not be blocked by background Scanner preparation");
+  releaseSecondMarketResponse();
   await page.getByText("РЕАЛЬНЫЕ СВЕЧИ BYBIT", { exact: false }).waitFor();
+  assert.equal(await applyMarket.isEnabled(), true,
+    "Apply must remain usable after a verified complete frame");
   assert.equal(publicMarketAttempts, 2);
   const marketSource = await page.locator(".replay-meta").innerText();
   assert.match(marketSource, /Bybit · подтверждённые M5 · без сделок/,
