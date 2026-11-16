@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { streamPublicM5 } from "./streamPublicM5";
 import {
   ALL_SELECTABLE, MIRROR_OPTIONS, OTHER_OPTIONS, clearAll, isAllSelected,
   onlyWedges, parseUtcMinute, presetEndInclusive, extendInclusiveWindow, adjustInclusiveWindow,
@@ -192,4 +193,60 @@ describe("local one-symbol strategy setup (no trading)", () => {
     expect(() => parseWedgeResult({ ...report, total_net_pnl: 900 })).toThrow();
   });
 
+});
+
+describe("public Scanner M5 terminal-frame lifecycle", () => {
+  it("resolves at verified complete even when the HTTP connection does not reach EOF", async () => {
+    const start = Date.UTC(2026, 10, 12);
+    const runId = "public_m5_terminal_test";
+    const source = {
+      source: "SIMULATION", simulation_run_id: runId,
+      symbol: "ADAUSDT", mode: "MARKET_ONLY", timeframe: "5m",
+      market_data_source: "BYBIT_PUBLIC_KLINE",
+      events: [{
+        source: "SIMULATION", simulation_run_id: runId, sequence: 1,
+        kind: "CANDLE_CLOSED", time_ms: start + 300_000,
+        candle: { start_ms: start, end_ms: start + 300_000,
+          open: 1, high: 2, low: 0.5, close: 1, volume: 3 },
+      }],
+      scanner_research: {
+        scope: "PUBLIC_M5_OBSERVATIONS_NO_ROBOT_EXECUTION",
+        detectors: ["WEDGE_FALLING"],
+        configuration: "RESEARCH_HUNTER_SCORE50_NATIVE_WEDGE_AND_BOX",
+      },
+      scanner_observations: [],
+    };
+    const frames = [
+      { type: "start", symbol: "ADAUSDT", start: "2026-11-12T00:00", end: "2026-11-12T00:05" },
+      { type: "snapshot", ready_count: 1, document: source },
+      { type: "complete", simulation_run_id: runId, ready_count: 1 },
+    ].map(frame => JSON.stringify(frame)).join("\n") + "\n";
+    let cancelled = false;
+    const neverEndingBody = new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(new TextEncoder().encode(frames)); },
+      cancel() { cancelled = true; },
+      // Deliberately no controller.close(): the HTTP transport remains open.
+    });
+    vi.stubGlobal("fetch", async () => new Response(neverEndingBody, {
+      headers: { "Content-Type": "application/x-ndjson; charset=utf-8" },
+    }));
+    const seen: number[] = [];
+    let watchdog: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        streamPublicM5(new URLSearchParams({
+          symbol: "ADAUSDT", start: "2026-11-12T00:00", end: "2026-11-12T00:05",
+          strategies: "WEDGE_FALLING",
+        }), new AbortController().signal, document => seen.push(document.events.length)),
+        new Promise<never>((_, reject) => {
+          watchdog = setTimeout(() => reject(new Error("Waited for HTTP EOF after complete")), 800);
+        }),
+      ]);
+      expect(seen).toEqual([1]);
+      expect(cancelled).toBe(true);
+    } finally {
+      if (watchdog) clearTimeout(watchdog);
+      vi.unstubAllGlobals();
+    }
+  });
 });
