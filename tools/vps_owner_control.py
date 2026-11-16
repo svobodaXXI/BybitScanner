@@ -50,15 +50,21 @@ def status(request: str, *, run=subprocess.run) -> int:
         state = "FINISHED_OK"
     elif fields.get("ActiveState") == "failed" or fields.get("Result") not in ("success", ""):
         state = "FAILED"
-    else:
+    elif fields.get("ActiveState") == "activating":
         state = "RUNNING"
+    elif fields.get("ActiveState") == "active" and fields.get("SubState") == "running":
+        state = "RUNNING"
+    else:
+        # An inactive/dead or otherwise unexpected unit is not an executing
+        # request. Never label an unknown lifecycle state RUNNING.
+        state = "UNPROVEN"
     print("REQUEST_ID=" + request)
     print("UNIT=" + unit)
     print("STATUS=" + state)
     print("RESULT=" + fields.get("Result", "unknown"))
     print("EXIT_CODE=" + fields.get("ExecMainStatus", "unknown"))
     print("DESCRIPTION=" + fields.get("Description", "")[:180])
-    return 0 if state == "FINISHED_OK" else 2 if state == "FAILED" else 3
+    return 0 if state == "FINISHED_OK" else 3 if state == "RUNNING" else 2
 
 
 def submit(action: str, sha: str, request: str, origin: str,
