@@ -21,6 +21,16 @@ import { RunSetupPanel } from "./RunSetupPanel";
 import { streamPublicM5 } from "./streamPublicM5";
 import { validateInclusiveWindow, makeWedgeRunRequest, formatRunCoordinates, formatRunDuration, onlyWedges, type RunSelection } from "./runSetup";
 type WedgeRunRequest = ReturnType<typeof makeWedgeRunRequest>;
+
+// Immutable evidence time, including original milliseconds. This represents
+// recorded source timestamps, NOT an inferred order of events within one ms.
+function evidenceTimestampUtc(timeMs: number): string {
+  const stamp = new Date(timeMs);
+  return stamp.toLocaleString("ru-RU", {
+    timeZone: "UTC", day: "2-digit", month: "2-digit", year: "numeric",
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+  }) + " (" + String(stamp.getUTCMilliseconds()).padStart(3, "0") + ") UTC";
+}
 import "./replay.css";
 
 // The replay tools share the terminal's compact icon-first interaction, with
@@ -642,6 +652,46 @@ export function ReplayPage() {
     paperOverlay.status === "MATCHED" && shown.lastTimeMs !== null
       ? paperFacts.setup_context.decisions.filter(e => e.occurred_at_ms <= shown.lastTimeMs!)
       : [], [paperFacts, paperOverlay, shown.lastTimeMs]);
+
+  // Do not mix actual PAPER executions or independent D2 observations
+  // with virtual Scanner/Robot SIMULATION events. A factual fill becomes
+  // visible only after its matching original M5 candle has closed.
+  const paperTimeline = useMemo(() => {
+    if (!paperFacts || paperOverlay.status !== "MATCHED" || shown.lastTimeMs === null)
+      return [];
+    const visibleExecutionIds = new Set(
+      revealedPaperMarkers(paperOverlay, shown.candles).map(marker => marker.execution_id),
+    );
+    const roleName: Record<(typeof paperFacts.execution_allocations)[number]["allocation_role"], string> = {
+      OPEN: "Открытие позиции", REVERSAL_OPEN: "Открытие после разворота",
+      INCREASE: "Увеличение позиции", REDUCE: "Сокращение позиции",
+      CLOSE: "Закрытие позиции",
+    };
+    const executions = paperFacts.execution_allocations
+      .filter(item => visibleExecutionIds.has(item.execution_id))
+      .map((item, index) => ({
+        id: "paper:" + index + ":" + item.execution_id,
+        timeMs: item.occurred_at_ms,
+        category: "PAPER · фактическое исполнение",
+        summary: roleName[item.allocation_role] + " · " + item.order_side +
+          (item.allocation_role === "CLOSE" ? " · причина STOP/TAKE не подтверждена" : ""),
+        details: "Цена " + item.execution_price + " · количество " + item.allocated_quantity +
+          " · комиссия " + item.allocated_fee + " USDT",
+        provenance: "Контроллер " + item.controller + " · order_id " + item.order_id +
+          " · execution_id " + item.execution_id,
+      }));
+    const observations = paperDecisionObservations.map(item => ({
+      id: "d2:" + item.decision_event_id,
+      timeMs: item.occurred_at_ms,
+      category: "D2 · наблюдение (не runtime-журнал Robot)",
+      summary: item.kind + " · " + (item.previous_state ?? "—") +
+        " → " + item.next_state + " · " + item.reason_code,
+      details: "Контроллер " + item.controller + " · источник " + item.origin,
+      provenance: "decision_event_id " + item.decision_event_id,
+    }));
+    return [...executions, ...observations].sort((a, b) =>
+      a.timeMs - b.timeMs || a.id.localeCompare(b.id));
+  }, [paperFacts, paperOverlay, shown.candles, shown.lastTimeMs, paperDecisionObservations]);
 
   const total = document.events.length;
   const progress = total > 0 ? Math.round(100 * cursor / total) : 0;
@@ -1376,17 +1426,16 @@ export function ReplayPage() {
               </div>))}
             {journal.length === 0 && document.mode !== "MARKET_ONLY" &&
               <p>Ожидаю события Scanner и Robot</p>}
-            {paperDecisionObservations.length > 0 && (
-              <section aria-label="Наблюдения PAPER D2" className="replay-d2-observations">
-                <strong>Подтверждённые наблюдения D2 · не полный журнал Robot</strong>
-                {paperDecisionObservations.map(event => (
-                  <div className="replay-events-item" key={event.decision_event_id}>
-                    <time>{new Date(event.occurred_at_ms).toLocaleString("ru-RU", {
-                      timeZone: "UTC", day: "2-digit", month: "2-digit",
-                      hour: "2-digit", minute: "2-digit",
-                    })} UTC</time>
-                    <span>{event.kind}: {event.previous_state ?? "—"} → {event.next_state} · {event.reason_code}</span>
-                    <span>Источник: {event.controller}</span>
+            {paperTimeline.length > 0 && (
+              <section aria-label="Хронология PAPER и D2" className="replay-d2-observations">
+                <strong>Фактические исполнения PAPER и наблюдения D2 · не полный журнал команд Robot</strong>
+                {paperTimeline.map(item => (
+                  <div className="replay-events-item replay-evidence-event" key={item.id}>
+                    <time>{evidenceTimestampUtc(item.timeMs)}</time>
+                    <strong>{item.category}</strong>
+                    <span>{item.summary}</span>
+                    <span>{item.details}</span>
+                    <span>{item.provenance}</span>
                   </div>
                 ))}
               </section>
