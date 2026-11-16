@@ -582,6 +582,7 @@ export function ReplayPage() {
   }, []);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyFailed, setHistoryFailed] = useState(false);
+  const [cancelNativeId, setCancelNativeId] = useState(0);
   const historyRequest = useRef<AbortController | null>(null);
   const bundledRequest = useRef<AbortController | null>(null);
   const [cursor, setCursor] = useState(0);
@@ -848,6 +849,7 @@ export function ReplayPage() {
     historyRequest.current?.abort();
     historyRequest.current = null;
     setHistoryLoading(false);
+    setCancelNativeId(id => id + 1);
     setPlaying(false);
     try {
       if (file.size > 24 * 1024 * 1024) throw new Error("Файл больше 24 МБ");
@@ -1055,6 +1057,7 @@ export function ReplayPage() {
         onPasteSymbol={onPasteSymbol} onSimulationStart={onSimulationStart}
         onSimulationReady={onSimulationReady} onSimulationAppend={onSimulationAppend}
         onSimulationFailed={onSimulationFailed} onSimulationBusy={setRunLoading}
+        cancelNativeId={cancelNativeId}
         showReport={!simulationGraphPending && !runLoading && !historyLoading && !historyFailed && cursor >= total}
         onPublicHistoryRequest={(ticker, from, to, choices) => void loadLocalHistory(ticker, from, to, choices)}
         publicHistoryLoading={historyLoading}
@@ -1079,6 +1082,7 @@ export function ReplayPage() {
           bundledRequest.current?.abort(); bundledRequest.current = null;
           historyRequest.current?.abort(); historyRequest.current = null;
           setHistoryLoading(false); setHistoryFailed(false);
+          setCancelNativeId(id => id + 1);
           setPlaying(false); setCursor(0); setError(null);
           setDocument(syntheticReplay()); setSimulationGraphPending(false);
           setFileLabel("Синтетический пример");
