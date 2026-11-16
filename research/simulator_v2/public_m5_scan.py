@@ -7,16 +7,12 @@ module reads that same document without re-fetching or future lookahead.
 """
 from __future__ import annotations
 
-from concurrent.futures import ProcessPoolExecutor
-from contextlib import ExitStack, closing
 from decimal import Decimal
-from multiprocessing import get_context
-import os
 import re
 from typing import Callable
 
 from research.historical_market_replay import Candle
-from research.simulator_v2.wedge_observer import ReadOnlyWedgeScanner, WedgeObservation, WedgeScannerConfig
+from research.simulator_v2.wedge_observer import ReadOnlyWedgeScanner, WedgeScannerConfig
 
 M5 = 300_000
 MAX_PUBLIC_SCAN_BARS = 288
@@ -30,46 +26,13 @@ WEDGE_RESEARCH_PRESET = WedgeScannerConfig(
 )
 
 
-
-def _closed_wedge_candidate(
-    task: tuple[str, str, tuple[Candle, ...]],
-) -> WedgeObservation | None:
-    """Evaluate one independent CLOSED M5 window with original Scanner code.
-
-    A worker has no trading, exchange, PAPER or VirtualReplaySession access.
-    """
-    run_id, symbol, window = task
-    return ReadOnlyWedgeScanner(WEDGE_RESEARCH_PRESET).evaluate_closed_m5_window(
-        simulation_run_id=run_id, symbol=symbol,
-        closed_at_ms=window[-1].end_ms, bars=window,
-    )
-
-
-def _ordered_parallel_wedges(
-    candles: tuple[Candle, ...], run_id: str, symbol: str, workers: int,
-):
-    """Bounded CPU evaluation; consume and publish strictly in M5 order."""
-    with ProcessPoolExecutor(max_workers=workers, mp_context=get_context("spawn")) as pool:
-        for begin in range(49, len(candles), workers):
-            tasks = (
-                (run_id, symbol, candles[max(0, count - 300):count])
-                for count in range(begin + 1, min(len(candles), begin + workers) + 1)
-            )
-            yield from pool.map(_closed_wedge_candidate, tasks)
-
-
 def scan_public_closed_m5(
     document: dict[str, object], selected: tuple[str, ...],
     on_ready: Callable[[int, list[dict[str, object]]], None] | None = None,
-    *, parallel_workers: int | None = None,
 ) -> list[dict[str, object]]:
     if (not isinstance(selected, tuple) or len(selected) != len(set(selected))
             or not all(x in SELECTABLE for x in selected)):
         raise ValueError("only known local M5 research detectors can be selected")
-    if parallel_workers is not None and (
-        type(parallel_workers) is not int or not 1 <= parallel_workers <= 3
-    ):
-        raise ValueError("bounded public M5 research requires 1..3 workers")
     if not selected:
         return []
     if (document.get("mode") != "MARKET_ONLY"
@@ -114,74 +77,62 @@ def scan_public_closed_m5(
         from geometry.ikigai_box import detect_ikigai_box
     observed: list[dict[str, object]] = []
     seen: set[tuple[str, str]] = set()
-    workers = min(3, os.cpu_count() or 1) if parallel_workers is None else parallel_workers
-    # Preserve serial behavior for small runs and nonstreaming callers.
-    # Only the independent public research observer uses multiple processes.
-    parallel = wedge_scanner is not None and on_ready is not None and workers > 1 and (
-        len(candles) >= 100 if parallel_workers is None else len(candles) >= 50
-    )
-    with ExitStack() as resources:
-        wedge_results = resources.enter_context(closing(_ordered_parallel_wedges(
-            tuple(candles), run_id, symbol, workers,
-        ))) if parallel else None
-        for count in range(1, len(candles) + 1):
-            window = tuple(candles[max(0, count - 300):count])
-            current = window[-1]
-            if wedge_scanner and len(window) >= 50:
-                result = next(wedge_results) if wedge_results is not None else (
-                    wedge_scanner.evaluate_closed_m5_window(
-                        simulation_run_id=run_id, symbol=symbol,
-                        closed_at_ms=current.end_ms, bars=window,
-                    )
-                )
-                if result is not None:
-                    category = ("WEDGE_FALLING" if result.pattern == "Falling Wedge"
-                                else "WEDGE_RISING")
-                    source_id = result.formation_id
-                    if (category in selected and source_id is not None and
-                            (category, source_id) not in seen):
-                        seen.add((category, source_id))
-                        observed.append({
-                            "strategy": category, "timeframe": "5m",
-                            "pattern": result.pattern, "signal_id": source_id,
-                            "available_at_ms": current.end_ms,
-                            "source_candle_start_ms": current.start_ms,
-                            "close_price": float(current.close),
-                            "status": "FILTER_APPROVED" if result.scanner_filter_approved
-                                      else "FILTER_REJECTED",
-                            "reason": result.scanner_filter_reason[:240],
-                            "score": result.final_score,
-                        })
-            if box and len(window) >= 32:
-                df = pd.DataFrame({
-                    key: [float(getattr(c, key)) for c in window]
-                    for key in ("open", "high", "low", "close")
-                })
-                formation = detect_ikigai_box(df)
-                if formation is not None:
-                    a = window[formation.anchor_start_index].start_ms
-                    b = window[formation.anchor_end_index].start_ms
-                    identity = f"5m:{formation.direction}:{a}:{b}"
-                    if ("IKIGAI_BOX", identity) not in seen:
-                        seen.add(("IKIGAI_BOX", identity))
-                        observed.append({
-                            "strategy": "IKIGAI_BOX", "timeframe": "5m",
-                            "pattern": "Ikigai Box", "signal_id": identity,
-                            "available_at_ms": current.end_ms,
-                            "source_candle_start_ms": current.start_ms,
-                            "close_price": float(current.close),
-                            "status": "CONFIRMED_STRUCTURE_ONLY",
-                            "reason": "No Robot Box order admission or risk authorization",
-                            "side": formation.direction,
-                            "box_start_ms": window[formation.box_start_index].start_ms,
-                            "box_end_ms": window[formation.box_end_index].start_ms,
-                            "box_low": formation.box_low,
-                            "box_high": formation.box_high,
-                        })
-            if len(observed) > 512:
-                raise ValueError("Scanner study exceeds bounded candidate count")
-            # Each READY count follows the original detector's CLOSED M5.
-            # No candle/observation is released before this source-time boundary.
-            if on_ready is not None:
-                on_ready(count, observed)
+    for count in range(1, len(candles) + 1):
+        window = tuple(candles[max(0, count - 300):count])
+        current = window[-1]
+        if wedge_scanner and len(window) >= 50:
+            result = wedge_scanner.evaluate_closed_m5_window(
+                simulation_run_id=run_id, symbol=symbol,
+                closed_at_ms=current.end_ms, bars=window,
+            )
+            if result is not None:
+                category = ("WEDGE_FALLING" if result.pattern == "Falling Wedge"
+                            else "WEDGE_RISING")
+                source_id = result.formation_id
+                if (category in selected and source_id is not None and
+                        (category, source_id) not in seen):
+                    seen.add((category, source_id))
+                    observed.append({
+                        "strategy": category, "timeframe": "5m",
+                        "pattern": result.pattern, "signal_id": source_id,
+                        "available_at_ms": current.end_ms,
+                        "source_candle_start_ms": current.start_ms,
+                        "close_price": float(current.close),
+                        "status": "FILTER_APPROVED" if result.scanner_filter_approved
+                                  else "FILTER_REJECTED",
+                        "reason": result.scanner_filter_reason[:240],
+                        "score": result.final_score,
+                    })
+        if box and len(window) >= 32:
+            df = pd.DataFrame({
+                key: [float(getattr(c, key)) for c in window]
+                for key in ("open", "high", "low", "close")
+            })
+            formation = detect_ikigai_box(df)
+            if formation is not None:
+                a = window[formation.anchor_start_index].start_ms
+                b = window[formation.anchor_end_index].start_ms
+                identity = f"5m:{formation.direction}:{a}:{b}"
+                if ("IKIGAI_BOX", identity) not in seen:
+                    seen.add(("IKIGAI_BOX", identity))
+                    observed.append({
+                        "strategy": "IKIGAI_BOX", "timeframe": "5m",
+                        "pattern": "Ikigai Box", "signal_id": identity,
+                        "available_at_ms": current.end_ms,
+                        "source_candle_start_ms": current.start_ms,
+                        "close_price": float(current.close),
+                        "status": "CONFIRMED_STRUCTURE_ONLY",
+                        "reason": "No Robot Box order admission or risk authorization",
+                        "side": formation.direction,
+                        "box_start_ms": window[formation.box_start_index].start_ms,
+                        "box_end_ms": window[formation.box_end_index].start_ms,
+                        "box_low": formation.box_low,
+                        "box_high": formation.box_high,
+                    })
+        if len(observed) > 512:
+            raise ValueError("Scanner study exceeds bounded candidate count")
+        # Each READY count follows the original detector's CLOSED M5.
+        # No candle/observation is released before this source-time boundary.
+        if on_ready is not None:
+            on_ready(count, observed)
     return sorted(observed, key=lambda x: (x["available_at_ms"], x["strategy"], x["signal_id"]))
