@@ -12,8 +12,11 @@ DOCUMENTS/CHANGE_REQUESTS/CR-SCANNER-GEOMETRY-002.md:
 """
 
 import unittest
+from unittest.mock import patch
 
 import pandas as pd
+from confirmation import calculate_atr
+from geometry.engine import analyze_geometry
 
 from geometry.touches import (
     count_touches,
@@ -219,6 +222,70 @@ class AnalyzeTouchesContractTests(unittest.TestCase):
         self.assertEqual(result["upper_touches"], 2)
         self.assertEqual(result["lower_touches"], 2)
         self.assertTrue(result["valid"])
+
+
+class AtrPerWindowReuseTests(unittest.TestCase):
+    """One exact ATR(14) for a CLOSED candle window, not per candidate pair."""
+
+    def test_upper_and_lower_touches_match_original_independent_valuation(self):
+        candles = _flat_candles()
+        upper = {"slope": 0., "intercept": 110.}
+        lower = {"slope": 0., "intercept": 90.}
+        highs = [{"index": i, "price": 110. + (i % 2)} for i in (5, 20, 25)]
+        lows = [{"index": i, "price": 90. - (i % 2)} for i in (5, 20, 25)]
+        with patch("geometry.touches.calculate_atr", wraps=calculate_atr) as calc:
+            shared = analyze_touches(upper, lower, highs, lows, candles=candles)
+        self.assertEqual(calc.call_count, 1)
+        # Every numerical tolerance, classification, rounding and warm-up
+        # fallback must equal the pre-cache independent ATR calculations.
+        self.assertEqual(
+            shared["upper_touch_points"],
+            count_touches(upper, highs, candles=candles)["points"],
+        )
+        self.assertEqual(
+            shared["lower_touch_points"],
+            count_touches(lower, lows, candles=candles)["points"],
+        )
+
+    def test_analyze_geometry_reuses_exact_atr_for_each_candidate_pair(self):
+        candles = _flat_candles()
+        highs = [{"index": i, "price": 110. - i * .1} for i in (5, 15, 25, 35)]
+        lows = [{"index": i, "price": 90. + i * .1} for i in (5, 15, 25, 35)]
+        upper = [{"line": {"slope": -.1, "intercept": 110.},
+                  "points": highs} for _ in range(3)]
+        lower = [{"line": {"slope": .1, "intercept": 90.},
+                  "points": lows} for _ in range(4)]
+        # A fixed 3x4 grid isolates how Geometry distributes already
+        # calculated ATR, without running the unrelated pair ranking math.
+        with patch("geometry.engine.build_candidate_lines",
+                   side_effect=[upper, lower]), \
+             patch("geometry.engine.filter_candidates", side_effect=lambda x: x), \
+             patch("geometry.engine.build_triangle_only_lines",
+                   return_value=([], [])), \
+             patch("geometry.engine.evaluate_candidate_pair",
+                   return_value=None) as evaluate, \
+             patch("geometry.engine._atr_series",
+                   wraps=__import__("geometry.touches", fromlist=["_atr_series"])._atr_series) as calc:
+            self.assertIsNone(analyze_geometry(
+                highs, lows, current_index=39, candles=candles,
+            ))
+        self.assertEqual(calc.call_count, 1)
+        self.assertEqual(evaluate.call_count, 12)
+        passed = [call.kwargs["atr_series"] for call in evaluate.call_args_list]
+        self.assertTrue(all(atr is passed[0] for atr in passed))
+        self.assertTrue(passed[0].equals(calculate_atr(candles, period=ATR_PERIOD)))
+
+    def test_different_windows_do_not_share_atr(self):
+        first = _flat_candles(40, half_range=1.)
+        second = _flat_candles(40, half_range=4.)
+        line = {"slope": 0., "intercept": 100.}
+        points = [{"index": 20, "price": 110.}]
+        a = count_touches(line, points, candles=first)
+        b = count_touches(line, points, candles=second)
+        self.assertNotEqual(
+            a["points"][0]["touch_tolerance"],
+            b["points"][0]["touch_tolerance"],
+        )
 
 
 class ValidateTouchesContractTests(unittest.TestCase):
