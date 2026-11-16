@@ -425,7 +425,7 @@ class RobotBreakoutMonitor:
             ):
                 return False
             candle = {"time_ms": timestamp, "high": high, "low": low}
-        result = step(record.candidate_id, candle)
+        result = step(record.candidate_id, record.symbol.value, candle)
         return getattr(result, "status", None) is CommandResultStatus.COMPLETED
 
     def process_authoritative_fill(self, symbol: str) -> tuple[str, ...]:
