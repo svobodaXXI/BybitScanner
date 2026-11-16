@@ -13,10 +13,12 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_FLOOR
 import hashlib
 import os
+import uuid
 from typing import Any, Mapping, Protocol
 
 from robot_state_machine import DIRECTION_LONG, DIRECTION_SHORT
 from terminal.domain.models import Execution, OrderSide, TradingAccountId, Symbol
+from terminal.application.command_identity import CommandIdentityFactory
 from terminal.api.models import (
     ClientActionId,
     FullCloseCommandRequest,
@@ -518,6 +520,7 @@ def build_wedge_be_partial_intent(
     digest = hashlib.sha256(
         "\x00".join(("robot-wedge-be-partial-v1", *ids)).encode("utf-8")
     ).hexdigest()[:32]
+    identity = CommandIdentityFactory(lambda: uuid.UUID(hex=digest)).create()
     return {
         "version": 1,
         "account_id": account_id,
@@ -531,8 +534,8 @@ def build_wedge_be_partial_intent(
         "executable_price": str(executable_price),
         "trigger_candle_end_ms": trigger_candle_end_ms,
         "client_action_id": f"robot-wedge-be-{digest}",
-        "command_id": f"cmd_{digest}",
-        "order_link_id": None,  # Must be supplied by canonical owner identity factory.
+        "command_id": identity.command_id.value,
+        "order_link_id": identity.order_link_id,
         "reduce_only_required": True,
     }
 
