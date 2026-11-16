@@ -366,6 +366,28 @@ try {
   await page.getByRole("button", { name: "В начало" }).click();
   assert.equal(await page.locator('[role="progressbar"]').getAttribute("aria-valuenow"), "0");
 
+  // Owner-accepted regression: seeking during active Play pauses immediately,
+  // and the next Play continues from the sought M5 (never from the beginning).
+  await page.locator(".replay-rate input").fill("2");
+  await page.getByRole("button", { name: "Пуск", exact: true }).click();
+  await page.waitForFunction(() =>
+    Number(document.querySelector(".replay-chart-shell")?.dataset.displayedCandles) >= 1);
+  await scrub.fill("12");
+  assert.equal(await scrub.inputValue(), "12");
+  assert.equal(await page.getByRole("button", { name: "Пуск", exact: true }).count(), 1,
+    "seek during active Play must pause the player");
+  await page.waitForTimeout(650); // More than one 2-candles/s tick.
+  assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-displayed-candles"), "12",
+    "seek must keep the player paused, without hidden advancement");
+  await page.getByRole("button", { name: "Пуск", exact: true }).click();
+  await page.waitForFunction(() =>
+    Number(document.querySelector(".replay-chart-shell")?.dataset.displayedCandles) >= 13);
+  assert.ok(Number(await page.locator(".replay-chart-shell").getAttribute("data-displayed-candles")) >= 13,
+    "resume must advance from the sought M5 instead of restarting at zero");
+  await page.getByRole("button", { name: "Пауза", exact: true }).click();
+  await page.getByRole("button", { name: "В начало" }).click();
+  assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-displayed-candles"), "0");
+
   // The synthetic demo now contains enough true closed candles to show ADX
   // after its 14/14 warmup. Check TRUE-price markers, not shifted chart arrows.
   const demoIndicator = page.getByRole("group", { name: "Индикатор ADX DMI" });
