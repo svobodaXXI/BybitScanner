@@ -341,7 +341,10 @@ def analyze_geometry(
     # lines. Compute it once, then reuse its exact pandas values across
     # every upper/lower pair. No persistent cache or future-candle reuse.
     window_atr = _atr_series(candles) if candles is not None else None
-    atr_kwargs = {"atr_series": window_atr} if window_atr is not None else {}
+    atr_kwargs = (
+        {"atr_series": window_atr, "touch_cache": {}}
+        if window_atr is not None else {}
+    )
 
     for upper_candidate in upper_candidates:
 
