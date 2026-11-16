@@ -284,6 +284,86 @@ def tighten_stop(direction: str, *, existing_stop: Decimal | None, proposed_stop
     raise RobotProtectionError("unsupported Robot direction")
 
 
+def plan_wedge_partial_at_two_r(
+    direction: str, *,
+    pattern: str,
+    average_entry: Decimal,
+    initial_stop: Decimal,
+    active_stop: Decimal,
+    active_take: Decimal,
+    original_quantity: Decimal,
+    remaining_quantity: Decimal,
+    quantity_step: Decimal,
+    entry_fill_ms: int,
+    candle_open_ms: int,
+    candle_end_ms: int,
+    candle_high: Decimal,
+    candle_low: Decimal,
+    available_at_ms: int,
+) -> Decimal | None:
+    """Return a 25% reduce-only *quantity proposal*, never an order.
+
+    A real entry must already be filled and protected, and this must be the
+    first partial of the trade. Only a complete later M1 bar can signal +2R,
+    anchored to the original admission STOP (not a tightened/replaced STOP).
+    If the same bar reaches either active STOP or TAKE, the protection event
+    takes priority and no partial can be planned from its ambiguous intrabar
+    ordering. This assumes the caller supplied attested execution/position,
+    original risk, candle source and a durable no-previous-partial fence.
+    """
+    direction = str(direction).strip().upper()
+    if direction not in (DIRECTION_LONG, DIRECTION_SHORT):
+        raise RobotProtectionError("unsupported partial direction")
+    if pattern not in ("Falling Wedge", "Rising Wedge"):
+        raise RobotProtectionError("partial policy is only proposed for Wedge")
+    prices = dict(
+        average_entry=average_entry, initial_stop=initial_stop,
+        active_stop=active_stop, active_take=active_take,
+        original_quantity=original_quantity, remaining_quantity=remaining_quantity,
+        quantity_step=quantity_step, candle_high=candle_high, candle_low=candle_low,
+    )
+    if any(not isinstance(x, Decimal) or not x.is_finite() for x in prices.values()):
+        raise RobotProtectionError("unproven partial Decimal inputs")
+    if not (
+        average_entry > 0 and initial_stop > 0 and active_stop > 0
+        and active_take > 0 and original_quantity > 0
+        and remaining_quantity == original_quantity and quantity_step > 0
+        and candle_high > 0 and candle_low > 0 and candle_high >= candle_low
+    ):
+        raise RobotProtectionError("invalid protected entry, volume or candle")
+    if not all(type(t) is int and t >= 0 for t in (
+        entry_fill_ms, candle_open_ms, candle_end_ms, available_at_ms,
+    )):
+        raise RobotProtectionError("unproven candle time")
+    if (
+        candle_open_ms % 60_000 != 0
+        or candle_end_ms != candle_open_ms + 60_000
+        or candle_open_ms < entry_fill_ms
+        or available_at_ms < candle_end_ms
+    ):
+        raise RobotProtectionError("unproven closed post-fill M1 boundary")
+    if direction == DIRECTION_LONG:
+        if not (initial_stop <= active_stop < average_entry < active_take):
+            raise RobotProtectionError("invalid protected LONG risk")
+        risk = average_entry - initial_stop
+        if candle_low <= active_stop or candle_high >= active_take:
+            return None
+        reached = candle_high >= average_entry + Decimal(2) * risk
+    else:
+        if not (active_take < average_entry < active_stop <= initial_stop):
+            raise RobotProtectionError("invalid protected SHORT risk")
+        risk = initial_stop - average_entry
+        if candle_high >= active_stop or candle_low <= active_take:
+            return None
+        reached = candle_low <= average_entry - Decimal(2) * risk
+    if not reached:
+        return None
+    proposed = (
+        original_quantity * Decimal("0.25") / quantity_step
+    ).to_integral_value(rounding=ROUND_FLOOR) * quantity_step
+    return proposed if Decimal(0) < proposed < remaining_quantity else None
+
+
 def fee_aware_break_even_stop(
     direction: str, *,
     average_entry: Decimal,
