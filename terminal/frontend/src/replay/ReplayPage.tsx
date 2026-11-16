@@ -1315,7 +1315,7 @@ export function ReplayPage() {
           {requestedWindow && expectedM5 > 0 && (
             <span role="status" aria-label="Загрузка прогона"
               className="replay-load-status" data-tone={loadTone}>
-              Прогон загружен на {loadPercent}% · {loadedM5}/{expectedM5} свечей
+              Прогон загружен на {loadPercent}%
             </span>
           )}
         </div>
