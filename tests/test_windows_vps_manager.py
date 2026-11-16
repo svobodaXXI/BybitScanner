@@ -447,6 +447,60 @@ class TestWindowsVpsManager(unittest.TestCase):
             VPSManager.worker_control(fake, cmd, "preflight", "")
         self.assertEqual(fake.events.get_nowait()[0], "unproven")
 
+    def test_cli_preflight_failure_reports_sanitized_cause_and_preserves_fail_closed(self):
+        cases = (
+            (255, "banner exchange: Connection to 1.2.3.4 port 22: invalid format",
+             "SSH_BANNER_FAILURE"),
+            (255, "Permission denied (publickey). key-private-secret",
+             "SSH_AUTH_REJECTED"),
+            (255, "Host key verification failed.", "SSH_HOST_KEY_REJECTED"),
+            (1, "bash: /opt/BybitScanner/venv/bin/python: No such file or directory",
+             "REMOTE_REQUIRED_FILE_MISSING"),
+            (7, "curl: (7) Failed to connect to localhost", "REMOTE_API_UNREACHABLE"),
+            (0, "", "REMOTE_RECEIPT_MISSING"),
+        )
+        for exit_code, stderr, kind in cases:
+            with self.subTest(kind=kind):
+                completed = subprocess.CompletedProcess(
+                    ["ssh"], exit_code, stdout="partial stdout", stderr=stderr)
+                with (patch("tools.windows_vps_manager.preferred_route",
+                            return_value=("bybitscanner-vps", "")),
+                      patch("tools.windows_vps_manager.subprocess.run",
+                            return_value=completed) as ssh,
+                      patch("sys.stdout", new_callable=io.StringIO) as output):
+                    result = run_cli(parse_args(["--operation", "preflight"]))
+                self.assertEqual(result, 2)
+                self.assertEqual(ssh.call_count, 1)
+                self.assertIn("PREFLIGHT_BLOCKED_UNPROVEN", output.getvalue())
+                self.assertIn("PREFLIGHT_SSH_EXIT_CODE=" + str(exit_code),
+                              output.getvalue())
+                self.assertIn("PREFLIGHT_FAILURE_CLASS=" + kind, output.getvalue())
+                self.assertNotIn("key-private-secret", output.getvalue())
+                self.assertNotIn("1.2.3.4", output.getvalue())
+
+    def test_preflight_timeout_is_classified_without_ssh_retry(self):
+        with (patch("tools.windows_vps_manager.preferred_route",
+                    return_value=("bybitscanner-vps", "")),
+              patch("tools.windows_vps_manager.subprocess.run",
+                    side_effect=subprocess.TimeoutExpired("ssh", 35)) as ssh,
+              patch("sys.stdout", new_callable=io.StringIO) as output):
+            self.assertEqual(run_cli(parse_args(["--operation", "preflight"])), 2)
+        self.assertEqual(ssh.call_count, 1)
+        self.assertIn("PREFLIGHT_FAILURE_CLASS=SSH_CLIENT_TIMEOUT", output.getvalue())
+        self.assertIn("PREFLIGHT_BLOCKED_UNPROVEN", output.getvalue())
+
+    def test_gui_preflight_failure_includes_safe_reason(self):
+        cmd = control_ssh_command("bybitscanner-vps", "", "", "preflight")
+        with patch("tools.windows_vps_manager.subprocess.run",
+                   return_value=subprocess.CompletedProcess(
+                       cmd, 255, stdout="", stderr="Permission denied (publickey) secret")):
+            fake = SimpleNamespace(events=queue.Queue())
+            VPSManager.worker_control(fake, cmd, "preflight", "")
+        kind, output = fake.events.get_nowait()
+        self.assertEqual(kind, "unproven")
+        self.assertIn("PREFLIGHT_FAILURE_CLASS=SSH_AUTH_REJECTED", output)
+        self.assertNotIn("secret", output)
+
     def test_existing_alias_detected_without_rewriting_ssh_config(self):
         with tempfile.TemporaryDirectory() as temp:
             config = Path(temp) / ".ssh"
