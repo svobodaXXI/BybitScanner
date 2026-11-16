@@ -319,6 +319,21 @@ class RobotPaperActionExecutor:
             lambda runtime: runtime._robot_full_close(request, evidence=evidence)
         )
 
+    def wedge_be_step(self, candidate_id: str, symbol: str, candle):
+        # Fresh public book acquisition is OFF the SQLite owner; never fall
+        # back to a synchronous exchange request from its single writer.
+        evidence = self._runtime._dispatch_robot_market_book(symbol)
+        if evidence is None:
+            return CommandResult(
+                "be-book-" + candidate_id, CommandResultStatus.UNAVAILABLE,
+                "be_book_missing", "BE requires a fresh streamed L2 book",
+            )
+        return self._runtime._dispatch_robot_command(
+            lambda runtime: runtime._robot_wedge_be_auto_step(
+                candidate_id, symbol=symbol, candle=candle, book=evidence,
+            )
+        )
+
 
 class _DirectRobotActionExecutor:
     """Same-thread ActionExecutor binding for RobotBreakoutMonitor, used only
@@ -766,11 +781,15 @@ class PaperRuntime:
         robot_closed_candle_provider: Callable[[str], Mapping[str, object] | None] | None = None,
         robot_command_dispatcher: Callable[[Callable[["PaperRuntime"], object]], object] | None = None,
         robot_tick_interval_s: float = DEFAULT_TICK_INTERVAL_S,
+        wedge_be_auto_paper_enabled: bool = False,
     ) -> None:
         # Bound (if given) via this constructor argument, or later via
         # start_robot_monitor() once a real one exists -- see the class
         # docstring note on RobotBreakoutMonitor's thread ownership below.
         self._robot_command_dispatcher = robot_command_dispatcher
+        if type(wedge_be_auto_paper_enabled) is not bool:
+            raise ValueError("PAPER Wedge BE opt-in must be explicit bool")
+        self._wedge_be_auto_paper_enabled = wedge_be_auto_paper_enabled
         # (arm, release) of RobotProtectionCoverageManager, bound by the composition
         # root before the monitor may create a resting entry LIMIT.
         self._robot_entry_coverage: tuple[
@@ -1115,6 +1134,7 @@ class PaperRuntime:
             market_preflight=self._dispatch_robot_market_preflight,
             submit_market=self._dispatch_robot_market_submit,
             tick_interval_s=robot_tick_interval_s,
+            wedge_be_auto_paper_enabled=wedge_be_auto_paper_enabled,
             arm_entry_coverage=self._arm_robot_entry_coverage,
             release_entry_coverage=self._release_robot_entry_coverage,
             incident_dir=self._robot_incident_dir,
@@ -4232,6 +4252,77 @@ class PaperRuntime:
         )
         return result
 
+
+    def _robot_wedge_be_auto_step(
+        self, candidate_id: str, *, symbol: str,
+        candle: Mapping[str, object] | None,
+        book: NormalizedOrderBook,
+    ) -> CommandResult:
+        """Owner-only resumed BE state machine; opt-in, PAPER-only, no replay.
+
+        A completed durable partial is reconciled to one fee-aware STOP.
+        A latched UNKNOWN or absent command NEVER dispatches again. New
+        partials consume only an independently verified closed M1 candle.
+        """
+        if not self._wedge_be_auto_paper_enabled:
+            return CommandResult(
+                "be-disabled-" + candidate_id, CommandResultStatus.BLOCKED,
+                "be_disabled", "Wedge BE PAPER automatic opt-in is disabled",
+            )
+        record = self.store.get_robot_candidate(candidate_id)
+        if (
+            record is None or record.status != "OPEN"
+            or record.trading_account_id != self._paper_account_id
+            or record.symbol.value != symbol
+            or not isinstance(record.robot_state, Mapping)
+            or record.signal_snapshot.get("pattern") not in ("Falling Wedge", "Rising Wedge")
+        ):
+            raise RuntimeError("BE owner handoff does not match OPEN Wedge")
+        execution = record.robot_state.get("execution") or {}
+        if not isinstance(execution, Mapping):
+            raise RuntimeError("BE persisted execution is invalid")
+        if "wedge_be_partial_intent" in execution:
+            intent = execution["wedge_be_partial_intent"]
+            if not isinstance(intent, Mapping):
+                raise RuntimeError("BE prior partial intent is corrupt")
+            command_id = intent.get("command_id")
+            if not isinstance(command_id, str) or not command_id:
+                raise RuntimeError("BE partial intent has no durable command ID")
+            command = self.store.get_command(CommandId(command_id))
+            if command is None or command.current_state.value != "filled":
+                # Covers crash after CAS before submit, UNKNOWN/ACKNOWLEDGED
+                # responses, or an owner that cannot yet prove the fill.
+                return CommandResult(
+                    str(intent.get("client_action_id", "be-pending")),
+                    CommandResultStatus.UNKNOWN, "be_partial_unresolved",
+                    "Reconcile original partial command, never resubmit",
+                    command_id, True,
+                )
+            return self._robot_wedge_be_reconcile_partial(
+                candidate_id, book=book, worst_case_slippage_ticks=2,
+            )
+        if candle is None:
+            return CommandResult(
+                "be-no-candle-" + candidate_id, CommandResultStatus.BLOCKED,
+                "be_candle_unavailable", "BE needs a fully closed M1 bar",
+            )
+        timestamp = candle.get("time_ms")
+        if type(timestamp) is not int or timestamp <= 0 or timestamp % 60_000:
+            raise RuntimeError("BE M1 timestamp invalid")
+        end_ms = timestamp + 60_000
+        if not (0 <= book.received_at_ms - end_ms <= 90_000):
+            raise RuntimeError("BE M1 evidence is forming, late or stale")
+        try:
+            high = Decimal(str(candle["high"]))
+            low = Decimal(str(candle["low"]))
+        except (KeyError, TypeError, ValueError, ArithmeticError) as exc:
+            raise RuntimeError("BE source OHLC is invalid") from exc
+        if not high.is_finite() or not low.is_finite() or low <= 0 or high < low:
+            raise RuntimeError("BE source OHLC is invalid")
+        return self._robot_wedge_be_partial_once(
+            candidate_id, candle_open_ms=timestamp, candle_end_ms=end_ms,
+            candle_high=high, candle_low=low, book=book,
+        )
 
     def _robot_wedge_be_partial_once(
         self, candidate_id: str, *,
