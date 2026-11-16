@@ -443,6 +443,7 @@ class VPSManager(tk.Tk):
         self.status = tk.StringVar(value="Не подключено · PAPER only")
         self.events: queue.Queue[tuple[str, str]] = queue.Queue()
         self.busy = False
+        self._copy_seq = 0
         top = ttk.Frame(self, padding=12)
         top.pack(fill="x")
         ttk.Label(top, text="VPS адрес:").grid(row=0, column=0, sticky="w")
@@ -495,6 +496,28 @@ class VPSManager(tk.Tk):
     def write(self, text: str) -> None:
         self.log.configure(state="normal")
         self.log.insert("end", text + "\n")
+        self.log.see("end")
+        self.log.configure(state="disabled")
+
+    def copy_result(self, result: str) -> None:
+        """Copy the complete output of one finished action to the clipboard."""
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(result)
+            self.update_idletasks()
+        except tk.TclError:
+            messagebox.showerror("VPS Manager", "Не удалось скопировать результат")
+
+    def write_result(self, result: str) -> None:
+        """Offer an independent copy link for each completed journal entry."""
+        self._copy_seq += 1
+        tag = f"copy_result_{self._copy_seq}"
+        self.log.configure(state="normal")
+        self.log.insert("end", "📋 Скопировать результат\n", (tag,))
+        self.log.insert("end", result + "\n\n")
+        self.log.tag_configure(tag, foreground="#0066bb", underline=True)
+        self.log.tag_bind(tag, "<Button-1>",
+                          lambda _event, output=result: self.copy_result(output))
         self.log.see("end")
         self.log.configure(state="disabled")
 
@@ -607,7 +630,7 @@ class VPSManager(tk.Tk):
         try:
             while True:
                 kind, result = self.events.get_nowait()
-                self.write(result)
+                self.write_result(result)
                 self.busy = False
                 labels = {
                     "success": "Успешно · монолит завершил операцию; приёмка владельцем отдельно",

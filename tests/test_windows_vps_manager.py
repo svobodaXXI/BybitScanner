@@ -224,6 +224,35 @@ class TestWindowsVpsManager(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     control_ssh_command("bybitscanner-vps", "", "", **args)
 
+    def test_completed_journal_entries_have_independent_copy_targets(self):
+        fake = SimpleNamespace(log=Mock(), _copy_seq=0, copy_result=Mock())
+        first = "PREFLIGHT_READ_ONLY_DATA_COLLECTED_NOT_ACCEPTED\\nfirst"
+        second = "REQUEST_ID=abc\\nSTATUS=FINISHED_OK\\nsecond"
+        VPSManager.write_result(fake, first)
+        VPSManager.write_result(fake, second)
+        self.assertEqual(fake._copy_seq, 2)
+        self.assertEqual(fake.log.tag_bind.call_count, 2)
+        self.assertIn(first, str(fake.log.insert.call_args_list))
+        self.assertIn(second, str(fake.log.insert.call_args_list))
+        self.assertNotEqual(
+            fake.log.tag_bind.call_args_list[0].args[0],
+            fake.log.tag_bind.call_args_list[1].args[0],
+        )
+        fake.log.tag_bind.call_args_list[0].args[2](None)
+        fake.log.tag_bind.call_args_list[1].args[2](None)
+        self.assertEqual([c.args[0] for c in fake.copy_result.call_args_list],
+                         [first, second])
+
+    def test_copy_result_uses_only_one_result_and_no_remote_call(self):
+        fake = SimpleNamespace(
+            clipboard_clear=Mock(), clipboard_append=Mock(),
+            update_idletasks=Mock())
+        output = "Preflight\\nline 1\\nline 2\\nfull output"
+        VPSManager.copy_result(fake, output)
+        fake.clipboard_clear.assert_called_once_with()
+        fake.clipboard_append.assert_called_once_with(output)
+        fake.update_idletasks.assert_called_once_with()
+
     def test_gui_automatically_watches_same_uuid_until_terminal_success(self):
         req = "9" * 32
         command = ["ssh", "exact-status"]
