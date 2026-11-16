@@ -28,6 +28,8 @@ from robot_protection import (
     tighten_stop,
     fee_aware_break_even_stop,
     summarize_attested_robot_partial,
+    build_wedge_be_partial_intent,
+    restore_wedge_be_partial_intent,
     plan_wedge_partial_at_two_r,
 )
 from robot_state_machine import DIRECTION_LONG, DIRECTION_SHORT
@@ -712,6 +714,101 @@ class AttestedPartialEconomicsTests(unittest.TestCase):
             with self.subTest(updates=updates):
                 with self.assertRaises(RobotProtectionError):
                     self._source(**updates)
+
+
+class DurableWedgePartialIntentTests(unittest.TestCase):
+    def _case(self, **updates):
+        values = dict(
+            account_id="paper-main", trade_id="robot-trade-c1",
+            candidate_id="c1", symbol="TESTUSDT", direction="LONG",
+            original_quantity=Decimal("10"), remaining_quantity=Decimal("10"),
+            partial_quantity=Decimal("2.5"), executable_price=Decimal("104.5"),
+            trigger_candle_end_ms=120000,
+        )
+        values.update(updates)
+        return values
+
+    def test_deterministic_unique_intent_and_canonical_order_identity(self):
+        a = build_wedge_be_partial_intent(**self._case())
+        b = build_wedge_be_partial_intent(**self._case())
+        self.assertEqual(a, b)
+        self.assertTrue(a["reduce_only_required"])
+        self.assertEqual(a["side"], "Sell")
+        self.assertTrue(a["order_link_id"].startswith("tw_"))
+        self.assertEqual(len(a["order_link_id"]), 36)
+        self.assertEqual(
+            a,
+            restore_wedge_be_partial_intent(
+                a, **{k: v for k, v in self._case().items()
+                      if k not in ("partial_quantity", "executable_price",
+                                   "trigger_candle_end_ms")},
+            ),
+        )
+        changed_price = build_wedge_be_partial_intent(
+            **self._case(executable_price=Decimal("105.0")),
+        )
+        self.assertEqual(changed_price["client_action_id"], a["client_action_id"])
+        self.assertEqual(changed_price["order_link_id"], a["order_link_id"])
+        self.assertNotEqual(changed_price, a)
+        self.assertNotEqual(
+            build_wedge_be_partial_intent(**self._case(trade_id="robot-trade-c2"))[
+                "client_action_id"
+            ],
+            a["client_action_id"],
+        )
+
+    def test_short_intent_uses_buy_and_correct_quantity(self):
+        intent = build_wedge_be_partial_intent(
+            **self._case(direction="SHORT", partial_quantity=Decimal("2.4")),
+        )
+        self.assertEqual(intent["side"], "Buy")
+        self.assertEqual(intent["partial_quantity"], "2.4")
+
+    def test_restart_rejects_mutation_and_changed_authoritative_position(self):
+        intact = build_wedge_be_partial_intent(**self._case())
+        base = {k: v for k, v in self._case().items()
+                if k not in ("partial_quantity", "executable_price",
+                             "trigger_candle_end_ms")}
+        for mutation in (
+            {"trade_id": "robot-trade-other"},
+            {"partial_quantity": "5"},
+            {"executable_price": "103"},
+            {"trigger_candle_end_ms": 60000},
+            {"client_action_id": "unexpected"},
+            {"command_id": "cmd_foreign"},
+            {"order_link_id": "tw_foreign"},
+            {"reduce_only_required": False},
+            {"side": "Buy"},
+            {"version": 2},
+            {"extra": "unexpected"},
+        ):
+            with self.subTest(mutation=mutation):
+                with self.assertRaises(RobotProtectionError):
+                    restore_wedge_be_partial_intent(
+                        {**intact, **mutation}, **base,
+                    )
+        with self.assertRaises(RobotProtectionError):
+            restore_wedge_be_partial_intent(
+                intact, **{**base, "remaining_quantity": Decimal("7.5")},
+            )
+
+    def test_unproven_quantities_time_and_identity_fail_closed(self):
+        for invalid in (
+            {"remaining_quantity": Decimal("7.5")},
+            {"partial_quantity": Decimal("2.6")},
+            {"partial_quantity": Decimal("0")},
+            {"partial_quantity": Decimal("10")},
+            {"partial_quantity": Decimal("NaN")},
+            {"executable_price": Decimal("0")},
+            {"trigger_candle_end_ms": 100001},
+            {"trigger_candle_end_ms": True},
+            {"account_id": "OTHER" + chr(0) + "PAPER"},
+            {"symbol": "testusdt"},
+            {"direction": "SIDEWAYS"},
+        ):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(RobotProtectionError):
+                    build_wedge_be_partial_intent(**self._case(**invalid))
 
 
 class FeeAwareBreakEvenPlannerTests(unittest.TestCase):
