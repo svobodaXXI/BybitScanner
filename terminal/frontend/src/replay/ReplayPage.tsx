@@ -1000,13 +1000,13 @@ export function ReplayPage() {
             setSimulationGraphPending(false);
             setDrawings([]); setSelectedDrawing(null); setDrawingTool("crosshair");
             setCursor(0);
-            setFileLabel("Bybit · подтверждённые M5 · Scanner исследует · без сделок");
+            setFileLabel("Bybit · подтверждённые M5 · без сделок · Scanner исследует");
           }
           setDocument(imported);
         });
         if (first) throw new Error("Scanner не подтвердил ни одной закрытой M5");
         if (historyRequest.current === controller)
-          setFileLabel("Bybit · подтверждённые M5 · Scanner завершил · без сделок");
+          setFileLabel("Bybit · подтверждённые M5 · без сделок · Scanner завершил");
       } else {
         armTimeout(90_000);
         const response = await fetch("/local-replay/history?" + query.toString(), {
