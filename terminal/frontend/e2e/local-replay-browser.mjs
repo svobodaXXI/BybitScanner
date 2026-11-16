@@ -760,16 +760,16 @@ try {
     "PAPER · фактическое исполнение",
     "PAPER · фактическое исполнение",
   ], "facts and D2 observations must be sorted together by original milliseconds");
-  assert.match(await rows.nth(0).innerText(), /\\(234\\) UTC/);
-  assert.match(await rows.nth(1).innerText(), /\\(345\\) UTC/);
-  assert.match(await rows.nth(2).innerText(), /\\(123\\) UTC/);
-  assert.match(await rows.nth(3).innerText(), /\\(134\\) UTC/);
+  assert.match(await rows.nth(0).innerText(), /\(234\) UTC/);
+  assert.match(await rows.nth(1).innerText(), /\(345\) UTC/);
+  assert.match(await rows.nth(2).innerText(), /\(123\) UTC/);
+  assert.match(await rows.nth(3).innerText(), /\(134\) UTC/);
   assert.match(await rows.nth(2).innerText(), /Открытие позиции · Buy/);
-  assert.match(await rows.nth(2).innerText(), /100\\.12345678/);
-  assert.match(await rows.nth(2).innerText(), /количество 2 · комиссия 0\\.05 USDT/);
+  assert.match(await rows.nth(2).innerText(), /100\.12345678/);
+  assert.match(await rows.nth(2).innerText(), /количество 2 · комиссия 0\.05 USDT/);
   assert.match(await rows.nth(2).innerText(), /order_id order-1 · execution_id exec-1/);
-  assert.match(await rows.nth(3).innerText(), /Закрытие позиции · Sell · причина STOP\\/TAKE не подтверждена/);
-  assert.match(await rows.nth(3).innerText(), /99\\.5/);
+  assert.match(await rows.nth(3).innerText(), /Закрытие позиции · Sell · причина STOP\/TAKE не подтверждена/);
+  assert.match(await rows.nth(3).innerText(), /99\.5/);
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "0",
     "factual journal cannot create virtual SIMULATION fills");
   await page.waitForFunction(() =>
