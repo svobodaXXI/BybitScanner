@@ -602,10 +602,8 @@ export function ReplayPage() {
   );
   // The synthetic fixture is available only via the explicit Example button.
   const [simulationGraphPending, setSimulationGraphPending] = useState(true);
-  const [preparedRun, setPreparedRun] = useState(false);
   const [runLoading, setRunLoading] = useState(false);
   const [runWaitingSeconds, setRunWaitingSeconds] = useState(0);
-  const [playRequestId, setPlayRequestId] = useState(0);
 
   useEffect(() => {
     if (!runLoading) { setRunWaitingSeconds(0); return; }
@@ -742,7 +740,6 @@ export function ReplayPage() {
     setDrawings([]); setSelectedDrawing(null); setDrawingTool("crosshair");
     setFileLabel(formatRunCoordinates(request.symbol, request.start_utc, request.end_utc_inclusive));
     setSimulationGraphPending(true);
-    setPreparedRun(true);
     setRunLoading(false);
   }, []);
 
@@ -754,7 +751,6 @@ export function ReplayPage() {
     setDrawings([]); setSelectedDrawing(null); setDrawingTool("crosshair");
     setFileLabel(formatRunCoordinates(ticker, start, end));
     setSimulationGraphPending(true);
-    setPreparedRun(false);
     setRunLoading(false);
   }, []);
 
@@ -766,7 +762,6 @@ export function ReplayPage() {
   const onSimulationFailed = useCallback(() => {
     setPlaying(false);
     setSimulationGraphPending(true);
-    setPreparedRun(true);
     setCursor(0);
   }, []);
   const onSimulationReady = useCallback((replay: ReplayDocument) => {
@@ -778,7 +773,6 @@ export function ReplayPage() {
     setCursor(0); setTimeframe("5m");
     // The owner-selected ticker and date range stay visible in Source.
     setSimulationGraphPending(false);
-    setPreparedRun(false);
     setPlaying(false); // Apply prepares in background; owner controls playback.
   }, []);
 
@@ -1061,7 +1055,7 @@ export function ReplayPage() {
         onPasteSymbol={onPasteSymbol} onSimulationStart={onSimulationStart}
         onSimulationReady={onSimulationReady} onSimulationAppend={onSimulationAppend}
         onSimulationFailed={onSimulationFailed} onSimulationBusy={setRunLoading}
-        playRequestId={playRequestId} showReport={!simulationGraphPending && !runLoading && cursor >= total}
+        showReport={!simulationGraphPending && !runLoading && !historyLoading && !historyFailed && cursor >= total}
         onPublicHistoryRequest={(ticker, from, to, choices) => void loadLocalHistory(ticker, from, to, choices)}
         publicHistoryLoading={historyLoading}
         onStrategySelectionChange={setSelectedStrategies}
@@ -1086,7 +1080,6 @@ export function ReplayPage() {
           historyRequest.current?.abort(); historyRequest.current = null;
           setHistoryLoading(false); setPlaying(false); setCursor(0); setError(null);
           setDocument(syntheticReplay()); setSimulationGraphPending(false);
-          setPreparedRun(false);
           setFileLabel("Синтетический пример");
           setDrawings([]); setSelectedDrawing(null); setDrawingTool("crosshair");
         }}>Пример</button>
