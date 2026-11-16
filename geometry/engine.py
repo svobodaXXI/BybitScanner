@@ -44,6 +44,8 @@ from .evaluation import (
     evaluate_candidate_pair
 )
 
+from .touches import _atr_series
+
 from .ranking import (
     rank_geometry
 )
@@ -335,6 +337,12 @@ def analyze_geometry(
 
     ranked_candidates = []
 
+    # ATR(14) depends on the CLOSED candle window, not on the candidate
+    # lines. Compute it once, then reuse its exact pandas values across
+    # every upper/lower pair. No persistent cache or future-candle reuse.
+    window_atr = _atr_series(candles) if candles is not None else None
+    atr_kwargs = {"atr_series": window_atr} if window_atr is not None else {}
+
     for upper_candidate in upper_candidates:
 
         for lower_candidate in lower_candidates:
@@ -366,7 +374,8 @@ def analyze_geometry(
                 highs=highs,
                 lows=lows,
                 current_index=current_index,
-                candles=candles
+                candles=candles,
+                **atr_kwargs
             )
 
             if geometry is None:
