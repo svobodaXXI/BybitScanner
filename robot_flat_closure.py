@@ -327,7 +327,14 @@ def prove_flat_closure(
     if entry_notional <= 0:
         return None
     exit_price = closing.price.value
-    fees_costs_usdt = closing.fee * entry_quantity / closing_quantity
+    # All fills in this lot have an unambiguous candidate/order owner above.
+    # Count this trade's actual entry fees, never the other Robot lot's fees.
+    entry_fees = sum(
+        (execution.fee for execution in window
+         if order_owner[execution.order_id.value] == trade.candidate_id),
+        Decimal(0),
+    )
+    fees_costs_usdt = entry_fees + closing.fee * entry_quantity / closing_quantity
     if trade.direction == DIRECTION_LONG:
         price_delta = exit_price - trade.average_entry
     else:
