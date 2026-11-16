@@ -463,8 +463,14 @@ class VPSManager(tk.Tk):
             row=4, column=0, columnspan=4, sticky="w")
         ttk.Label(top, text="ID операции (для статуса):").grid(
             row=5, column=0, sticky="w", pady=(5, 0))
-        ttk.Entry(top, textvariable=self.request_id, width=34).grid(
-            row=5, column=1, columnspan=3, sticky="w", padx=6, pady=(5, 0))
+        id_controls = ttk.Frame(top)
+        id_controls.grid(row=5, column=1, columnspan=3, sticky="w", pady=(5, 0))
+        self.request_id_entry = ttk.Entry(
+            id_controls, textvariable=self.request_id, width=36, show="")
+        self.request_id_entry.pack(side="left", padx=6)
+        self.request_id_entry.bind("<Control-KeyPress>", self.paste_request_id_hotkey)
+        ttk.Button(id_controls, text="Вставить ID",
+                   command=self.paste_request_id).pack(side="left", padx=6)
         buttons = ttk.Frame(self, padding=(12, 0, 12, 9))
         buttons.pack(fill="x")
         self.buttons = []
@@ -551,6 +557,29 @@ class VPSManager(tk.Tk):
             button.state(["disabled"])
         self.write(f"\n> {name}")
         threading.Thread(target=self.worker, args=(command,), daemon=True).start()
+
+    def paste_request_id(self) -> None:
+        """Paste and show the exact operation ID without an SSH call."""
+        try:
+            request = self.clipboard_get().strip().lower()
+        except tk.TclError:
+            messagebox.showerror("VPS Manager", "Буфер обмена пуст или недоступен")
+            return
+        if REQUEST_ID.fullmatch(request) is None:
+            messagebox.showerror(
+                "VPS Manager", "В буфере нет ID операции (32 шестнадцатеричных символа)")
+            return
+        self.request_id.set(request)
+        self.request_id_entry.icursor("end")
+        self.request_id_entry.focus_set()
+
+    def paste_request_id_hotkey(self, event: tk.Event) -> str | None:
+        """Handle Ctrl+V regardless of English or Russian keyboard layout."""
+        if (event.keysym.casefold() in ("v", "cyrillic_em")
+                or event.keycode == 86):
+            self.paste_request_id()
+            return "break"
+        return None
 
     def run_control(self, mode: str) -> None:
         if self.busy:

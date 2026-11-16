@@ -325,6 +325,47 @@ class TestWindowsVpsManager(unittest.TestCase):
         self.assertIn("LIST_FAILURE_CLASS=SSH_CLIENT_TIMEOUT", output)
         self.assertNotIn("повторять операцию нельзя", output)
 
+    def test_visible_id_paste_copies_32_hex_characters_to_entry_without_ssh(self):
+        request = "ABCDEF0123456789ABCDEF0123456789"
+        entry = Mock()
+        fake = SimpleNamespace(
+            clipboard_get=Mock(return_value=request + "\n"),
+            request_id=Mock(), request_id_entry=entry)
+        VPSManager.paste_request_id(fake)
+        fake.request_id.set.assert_called_once_with(request.lower())
+        entry.icursor.assert_called_once_with("end")
+        entry.focus_set.assert_called_once_with()
+
+    def test_id_paste_rejects_invalid_clipboard_without_overwriting_entry(self):
+        from tkinter import TclError
+        for value in ("", "status", "f" * 31, None):
+            with self.subTest(value=value):
+                clipboard = (Mock(side_effect=TclError("clipboard unavailable"))
+                             if value is None else Mock(return_value=value))
+                fake = SimpleNamespace(
+                    clipboard_get=clipboard, request_id=Mock(),
+                    request_id_entry=Mock())
+                with patch("tools.windows_vps_manager.messagebox.showerror") as err:
+                    VPSManager.paste_request_id(fake)
+                err.assert_called_once()
+                fake.request_id.set.assert_not_called()
+                fake.request_id_entry.icursor.assert_not_called()
+
+    def test_id_ctrl_v_works_with_english_and_russian_layout(self):
+        for keysym, keycode in (("v", 86), ("V", 86), ("Cyrillic_em", 0),
+                                ("unknown", 86)):
+            with self.subTest(keysym=keysym):
+                fake = SimpleNamespace(paste_request_id=Mock())
+                event = SimpleNamespace(keysym=keysym, keycode=keycode)
+                self.assertEqual(VPSManager.paste_request_id_hotkey(fake, event),
+                                 "break")
+                fake.paste_request_id.assert_called_once_with()
+        fake = SimpleNamespace(paste_request_id=Mock())
+        result = VPSManager.paste_request_id_hotkey(
+            fake, SimpleNamespace(keysym="a", keycode=65))
+        self.assertIsNone(result)
+        fake.paste_request_id.assert_not_called()
+
     def test_status_gui_uses_explicit_exact_id_across_devices_read_only(self):
         request = "a" * 32
         fake = SimpleNamespace(
