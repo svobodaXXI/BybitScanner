@@ -470,6 +470,108 @@ def summarize_attested_robot_partial(
     )
 
 
+def build_wedge_be_partial_intent(
+    *,
+    account_id: str,
+    trade_id: str,
+    candidate_id: str,
+    symbol: str,
+    direction: str,
+    original_quantity: Decimal,
+    remaining_quantity: Decimal,
+    partial_quantity: Decimal,
+    executable_price: Decimal,
+    trigger_candle_end_ms: int,
+) -> dict[str, object]:
+    """Freeze one Wedge partial-exit *intent*, without permission to execute.
+
+    The stable action identity is keyed to the trade, not price or each tick:
+    recovering an unconfirmed attempt cannot silently invent a second order.
+    The caller must durably persist this exact intent before any owner-thread
+    dispatch, prove the order is REDUCE-ONLY for this owned trade, and reconcile
+    UNKNOWN submissions rather than replaying them. The existing generic
+    MarketCommandRequest does NOT encode reduce_only and is unsafe here.
+    """
+    ids = (account_id, trade_id, candidate_id, symbol)
+    if any(not isinstance(v, str) or not v or v.strip() != v for v in ids):
+        raise RobotProtectionError("partial trade/account identity unavailable")
+    if any("\x00" in v or any(ord(ch) < 32 for ch in v) for v in ids):
+        raise RobotProtectionError("partial identity contains control character")
+    if symbol != symbol.upper():
+        raise RobotProtectionError("partial symbol must be canonical")
+    if direction not in (DIRECTION_LONG, DIRECTION_SHORT):
+        raise RobotProtectionError("unsupported partial direction")
+    q = (original_quantity, remaining_quantity, partial_quantity, executable_price)
+    if any(not isinstance(v, Decimal) or not v.is_finite() for v in q):
+        raise RobotProtectionError("unproven partial volume/price")
+    if not (
+        original_quantity > 0 and remaining_quantity == original_quantity
+        and 0 < partial_quantity < remaining_quantity
+        and executable_price > 0
+        and partial_quantity <= original_quantity * Decimal("0.25")
+    ):
+        raise RobotProtectionError("partial must be first 25% or smaller")
+    if type(trigger_candle_end_ms) is not int or trigger_candle_end_ms <= 0:
+        raise RobotProtectionError("unproven closed M1 trigger timestamp")
+    if trigger_candle_end_ms % 60_000:
+        raise RobotProtectionError("trigger timestamp is not aligned M1 close")
+    digest = hashlib.sha256(
+        "\x00".join(("robot-wedge-be-partial-v1", *ids)).encode("utf-8")
+    ).hexdigest()[:32]
+    return {
+        "version": 1,
+        "account_id": account_id,
+        "trade_id": trade_id,
+        "candidate_id": candidate_id,
+        "symbol": symbol,
+        "direction": direction,
+        "side": "Sell" if direction == DIRECTION_LONG else "Buy",
+        "original_quantity": str(original_quantity),
+        "partial_quantity": str(partial_quantity),
+        "executable_price": str(executable_price),
+        "trigger_candle_end_ms": trigger_candle_end_ms,
+        "client_action_id": f"robot-wedge-be-{digest}",
+        "command_id": f"cmd_{digest}",
+        "order_link_id": None,  # Must be supplied by canonical owner identity factory.
+        "reduce_only_required": True,
+    }
+
+
+def restore_wedge_be_partial_intent(
+    intent: Mapping[str, object], *,
+    account_id: str,
+    trade_id: str,
+    candidate_id: str,
+    symbol: str,
+    direction: str,
+    original_quantity: Decimal,
+    remaining_quantity: Decimal,
+) -> dict[str, object]:
+    """Fail closed on a conflicting or tampered durable intent after restart.
+
+    This is *not* evidence that a pending/UNKNOWN execution may be submitted
+    again. Any existing command ID requires canonical owner reconciliation.
+    """
+    if not isinstance(intent, Mapping):
+        raise RobotProtectionError("missing durable partial intent")
+    try:
+        partial = Decimal(intent["partial_quantity"])
+        price = Decimal(intent["executable_price"])
+        time = intent["trigger_candle_end_ms"]
+    except (KeyError, ValueError, TypeError, InvalidOperation) as exc:
+        raise RobotProtectionError("partial intent values are incomplete") from exc
+    rebuilt = build_wedge_be_partial_intent(
+        account_id=account_id, trade_id=trade_id, candidate_id=candidate_id,
+        symbol=symbol, direction=direction,
+        original_quantity=original_quantity, remaining_quantity=remaining_quantity,
+        partial_quantity=partial, executable_price=price,
+        trigger_candle_end_ms=time,
+    )
+    if dict(intent) != rebuilt:
+        raise RobotProtectionError("durable partial intent conflicts with proven trade")
+    return rebuilt
+
+
 def fee_aware_break_even_stop(
     direction: str, *,
     average_entry: Decimal,
