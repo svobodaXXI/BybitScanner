@@ -854,7 +854,7 @@ export function ReplayPage() {
       const data: unknown = JSON.parse(await file.text());
       const parsed = parseReplayDocument(data);
       setDocument(parsed);
-      setSimulationGraphPending(false);
+      setSimulationGraphPending(false); setHistoryFailed(false);
       // Manual import also replaces the market selection, never leave stale
       // BTC/date controls beside an imported GRASSUSDT archive.
       if (parsed.mode === "MARKET_ONLY") syncImportedMarketSelection(parsed);
@@ -1078,7 +1078,8 @@ export function ReplayPage() {
         <button type="button" onClick={() => {
           bundledRequest.current?.abort(); bundledRequest.current = null;
           historyRequest.current?.abort(); historyRequest.current = null;
-          setHistoryLoading(false); setPlaying(false); setCursor(0); setError(null);
+          setHistoryLoading(false); setHistoryFailed(false);
+          setPlaying(false); setCursor(0); setError(null);
           setDocument(syntheticReplay()); setSimulationGraphPending(false);
           setFileLabel("Синтетический пример");
           setDrawings([]); setSelectedDrawing(null); setDrawingTool("crosshair");
