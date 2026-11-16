@@ -61,6 +61,7 @@ on:
       - "tests/fixtures/runtime_replays/**"
       - "tests/test_robot_entry_limit.py"
       - "tests/test_terminal_paper_runtime.py"
+      - "tests/test_robot_be_partial_owner_paper.py"
       - "tests/test_robot_breakout_monitor.py"
       - "tests/test_robot_recovery_coordinator.py"
       - "tests/test_terminal_paper_http.py"
