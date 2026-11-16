@@ -4322,6 +4322,22 @@ class PaperRuntime:
             or len({f.dedup_key.exec_id.value for f in fills}) != len(fills)
         ):
             raise RuntimeError("BE exact entry fills unavailable")
+        entry_side = OrderSide.BUY if trade.direction == "LONG" else OrderSide.SELL
+        if (
+            any(
+                fill.dedup_key.trading_account_id != self._paper_account_id
+                or fill.dedup_key.category is not Category.LINEAR
+                or fill.symbol != candidate.symbol
+                or fill.side is not entry_side
+                or fill.order_id not in entries
+                for fill in fills
+            )
+            or sum(
+                (fill.price.value * fill.quantity.value for fill in fills),
+                Decimal(0),
+            ) / trade.entry_quantity != trade.average_entry
+        ):
+            raise RuntimeError("BE entry ownership, side or average price mismatch")
         self._market_executor.validate_book(candidate.symbol, book)
         levels = book.bids if trade.direction == "LONG" else book.asks
         if not levels:
