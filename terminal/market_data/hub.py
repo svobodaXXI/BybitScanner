@@ -14,6 +14,7 @@ from typing import Callable, Protocol
 import websocket
 
 from terminal.market_data.instrument_registry import InstrumentRegistry
+from terminal.market_data.impulse_observation import PublicTradeObservation
 from terminal.runtime.incident_telemetry import report_incident
 
 LOGGER = logging.getLogger(__name__)
@@ -63,12 +64,16 @@ class SymbolContext:
     book_subscription_state: str = "NOT_SUBSCRIBED"
     trades_subscription_state: str = "NOT_SUBSCRIBED"
     trade_bootstrap_complete: bool = False
+    impulse_observation: PublicTradeObservation = field(init=False)
     reconnect_count: int = 0
     last_error: str | None = None
     created_at_ms: int = field(default_factory=lambda: int(time.time() * 1000))
     _update_listeners: dict[str, Callable[[str], None]] = field(default_factory=dict)
     _disconnect_listeners: dict[str, Callable[[int, str], None]] = field(default_factory=dict)
     _listener_lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def __post_init__(self) -> None:
+        self.impulse_observation = PublicTradeObservation(self.symbol)
 
     def add_update_listener(self, name: str, callback: Callable[[str], None]) -> None:
         """Register ``callback`` under ``name`` without disturbing any other
@@ -331,6 +336,7 @@ class MarketDataHub:
                         context.trades_subscription_state = "DISCONNECTED"
                         context.trade_bootstrap_complete = False
                         context.reconnect_count += 1
+                        context.impulse_observation.mark_gap()
                         context.last_error = type(exc).__name__
                         context.public_orderbook.mark_disconnected()
                         context._dispatch_disconnect(
@@ -384,6 +390,8 @@ class MarketDataHub:
             component = "book"
         elif topic.startswith("publicTrade."):
             applied = context.public_trades.apply_message(message)
+            if applied == "APPLIED":
+                context.impulse_observation.observe(message)
             component = "trades"
         else:
             return
