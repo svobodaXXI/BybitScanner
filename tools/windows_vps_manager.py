@@ -277,6 +277,38 @@ def control_ssh_command(host: str, user: str, key: str, operation: str,
     return argv
 
 
+def preflight_failure_class(stderr: str, exit_code: int) -> str:
+    """Return a bounded, non-secret reason; never echo arbitrary SSH stderr."""
+    reason = stderr.casefold()
+    if exit_code == 255:
+        for pattern, kind in (
+            ("host key verification failed", "SSH_HOST_KEY_REJECTED"),
+            ("remote host identification has changed", "SSH_HOST_KEY_REJECTED"),
+            ("permission denied", "SSH_AUTH_REJECTED"),
+            ("identity file", "SSH_IDENTITY_UNAVAILABLE"),
+            ("could not resolve hostname", "SSH_DNS_FAILURE"),
+            ("no route to host", "SSH_NETWORK_UNREACHABLE"),
+            ("connection refused", "SSH_CONNECTION_REFUSED"),
+            ("connection timed out", "SSH_CONNECT_TIMEOUT"),
+            ("operation timed out", "SSH_CONNECT_TIMEOUT"),
+            ("banner exchange", "SSH_BANNER_FAILURE"),
+            ("kex_exchange_identification", "SSH_BANNER_FAILURE"),
+            ("connection reset", "SSH_CONNECTION_RESET"),
+        ):
+            if pattern in reason:
+                return kind
+        return "SSH_TRANSPORT_UNCLASSIFIED"
+    if "no such file or directory" in reason:
+        return "REMOTE_REQUIRED_FILE_MISSING"
+    if "command not found" in reason:
+        return "REMOTE_COMMAND_NOT_FOUND"
+    if "curl: (7)" in reason or "curl: (28)" in reason:
+        return "REMOTE_API_UNREACHABLE"
+    if "curl: (22)" in reason:
+        return "REMOTE_API_HTTP_FAILURE"
+    return "REMOTE_COMMAND_FAILED"
+
+
 def run_cli(options: argparse.Namespace) -> int:
     host, user = (options.host, options.user) if options.host else preferred_route()
     if not host:
@@ -303,15 +335,27 @@ def run_cli(options: argparse.Namespace) -> int:
     try:
         completed = subprocess.run(argv, capture_output=True, text=True,
                                    timeout=35, stdin=subprocess.DEVNULL, check=False)
-    except (OSError, subprocess.TimeoutExpired):
-        print("SSH_UNPROVEN; request_id=" + req + "; check status; do not resubmit")
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        if options.operation == "preflight":
+            failure = ("SSH_CLIENT_TIMEOUT" if isinstance(exc, subprocess.TimeoutExpired)
+                       else "SSH_CLIENT_SPAWN_FAILURE")
+            print("PREFLIGHT_FAILURE_CLASS=" + failure)
+            print("PREFLIGHT_BLOCKED_UNPROVEN")
+        else:
+            print("SSH_UNPROVEN; request_id=" + req + "; check status; do not resubmit")
         return 2
     output = completed.stdout.strip()
     print(output)
     if options.operation == "preflight":
+        print("PREFLIGHT_SSH_EXIT_CODE=" + str(completed.returncode))
         if completed.returncode == 0 and "PREFLIGHT_READ_ONLY_DATA_COLLECTED_NOT_ACCEPTED" in output:
             print("PREFLIGHT_OBSERVED_NOT_ACCEPTED")
             return 0
+        if completed.returncode != 0:
+            print("PREFLIGHT_FAILURE_CLASS=" +
+                  preflight_failure_class(completed.stderr or "", completed.returncode))
+        else:
+            print("PREFLIGHT_FAILURE_CLASS=REMOTE_RECEIPT_MISSING")
         print("PREFLIGHT_BLOCKED_UNPROVEN")
         return 2
     if options.operation == "status":
@@ -480,6 +524,11 @@ class VPSManager(tk.Tk):
                              else "unproven")
                 else:
                     state = "success" if result.returncode == 0 else "failure"
+                if mode == "preflight" and state == "unproven":
+                    reason = (preflight_failure_class(result.stderr or "", result.returncode)
+                              if result.returncode != 0 else "REMOTE_RECEIPT_MISSING")
+                    output += ("\nPREFLIGHT_SSH_EXIT_CODE=" + str(result.returncode) +
+                               "\nPREFLIGHT_FAILURE_CLASS=" + reason)
                 self.events.put((state, output or "Статус не доказан"))
                 return
             # Lost submit reply => only query the same request; never replay it.
