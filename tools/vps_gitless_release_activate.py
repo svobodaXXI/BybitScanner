@@ -15,13 +15,14 @@ from pathlib import Path
 import shutil
 import stat
 import tempfile
+import time
 from typing import Callable
 
 from tools.vps_release_identity import (
     MANIFEST, ROOT, ReleaseIdentityBlocked, _validate_manifest,
     create_manifest, git_blob_hash, verify_release,
 )
-from tools.vps_release_resume import _assert_no_listeners, _systemd_state
+from tools.vps_release_resume import ResumeBlocked, _assert_no_listeners, _systemd_state
 from tools.vps_systemd_unit_prepare import UNITS
 
 UNIT_DIR = Path("/etc/systemd/system")
@@ -145,14 +146,38 @@ def _atomic_new_file(path: Path, data: bytes, mode: int = 0o644) -> None:
             os.unlink(name)
 
 
-def _stopped(states: Callable, listeners: Callable) -> None:
-    for unit in UNITS:
-        state = states(unit)
-        _demand(isinstance(state, dict)
-                and state.get("ActiveState") in ("inactive", "failed")
-                and str(state.get("MainPID")) == "0",
-                "PAPER_unit_not_stopped:" + unit)
-    listeners()
+def _stopped(
+    states: Callable, listeners: Callable, *, settle_seconds: float = 0,
+    clock: Callable = time.monotonic, sleep: Callable = time.sleep,
+) -> None:
+    """Wait only for systemd to settle after an already proven canonical STOP.
+
+    Neither a pending unit nor a timeout authorizes another STOP. Every unit
+    and listener is rechecked before switching tracked files.
+    """
+    deadline = clock() + settle_seconds
+    while True:
+        pending = None
+        for unit in UNITS:
+            try:
+                state = states(unit)
+            except ResumeBlocked as exc:
+                if str(exc) != "PAPER_unit_not_stopped":
+                    raise
+                pending = unit
+                break
+            if (not isinstance(state, dict)
+                    or state.get("ActiveState") not in ("inactive", "failed")
+                    or str(state.get("MainPID")) != "0"):
+                pending = unit
+                break
+        if pending is None:
+            listeners()
+            return
+        remaining = deadline - clock()
+        if remaining <= 0:
+            raise ActivationBlocked("PAPER_unit_not_stopped:" + pending)
+        sleep(min(0.25, remaining))
 
 
 def _new_manifest(stage: Path, sha: str) -> dict:
@@ -197,6 +222,7 @@ def activate_staged_release(
     unit_dir: Path = UNIT_DIR, transactions: Path = TRANSACTIONS,
     uid: int = 0, states: Callable = _systemd_state,
     listeners: Callable = _assert_no_listeners,
+    settle_seconds: float = 15,
 ) -> str:
     """Switch tracked files only after canonical stop or a trusted prior receipt.
 
@@ -235,7 +261,7 @@ def activate_staged_release(
         _demand(stat.S_ISREG(meta.st_mode) and meta.st_uid == uid
                 and not meta.st_mode & 0o077, "untrusted_release_lock")
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        _stopped(states, listeners)
+        _stopped(states, listeners, settle_seconds=settle_seconds)
         if journal.exists():
             _demand(journal.is_dir() and not journal.is_symlink(), "untrusted_transaction")
             rec = _manifest(_trusted_file(journal / "target.json", uid))

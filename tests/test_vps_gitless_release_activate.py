@@ -81,6 +81,7 @@ def _fixture(tmp_path: Path, monkeypatch):
         unit_dir=unit_dir, transactions=transactions, uid=os.geteuid(),
         states=lambda name: {"ActiveState": "inactive", "MainPID": "0"},
         listeners=lambda: None,
+        settle_seconds=0,
     )
 
 
@@ -144,6 +145,72 @@ def test_stopped_unit_or_live_port_never_mutates_files(tmp_path, monkeypatch):
     with pytest.raises(activation.ActivationBlocked, match="PAPER_port_owned"):
         _activate(kw)
     assert kw["manifest"].read_bytes() == before
+
+
+def test_bounded_systemd_settle_after_proven_stop_rechecks_all_units():
+    from tools.vps_release_resume import ResumeBlocked
+    elapsed = [0.0]
+    first = [True]
+    checked = []
+    listener_checks = []
+
+    def states(unit):
+        checked.append(unit)
+        if first[0]:
+            first[0] = False
+            raise ResumeBlocked("PAPER_unit_not_stopped")
+        return {"ActiveState": "inactive", "MainPID": "0"}
+
+    def sleep(seconds):
+        elapsed[0] += seconds
+
+    activation._stopped(
+        states, lambda: listener_checks.append(True), settle_seconds=1,
+        clock=lambda: elapsed[0], sleep=sleep,
+    )
+    assert elapsed[0] == 0.25
+    assert checked.count(UNITS[0]) == 2
+    assert all(unit in checked for unit in UNITS)
+    assert listener_checks == [True]
+
+
+def test_systemd_settle_timeout_never_skips_port_fence_or_retries_stop():
+    from tools.vps_release_resume import ResumeBlocked
+    elapsed = [0.0]
+    calls = []
+    listener_checks = []
+
+    def states(unit):
+        calls.append(unit)
+        raise ResumeBlocked("PAPER_unit_not_stopped")
+
+    def sleep(seconds):
+        elapsed[0] += seconds
+
+    with pytest.raises(activation.ActivationBlocked, match="PAPER_unit_not_stopped"):
+        activation._stopped(
+            states, lambda: listener_checks.append(True),
+            settle_seconds=0.5, clock=lambda: elapsed[0], sleep=sleep,
+        )
+    assert elapsed[0] == 0.5
+    assert len(calls) == 3
+    assert listener_checks == []
+
+
+def test_systemd_unknown_failure_never_poll_retries():
+    from tools.vps_release_resume import ResumeBlocked
+    calls = []
+
+    def states(unit):
+        calls.append(unit)
+        raise ResumeBlocked("unreviewed_systemd_dropin")
+
+    with pytest.raises(ResumeBlocked, match="unreviewed_systemd_dropin"):
+        activation._stopped(
+            states, lambda: pytest.fail("no port check on unproven state"),
+            settle_seconds=15, sleep=lambda _: pytest.fail("unexpected retry"),
+        )
+    assert len(calls) == 1
 
 
 def test_untracked_collision_refuses_before_backup_or_mutation(tmp_path, monkeypatch):
