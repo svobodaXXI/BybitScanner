@@ -84,6 +84,10 @@ class OwnerControlTests(unittest.TestCase):
             ("active", "exited", "success", "0", 0),
             ("activating", "start", "success", "0", 3),
             ("failed", "failed", "exit-code", "2", 2),
+            ("inactive", "dead", "success", "0", 2),
+            ("inactive", "dead", "", "0", 2),
+            ("active", "running", "success", "0", 3),
+            ("active", "exited", "success", "1", 2),
         ):
             with self.subTest(active=active):
                 self.assertEqual(control.status(R, run=lambda cmd, **_kw: completed(
@@ -91,6 +95,19 @@ class OwnerControlTests(unittest.TestCase):
                     expected)
         self.assertEqual(control.status(R, run=lambda cmd, **_kw: completed(
             cmd, out="LoadState=not-found\n")), 2)
+
+    def test_inactive_owner_unit_is_never_reported_as_running(self):
+        response = ("LoadState=loaded\nActiveState=inactive\nSubState=dead\n"
+                    "Result=success\nExecMainStatus=0\n")
+        import io
+        from contextlib import redirect_stdout
+        printed = io.StringIO()
+        with redirect_stdout(printed):
+            exit_code = control.status(
+                R, run=lambda cmd, **_kw: completed(cmd, out=response))
+        self.assertEqual(exit_code, 2)
+        self.assertIn("STATUS=UNPROVEN", printed.getvalue())
+        self.assertNotIn("STATUS=RUNNING", printed.getvalue())
 
     def test_console_lists_same_requests_without_mutation(self):
         calls = []
