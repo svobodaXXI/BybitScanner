@@ -1189,7 +1189,7 @@ export function ReplayPage() {
           ? "Трендовые H1/M5 выбраны: жёлтые H1 и синие M5 — исследовательская геометрия, не торговые сигналы."
           : "Трендовые H1/M5 выключены: их линии и приор скрыты."}
         {" "}{document.scanner_research
-          ? `Оригинальные локальные детекторы M5 проверены: ${document.scanner_observations?.filter(o => o.strategy.startsWith("WEDGE_")).length ?? 0} клиньев и ${document.scanner_observations?.filter(o => o.strategy === "IKIGAI_BOX").length ?? 0} Ikigai Box (включая отфильтрованные кандидаты). Маркеры показываются после закрытия свечи; Robot здесь не торгует.`
+          ? `Оригинальные локальные детекторы M5 проверены: ${document.scanner_observations?.filter(o => o.strategy.startsWith("WEDGE_")).length ?? 0} клиньев и ${document.scanner_observations?.filter(o => o.strategy === "IKIGAI_BOX").length ?? 0} Ikigai Box (включая отфильтрованные кандидаты). Наблюдения доступны в журнале по мере закрытия свечей; Robot здесь не торгует.`
           : showSelectedWedges
             ? "Клинья выбраны, но оригинальный Scanner ещё не запускался."
             : "Клинья не выбраны и в публичном M5-просмотре не искались."}
@@ -1200,7 +1200,7 @@ export function ReplayPage() {
         {" "}{scannerObservations.length} из {document.scanner_observations?.length ?? 0}.
         {scannerObservations.length === 0
           ? " Пока нет подтверждённых наблюдений исходных детекторов."
-          : " Ромб — клин; квадрат — Ikigai Box. Розовый — отказ фильтра."}
+          : " Подробности обнаружений и отказов доступны в журнале событий."}
         {" "}Исследовательский режим, без Robot/PnL и исполнения.
       </p>}
       <details className="replay-diagnostics">
