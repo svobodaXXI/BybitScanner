@@ -179,8 +179,10 @@ OWNER_POLL_UNKNOWN_LIMIT = 3
 
 def watch_owner_request(
     status_command: list[str], request: str, *, initially_submitted: bool,
-    run=subprocess.run, sleep=time.sleep, attempts: int = OWNER_POLL_LIMIT,
+    run=None, sleep=None, attempts: int = OWNER_POLL_LIMIT,
 ) -> tuple[str, str]:
+    run = run or subprocess.run
+    sleep = sleep or time.sleep
     state = "submitted" if initially_submitted else "unproven"
     latest = ""
     unknown = 0
