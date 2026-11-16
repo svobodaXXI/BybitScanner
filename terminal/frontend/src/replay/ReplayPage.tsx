@@ -19,7 +19,7 @@ import type { DrawingObject, DrawingTool } from "../chart/drawingModel";
 import { chartLogicalAtTime, drawingLogicalToTime, timeAtChartLogical, timeToDrawingLogical } from "./replayDrawingCoordinates";
 import { RunSetupPanel } from "./RunSetupPanel";
 import { streamPublicM5 } from "./streamPublicM5";
-import { validateInclusiveWindow, makeWedgeRunRequest, formatRunCoordinates, onlyWedges, type RunSelection } from "./runSetup";
+import { validateInclusiveWindow, makeWedgeRunRequest, formatRunCoordinates, formatRunDuration, onlyWedges, type RunSelection } from "./runSetup";
 type WedgeRunRequest = ReturnType<typeof makeWedgeRunRequest>;
 import "./replay.css";
 
@@ -562,6 +562,10 @@ export function ReplayPage() {
   }, []);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyFailed, setHistoryFailed] = useState(false);
+  // This is the owner's requested UTC period, not the currently buffered frontier.
+  const [requestedWindow, setRequestedWindow] = useState<ReturnType<typeof validateInclusiveWindow> | null>(null);
+  // Only a verified terminal transport receipt can establish 100% loading.
+  const [sourceComplete, setSourceComplete] = useState(false);
   const [cancelNativeId, setCancelNativeId] = useState(0);
   const historyRequest = useRef<AbortController | null>(null);
   const bundledRequest = useRef<AbortController | null>(null);
@@ -640,7 +644,31 @@ export function ReplayPage() {
       : [], [paperFacts, paperOverlay, shown.lastTimeMs]);
 
   const total = document.events.length;
-  const progress = Math.round(100 * cursor / total);
+  const progress = total > 0 ? Math.round(100 * cursor / total) : 0;
+  const expectedM5 = useMemo(() => requestedWindow
+    ? Math.max(0, Math.floor(requestedWindow.endExclusiveMs / 300_000) -
+        Math.ceil(requestedWindow.startMs / 300_000))
+    : 0, [requestedWindow]);
+  // Count the contiguous, verified CLOSED M5 prefix, never the visible player cursor.
+  // A missing candle cannot be silently counted as loaded.
+  const loadedM5 = useMemo(() => {
+    if (!requestedWindow || expectedM5 === 0) return 0;
+    const closed = new Set(document.events.filter(event =>
+      event.kind === "CANDLE_CLOSED" && event.candle &&
+      event.candle.end_ms - event.candle.start_ms === 300_000 &&
+      event.candle.start_ms >= requestedWindow.startMs &&
+      event.candle.end_ms <= requestedWindow.endExclusiveMs
+    ).map(event => event.candle!.start_ms));
+    let count = 0;
+    for (let start = Math.ceil(requestedWindow.startMs / 300_000) * 300_000;
+         count < expectedM5 && closed.has(start); start += 300_000) count++;
+    return count;
+  }, [document.events, requestedWindow, expectedM5]);
+  const loadPercent = expectedM5 === 0 ? 0 :
+    sourceComplete && loadedM5 === expectedM5 ? 100 :
+    Math.min(99, Math.floor(100 * loadedM5 / expectedM5));
+  const loadTone = loadPercent < 50 ? "red" :
+    loadPercent < 80 ? "orange" : loadPercent < 100 ? "yellow" : "green";
   const playbackComplete = !simulationGraphPending && !historyLoading && !runLoading &&
     !historyFailed && total > 0 && cursor >= total;
   const seekPoints = useMemo(() => {
@@ -657,6 +685,11 @@ export function ReplayPage() {
     return result;
   }, [document.events]);
   const seekIndex = Math.max(0, seekPoints.indexOf(cursor));
+  // Keep the seek rail proportional to the WHOLE requested UTC period,
+  // not to whichever fraction the Scanner has verified so far.
+  const seekMaximum = expectedM5 > 0 ? expectedM5 : Math.max(1, seekPoints.length - 1);
+  const confirmedRunEnd = requestedWindow !== null && sourceComplete &&
+    loadPercent === 100 && playbackComplete;
   const priorBreaks = useMemo(
     () => showTrendGeometry ? visiblePriorBreaks(document, shown.lastTimeMs) : [],
     [document, shown.lastTimeMs, showTrendGeometry],
@@ -716,6 +749,8 @@ export function ReplayPage() {
     bundledRequest.current?.abort(); bundledRequest.current = null;
     historyRequest.current?.abort(); historyRequest.current = null;
     setHistoryLoading(false);
+    setSourceComplete(false);
+    setRequestedWindow(validateInclusiveWindow(request.start_utc, request.end_utc_inclusive));
     setPlaying(false); setCursor(0);
     setError(null); setHistoryFailed(false);
     setDrawings([]); setSelectedDrawing(null); setDrawingTool("crosshair");
@@ -728,6 +763,8 @@ export function ReplayPage() {
     bundledRequest.current?.abort(); bundledRequest.current = null;
     historyRequest.current?.abort(); historyRequest.current = null;
     setHistoryLoading(false);
+    setSourceComplete(false);
+    setRequestedWindow(validateInclusiveWindow(start, end));
     setPlaying(false); setCursor(0); setError(null); setHistoryFailed(false);
     setDrawings([]); setSelectedDrawing(null); setDrawingTool("crosshair");
     setFileLabel(formatRunCoordinates(ticker, start, end));
@@ -741,10 +778,12 @@ export function ReplayPage() {
       : previous);
   }, []);
   const onSimulationFailed = useCallback(() => {
+    setSourceComplete(false);
     setPlaying(false);
     setSimulationGraphPending(true);
     setCursor(0);
   }, []);
+  const onSimulationComplete = useCallback(() => setSourceComplete(true), []);
   const onSimulationReady = useCallback((replay: ReplayDocument) => {
     if (replay.mode !== "STRATEGY" || replay.demo || !replay.symbol) {
       throw new Error("Новый прогон не содержит проверенной истории");
@@ -785,6 +824,8 @@ export function ReplayPage() {
         }
         if (controller.signal.aborted) return;
         setDocument(parsed);
+        setRequestedWindow(null);
+        setSourceComplete(true);
         setSimulationGraphPending(false);
         syncImportedMarketSelection(parsed);
         setPlaying(false); setCursor(0);
@@ -836,6 +877,8 @@ export function ReplayPage() {
       const data: unknown = JSON.parse(await file.text());
       const parsed = parseReplayDocument(data);
       setDocument(parsed);
+      setRequestedWindow(null);
+      setSourceComplete(true);
       setSimulationGraphPending(false); setHistoryFailed(false);
       // Manual import also replaces the market selection, never leave stale
       // BTC/date controls beside an imported GRASSUSDT archive.
@@ -936,6 +979,7 @@ export function ReplayPage() {
     const controller = new AbortController();
     historyRequest.current = controller;
     setHistoryLoading(true);
+    setSourceComplete(false);
     setPlaying(false);
     setError(null); setHistoryFailed(false);
     let timeout: ReturnType<typeof setTimeout> | null = null;
@@ -985,8 +1029,10 @@ export function ReplayPage() {
           setDocument(imported);
         });
         if (first) throw new Error("Scanner не подтвердил ни одной закрытой M5");
-        if (historyRequest.current === controller)
+        if (historyRequest.current === controller) {
+          setSourceComplete(true);
           setFileLabel("Bybit · подтверждённые M5 · без сделок · Scanner завершил");
+        }
       } else {
         armTimeout(90_000);
         const response = await fetch("/local-replay/history?" + query.toString(), {
@@ -1003,6 +1049,7 @@ export function ReplayPage() {
           throw new Error("История не соответствует режиму MARKET_ONLY");
         if (historyRequest.current !== controller) return;
         setDocument(imported);
+        setSourceComplete(true);
         setSimulationGraphPending(false);
         setDrawings([]); setSelectedDrawing(null); setDrawingTool("crosshair");
         setCursor(0);
@@ -1012,6 +1059,7 @@ export function ReplayPage() {
     } catch (e) {
       if (historyRequest.current !== controller) return;
       setHistoryFailed(true);
+      setSourceComplete(false);
       setPlaying(false);
       setError(controller.signal.aborted
         ? "Поток M5 не подтвердил следующую свечу в установленный срок. Уже проверенные свечи остаются частичным результатом."
@@ -1036,6 +1084,7 @@ export function ReplayPage() {
       <RunSetupPanel symbol={symbol} onHistoryPreparation={onHistoryPreparation}
         onPasteSymbol={onPasteSymbol} onSimulationStart={onSimulationStart}
         onSimulationReady={onSimulationReady} onSimulationAppend={onSimulationAppend}
+        onSimulationComplete={onSimulationComplete}
         onSimulationFailed={onSimulationFailed} onSimulationBusy={setRunLoading}
         cancelNativeId={cancelNativeId}
         showReport={!simulationGraphPending && !runLoading && !historyLoading && !historyFailed && cursor >= total}
@@ -1065,6 +1114,7 @@ export function ReplayPage() {
           setCancelNativeId(id => id + 1);
           setPlaying(false); setCursor(0); setError(null);
           setDocument(syntheticReplay()); setSimulationGraphPending(false);
+          setRequestedWindow(null); setSourceComplete(true);
           setFileLabel("Синтетический пример");
           setDrawings([]); setSelectedDrawing(null); setDrawingTool("crosshair");
         }}>Пример</button>
@@ -1139,7 +1189,7 @@ export function ReplayPage() {
           ? "Трендовые H1/M5 выбраны: жёлтые H1 и синие M5 — исследовательская геометрия, не торговые сигналы."
           : "Трендовые H1/M5 выключены: их линии и приор скрыты."}
         {" "}{document.scanner_research
-          ? `Оригинальные локальные детекторы M5 проверены: ${document.scanner_observations?.filter(o => o.strategy.startsWith("WEDGE_")).length ?? 0} клиньев и ${document.scanner_observations?.filter(o => o.strategy === "IKIGAI_BOX").length ?? 0} Ikigai Box (включая отфильтрованные кандидаты). Маркеры показываются после закрытия свечи; Robot здесь не торгует.`
+          ? `Оригинальные локальные детекторы M5 проверены: ${document.scanner_observations?.filter(o => o.strategy.startsWith("WEDGE_")).length ?? 0} клиньев и ${document.scanner_observations?.filter(o => o.strategy === "IKIGAI_BOX").length ?? 0} Ikigai Box (включая отфильтрованные кандидаты). Наблюдения доступны в журнале по мере закрытия свечей; Robot здесь не торгует.`
           : showSelectedWedges
             ? "Клинья выбраны, но оригинальный Scanner ещё не запускался."
             : "Клинья не выбраны и в публичном M5-просмотре не искались."}
@@ -1150,7 +1200,7 @@ export function ReplayPage() {
         {" "}{scannerObservations.length} из {document.scanner_observations?.length ?? 0}.
         {scannerObservations.length === 0
           ? " Пока нет подтверждённых наблюдений исходных детекторов."
-          : " Ромб — клин; квадрат — Ikigai Box. Розовый — отказ фильтра."}
+          : " Подробности обнаружений и отказов доступны в журнале событий."}
         {" "}Исследовательский режим, без Robot/PnL и исполнения.
       </p>}
       <details className="replay-diagnostics">
@@ -1252,13 +1302,23 @@ export function ReplayPage() {
             setPlaying(false);
             setCursor((current) => nextClosedCandleCursor(document.events, current));
           }} disabled={simulationGraphPending || cursor >= total}><PlayerIcon name="forward" /></button>
-        <input className="replay-seek" type="range" min={0} max={seekPoints.length - 1}
-                step={1} value={simulationGraphPending ? 0 : seekIndex}
-                disabled={simulationGraphPending} aria-label="Перемотка воспроизведения"
-                onChange={e => {
-                  setPlaying(false);
-                  setCursor(seekPoints[Number(e.target.value)]);
-                }} />
+        <div className="replay-seek-progress">
+          <input className="replay-seek" type="range" min={0} max={seekMaximum}
+                  step={1} value={simulationGraphPending ? 0 : Math.min(seekIndex, seekMaximum)}
+                  disabled={simulationGraphPending} aria-label="Перемотка воспроизведения"
+                  onChange={e => {
+                    setPlaying(false);
+                    // A seek beyond the verified frontier must not invent candles.
+                    const safe = Math.min(Number(e.target.value), seekPoints.length - 1);
+                    setCursor(seekPoints[Math.max(0, safe)]);
+                  }} />
+          {requestedWindow && expectedM5 > 0 && (
+            <span role="status" aria-label="Загрузка прогона"
+              className="replay-load-status" data-tone={loadTone}>
+              Прогон загружен на {loadPercent}%
+            </span>
+          )}
+        </div>
         <label className="replay-rate">Скорость {rate} свечей/с
           <input type="range" min="1" max="60" value={rate} onChange={(e) => setRate(Number(e.target.value))} />
         </label>
@@ -1338,6 +1398,12 @@ export function ReplayPage() {
               })} UTC</time>
               <span>{item.message}</span>
             </div>)}
+            {confirmedRunEnd && requestedWindow && (
+              <div className="replay-events-item replay-run-complete" role="status"
+                aria-label="Завершение прогона">
+                Прогон завершён · {shown.candles.length} свечей · {formatRunDuration(requestedWindow.minutes)}
+              </div>
+            )}
           </div>
         </aside>
       </div>

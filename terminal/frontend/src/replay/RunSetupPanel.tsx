@@ -22,7 +22,7 @@ const STEPS: Array<{ id: PeriodIncrement; name: string }> = [
 /** Local-only Wedge execution via loopback: never production /api or PAPER. */
 export function RunSetupPanel({
   symbol, onPasteSymbol, onSimulationStart, onSimulationReady,
-  onSimulationAppend, onSimulationFailed, onSimulationBusy, showReport, cancelNativeId,
+  onSimulationAppend, onSimulationComplete, onSimulationFailed, onSimulationBusy, showReport, cancelNativeId,
   onPublicHistoryRequest, publicHistoryLoading, onStrategySelectionChange, onHistoryPreparation,
   onEpisodeLookup,
 }: {
@@ -34,6 +34,7 @@ export function RunSetupPanel({
   cancelNativeId: number;
   onSimulationReady: (replay: ReplayDocument) => void;
   onSimulationAppend: (runId: string, events: ReplayEvent[]) => void;
+  onSimulationComplete: () => void;
   onSimulationFailed: () => void;
   onPublicHistoryRequest: (symbol: string, start: string, endInclusive: string, selected: readonly StrategyId[]) => void;
   onHistoryPreparation: (symbol: string, start: string, endInclusive: string) => void;
@@ -119,8 +120,10 @@ export function RunSetupPanel({
             onSimulationAppend(runId, events);
         },
       );
-      if (seq === generation.current && !controller.signal.aborted)
+      if (seq === generation.current && !controller.signal.aborted) {
         setReport(result);
+        onSimulationComplete(); // Verified final receipt, not an early snapshot.
+      }
     } catch (error) {
       if (seq === generation.current && !controller.signal.aborted) {
         onSimulationFailed();
@@ -132,7 +135,7 @@ export function RunSetupPanel({
         setLoading(false); onSimulationBusy(false);
       }
     }
-  }, [onSimulationReady, onSimulationAppend, onSimulationFailed, onSimulationBusy]);
+  }, [onSimulationReady, onSimulationAppend, onSimulationComplete, onSimulationFailed, onSimulationBusy]);
 
   // Replacing the whole replay with Example / imported JSON cancels the
   // previous local producer. Pause/Seek intentionally do not cancel it.
