@@ -5236,6 +5236,7 @@ def create_configured_paper_runtime(
     robot_closed_candle_provider=None,
     robot_latest_geometry_index_provider=None,
     robot_tick_interval_s: float = DEFAULT_ROBOT_TICK_INTERVAL_S,
+    wedge_be_auto_paper_enabled: bool = False,
 ) -> PaperRuntime:
     return PaperRuntime(
         database_path,
@@ -5268,6 +5269,7 @@ def create_configured_paper_runtime(
         robot_closed_candle_provider=robot_closed_candle_provider,
         robot_latest_geometry_index_provider=robot_latest_geometry_index_provider,
         robot_tick_interval_s=robot_tick_interval_s,
+        wedge_be_auto_paper_enabled=wedge_be_auto_paper_enabled,
     )
 
 
@@ -5395,6 +5397,11 @@ def main() -> None:
             ),
             live_limit_build_sha=os.environ.get("BYBITSCANNER_BUILD_SHA", ""),
             deployment_identity=os.environ.get("BYBITSCANNER_DEPLOYMENT_IDENTITY", "local"),
+            # Independent owner-approved activation is required. Off for
+            # every normal install; no VPS service/env change in this PR.
+            wedge_be_auto_paper_enabled=(
+                os.environ.get("BYBITSCANNER_ROBOT_WEDGE_BE_PAPER_AUTO", "") == "1"
+            ),
         ))
         initial_market.add_update_listener(
             WorkspaceMarketDataManager._WORKSPACE_LISTENER, runtime.enqueue_book_update,

@@ -182,6 +182,189 @@ class RobotBePartialOwnerPaperTests(unittest.TestCase):
         self.assertEqual(protection.stop_loss, Decimal("64000"))
         self.assertEqual(protection.take_profit, Decimal("65300"))
 
+    def _enable_auto(self):
+        self.runtime._wedge_be_auto_paper_enabled = True
+        monitor = self.runtime._robot_breakout_monitor
+        monitor._wedge_be_auto_paper_enabled = True
+        monitor._get_closed_candle = lambda symbol: {
+            "time_ms": self.minute + 60000,
+            "high": 64800, "low": 64600, "close": 64800,
+        } if symbol == self.symbol.value else None
+        return monitor
+
+    def test_wedge_auto_default_off_prevents_any_market_or_stop_command(self):
+        from unittest.mock import patch
+
+        monitor = self.runtime._robot_breakout_monitor
+        original = len(self.runtime.store.load_executions())
+        with patch.object(monitor, "_get_closed_candle", side_effect=AssertionError("auto disabled")):
+            self.assertEqual(monitor.tick(), ())
+        self.assertEqual(len(self.runtime.store.load_executions()), original)
+        self.assertNotIn(
+            "wedge_be_partial_intent",
+            self.runtime.store.get_robot_candidate(self.candidate_id).robot_state["execution"],
+        )
+
+    def test_automatic_closed_m1_then_next_tick_reconciles_stop_once(self):
+        from unittest.mock import patch
+
+        monitor = self._enable_auto()
+        initial_executions = len(self.runtime.store.load_executions())
+        with patch.object(self.runtime, "_streamed_book", side_effect=lambda symbol:
+                          _crossing_book(self.symbol.value, bid="64800", ask="64800.5")):
+            self.assertEqual(monitor.tick(), (self.candidate_id,))
+            self.assertEqual(len(self.runtime.store.load_executions()), initial_executions + 1)
+            after_partial = self.runtime.store.get_protection_projection(self.key)
+            self.assertEqual(after_partial.stop_loss, Decimal("64000"))
+            self.assertEqual(monitor.tick(), (self.candidate_id,))
+            protected = self.runtime.store.get_protection_projection(self.key)
+            self.assertGreater(protected.stop_loss, Decimal("64000"))
+            self.assertEqual(protected.take_profit, Decimal("65300"))
+            self.assertEqual(monitor.tick(), (self.candidate_id,))
+        self.assertEqual(len(self.runtime.store.load_executions()), initial_executions + 1)
+        self.assertEqual(
+            self.runtime.store.get_protection_projection(self.key).stop_loss,
+            protected.stop_loss,
+        )
+
+    def test_auto_rejects_unclosed_or_stale_m1_without_dispatch(self):
+        from unittest.mock import patch
+
+        monitor = self._enable_auto()
+        initial_executions = len(self.runtime.store.load_executions())
+        with patch.object(self.runtime, "_streamed_book", side_effect=lambda symbol:
+                          _crossing_book(self.symbol.value, bid="64800", ask="64800.5")):
+            monitor._get_closed_candle = lambda _: {
+                "time_ms": self.minute + 120000, "high": 64800,
+                "low": 64600, "close": 64800,
+            }
+            self.assertEqual(monitor.tick(), ())
+            monitor._get_closed_candle = lambda _: {
+                "time_ms": self.minute - 300000, "high": 64800,
+                "low": 64600, "close": 64800,
+            }
+            self.assertEqual(monitor.tick(), ())
+        self.assertEqual(len(self.runtime.store.load_executions()), initial_executions)
+
+    def test_auto_recovery_never_resubmits_unknown_partial(self):
+        from unittest.mock import patch
+        from terminal.api.models import CommandResult
+
+        monitor = self._enable_auto()
+        original = len(self.runtime.store.load_executions())
+        unknown = CommandResult(
+            "unknown-be", CommandResultStatus.UNKNOWN, "unknown", "owner outcome unknown",
+            None, True,
+        )
+        with patch.object(self.runtime, "_streamed_book", side_effect=lambda symbol:
+                          _crossing_book(self.symbol.value, bid="64800", ask="64800.5")):
+            with patch.object(self.runtime._robot_api, "full_close", return_value=unknown) as send:
+                self.assertEqual(monitor.tick(), ())
+                self.assertEqual(send.call_count, 1)
+                self.assertEqual(monitor.tick(), ())
+                self.assertEqual(send.call_count, 1)
+        self.assertEqual(len(self.runtime.store.load_executions()), original)
+        self.assertIn(
+            "wedge_be_partial_intent",
+            self.runtime.store.get_robot_candidate(self.candidate_id).robot_state["execution"],
+        )
+
+    def test_reopened_runtime_never_resubmits_unknown_latched_partial(self):
+        """Crash after durable intent but before command receipt: no retry."""
+        from unittest.mock import patch
+        from terminal.api.models import CommandResult
+
+        monitor = self._enable_auto()
+        unknown = CommandResult(
+            "unknown-be", CommandResultStatus.UNKNOWN,
+            "mutation_unknown", "partial command not proven", None, True,
+        )
+        with patch.object(
+            self.runtime, "_streamed_book",
+            side_effect=lambda symbol: _crossing_book(
+                self.symbol.value, bid="64800", ask="64800.5",
+            ),
+        ), patch.object(
+            self.runtime._robot_api, "full_close", return_value=unknown,
+        ) as dispatch:
+            self.assertEqual(monitor.tick(), ())
+            self.assertEqual(dispatch.call_count, 1)
+        immutable = dict(
+            self.runtime.store.get_robot_candidate(self.candidate_id)
+            .robot_state["execution"]["wedge_be_partial_intent"]
+        )
+        self.runtime.close()
+        reopened = _runtime(self.db)
+        self.addCleanup(reopened.close)
+        reopened._wedge_be_auto_paper_enabled = True
+        with patch.object(
+            reopened._robot_api, "full_close",
+            side_effect=AssertionError("durable BE intent must not resubmit"),
+        ):
+            state = reopened._robot_wedge_be_auto_step(
+                self.candidate_id, symbol=self.symbol.value, candle=None,
+                book=_crossing_book(self.symbol.value, bid="64801", ask="64801.5"),
+            )
+        self.assertEqual(state.status, CommandResultStatus.UNKNOWN)
+        self.assertEqual(
+            reopened.store.get_robot_candidate(self.candidate_id)
+            .robot_state["execution"]["wedge_be_partial_intent"],
+            immutable,
+        )
+        self.assertEqual(
+            reopened.store.get_protection_projection(self.key).stop_loss,
+            Decimal("64000"),
+        )
+        self.assertEqual(
+            len(reopened.store.load_executions_for_symbol(self.account, self.symbol)),
+            1,
+        )
+
+    def test_reopened_runtime_resumes_filled_partial_to_tighter_stop_once(self):
+        """Recovered filled partial gets STOP after independent READY proof."""
+        from unittest.mock import patch
+
+        self.assertEqual(self.run_partial().status, CommandResultStatus.COMPLETED)
+        before = len(self.runtime.store.load_executions_for_symbol(
+            self.account, self.symbol,
+        ))
+        self.assertEqual(
+            self.runtime.store.get_protection_projection(self.key).stop_loss,
+            Decimal("64000"),
+        )
+        self.runtime.close()
+        reopened = _runtime(self.db)
+        self.addCleanup(reopened.close)
+        # The owner/operator must independently reestablish READY after
+        # startup recovery; a BE handler must never grant itself admission.
+        _set_admission(reopened, mode="ROBOT_RUNNING", recovery_status="READY")
+        reopened._wedge_be_auto_paper_enabled = True
+        with patch.object(
+            reopened._robot_api, "full_close",
+            side_effect=AssertionError("filled BE must not issue a new partial"),
+        ):
+            result = reopened._robot_wedge_be_auto_step(
+                self.candidate_id, symbol=self.symbol.value, candle=None,
+                book=_crossing_book(self.symbol.value, bid="64800", ask="64800.5"),
+            )
+        self.assertEqual(result.status, CommandResultStatus.COMPLETED)
+        protection = reopened.store.get_protection_projection(self.key)
+        self.assertGreater(protection.stop_loss, Decimal("64000"))
+        self.assertEqual(protection.take_profit, Decimal("65300"))
+        self.assertEqual(
+            len(reopened.store.load_executions_for_symbol(self.account, self.symbol)),
+            before,
+        )
+        again = reopened._robot_wedge_be_auto_step(
+            self.candidate_id, symbol=self.symbol.value, candle=None,
+            book=_crossing_book(self.symbol.value, bid="64800", ask="64800.5"),
+        )
+        self.assertEqual(again.status, CommandResultStatus.COMPLETED)
+        self.assertEqual(
+            reopened.store.get_protection_projection(self.key).stop_loss,
+            protection.stop_loss,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
