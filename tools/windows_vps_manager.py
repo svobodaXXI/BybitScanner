@@ -351,6 +351,78 @@ def preflight_failure_class(stderr: str, exit_code: int) -> str:
     return "REMOTE_COMMAND_FAILED"
 
 
+
+# Owner-confirmed Windows laptop fingerprint, public metadata only.
+LAPTOP_AGENT_FINGERPRINT = "SHA256:NcIbbPki11WrAx0RjjtAuUnY/bsgsnou2Syp6fNRRc0"
+
+
+def _pinned_laptop_ssh(command: list[str]) -> bool:
+    """Exclude PC, custom routes, unknown identities and any noncanonical SSH."""
+    if (known_windows_device() != "laptop" or len(command) < 4
+            or command[0] != "ssh" or command[1:3] != ["-F", "none"]
+            or command[-2] != "root@83.217.213.181"):
+        return False
+    if not all(flag in command for flag in
+               ("IdentitiesOnly=yes", "BatchMode=yes", "StrictHostKeyChecking=yes")):
+        return False
+    try:
+        return command[command.index("-i") + 1] == str(
+            Path.home() / ".ssh" / "bybitscanner_laptop")
+    except (ValueError, IndexError):
+        return False
+
+
+def _local_agent_call(argv: list[str]) -> subprocess.CompletedProcess | None:
+    try:
+        return subprocess.run(
+            argv, capture_output=True, text=True, errors="replace",
+            stdin=subprocess.DEVNULL, timeout=12, creationflags=NO_WINDOW,
+            check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def run_readonly_ssh_with_laptop_agent_recovery(
+    command: list[str], **kwargs,
+) -> tuple[subprocess.CompletedProcess, str]:
+    """At most one same-request SSH retry after observed laptop publickey denial.
+
+    Intended only for read-only callers. No key loading, passwords, config
+    updates, SSH retries on banner timeout or retry of a mutating submit.
+    """
+    first = subprocess.run(command, **kwargs)
+    if (not _pinned_laptop_ssh(command) or first.returncode != 255
+            or "permission denied (publickey" not in (first.stderr or "").casefold()):
+        return first, ""
+
+    windows = Path(os.environ.get("WINDIR", r"C:\Windows"))
+    ps = [str(windows / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"),
+          "-NoProfile", "-NonInteractive", "-Command"]
+    service = _local_agent_call(
+        ps + ["$s=Get-Service -Name ssh-agent -ErrorAction Stop; "
+              "$s.Status.ToString() + '/' + $s.StartType.ToString()"])
+    if service is None or service.returncode != 0:
+        return first, "SSH_AGENT_RECOVERY=BLOCKED_SERVICE_STATUS_UNKNOWN"
+    if service.stdout.strip().casefold() != "stopped/manual":
+        return first, "SSH_AGENT_RECOVERY=BLOCKED_SERVICE_NOT_STOPPED_MANUAL"
+
+    started = _local_agent_call(
+        ps + ["Start-Service -Name ssh-agent -ErrorAction Stop"])
+    if started is None or started.returncode != 0:
+        return first, "SSH_AGENT_RECOVERY=BLOCKED_SERVICE_START_FAILED"
+
+    ssh_add = str(windows / "System32" / "OpenSSH" / "ssh-add.exe")
+    identities = _local_agent_call([ssh_add, "-l"])
+    if (identities is None or identities.returncode != 0
+            or LAPTOP_AGENT_FINGERPRINT not in (identities.stdout or "").split()):
+        return first, "SSH_AGENT_RECOVERY=BLOCKED_PINNED_KEY_NOT_IN_AGENT"
+
+    # Same *read-only* request, once; no alternate IP, key, auth or SSH settings.
+    second = subprocess.run(command, **kwargs)
+    return second, ("SSH_AGENT_RECOVERY=RETRY_ONCE_OK" if second.returncode == 0
+                    else "SSH_AGENT_RECOVERY=RETRY_ONCE_UNPROVEN")
+
+
 def run_cli(options: argparse.Namespace) -> int:
     host, user = (options.host, options.user) if options.host else preferred_route()
     if not host:
@@ -375,8 +447,14 @@ def run_cli(options: argparse.Namespace) -> int:
             return 2
         print("REQUEST_ID=" + req, flush=True)
     try:
-        completed = subprocess.run(argv, capture_output=True, text=True,
-                                   timeout=35, stdin=subprocess.DEVNULL, check=False)
+        if options.operation in ("status", "list", "preflight"):
+            completed, recovery = run_readonly_ssh_with_laptop_agent_recovery(
+                argv, capture_output=True, text=True, timeout=35,
+                stdin=subprocess.DEVNULL, check=False)
+        else:
+            completed = subprocess.run(argv, capture_output=True, text=True,
+                                       timeout=35, stdin=subprocess.DEVNULL, check=False)
+            recovery = ""
     except (OSError, subprocess.TimeoutExpired) as exc:
         if options.operation == "preflight":
             failure = ("SSH_CLIENT_TIMEOUT" if isinstance(exc, subprocess.TimeoutExpired)
@@ -388,6 +466,8 @@ def run_cli(options: argparse.Namespace) -> int:
         return 2
     output = completed.stdout.strip()
     print(output)
+    if recovery:
+        print(recovery)
     if options.operation == "preflight":
         print("PREFLIGHT_SSH_EXIT_CODE=" + str(completed.returncode))
         if completed.returncode == 0 and "PREFLIGHT_READ_ONLY_DATA_COLLECTED_NOT_ACCEPTED" in output:
@@ -622,10 +702,17 @@ class VPSManager(tk.Tk):
 
     def worker_control(self, command: list[str], mode: str, request: str) -> None:
         try:
-            result = subprocess.run(
-                command, capture_output=True, text=True, errors="replace",
-                timeout=35, stdin=subprocess.DEVNULL, creationflags=NO_WINDOW,
-                check=False)
+            if mode not in CONTROL_ACTIONS.values():
+                result, recovery = run_readonly_ssh_with_laptop_agent_recovery(
+                    command, capture_output=True, text=True, errors="replace",
+                    timeout=35, stdin=subprocess.DEVNULL, creationflags=NO_WINDOW,
+                    check=False)
+            else:
+                result = subprocess.run(
+                    command, capture_output=True, text=True, errors="replace",
+                    timeout=35, stdin=subprocess.DEVNULL, creationflags=NO_WINDOW,
+                    check=False)
+                recovery = ""
             output = result.stdout.strip()
             if mode not in CONTROL_ACTIONS.values():
                 if mode == "status":
@@ -656,6 +743,8 @@ class VPSManager(tk.Tk):
                               if result.returncode != 0 else "REMOTE_RECEIPT_MISSING")
                     output += ("\nPREFLIGHT_SSH_EXIT_CODE=" + str(result.returncode) +
                                "\nPREFLIGHT_FAILURE_CLASS=" + reason)
+                if recovery:
+                    output = (output + "\n" + recovery).strip()
                 self.events.put((state, output or "Статус не доказан"))
                 return
             # Lost submit reply => only query the same request; never replay it.
@@ -683,12 +772,14 @@ class VPSManager(tk.Tk):
 
     def worker(self, command: list[str]) -> None:
         try:
-            result = subprocess.run(
+            result, recovery = run_readonly_ssh_with_laptop_agent_recovery(
                 command, capture_output=True, text=True, errors="replace",
                 timeout=45, stdin=subprocess.DEVNULL, creationflags=NO_WINDOW,
                 env=os.environ.copy(), check=False,
             )
             output = "\n".join(part for part in (result.stdout.strip(), result.stderr.strip()) if part)
+            if recovery:
+                output = (output + "\n" + recovery).strip()
             status = "observed" if result.returncode == 0 else "failure"
             self.events.put((status, f"{output or '(нет вывода)'}\nExit code: {result.returncode}"))
         except (OSError, subprocess.TimeoutExpired) as exc:

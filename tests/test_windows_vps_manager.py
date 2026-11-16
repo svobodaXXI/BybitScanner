@@ -14,7 +14,9 @@ from tools.windows_vps_manager import (ACTIONS, VPSManager, control_ssh_command,
                                        preferred_route, parse_args, ssh_command,
                                        remember_request_id, recover_last_request_id, run_cli,
                                        known_windows_device, preferred_key, PREFLIGHT,
-                                       watch_owner_request)
+                                       watch_owner_request,
+                                       run_readonly_ssh_with_laptop_agent_recovery,
+                                       LAPTOP_AGENT_FINGERPRINT)
 
 
 class TestWindowsVpsManager(unittest.TestCase):
@@ -60,6 +62,106 @@ class TestWindowsVpsManager(unittest.TestCase):
                 self.assertEqual(remote, ACTIONS[action])
                 self.assertNotIn("systemctl start", remote)
                 self.assertNotIn("systemctl stop", remote)
+
+
+    def _pinned_laptop_command_for_agent_test(self):
+        from tools.windows_vps_manager import Path as ManagerPath
+        return ["ssh", "-F", "none", "-o", "BatchMode=yes",
+                "-o", "StrictHostKeyChecking=yes", "-o", "IdentitiesOnly=yes",
+                "-i", str(ManagerPath.home() / ".ssh" / "bybitscanner_laptop"),
+                "root@83.217.213.181", "echo SSH_OK"]
+
+    def test_laptop_readonly_publickey_failure_starts_stopped_manual_agent_once(self):
+        cmd = self._pinned_laptop_command_for_agent_test()
+        replies = [
+            subprocess.CompletedProcess(cmd, 255, "", "Permission denied (publickey,password)."),
+            subprocess.CompletedProcess(["powershell", "Get-Service"], 0, "Stopped/Manual\n", ""),
+            subprocess.CompletedProcess(["powershell", "Start-Service"], 0, "", ""),
+            subprocess.CompletedProcess(["ssh-add", "-l"], 0,
+                "256 " + LAPTOP_AGENT_FINGERPRINT + " bybitscanner-laptop (ED25519)\n", ""),
+            subprocess.CompletedProcess(cmd, 0, "SSH_OK\n", ""),
+        ]
+        with (patch("tools.windows_vps_manager.known_windows_device", return_value="laptop"),
+              patch("tools.windows_vps_manager.subprocess.run", side_effect=replies) as runner):
+            result, recovery = run_readonly_ssh_with_laptop_agent_recovery(
+                cmd, capture_output=True, check=False)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(recovery, "SSH_AGENT_RECOVERY=RETRY_ONCE_OK")
+        self.assertEqual(runner.call_count, 5)
+        self.assertEqual(runner.call_args_list[0].args[0], cmd)
+        self.assertEqual(runner.call_args_list[-1].args[0], cmd)
+        self.assertIn("Get-Service -Name ssh-agent",
+                      runner.call_args_list[1].args[0][-1])
+        self.assertIn("Start-Service -Name ssh-agent",
+                      runner.call_args_list[2].args[0][-1])
+        self.assertEqual(runner.call_args_list[3].args[0][-1], "-l")
+
+    def test_laptop_agent_does_not_retry_on_banner_timeout_or_different_device(self):
+        cmd = self._pinned_laptop_command_for_agent_test()
+        for profile, command, err in (
+            ("laptop", cmd, "Connection timed out during banner exchange"),
+            ("pc", cmd, "Permission denied (publickey,password)"),
+            ("laptop", [*cmd[:-2], "root@212.193.14.116", cmd[-1]],
+             "Permission denied (publickey,password)"),
+        ):
+            with self.subTest(profile=profile, target=command[-2], err=err):
+                reply = subprocess.CompletedProcess(command, 255, "", err)
+                with (patch("tools.windows_vps_manager.known_windows_device",
+                            return_value=profile),
+                      patch("tools.windows_vps_manager.subprocess.run",
+                            return_value=reply) as runner):
+                    result, recovery = run_readonly_ssh_with_laptop_agent_recovery(
+                        command, capture_output=True, check=False)
+                self.assertIs(result, reply)
+                self.assertEqual(recovery, "")
+                runner.assert_called_once()
+
+    def test_laptop_agent_cannot_start_if_not_stopped_manual(self):
+        cmd = self._pinned_laptop_command_for_agent_test()
+        result = subprocess.CompletedProcess(cmd, 255, "", "Permission denied (publickey)")
+        cases = (
+            ("Running/Manual", 0, "BLOCKED_SERVICE_NOT_STOPPED_MANUAL"),
+            ("Stopped/Disabled", 0, "BLOCKED_SERVICE_NOT_STOPPED_MANUAL"),
+            ("Stopped/Manual", 1, "BLOCKED_SERVICE_STATUS_UNKNOWN"),
+        )
+        for service_out, code, expected in cases:
+            with self.subTest(service=service_out, code=code):
+                with (patch("tools.windows_vps_manager.known_windows_device",
+                            return_value="laptop"),
+                      patch("tools.windows_vps_manager.subprocess.run",
+                            side_effect=[result, subprocess.CompletedProcess(
+                                ["powershell", "Get-Service"], code, service_out, "SECRET")]) as runner):
+                    reply, state = run_readonly_ssh_with_laptop_agent_recovery(
+                        cmd, capture_output=True)
+                self.assertIs(reply, result)
+                self.assertEqual(state, "SSH_AGENT_RECOVERY=" + expected)
+                self.assertEqual(runner.call_count, 2)
+                self.assertNotIn("SECRET", state)
+
+    def test_laptop_agent_start_denied_and_missing_identity_fail_closed(self):
+        cmd = self._pinned_laptop_command_for_agent_test()
+        denied = subprocess.CompletedProcess(cmd, 255, "", "Permission denied (publickey,password)")
+        status = subprocess.CompletedProcess(["powershell"], 0, "Stopped/Manual", "")
+        for start_code, expected_calls, expected in (
+            (1, 3, "BLOCKED_SERVICE_START_FAILED"),
+            (0, 4, "BLOCKED_PINNED_KEY_NOT_IN_AGENT"),
+        ):
+            replies = [denied, status,
+                       subprocess.CompletedProcess(["powershell"], start_code, "", "ACCESS DENIED")]
+            if start_code == 0:
+                replies.append(subprocess.CompletedProcess(
+                    ["ssh-add"], 0, "256 SHA256:untrusted different-key (ED25519)", ""))
+            with self.subTest(start_code=start_code):
+                with (patch("tools.windows_vps_manager.known_windows_device",
+                            return_value="laptop"),
+                      patch("tools.windows_vps_manager.subprocess.run",
+                            side_effect=replies) as runner):
+                    reply, recovery = run_readonly_ssh_with_laptop_agent_recovery(
+                        cmd, capture_output=True)
+                self.assertIs(reply, denied)
+                self.assertEqual(recovery, "SSH_AGENT_RECOVERY=" + expected)
+                self.assertEqual(runner.call_count, expected_calls)
+                self.assertNotIn("ACCESS DENIED", recovery)
 
     def test_failed_ssh_and_timeout_are_not_reported_as_success(self) -> None:
         for result, expected in (
