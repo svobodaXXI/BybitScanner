@@ -22,7 +22,7 @@ const STEPS: Array<{ id: PeriodIncrement; name: string }> = [
 /** Local-only Wedge execution via loopback: never production /api or PAPER. */
 export function RunSetupPanel({
   symbol, onPasteSymbol, onSimulationStart, onSimulationReady,
-  onSimulationAppend, onSimulationFailed, onSimulationBusy, showReport,
+  onSimulationAppend, onSimulationFailed, onSimulationBusy, showReport, cancelNativeId,
   onPublicHistoryRequest, publicHistoryLoading, onStrategySelectionChange, onHistoryPreparation,
   onEpisodeLookup,
 }: {
@@ -31,6 +31,7 @@ export function RunSetupPanel({
   onSimulationStart: (request: WedgeRunRequest) => void;
   onSimulationBusy: (busy: boolean) => void;
   showReport: boolean;
+  cancelNativeId: number;
   onSimulationReady: (replay: ReplayDocument) => void;
   onSimulationAppend: (runId: string, events: ReplayEvent[]) => void;
   onSimulationFailed: () => void;
@@ -132,6 +133,19 @@ export function RunSetupPanel({
       }
     }
   }, [onSimulationReady, onSimulationAppend, onSimulationFailed, onSimulationBusy]);
+
+  // Replacing the whole replay with Example / imported JSON cancels the
+  // previous local producer. Pause/Seek intentionally do not cancel it.
+  useEffect(() => {
+    if (cancelNativeId === 0) return;
+    generation.current++;
+    requestController.current?.abort();
+    requestController.current = null;
+    running.current = false;
+    setLoading(false);
+    setReport(null);
+    onSimulationBusy(false);
+  }, [cancelNativeId, onSimulationBusy]);
 
   const updateStart = (value: string) => {
     datesEdited.current = true;
