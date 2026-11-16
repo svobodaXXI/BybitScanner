@@ -63,7 +63,7 @@ class TestWindowsVpsManager(unittest.TestCase):
 
     def test_failed_ssh_and_timeout_are_not_reported_as_success(self) -> None:
         for result, expected in (
-            (subprocess.CompletedProcess(["ssh"], 0, stdout="healthy", stderr=""), "success"),
+            (subprocess.CompletedProcess(["ssh"], 0, stdout="healthy", stderr=""), "observed"),
             (subprocess.CompletedProcess(["ssh"], 255, stdout="", stderr="denied"), "failure"),
         ):
             with self.subTest(exit_code=result.returncode):
@@ -287,6 +287,68 @@ class TestWindowsVpsManager(unittest.TestCase):
         error.assert_called_once()
         fake.log.replace.assert_not_called()
         fake.log.tag_configure.assert_not_called()
+
+    def test_list_readonly_empty_is_not_monolith_success(self):
+        cmd = ["ssh", "list-only"]
+        cases = (
+            (0, "", "", "observed", "REQUEST_LIST=EMPTY"),
+            (0, "bybitscanner-owner-abc.service loaded active exited", "",
+             "observed", "bybitscanner-owner-abc"),
+            (255, "", "banner exchange timeout SECRET", "unproven",
+             "LIST_FAILURE_CLASS=SSH_BANNER_FAILURE"),
+            (2, "REQUEST_LIST=UNPROVEN", "secret message", "unproven",
+             "LIST_FAILURE_CLASS=REMOTE_COMMAND_FAILED"),
+        )
+        for exit_code, stdout, stderr, expected_kind, expected_text in cases:
+            with self.subTest(code=exit_code, stdout=stdout):
+                fake = SimpleNamespace(events=queue.Queue())
+                reply = subprocess.CompletedProcess(cmd, exit_code, stdout, stderr)
+                with patch("tools.windows_vps_manager.subprocess.run",
+                           return_value=reply) as remote:
+                    VPSManager.worker_control(fake, cmd, "list", "")
+                remote.assert_called_once()
+                kind, output = fake.events.get_nowait()
+                self.assertEqual(kind, expected_kind)
+                self.assertIn(expected_text, output)
+                self.assertNotIn("SECRET", output)
+                self.assertNotIn("secret message", output)
+
+    def test_list_transport_timeout_remains_unknown_without_retry(self):
+        cmd = ["ssh", "list-only"]
+        fake = SimpleNamespace(events=queue.Queue())
+        with patch("tools.windows_vps_manager.subprocess.run",
+                   side_effect=subprocess.TimeoutExpired("ssh", 35)) as remote:
+            VPSManager.worker_control(fake, cmd, "list", "")
+        remote.assert_called_once()
+        kind, output = fake.events.get_nowait()
+        self.assertEqual(kind, "unproven")
+        self.assertIn("LIST_FAILURE_CLASS=SSH_CLIENT_TIMEOUT", output)
+        self.assertNotIn("повторять операцию нельзя", output)
+
+    def test_status_gui_uses_explicit_exact_id_across_devices_read_only(self):
+        request = "a" * 32
+        fake = SimpleNamespace(
+            busy=False, sha=Mock(), request_id=Mock(), last_request_id="b" * 32,
+            host=Mock(), user=Mock(), key=Mock(), origin="win-pc-test",
+            status=Mock(), buttons=[Mock()], write=Mock(),
+        )
+        fake.sha.get.return_value = ""
+        fake.request_id.get.return_value = request
+        fake.host.get.return_value = "bybitscanner-vps"
+        fake.user.get.return_value = ""
+        fake.key.get.return_value = ""
+        with (patch("tools.windows_vps_manager.control_ssh_command",
+                    return_value=["ssh", "status-only"]) as cmd,
+              patch("tools.windows_vps_manager.threading.Thread") as worker):
+            VPSManager.run_control(fake, "status")
+        cmd.assert_called_once()
+        self.assertEqual(cmd.call_args.args[3], "status")
+        self.assertEqual(cmd.call_args.kwargs["request_id"], request)
+        self.assertNotEqual(cmd.call_args.kwargs["request_id"],
+                            fake.last_request_id)
+        worker.assert_called_once()
+        self.assertEqual(worker.call_args.kwargs["args"][1:], ("status", request))
+        fake.buttons[0].state.assert_called_once_with(["disabled"])
 
     def test_gui_automatically_watches_same_uuid_until_terminal_success(self):
         req = "9" * 32

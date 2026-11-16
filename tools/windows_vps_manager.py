@@ -438,6 +438,7 @@ class VPSManager(tk.Tk):
             key = preferred_key(*automatic)
         self.sha = tk.StringVar(value="")
         self.last_request_id = recover_last_request_id()
+        self.request_id = tk.StringVar(value=self.last_request_id)
         self.origin = device_origin()
         self.key = tk.StringVar(value=key)
         self.status = tk.StringVar(value="Не подключено · PAPER only")
@@ -460,6 +461,10 @@ class VPSManager(tk.Tk):
             row=3, column=1, columnspan=3, sticky="we")
         ttk.Label(top, text="Устройство: " + self.origin).grid(
             row=4, column=0, columnspan=4, sticky="w")
+        ttk.Label(top, text="ID операции (для статуса):").grid(
+            row=5, column=0, sticky="w", pady=(5, 0))
+        ttk.Entry(top, textvariable=self.request_id, width=34).grid(
+            row=5, column=1, columnspan=3, sticky="w", padx=6, pady=(5, 0))
         buttons = ttk.Frame(self, padding=(12, 0, 12, 9))
         buttons.pack(fill="x")
         self.buttons = []
@@ -474,7 +479,7 @@ class VPSManager(tk.Tk):
             self.buttons.append(button)
         for index, (label, mode) in enumerate((
             ("Автопроверка VPS (только чтение)", "preflight"),
-            ("Статус последней операции", "status"),
+            ("Статус по ID операции", "status"),
             ("Все операции монолита", "list"),
         ), start=len(ACTIONS) + len(CONTROL_ACTIONS)):
             button = ttk.Button(buttons, text=label,
@@ -553,9 +558,10 @@ class VPSManager(tk.Tk):
         sha = self.sha.get().strip() or (
             "installed" if mode in ("start", "stop") else "")
         request = (uuid.uuid4().hex if mode in CONTROL_ACTIONS.values()
+                   else self.request_id.get().strip() if mode == "status"
                    else self.last_request_id)
         if mode == "status" and not request:
-            messagebox.showinfo("VPS Manager", "Операций в этом сеансе пока нет")
+            messagebox.showinfo("VPS Manager", "Введите точный ID операции (32 символа)")
             return
         try:
             command = control_ssh_command(
@@ -576,6 +582,7 @@ class VPSManager(tk.Tk):
                 )
                 return
             self.last_request_id = request
+            self.request_id.set(request)
         self.busy = True
         self.status.set("Выполняется: " + mode)
         for button in self.buttons:
@@ -598,8 +605,23 @@ class VPSManager(tk.Tk):
                     state = ("observed" if result.returncode == 0 and
                              "PREFLIGHT_READ_ONLY_DATA_COLLECTED_NOT_ACCEPTED" in output
                              else "unproven")
+                elif mode == "list":
+                    if result.returncode != 0 or output == "REQUEST_LIST=UNPROVEN":
+                        state = "unproven"
+                        output = ("REQUEST_LIST=UNPROVEN\nLIST_EXIT_CODE=" +
+                                  str(result.returncode) +
+                                  "\nLIST_FAILURE_CLASS=" +
+                                  preflight_failure_class(result.stderr or "",
+                                                          result.returncode))
+                    elif not output:
+                        state = "observed"
+                        output = ("REQUEST_LIST=EMPTY\n"
+                                  "Список сохранённых операций пуст; это не "
+                                  "доказательство отсутствия прежних операций.")
+                    else:
+                        state = "observed"
                 else:
-                    state = "success" if result.returncode == 0 else "failure"
+                    state = "observed" if result.returncode == 0 else "unproven"
                 if mode == "preflight" and state == "unproven":
                     reason = (preflight_failure_class(result.stderr or "", result.returncode)
                               if result.returncode != 0 else "REMOTE_RECEIPT_MISSING")
@@ -620,9 +642,15 @@ class VPSManager(tk.Tk):
                 status_command, request, initially_submitted=(state == "submitted"))
             self.events.put((state, (output or "Ответ запуска неизвестен")
                              + "\n" + details + "\nREQUEST_ID=" + request))
-        except (OSError, subprocess.TimeoutExpired, ValueError):
-            self.events.put(("failure", "SSH_STATUS_UNPROVEN; REQUEST_ID=" + request
-                             + "; повторять операцию нельзя, проверяйте статус"))
+        except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
+            if mode == "list":
+                reason = ("SSH_CLIENT_TIMEOUT" if isinstance(exc, subprocess.TimeoutExpired)
+                          else "SSH_CLIENT_SPAWN_FAILURE")
+                self.events.put(("unproven", "REQUEST_LIST=UNPROVEN\n"
+                                 "LIST_FAILURE_CLASS=" + reason))
+            else:
+                self.events.put(("failure", "SSH_STATUS_UNPROVEN; REQUEST_ID=" + request
+                                 + "; повторять операцию нельзя, проверяйте статус"))
 
     def worker(self, command: list[str]) -> None:
         try:
@@ -632,7 +660,7 @@ class VPSManager(tk.Tk):
                 env=os.environ.copy(), check=False,
             )
             output = "\n".join(part for part in (result.stdout.strip(), result.stderr.strip()) if part)
-            status = "success" if result.returncode == 0 else "failure"
+            status = "observed" if result.returncode == 0 else "failure"
             self.events.put((status, f"{output or '(нет вывода)'}\nExit code: {result.returncode}"))
         except (OSError, subprocess.TimeoutExpired) as exc:
             self.events.put(("failure", f"Ошибка SSH: {type(exc).__name__}"))
