@@ -562,7 +562,7 @@ try {
   // 40 loaded M5 within an explicitly requested 288-bar UTC day is NOT 100%.
   // The seek rail spans the full requested period, never just buffered candles.
   const loadingStatus = page.getByRole("status", { name: "Загрузка прогона" });
-  assert.match(await loadingStatus.innerText(), /Прогон загружен на 13% · 40\/288 свечей/);
+  assert.equal((await loadingStatus.innerText()).trim(), "Прогон загружен на 13%");
   assert.equal(await loadingStatus.getAttribute("data-tone"), "red");
   assert.equal(await page.getByRole("slider", { name: "Перемотка воспроизведения" }).getAttribute("max"), "288");
   assert.equal(await page.getByRole("status", { name: "Завершение прогона" }).count(), 0,
@@ -791,9 +791,9 @@ try {
     await bounds.getByRole("button", { name: "Применить" }).click();
     await page.waitForFunction(([pct, loaded]) => {
       const status = document.querySelector('[aria-label="Загрузка прогона"]');
-      return status?.textContent?.includes("на " + pct + "%") &&
-        status?.textContent?.includes("40/" + loaded + " свечей");
+      return status?.textContent?.trim() === "Прогон загружен на " + pct + "%";
     }, [percentage, count]);
+    assert.equal((await loadingStatus.innerText()).trim(), "Прогон загружен на " + percentage + "%");
     assert.equal(await loadingStatus.getAttribute("data-tone"), tone);
     assert.equal(await page.getByRole("slider", { name: "Перемотка воспроизведения" }).getAttribute("max"), String(count));
     assert.equal(await page.getByRole("status", { name: "Завершение прогона" }).count(), 0,
