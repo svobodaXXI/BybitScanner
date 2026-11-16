@@ -480,7 +480,8 @@ try {
   let publicMarketAttempts = 0;
   await page.route("**/local-replay/history-stream?*", async (route) => {
     publicMarketAttempts++;
-    const requested = new URL(route.request().url()).searchParams.get("strategies")?.split(",") ?? [];
+    const coordinates = new URL(route.request().url()).searchParams;
+    const requested = coordinates.get("strategies")?.split(",") ?? [];
     assert.ok(requested.includes("WEDGE_FALLING") && requested.includes("WEDGE_RISING"),
       "the checked native Wedge detectors must reach loopback");
     const observed = requested.includes("IKIGAI_BOX") ? [{
@@ -511,7 +512,7 @@ try {
       };
     };
     const frames = [
-      { type: "start", symbol: "BTCUSDT", start: "2026-10-01T00:00", end: "2026-10-02T00:00" },
+      { type: "start", symbol: "BTCUSDT", start: coordinates.get("start"), end: coordinates.get("end") },
       ...[1, 3, 40].map(count => ({ type: "snapshot", ready_count: count, document: prefix(count) })),
       { type: "complete", simulation_run_id: history.simulation_run_id, ready_count: 40 },
     ];
@@ -557,6 +558,14 @@ try {
   assert.match(await indicator.innerText(), /ADX 22\.8/);
   assert.ok((await page.locator(".replay-chart canvas").count()) >= 4);
   assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-displayed-candles"), "40");
+  // 40 loaded M5 within an explicitly requested 288-bar UTC day is NOT 100%.
+  // The seek rail spans the full requested period, never just buffered candles.
+  const loadingStatus = page.getByRole("status", { name: "Загрузка прогона" });
+  assert.match(await loadingStatus.innerText(), /Прогон загружен на 13% · 40\/288 свечей/);
+  assert.equal(await loadingStatus.getAttribute("data-tone"), "red");
+  assert.equal(await page.getByRole("slider", { name: "Перемотка воспроизведения" }).getAttribute("max"), "288");
+  assert.equal(await page.getByRole("status", { name: "Завершение прогона" }).count(), 0,
+    "a partial but server-completed archive must never claim the requested period is finished");
   const overlay = page.locator(".replay-execution-overlay");
   // Owner regression: "Only wedges" must NOT draw the unrelated H1/M5
   // geometry just because this is a public market-only chart. The Wedge
@@ -766,6 +775,42 @@ try {
   await page.waitForFunction(() =>
     document.querySelector(".replay-execution-overlay")?.dataset.visiblePaperFills === "0");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-original-geometry"), "0");
+
+  // Threshold colors are driven by completed M5 / the owner's exact UTC
+  // period, independently of how many candles the player has displayed.
+  // These read-only mocked responses intentionally contain only 40 bars.
+  await bounds.getByRole("button", { name: "Только клинья" }).click();
+  for (const [end, percentage, count, tone] of [
+    ["04:59", 66, 60, "orange"],
+    ["04:09", 80, 50, "yellow"],
+    ["03:19", 100, 40, "green"],
+  ]) {
+    await bounds.getByRole("textbox", { name: "Координаты прогона" })
+      .fill("BTCUSDT | 2026-10-01T00:00 | 2026-10-01T" + end);
+    await bounds.getByRole("button", { name: "Применить" }).click();
+    await page.waitForFunction(([pct, loaded]) => {
+      const status = document.querySelector('[aria-label="Загрузка прогона"]');
+      return status?.textContent?.includes("на " + pct + "%") &&
+        status?.textContent?.includes("40/" + loaded + " свечей");
+    }, [percentage, count]);
+    assert.equal(await loadingStatus.getAttribute("data-tone"), tone);
+    assert.equal(await page.getByRole("slider", { name: "Перемотка воспроизведения" }).getAttribute("max"), String(count));
+    assert.equal(await page.getByRole("status", { name: "Завершение прогона" }).count(), 0,
+      "a downloaded run is not a played-to-end run");
+    if (percentage !== 100) {
+      await page.getByRole("button", { name: "Шаг вперёд" }).click();
+      assert.equal(await page.getByRole("status", { name: "Завершение прогона" }).count(), 0,
+        "never emit green completion for an incomplete UTC interval");
+    }
+  }
+  await page.locator(".replay-rate input").fill("60");
+  await page.getByRole("button", { name: "Пуск", exact: true }).click();
+  const finished = page.getByRole("status", { name: "Завершение прогона" });
+  await finished.waitFor();
+  assert.match(await finished.innerText(), /Прогон завершён · 40 свечей · 3 часа 20 минут/);
+  assert.equal(await loadingStatus.getAttribute("data-tone"), "green");
+  await page.getByRole("button", { name: "В начало" }).click();
+  assert.equal(await finished.count(), 0, "completion message rewinds with the playhead");
 
   await page.mouse.move(620, 660); // Crosshair must not create DMI dots.
   await page.screenshot({ path: join(screenshotDir, "machine-time-browser.png"), fullPage: true });
