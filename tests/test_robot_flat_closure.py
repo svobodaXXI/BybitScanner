@@ -56,9 +56,9 @@ CLOSING_AT_MS = 1789403591254
 ATTEMPTED_AT_MS = 1789403589892
 CLOSED_AT_MS = 1789403594827
 
-EXPECTED_FEES = Decimal("0.1498466302869085173501577287")
+EXPECTED_FEES = Decimal("0.2998466302869085173501577287")
 EXPECTED_PNL_USDT = Decimal("0.5234338115141955835962145490")
-EXPECTED_PNL_PCT = Decimal("0.1499019970942599593838546961")
+EXPECTED_PNL_PCT = (EXPECTED_PNL_USDT - EXPECTED_FEES) / (ENTRY_QUANTITY * AVERAGE_ENTRY) * 100
 
 
 def _execution(exec_id, order_id, side, price, quantity, timestamp_ms, fee="0.15"):
@@ -244,13 +244,13 @@ class ProveFlatClosurePositiveTests(unittest.TestCase):
     def test_partial_fills_aggregate_to_the_attested_entry_quantity(self):
         partials = [
             _execution("paper-limit-part-1", TRADE_ORDER, OrderSide.BUY,
-                       "0.1965", "700.0", 1789400971937),
+                       "0.1965", "700.0", 1789400971937, fee="0.03"),
             _execution("paper-limit-part-2", TRADE_ORDER, OrderSide.BUY,
-                       "0.1965", "568.3", 1789400971938),
+                       "0.1965", "568.3", 1789400971938, fee="0.07"),
             _execution("paper-limit-part-3", EMERGENCY_ORDER, OrderSide.BUY,
-                       "0.1971", "600.0", 1789403587548),
+                       "0.1971", "600.0", 1789403587548, fee="1.10"),
             _execution("paper-limit-part-4", EMERGENCY_ORDER, OrderSide.BUY,
-                       "0.1971", "667.7", 1789403587549),
+                       "0.1971", "667.7", 1789403587549, fee="1.20"),
         ]
         executions = [*_settled_manual_round_trip(), *partials, _closing()]
 
@@ -258,6 +258,11 @@ class ProveFlatClosurePositiveTests(unittest.TestCase):
 
         self.assertIsNotNone(evidence)
         self.assertEqual(len(evidence.open_lot), 4)
+        # Two own partial-fill fees (0.03 + 0.07), not the other lot's (1.10 + 1.20).
+        self.assertEqual(
+            evidence.fees_costs_usdt,
+            CLOSING_FEE * ENTRY_QUANTITY / CLOSING_QUANTITY + Decimal("0.10"),
+        )
         self.assertEqual(evidence.realized_pnl_usdt, EXPECTED_PNL_USDT)
         self.assertEqual(evidence.emergency.lot_quantity, Decimal("1267.7"))
 

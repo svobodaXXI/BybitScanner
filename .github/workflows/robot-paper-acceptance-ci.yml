@@ -27,6 +27,8 @@ on:
       - "robot_partial_fill.py"
       - "robot_market_confirmation.py"
       - "robot_protection.py"
+      - "robot_flat_closure.py"
+      - "tests/test_robot_flat_closure.py"
       - "scanner_geometry_cursor.py"
       - "terminal/application/robot_*.py"
       - "terminal/application/trading_application.py"
@@ -222,6 +224,8 @@ jobs:
           tests.test_incident_telemetry
           tests.test_nonblocking_console_logging
           tests.test_market_data_hub_disconnect_log
+      - name: Verify aggregate emergency-close fee attribution
+        run: python -m pytest -q tests/test_robot_flat_closure.py
       - name: Run Robot chart viewport acceptance
         run: python -m pytest -q tests/test_robot_chart_viewport.py
       - name: Run selected Robot trade origin projection acceptance
