@@ -15,28 +15,28 @@ specialist chats finish **only their active bounded task**, record a handoff and
 report READY_FOR_ARCHIVE or an exact blocker; do not start the proposed next
 workstreams. This is routing, not a new approval or trading authority.
 
-## Owner directive — acceptance and Codex boundaries (2026-11-16)
+## Owner directive — human acceptance and Codex GUI boundary (2026-11-16)
 
-**Owner-only real-world acceptance:** the owner personally performs and confirms all
-local, UI, Simulator, PAPER and VPS acceptance. Agents may prepare code, CI,
-reproduction steps and acceptance criteria, but may not treat automated tests,
-GitHub CI, technical receipts or their own statements as the owner's acceptance.
-Do not claim `ACCEPTED` without explicit first-hand owner confirmation.
+**Owner-only real-world acceptance.** The owner personally performs and confirms
+local UI, Simulator, PAPER and VPS acceptance. CI, automated tests and technical
+receipts may establish engineering evidence, not substitute for owner acceptance.
+Do not claim `ACCEPTED` without the owner's explicit confirmation.
 
-**No Codex access to the owner's computer:** do not use Codex as a routine local
-PC/laptop operator, synchronize local checkouts through it, perform laptop
-installs, SSH preflight, or collect local acceptance evidence by delegating
-desktop access. Codex is reserved for exceptional tasks explicitly assigned by
-the owner and VPS synchronization in the specifically authorized scope. Neither
-category implies standing access to the owner's computer or blanket approval
-for VPS/PAPER/trading operations. Prepare the minimum necessary owner-operated
-acceptance step instead. The prior Codex Desktop laptop preflight request is
-withdrawn; installed VPS SHA and host readiness remain unproven.
+**Never delegate interactive desktop control to Codex.** Do not give Codex the
+owner's mouse pointer, clicks, GUI buttons, keyboard entry into windows, or
+remote-control access to their PC/laptop desktop. This restriction does **not**
+ban Codex command-line/terminal work: exceptional owner-directed tasks and
+approved VPS synchronization may still use existing authorized terminal routes,
+subject to scope, secrets, Git protections, and host/trading approval gates.
+Do not equate terminal-based SSH or a checked-out repository with permission to
+control the graphical desktop. Actual UI acceptance remains the owner's task.
 
-This current owner instruction supersedes older access/delegation examples below
-where they would otherwise suggest routine Codex Desktop access to the PC.
-Maintain all independent merge, deployment, STOP/START, admission, PAPER and LIVE
-safety gates. See current coordination in issue #1077.
+This clarification supersedes the earlier overly broad statement that Codex
+had no computer access at all; it also supersedes any older instructions that
+would grant Codex cursor/click/GUI automation. GitHub issue #1077 carries the
+current coordination rule. No automatic retry of the blocked VPS preflight;
+installed SHA and host readiness remain unproven. Independent merge,
+deployment, STOP/START, admission, PAPER and LIVE safety gates remain in force.
 
 ## Owner time and trust — mandatory at every new task
 
