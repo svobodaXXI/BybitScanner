@@ -684,8 +684,8 @@ try {
     namespace: "PAPER_READ_ONLY", source: "PAPER_EXECUTIONS_ATTRIBUTED",
     source_revision: 3, account_id: "paper", owner: "ROBOT", cohort: "ROBOT",
     trade_episode_id: "te_" + "a".repeat(24), symbol: "BTCUSDT", side: "LONG",
-    opened_at_ms: t + 2 * 300000 + 2000,
-    closed_at_ms: t + 7 * 300000 + 2000,
+    opened_at_ms: t + 2 * 300000 + 2123,
+    closed_at_ms: t + 7 * 300000 + 2134,
     realized_price_pnl_usdt: "-0.9", known_execution_fees_usdt: "0.1",
     pnl_usdt: "-1.0", pnl_basis: "REALIZED_PRICE_MINUS_EXECUTION_FEES",
     replay_evidence: "EXECUTION_FACTS_ONLY_NO_DECISIONS_OR_CANDLES",
@@ -704,19 +704,19 @@ try {
       decisions: [
         { decision_event_id: "strategy-1", kind: "STRATEGY", previous_state: null,
           next_state: "APPROVED", reason_code: "STRATEGY_OK", controller: "ROBOT",
-          origin: "ROBOT", occurred_at_ms: t + 301000 },
+          origin: "ROBOT", occurred_at_ms: t + 301234 },
         { decision_event_id: "risk-1", kind: "RISK", previous_state: "APPROVED",
           next_state: "APPROVED", reason_code: "RISK_OK", controller: "ROBOT",
-          origin: "ROBOT", occurred_at_ms: t + 302000 },
+          origin: "ROBOT", occurred_at_ms: t + 302345 },
       ],
     },
     execution_allocations: [
       { execution_id: "exec-1", order_id: "order-1", order_side: "Buy",
         execution_price: "100.12345678", allocated_quantity: "2", allocated_fee: "0.05",
-        occurred_at_ms: t + 2 * 300000 + 2000, allocation_role: "OPEN", controller: "ROBOT" },
+        occurred_at_ms: t + 2 * 300000 + 2123, allocation_role: "OPEN", controller: "ROBOT" },
       { execution_id: "exec-2", order_id: "order-2", order_side: "Sell",
         execution_price: "99.5", allocated_quantity: "2", allocated_fee: "0.05",
-        occurred_at_ms: t + 7 * 300000 + 2000, allocation_role: "CLOSE", controller: "ROBOT" },
+        occurred_at_ms: t + 7 * 300000 + 2134, allocation_role: "CLOSE", controller: "ROBOT" },
     ],
   };
   episodeFacts.setup_context.geometry_status = "ORIGINAL_ARCHIVE_HASH_VERIFIED";
@@ -748,10 +748,30 @@ try {
   assert.match(await factNote.innerText(), /JSON без криптографической подписи/);
   assert.match(await factNote.innerText(), /Falling Wedge · 5m · версия v1/);
   assert.match(await factNote.innerText(), /архивная исходная геометрия/);
-  const d2Journal = page.getByRole("region", { name: "Наблюдения PAPER D2" });
-  assert.match(await d2Journal.innerText(), /STRATEGY_OK/);
-  assert.match(await d2Journal.innerText(), /RISK_OK/);
-  assert.match(await d2Journal.innerText(), /не полный журнал Robot/);
+  const factualJournal = page.getByRole("region", { name: "Хронология PAPER и D2" });
+  assert.match(await factualJournal.innerText(), /STRATEGY_OK/);
+  assert.match(await factualJournal.innerText(), /RISK_OK/);
+  assert.match(await factualJournal.innerText(), /не полный журнал команд Robot/);
+  const rows = factualJournal.locator(".replay-evidence-event");
+  assert.equal(await rows.count(), 4, "both source-proven fills and two D2 observations are visible");
+  assert.deepEqual(await rows.locator("strong").allInnerTexts(), [
+    "D2 · наблюдение (не runtime-журнал Robot)",
+    "D2 · наблюдение (не runtime-журнал Robot)",
+    "PAPER · фактическое исполнение",
+    "PAPER · фактическое исполнение",
+  ], "facts and D2 observations must be sorted together by original milliseconds");
+  assert.match(await rows.nth(0).innerText(), /\(234\) UTC/);
+  assert.match(await rows.nth(1).innerText(), /\(345\) UTC/);
+  assert.match(await rows.nth(2).innerText(), /\(123\) UTC/);
+  assert.match(await rows.nth(3).innerText(), /\(134\) UTC/);
+  assert.match(await rows.nth(2).innerText(), /Открытие позиции · Buy/);
+  assert.match(await rows.nth(2).innerText(), /100\.12345678/);
+  assert.match(await rows.nth(2).innerText(), /количество 2 · комиссия 0\.05 USDT/);
+  assert.match(await rows.nth(2).innerText(), /order_id order-1 · execution_id exec-1/);
+  assert.match(await rows.nth(3).innerText(), /Закрытие позиции · Sell · причина STOP\/TAKE не подтверждена/);
+  assert.match(await rows.nth(3).innerText(), /99\.5/);
+  assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "0",
+    "factual journal cannot create virtual SIMULATION fills");
   await page.waitForFunction(() =>
     document.querySelector(".replay-execution-overlay")?.dataset.visiblePaperFills === "2");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-scanner-observations"), "0");
@@ -763,18 +783,21 @@ try {
   await page.waitForFunction(() =>
     document.querySelector(".replay-execution-overlay")?.dataset.visiblePaperFills === "0");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-original-geometry"), "0");
-  await page.waitForFunction(() => !document.querySelector('[aria-label="Наблюдения PAPER D2"]'));
+  await page.waitForFunction(() => !document.querySelector('[aria-label="Хронология PAPER и D2"]'));
+  assert.equal(await factualJournal.count(), 0, "no future PAPER fill or D2 observation leaks on rewind");
   assert.doesNotMatch(await factNote.innerText(), /Falling Wedge/);
   await page.getByRole("button", { name: "Пуск", exact: true }).click();
   await page.waitForFunction(() =>
     document.querySelector(".replay-execution-overlay")?.dataset.visiblePaperFills === "2");
   await page.waitForFunction(() =>
     document.querySelector(".replay-execution-overlay")?.dataset.visibleOriginalGeometry === "1");
-  assert.match(await d2Journal.innerText(), /RISK_OK/);
+  assert.match(await factualJournal.innerText(), /RISK_OK/);
+  assert.equal(await rows.count(), 4, "factual events reappear only after the original candle closes");
   await page.getByRole("button", { name: "Пауза", exact: true }).click();
   await page.getByRole("button", { name: "Убрать факты PAPER" }).click();
   await page.waitForFunction(() =>
     document.querySelector(".replay-execution-overlay")?.dataset.visiblePaperFills === "0");
+  assert.equal(await factualJournal.count(), 0, "unloading PAPER must clear original events");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-original-geometry"), "0");
 
   // Threshold colors are driven by completed M5 / the owner's exact UTC
