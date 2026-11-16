@@ -157,7 +157,8 @@ def count_touches(
     violation_atr_multiplier=VIOLATION_TOLERANCE_ATR_MULTIPLIER,
     outlier_allowance=OUTLIER_ALLOWANCE_PER_LINE,
     legacy_tolerance_percent=LEGACY_TOUCH_TOLERANCE_PERCENT,
-    atr_period=ATR_PERIOD
+    atr_period=ATR_PERIOD,
+    atr_series=None,
 ):
     """
     Graduated, ATR-normalized touch evaluation for one trendline.
@@ -208,10 +209,13 @@ def count_touches(
             "violation_count": 0,
         }
 
-    atr_series = _atr_series(
-        candles,
-        period=atr_period
-    )
+    # Reuse ATR computed for this immutable CLOSED candle window.
+    # Standalone callers keep the original calculation and fallback rules.
+    if atr_series is None:
+        atr_series = _atr_series(
+            candles,
+            period=atr_period
+        )
 
     details = []
     count = 0
@@ -352,7 +356,8 @@ def analyze_touches(
     lower_line,
     highs,
     lows,
-    candles=None
+    candles=None,
+    atr_series=None,
 ):
     """
     Полный анализ касаний
@@ -365,17 +370,22 @@ def analyze_touches(
     """
 
 
+    if atr_series is None:
+        atr_series = _atr_series(candles)
+
     upper_result = count_touches(
         upper_line,
         highs,
-        candles=candles
+        candles=candles,
+        atr_series=atr_series,
     )
 
 
     lower_result = count_touches(
         lower_line,
         lows,
-        candles=candles
+        candles=candles,
+        atr_series=atr_series,
     )
 
 
