@@ -366,5 +366,179 @@ class RobotBePartialOwnerPaperTests(unittest.TestCase):
         )
 
 
+
+class RobotBeShortOwnerPaperTests(unittest.TestCase):
+    """SHORT mirror of the real PAPER owner path, not only math helpers."""
+
+    def setUp(self):
+        from terminal.api.models import (
+            ClientActionId, CommandResultStatus, LimitCommandRequest,
+            PaperStopMutationRequest, TimeInForce, VolumeRequest, VolumeUnit,
+        )
+        from terminal.domain.models import OrderSide
+        from terminal.runtime.paper_runtime import RobotPaperActionExecutor
+
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.db = Path(self.temp.name) / "be-short.sqlite3"
+        self.runtime = _runtime(self.db)
+        self.addCleanup(self.runtime.close)
+        self.account = TradingAccountId("paper")
+        self.symbol = Symbol("BTCUSDT")
+        self.candidate_id = "wedge-be-short-owner"
+        self.trade_id = "robot-trade-wedge-be-short-owner"
+        now_ms = int(time.time() * 1000)
+        self.minute = (now_ms // 60000 - 2) * 60000
+        self.runtime._limit_executor.clock_ms = lambda: self.minute + 30000
+        self.runtime._robot_command_dispatcher = lambda operation: operation(self.runtime)
+        executor = RobotPaperActionExecutor(self.runtime)
+        price = Decimal("64249.5")
+        submitted = self.runtime._create_limit(
+            LimitCommandRequest(
+                ClientActionId(self.trade_id + "-limit"), self.symbol.value,
+                OrderSide.SELL, VolumeRequest(VolumeUnit.USDT, Decimal("321")),
+                price, price, TimeInForce.GTC,
+            ), self.runtime._robot_context,
+        )
+        self.assertEqual(submitted.status, CommandResultStatus.COMPLETED)
+        self.assertEqual(self.runtime.robot_match_symbol(self.symbol.value), 1)
+        executor.create_stop(PaperStopMutationRequest(
+            ClientActionId(self.trade_id + "-stop"), self.symbol.value, Decimal("64500"),
+        ))
+        executor.create_take(PaperStopMutationRequest(
+            ClientActionId(self.trade_id + "-take"), self.symbol.value, Decimal("63400"),
+        ))
+        self.runtime.store.create_robot_candidate(
+            candidate_id=self.candidate_id, trading_account_id=self.account,
+            symbol=self.symbol, status="APPROVED",
+            signal_snapshot={"symbol": self.symbol.value, "pattern": "Rising Wedge"},
+            approved_at_ms=1000, updated_at_ms=1000,
+        )
+        self.key = PositionKey(self.account, Category.LINEAR, self.symbol, 0)
+        projection = self.runtime.store.get_position_projection(self.key)
+        self.initial_quantity = projection.quantity.value
+        self.runtime.store.create_robot_trade(
+            trade_id=self.trade_id, trading_account_id=self.account,
+            candidate_id=self.candidate_id, symbol=self.symbol, direction="SHORT",
+            pattern="Rising Wedge", source_timeframe="1", signal_time_ms=900,
+            entry_time_ms=1500, entry_path="LIMIT", actual_wv=Decimal("0.8"),
+            average_entry=price, stop_price=Decimal("64500"),
+            take_price=Decimal("63400"), entry_quantity=self.initial_quantity,
+            entry_position_version=projection.version, created_at_ms=1500,
+        )
+        candidate = self.runtime.store.get_robot_candidate(self.candidate_id)
+        fills = self.runtime.store.load_executions_for_symbol(self.account, self.symbol)
+        self.assertEqual(len(fills), 1)
+        self.runtime.store.save_robot_candidate_state(
+            self.candidate_id, status="OPEN",
+            robot_state={
+                "phase": "OPEN", "direction": "SHORT",
+                "execution": {"limit_order_id": fills[0].order_id.value},
+            },
+            expected_revision=candidate.state_revision,
+            updated_at_ms=int(time.time() * 1000),
+        )
+        _set_admission(self.runtime, mode="ROBOT_RUNNING", recovery_status="READY")
+
+    def _book(self, *, bid="63700", ask="63700.5"):
+        return _crossing_book(self.symbol.value, bid=bid, ask=ask)
+
+    def _partial(self, *, book=None):
+        return self.runtime._robot_wedge_be_partial_once(
+            self.candidate_id, candle_open_ms=self.minute + 60000,
+            candle_end_ms=self.minute + 120000,
+            candle_high=Decimal("64000"), candle_low=Decimal("63650"),
+            book=self._book() if book is None else book,
+        )
+
+    def _enable_auto(self):
+        self.runtime._wedge_be_auto_paper_enabled = True
+        monitor = self.runtime._robot_breakout_monitor
+        monitor._wedge_be_auto_paper_enabled = True
+        monitor._get_closed_candle = lambda symbol: {
+            "time_ms": self.minute + 60000, "high": 64000,
+            "low": 63650, "close": 63700,
+        } if symbol == self.symbol.value else None
+        return monitor
+
+    def test_short_closed_m1_partial_then_fee_aware_stop_once(self):
+        from unittest.mock import patch
+        from terminal.domain.models import PositionSide
+
+        monitor = self._enable_auto()
+        count_before = len(self.runtime.store.load_executions())
+        with patch.object(self.runtime, "_streamed_book", side_effect=lambda _: self._book()):
+            self.assertEqual(monitor.tick(), (self.candidate_id,))
+            after_partial = self.runtime.store.get_position_projection(self.key)
+            self.assertIs(after_partial.side, PositionSide.SHORT)
+            self.assertLess(after_partial.quantity.value, self.initial_quantity)
+            self.assertGreater(after_partial.quantity.value, Decimal(0))
+            self.assertEqual(len(self.runtime.store.load_executions()), count_before + 1)
+            self.assertEqual(
+                self.runtime.store.get_protection_projection(self.key).stop_loss,
+                Decimal("64500"),
+            )
+            self.assertEqual(monitor.tick(), (self.candidate_id,))
+            tightened = self.runtime.store.get_protection_projection(self.key)
+            self.assertLess(tightened.stop_loss, Decimal("64500"))
+            self.assertGreater(tightened.stop_loss, Decimal("63700.5"))
+            self.assertEqual(tightened.take_profit, Decimal("63400"))
+            self.assertEqual(monitor.tick(), (self.candidate_id,))
+        self.assertEqual(len(self.runtime.store.load_executions()), count_before + 1)
+        self.assertEqual(
+            self.runtime.store.get_protection_projection(self.key).stop_loss,
+            tightened.stop_loss,
+        )
+        self.assertIsNone(self.runtime.store.get_robot_trade(self.trade_id).exit_time_ms)
+        intent = self.runtime.store.get_robot_candidate(
+            self.candidate_id,
+        ).robot_state["execution"]["wedge_be_partial_intent"]
+        self.assertTrue(intent["reduce_only_required"])
+
+    def test_short_retraced_quote_does_not_latch_or_execute(self):
+        # Closed M1 low crossed +2R, but the current executable ask did not.
+        before = len(self.runtime.store.load_executions())
+        result = self._partial(book=self._book(bid="63800", ask="63800.5"))
+        self.assertEqual(result.status, CommandResultStatus.BLOCKED)
+        self.assertEqual(result.reason_code, "be_quote_retraced")
+        self.assertEqual(len(self.runtime.store.load_executions()), before)
+        self.assertNotIn(
+            "wedge_be_partial_intent",
+            self.runtime.store.get_robot_candidate(self.candidate_id)
+            .robot_state["execution"],
+        )
+
+    def test_short_filled_partial_restart_tightens_without_reorder(self):
+        from unittest.mock import patch
+
+        self.assertEqual(self._partial().status, CommandResultStatus.COMPLETED)
+        count_before = len(self.runtime.store.load_executions())
+        self.assertEqual(self.runtime.store.get_protection_projection(self.key).stop_loss,
+                         Decimal("64500"))
+        self.runtime.close()
+        reopened = _runtime(self.db)
+        self.addCleanup(reopened.close)
+        _set_admission(reopened, mode="ROBOT_RUNNING", recovery_status="READY")
+        reopened._wedge_be_auto_paper_enabled = True
+        with patch.object(
+            reopened._robot_api, "full_close",
+            side_effect=AssertionError("filled SHORT partial must never resubmit"),
+        ):
+            outcome = reopened._robot_wedge_be_auto_step(
+                self.candidate_id, symbol=self.symbol.value, candle=None,
+                book=self._book(),
+            )
+        self.assertEqual(outcome.status, CommandResultStatus.COMPLETED)
+        stop = reopened.store.get_protection_projection(self.key).stop_loss
+        self.assertLess(stop, Decimal("64500"))
+        self.assertGreater(stop, Decimal("63700.5"))
+        self.assertEqual(len(reopened.store.load_executions()), count_before)
+        again = reopened._robot_wedge_be_auto_step(
+            self.candidate_id, symbol=self.symbol.value, candle=None, book=self._book(),
+        )
+        self.assertEqual(again.status, CommandResultStatus.COMPLETED)
+        self.assertEqual(reopened.store.get_protection_projection(self.key).stop_loss, stop)
+        self.assertEqual(len(reopened.store.load_executions()), count_before)
+
 if __name__ == "__main__":
     unittest.main()
