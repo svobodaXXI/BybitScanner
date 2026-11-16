@@ -11,12 +11,19 @@ DOCUMENTS/CHANGE_REQUESTS/CR-SCANNER-GEOMETRY-002.md:
   contract, additive outlier/violation counts in details)
 """
 
+import contextlib
+import io
+import json
+from pathlib import Path
 import unittest
 from unittest.mock import patch
 
 import pandas as pd
 from confirmation import calculate_atr
 from geometry.engine import analyze_geometry
+import geometry.engine as geometry_engine
+from pivots import find_pivots
+from wedge.analyzer import _freshness_predicate
 
 from geometry.touches import (
     count_touches,
@@ -309,6 +316,37 @@ class AtrPerWindowReuseTests(unittest.TestCase):
             optimized[0]["upper_touch_points"][0]["score"],
             optimized[1]["upper_touch_points"][0]["score"],
         )
+
+    def test_cached_geometry_matches_uncached_real_historical_cases(self):
+        """No changed Wedge anchors or signals even on disputed old Gold cases.
+
+        Both paths execute the original full geometry candidate algorithm.
+        The control only disables the new per-window/per-line memo; it
+        does not change a single threshold, filter or signal rule.
+        """
+        cases_path = Path(__file__).parent / "fixtures" / "geometry_formation_fit" / "historical_cases.json"
+        cases = json.loads(cases_path.read_text(encoding="utf-8"))["cases"]
+        for name in ("INJ", "WLD", "XRP", "AAVE", "PONS"):
+            with self.subTest(symbol=name):
+                frame = pd.DataFrame(
+                    cases[name]["candles"],
+                    columns=["time", "open", "high", "low", "close", "volume"],
+                )
+                highs, lows = find_pivots(frame.copy())
+                with contextlib.redirect_stdout(io.StringIO()):
+                    optimized = analyze_geometry(
+                        highs, lows, len(frame)-1, frame, _freshness_predicate,
+                    )
+                with patch.object(geometry_engine, "_atr_series", return_value=None):
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        uncached = analyze_geometry(
+                            highs, lows, len(frame)-1, frame, _freshness_predicate,
+                        )
+                def projection(value):
+                    if value is None:
+                        return None
+                    return json.dumps(value.to_dict(), sort_keys=True, default=str)
+                self.assertEqual(projection(optimized), projection(uncached))
 
     def test_different_windows_do_not_share_atr(self):
         first = _flat_candles(40, half_range=1.)
