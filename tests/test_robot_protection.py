@@ -26,6 +26,8 @@ from robot_protection import (
     limited_stop,
     stop_within_limit,
     tighten_stop,
+    fee_aware_break_even_stop,
+    plan_wedge_partial_at_two_r,
 )
 from robot_state_machine import DIRECTION_LONG, DIRECTION_SHORT
 
@@ -518,6 +520,164 @@ class RobotProtectionTests(unittest.TestCase):
         self.assertEqual(at_entry, Decimal("101.500"))
         self.assertEqual(below_entry, Decimal("101.500"))
         self.assertGreater(below_entry, Decimal("100"))
+
+
+
+class WedgePartialCausalPlanTests(unittest.TestCase):
+    def _case(self, direction="LONG", **overrides):
+        params = dict(
+            pattern="Falling Wedge",
+            average_entry=Decimal("100"),
+            initial_stop=Decimal("98") if direction == "LONG" else Decimal("102"),
+            active_stop=Decimal("98") if direction == "LONG" else Decimal("102"),
+            active_take=Decimal("110") if direction == "LONG" else Decimal("90"),
+            original_quantity=Decimal("10"),
+            remaining_quantity=Decimal("10"),
+            quantity_step=Decimal("0.1"),
+            entry_fill_ms=59000,
+            candle_open_ms=60000,
+            candle_end_ms=120000,
+            candle_high=Decimal("104") if direction == "LONG" else Decimal("100"),
+            candle_low=Decimal("100") if direction == "LONG" else Decimal("96"),
+            available_at_ms=120000,
+        )
+        params.update(overrides)
+        return plan_wedge_partial_at_two_r(direction, **params)
+
+    def test_exact_two_r_and_step_floor_for_both_directions(self):
+        self.assertEqual(self._case(), Decimal("2.5"))
+        self.assertEqual(self._case("SHORT", pattern="Rising Wedge"), Decimal("2.5"))
+        self.assertEqual(self._case(original_quantity=Decimal("9.9"),
+                                    remaining_quantity=Decimal("9.9")),
+                         Decimal("2.4"))
+
+    def test_unreached_trigger_and_ambiguous_stop_take_bar_do_not_partial(self):
+        self.assertIsNone(self._case(candle_high=Decimal("103.99")))
+        self.assertIsNone(self._case("SHORT", candle_low=Decimal("96.01")))
+        self.assertIsNone(self._case(candle_low=Decimal("98")))
+        self.assertIsNone(self._case(candle_high=Decimal("110")))
+        self.assertIsNone(self._case("SHORT", candle_high=Decimal("102")))
+        self.assertIsNone(self._case("SHORT", candle_low=Decimal("90")))
+
+    def test_unfilled_or_not_yet_closed_bar_is_rejected_not_replayed(self):
+        cases = [
+            {"entry_fill_ms": 60001}, {"available_at_ms": 119999},
+            {"candle_open_ms": 60001},
+            {"candle_end_ms": 120001}, {"entry_fill_ms": True},
+            {"available_at_ms": -1},
+        ]
+        for updates in cases:
+            with self.subTest(updates=updates):
+                with self.assertRaises(RobotProtectionError):
+                    self._case(**updates)
+
+    def test_unknown_protection_or_duplicate_partial_is_rejected(self):
+        cases = [
+            {"remaining_quantity": Decimal("7.5")},
+            {"initial_stop": Decimal("100")},
+            {"active_stop": Decimal("102")},
+            {"active_take": Decimal("99")},
+            {"quantity_step": Decimal("0")},
+            {"candle_high": Decimal("NaN")},
+            {"pattern": "IKIGAI_BOX"},
+        ]
+        for updates in cases:
+            with self.subTest(updates=updates):
+                with self.assertRaises(RobotProtectionError):
+                    self._case(**updates)
+        with self.assertRaises(RobotProtectionError):
+            self._case("INVALID")
+
+    def test_non_executable_round_down_returns_none(self):
+        self.assertIsNone(self._case(
+            original_quantity=Decimal("0.3"),
+            remaining_quantity=Decimal("0.3"),
+        ))
+
+
+class FeeAwareBreakEvenPlannerTests(unittest.TestCase):
+    def _case(self, direction="LONG", **overrides):
+        data = dict(
+            average_entry=Decimal("100"),
+            original_quantity=Decimal("10"),
+            closed_quantity=Decimal("2.5"),
+            remaining_quantity=Decimal("7.5"),
+            realized_gross_pnl=Decimal("5"),
+            total_entry_fees=Decimal("1"),
+            realized_exit_fees=Decimal("0.15"),
+            stop_exit_fee_rate=Decimal("0.001"),
+            tick_size=Decimal("0.01"),
+            current_stop=Decimal("98") if direction == "LONG" else Decimal("102"),
+            executable_price=Decimal("104") if direction == "LONG" else Decimal("96"),
+            worst_case_slippage_ticks=1,
+        )
+        data.update(overrides)
+        return fee_aware_break_even_stop(direction, **data)
+
+    def test_long_stop_covers_all_fees_and_one_tick_adverse_slippage(self):
+        stop = self._case()
+        self.assertGreater(stop, Decimal("98"))
+        self.assertLess(stop, Decimal("104"))
+        fill = stop - Decimal("0.01")
+        net = (
+            Decimal("5") + (fill - Decimal("100")) * Decimal("7.5")
+            - Decimal("1.15") - fill * Decimal("7.5") * Decimal("0.001")
+        )
+        self.assertGreaterEqual(net, 0)
+
+    def test_short_stop_covers_all_fees_and_one_tick_adverse_slippage(self):
+        stop = self._case("SHORT")
+        self.assertLess(stop, Decimal("102"))
+        self.assertGreater(stop, Decimal("96"))
+        fill = stop + Decimal("0.01")
+        net = (
+            Decimal("5") + (Decimal("100") - fill) * Decimal("7.5")
+            - Decimal("1.15") - fill * Decimal("7.5") * Decimal("0.001")
+        )
+        self.assertGreaterEqual(net, 0)
+
+    def test_repeated_proposal_never_loosens_existing_stop(self):
+        long_stop = self._case()
+        short_stop = self._case("SHORT")
+        self.assertEqual(self._case(current_stop=long_stop + Decimal("0.01")),
+                         long_stop + Decimal("0.01"))
+        self.assertEqual(self._case("SHORT", current_stop=short_stop - Decimal("0.01")),
+                         short_stop - Decimal("0.01"))
+
+    def test_partial_must_be_proven_and_exactly_match_remaining_position(self):
+        for updates in (
+            {"closed_quantity": Decimal("0")},
+            {"remaining_quantity": Decimal("0")},
+            {"remaining_quantity": Decimal("8")},
+            {"original_quantity": Decimal("0")},
+            {"total_entry_fees": Decimal("-1")},
+            {"realized_exit_fees": Decimal("-0.1")},
+            {"stop_exit_fee_rate": Decimal("1")},
+            {"tick_size": Decimal("0")},
+            {"realized_gross_pnl": Decimal("NaN")},
+            {"worst_case_slippage_ticks": -1},
+            {"worst_case_slippage_ticks": True},
+        ):
+            with self.subTest(updates=updates):
+                with self.assertRaises(RobotProtectionError):
+                    self._case(**updates)
+
+    def test_gapped_or_unexecutable_stop_never_replaces_armed_protection(self):
+        for direction, updates in (
+            ("LONG", {"executable_price": Decimal("98")}),
+            ("SHORT", {"executable_price": Decimal("102")}),
+            ("LONG", {"executable_price": Decimal("99")}),
+            ("SHORT", {"executable_price": Decimal("101")}),
+        ):
+            with self.subTest(direction=direction, updates=updates):
+                with self.assertRaises(RobotProtectionError):
+                    self._case(direction, **updates)
+
+    def test_refuses_unsupported_direction_and_nonfinite_price(self):
+        with self.assertRaises(RobotProtectionError):
+            self._case("SIDEWAYS")
+        with self.assertRaises(RobotProtectionError):
+            self._case(average_entry=Decimal("Infinity"))
 
 
 class MinEntryRrTests(unittest.TestCase):

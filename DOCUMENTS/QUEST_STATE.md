@@ -1,3 +1,11 @@
+## 🎯 Активная очередь Scanner/Robot — 16.11.2026 (новое решение владельца)
+
+**Следующий результат:** довести fee-aware перенос STOP в безубыток до проверенной торговой механики; затем интегрировать с «Охотой за импульсом» в основной Robot, пройти отдельные CI/owner PAPER gates; лишь потом вернуться к предыдущим дефектам. Полный обязательный порядок и границы находятся в верхней секции `DOCUMENTS/BACKLOG.md`; планёрка [#1077](https://github.com/svobodaXXI/BybitScanner/issues/1077).
+
+**Сейчас:** BE — кодовый этап 1, исходная исследовательская модель #1048 OPEN/DRAFT и `DATA_INSUFFICIENT`; начинаем с fee-aware расчёта в `robot_protection.py`, без исполнения команд. Impulse #1025 OPEN/DRAFT, не в `stable`; независимые holdout пока не дают права на автоматическую торговлю. Реальная установка VPS/защита и личная приёмка владельца отдельно `UNPROVEN`. XP/достижения до проверенного реального результата не начисляются.
+
+---
+
 ## 🏆 Победа «Восстановление PAPER» — 2026-11-01 (по отчёту Codex)
 
 Итог: **RECOVERED**. Stable/installed SHA `86fda079cebb1139c2dd3b1e48990d5c8212f79a`; неизменная PAPER DB identity `e0cbafb1…ff0ad`, integrity OK; BUSDT STOP obligation **RESOLVED**, 6 executions и fingerprint неизменны; 0 незавершённых obligations, LIMIT, Market. Backend/Telegram active и ready; Robot `ROBOT_RUNNING / READY`; Scanner RUNNING; Autopilot PAPER_AUTO; Admission READY; protection HEALTHY. Появилась **новая** PAPER LONG AIOUSDT qty 8100 с coverage EXPOSURE — НЕ FLAT, НЕ завершённый цикл и не доказанный net PnL. LIVE не затронут. Не останавливать работающий PAPER runtime ради документации. Фактическая история ошибок, recovery runbook и остаточные defect-задачи: [PAPER_VPS_RECOVERY_POSTMORTEM_20261101.md](PAPER_VPS_RECOVERY_POSTMORTEM_20261101.md). Этот раздел имеет приоритет над устаревшими BLOCKED-снимками ниже.
