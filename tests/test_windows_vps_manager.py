@@ -13,7 +13,8 @@ from unittest.mock import Mock, patch
 from tools.windows_vps_manager import (ACTIONS, VPSManager, control_ssh_command,
                                        preferred_route, parse_args, ssh_command,
                                        remember_request_id, recover_last_request_id, run_cli,
-                                       known_windows_device, preferred_key, PREFLIGHT)
+                                       known_windows_device, preferred_key, PREFLIGHT,
+                                       watch_owner_request)
 
 
 class TestWindowsVpsManager(unittest.TestCase):
@@ -223,6 +224,50 @@ class TestWindowsVpsManager(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     control_ssh_command("bybitscanner-vps", "", "", **args)
 
+    def test_gui_automatically_watches_same_uuid_until_terminal_success(self):
+        req = "9" * 32
+        command = ["ssh", "exact-status"]
+        sequence = iter([
+            subprocess.CompletedProcess(command, 3, stdout=f"REQUEST_ID={req}\nSTATUS=RUNNING\n", stderr=""),
+            subprocess.CompletedProcess(command, 3, stdout=f"REQUEST_ID={req}\nSTATUS=RUNNING\n", stderr=""),
+            subprocess.CompletedProcess(command, 0, stdout=f"REQUEST_ID={req}\nSTATUS=FINISHED_OK\n", stderr=""),
+        ])
+        sleep = Mock()
+        run = Mock(side_effect=lambda *_a, **_kw: next(sequence))
+        state, details = watch_owner_request(
+            command, req, initially_submitted=True, run=run, sleep=sleep)
+        self.assertEqual(state, "success")
+        self.assertIn("STATUS=FINISHED_OK", details)
+        self.assertEqual(run.call_count, 3)
+        self.assertEqual(sleep.call_count, 2)
+        self.assertTrue(all(call.args[0] == command for call in run.call_args_list))
+
+    def test_gui_watcher_unknown_connection_never_replays_owner_action(self):
+        req = "a" * 32
+        command = ["ssh", "status-only"]
+        run = Mock(side_effect=subprocess.TimeoutExpired("ssh", 20))
+        state, details = watch_owner_request(
+            command, req, initially_submitted=True, run=run,
+            sleep=lambda *_: None)
+        self.assertEqual(state, "submitted")  # known accepted, terminal result unknown
+        self.assertIn("STATUS_UNPROVEN", details)
+        self.assertEqual(run.call_count, 3)
+        self.assertTrue(all(call.args[0] == command for call in run.call_args_list))
+
+    def test_gui_watcher_unknown_submission_not_upgraded_to_success(self):
+        req = "b" * 32
+        command = ["ssh", "status-only"]
+        reply = subprocess.CompletedProcess(
+            command, 0, stdout="REQUEST_ID=" + "c" * 32 + "\nSTATUS=FINISHED_OK\n",
+            stderr="")
+        run = Mock(return_value=reply)
+        state, details = watch_owner_request(
+            command, req, initially_submitted=False, run=run,
+            sleep=lambda *_: None)
+        self.assertEqual(state, "unproven")
+        self.assertIn("STATUS_UNPROVEN", details)
+        self.assertEqual(run.call_count, 3)
+
     def test_gui_unknown_submit_checks_status_without_resubmitting(self):
         fake = SimpleNamespace(events=queue.Queue(), host=Mock(), user=Mock(), key=Mock())
         fake.host.get.return_value = "bybitscanner-vps"
@@ -230,12 +275,12 @@ class TestWindowsVpsManager(unittest.TestCase):
         fake.key.get.return_value = ""
         request = "1" * 32
         submit = subprocess.CompletedProcess(["ssh"], 255, stdout="", stderr="lost")
-        status = subprocess.CompletedProcess(["ssh"], 3, stdout=(
-            "REQUEST_ID=" + request + "\nSTATUS=RUNNING\n"), stderr="")
+        status = subprocess.CompletedProcess(["ssh"], 0, stdout=(
+            "REQUEST_ID=" + request + "\nSTATUS=FINISHED_OK\n"), stderr="")
         with patch("tools.windows_vps_manager.subprocess.run", side_effect=[submit, status]) as run:
             VPSManager.worker_control(fake, ["ssh", "submit"], "update", request)
         self.assertEqual(run.call_count, 2)
-        self.assertEqual(fake.events.get_nowait()[0], "submitted")
+        self.assertEqual(fake.events.get_nowait()[0], "success")
 
     def test_gui_status_never_claims_success_without_matching_request(self):
         request = "1" * 32
