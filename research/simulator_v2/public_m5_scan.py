@@ -129,11 +129,10 @@ def scan_public_closed_m5(
                         "box_low": formation.box_low,
                         "box_high": formation.box_high,
                     })
-    if len(observed) > 512:
-        raise ValueError("Scanner study exceeds bounded candidate count")
-        # A M5 may be published only after all selected Scanner observers
-        # have processed its closed bar. The caller receives an immutable
-        # frontier count and cumulative, source-time verified observations.
+        if len(observed) > 512:
+            raise ValueError("Scanner study exceeds bounded candidate count")
+        # Each READY count follows the original detector's CLOSED M5.
+        # No candle/observation is released before this source-time boundary.
         if on_ready is not None:
             on_ready(count, observed)
     return sorted(observed, key=lambda x: (x["available_at_ms"], x["strategy"], x["signal_id"]))
