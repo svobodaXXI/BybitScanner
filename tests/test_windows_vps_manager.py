@@ -331,6 +331,7 @@ class TestWindowsVpsManager(unittest.TestCase):
             busy=False, sha=Mock(), request_id=Mock(), last_request_id="b" * 32,
             host=Mock(), user=Mock(), key=Mock(), origin="win-pc-test",
             status=Mock(), buttons=[Mock()], write=Mock(),
+            worker_control=Mock(),
         )
         fake.sha.get.return_value = ""
         fake.request_id.get.return_value = request
