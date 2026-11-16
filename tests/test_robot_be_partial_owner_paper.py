@@ -269,6 +269,57 @@ class RobotBePartialOwnerPaperTests(unittest.TestCase):
             self.runtime.store.get_robot_candidate(self.candidate_id).robot_state["execution"],
         )
 
+    def test_reopened_runtime_never_resubmits_unknown_latched_partial(self):
+        """Crash after durable intent but before command receipt: no retry."""
+        from unittest.mock import patch
+        from terminal.api.models import CommandResult
+
+        monitor = self._enable_auto()
+        unknown = CommandResult(
+            "unknown-be", CommandResultStatus.UNKNOWN,
+            "mutation_unknown", "partial command not proven", None, True,
+        )
+        with patch.object(
+            self.runtime, "_streamed_book",
+            side_effect=lambda symbol: _crossing_book(
+                self.symbol.value, bid="64800", ask="64800.5",
+            ),
+        ), patch.object(
+            self.runtime._robot_api, "full_close", return_value=unknown,
+        ) as dispatch:
+            self.assertEqual(monitor.tick(), ())
+            self.assertEqual(dispatch.call_count, 1)
+        immutable = dict(
+            self.runtime.store.get_robot_candidate(self.candidate_id)
+            .robot_state["execution"]["wedge_be_partial_intent"]
+        )
+        self.runtime.close()
+        reopened = _runtime(self.db)
+        self.addCleanup(reopened.close)
+        reopened._wedge_be_auto_paper_enabled = True
+        with patch.object(
+            reopened._robot_api, "full_close",
+            side_effect=AssertionError("durable BE intent must not resubmit"),
+        ):
+            state = reopened._robot_wedge_be_auto_step(
+                self.candidate_id, symbol=self.symbol.value, candle=None,
+                book=_crossing_book(self.symbol.value, bid="64801", ask="64801.5"),
+            )
+        self.assertEqual(state.status, CommandResultStatus.UNKNOWN)
+        self.assertEqual(
+            reopened.store.get_robot_candidate(self.candidate_id)
+            .robot_state["execution"]["wedge_be_partial_intent"],
+            immutable,
+        )
+        self.assertEqual(
+            reopened.store.get_protection_projection(self.key).stop_loss,
+            Decimal("64000"),
+        )
+        self.assertEqual(
+            len(reopened.store.load_executions_for_symbol(self.account, self.symbol)),
+            1,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
