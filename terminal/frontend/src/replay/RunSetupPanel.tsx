@@ -22,7 +22,7 @@ const STEPS: Array<{ id: PeriodIncrement; name: string }> = [
 /** Local-only Wedge execution via loopback: never production /api or PAPER. */
 export function RunSetupPanel({
   symbol, onPasteSymbol, onSimulationStart, onSimulationReady,
-  onSimulationAppend, onSimulationFailed, onSimulationBusy, playRequestId, showReport,
+  onSimulationAppend, onSimulationFailed, onSimulationBusy, showReport,
   onPublicHistoryRequest, publicHistoryLoading, onStrategySelectionChange, onHistoryPreparation,
   onEpisodeLookup,
 }: {
@@ -30,7 +30,6 @@ export function RunSetupPanel({
   onPasteSymbol: (symbol: string) => void;
   onSimulationStart: (request: WedgeRunRequest) => void;
   onSimulationBusy: (busy: boolean) => void;
-  playRequestId: number;
   showReport: boolean;
   onSimulationReady: (replay: ReplayDocument) => void;
   onSimulationAppend: (runId: string, events: ReplayEvent[]) => void;
@@ -56,7 +55,6 @@ export function RunSetupPanel({
   const [coordinateText, setCoordinateText] = useState("");
   const [coordinateError, setCoordinateError] = useState("");
   const datesEdited = useRef(false);
-  const preparedRun = useRef<WedgeRunRequest | null>(null);
   const generation = useRef(0);
   const running = useRef(false);
   const requestController = useRef<AbortController | null>(null);
@@ -135,11 +133,6 @@ export function RunSetupPanel({
     }
   }, [onSimulationReady, onSimulationAppend, onSimulationFailed, onSimulationBusy]);
 
-  useEffect(() => {
-    if (playRequestId > 0 && preparedRun.current)
-      void runWedges(preparedRun.current, generation.current);
-  }, [playRequestId, runWedges]);
-
   const updateStart = (value: string) => {
     datesEdited.current = true;
     setPeriodError("");
@@ -189,15 +182,28 @@ export function RunSetupPanel({
       running.current = false;
       onSimulationBusy(false);
       generation.current++;
-      preparedRun.current = request;
+      const currentGeneration = generation.current;
+      // The status hint only selects an eligible local M1 attempt. The
+      // original backend still validates all M1 SHA, source and risk gates.
+      const archive = status?.archive_hint;
+      const nativeReady = request !== null && status?.can_attempt === true &&
+        archive?.symbol === ticker &&
+        archive.start_utc === coords.start_utc &&
+        archive.end_utc_inclusive === coords.end_utc_inclusive;
       datesEdited.current = true;
       onPasteSymbol(ticker);
       setStart(coords.start_utc); setEnd(coords.end_utc_inclusive);
       setPreset(null); setPeriodError(""); setCoordinateError(""); setRunError("");
       setReport(null);
-      if (request) onSimulationStart(request); // Virtual POST still requires ▶ and verified prerequisites.
-      else onHistoryPreparation(ticker, coords.start_utc, coords.end_utc_inclusive);
-      onPublicHistoryRequest(ticker, coords.start_utc, coords.end_utc_inclusive, selection.selected);
+      if (nativeReady && request) {
+        onSimulationStart(request);
+        // One original Scanner→Robot→VirtualExchange stream starts on Apply.
+        // The player's ▶/Pause controls only its already verified frontier.
+        void runWedges(request, currentGeneration);
+      } else {
+        onHistoryPreparation(ticker, coords.start_utc, coords.end_utc_inclusive);
+        onPublicHistoryRequest(ticker, coords.start_utc, coords.end_utc_inclusive, selection.selected);
+      }
     } catch (error) {
       setCoordinateError(error instanceof Error ? error.message : "Неверные координаты прогона");
     }
