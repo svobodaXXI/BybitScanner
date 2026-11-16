@@ -258,7 +258,7 @@ class ProveFlatClosurePositiveTests(unittest.TestCase):
 
         self.assertIsNotNone(evidence)
         self.assertEqual(len(evidence.open_lot), 4)
-        # Two own partial-fill fees (0.03 + 0.07), not the other lot\u0027s (1.10 + 1.20).
+        # Two own partial-fill fees (0.03 + 0.07), not the other lot's (1.10 + 1.20).
         self.assertEqual(
             evidence.fees_costs_usdt,
             CLOSING_FEE * ENTRY_QUANTITY / CLOSING_QUANTITY + Decimal("0.10"),
