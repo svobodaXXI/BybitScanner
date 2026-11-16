@@ -10,7 +10,7 @@ from __future__ import annotations
 import robot_l_shape
 
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_FLOOR
 import hashlib
 import os
 from typing import Any, Mapping, Protocol
@@ -282,6 +282,97 @@ def tighten_stop(direction: str, *, existing_stop: Decimal | None, proposed_stop
     if normalized_direction == DIRECTION_SHORT:
         return min(existing, proposed)
     raise RobotProtectionError("unsupported Robot direction")
+
+
+def fee_aware_break_even_stop(
+    direction: str, *,
+    average_entry: Decimal,
+    original_quantity: Decimal,
+    closed_quantity: Decimal,
+    remaining_quantity: Decimal,
+    realized_gross_pnl: Decimal,
+    total_entry_fees: Decimal,
+    realized_exit_fees: Decimal,
+    stop_exit_fee_rate: Decimal,
+    tick_size: Decimal,
+    current_stop: Decimal,
+    executable_price: Decimal,
+    worst_case_slippage_ticks: int,
+) -> Decimal:
+    """Plan a tighten-only fee-aware STOP after an *already proven* partial fill.
+
+    This pure calculation is NOT a trigger, partial-close command, or permission
+    to amend protection. The caller must independently prove the +2R event,
+    the exact 25% partial execution/identity and fees, authoritative position,
+    idempotent state, admission/protection coverage, and the current executable
+    quote. A later owner-thread executor must preserve the old armed STOP until
+    a correlated amendment is accepted. Unknown evidence must not call here.
+
+    `realized_gross_pnl` is gross from the closed portion; entry fees cover the
+    ORIGINAL position, while exit fees cover the ALREADY closed portion.
+    Remaining-stop exit fees and worst-case adverse price slippage are reserved
+    separately. Future price gaps beyond the reserve can still cause a loss.
+    """
+    direction = str(direction).strip().upper()
+    if direction not in (DIRECTION_LONG, DIRECTION_SHORT):
+        raise RobotProtectionError("unsupported break-even direction")
+    numbers = {
+        "average_entry": average_entry,
+        "original_quantity": original_quantity,
+        "closed_quantity": closed_quantity,
+        "remaining_quantity": remaining_quantity,
+        "realized_gross_pnl": realized_gross_pnl,
+        "total_entry_fees": total_entry_fees,
+        "realized_exit_fees": realized_exit_fees,
+        "stop_exit_fee_rate": stop_exit_fee_rate,
+        "tick_size": tick_size,
+        "current_stop": current_stop,
+        "executable_price": executable_price,
+    }
+    for name, value in numbers.items():
+        if not isinstance(value, Decimal) or not value.is_finite():
+            raise RobotProtectionError(f"{name} must be finite Decimal")
+    if not (
+        average_entry > 0 and original_quantity > 0
+        and closed_quantity > 0 and remaining_quantity > 0
+        and closed_quantity + remaining_quantity == original_quantity
+        and tick_size > 0 and current_stop > 0 and executable_price > 0
+        and realized_exit_fees >= 0 and total_entry_fees >= 0
+        and Decimal(0) <= stop_exit_fee_rate < Decimal(1)
+    ):
+        raise RobotProtectionError("unproven break-even quantity, fee or price")
+    if type(worst_case_slippage_ticks) is not int or worst_case_slippage_ticks < 0:
+        raise RobotProtectionError("invalid break-even slippage reserve")
+    if (
+        direction == DIRECTION_LONG and current_stop >= executable_price
+    ) or (
+        direction == DIRECTION_SHORT and current_stop <= executable_price
+    ):
+        raise RobotProtectionError("existing STOP not safely behind executable quote")
+
+    fees_paid = total_entry_fees + realized_exit_fees
+    slip = tick_size * worst_case_slippage_ticks
+    if direction == DIRECTION_LONG:
+        # Net = closed-gross + (stop-fill - entry)*remaining
+        #       - paid-fees - stop-fill*remaining*fee-rate.
+        minimum_fill = (
+            remaining_quantity * average_entry - realized_gross_pnl + fees_paid
+        ) / (remaining_quantity * (Decimal(1) - stop_exit_fee_rate))
+        proposed = (
+            (minimum_fill + slip) / tick_size
+        ).to_integral_value(rounding=ROUND_CEILING) * tick_size
+        if proposed >= executable_price:
+            raise RobotProtectionError("cannot safely arm break-even STOP below bid")
+    else:
+        maximum_fill = (
+            remaining_quantity * average_entry + realized_gross_pnl - fees_paid
+        ) / (remaining_quantity * (Decimal(1) + stop_exit_fee_rate))
+        proposed = (
+            (maximum_fill - slip) / tick_size
+        ).to_integral_value(rounding=ROUND_FLOOR) * tick_size
+        if proposed <= 0 or proposed <= executable_price:
+            raise RobotProtectionError("cannot safely arm break-even STOP above ask")
+    return tighten_stop(direction, existing_stop=current_stop, proposed_stop=proposed)
 
 
 def frozen_take_90(
