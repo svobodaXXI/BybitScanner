@@ -4448,6 +4448,11 @@ class PaperRuntime:
             or projection is None or projection.status != "confirmed_active"
             or projection.pending_command_id is not None or projection.stop_loss is None
             or projection.take_profit != trade.take_price
+            or self.store.load_active_paper_limits(self._paper_account_id, candidate.symbol)
+            or any(
+                cmd.trading_account_id == self._paper_account_id and cmd.symbol == candidate.symbol
+                for cmd in self.store.load_unfinished_commands()
+            )
             or (
                 trade.direction == "LONG" and projection.stop_loss < trade.stop_price
             ) or (
