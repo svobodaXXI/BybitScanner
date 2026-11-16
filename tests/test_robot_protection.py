@@ -676,7 +676,10 @@ class AttestedPartialEconomicsTests(unittest.TestCase):
         self.assertEqual(facts.latest_partial_fill_ms, 2000)
 
     def test_foreign_ambiguous_duplicate_or_incomplete_evidence_fails_closed(self):
-        own = self._source().partial_executions[0]
+        own = self._fill(
+            "partial-exec-a", "partial-1", OrderSide.SELL,
+            "1", "104", "0.0624", 2000,
+        )
         cases = (
             {"partial_executions": (own, own)},
             {"partial_executions": (self._fill(
