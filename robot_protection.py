@@ -521,8 +521,19 @@ def build_wedge_be_partial_intent(
         "\x00".join(("robot-wedge-be-partial-v1", *ids)).encode("utf-8")
     ).hexdigest()[:32]
     identity = CommandIdentityFactory(lambda: uuid.UUID(hex=digest)).create()
+    # A stable one-per-trade action ID prevents multiplying orders, while a
+    # separate immutable payload fingerprint detects incompatible persisted
+    # quote, event time or quantity after crash/restart.
+    payload_fingerprint = hashlib.sha256(
+        "\x1f".join((
+            "robot-wedge-be-partial-intent-v1", *ids, direction,
+            str(original_quantity), str(partial_quantity),
+            str(executable_price), str(trigger_candle_end_ms),
+        )).encode("utf-8")
+    ).hexdigest()
     return {
         "version": 1,
+        "payload_fingerprint": payload_fingerprint,
         "account_id": account_id,
         "trade_id": trade_id,
         "candidate_id": candidate_id,
