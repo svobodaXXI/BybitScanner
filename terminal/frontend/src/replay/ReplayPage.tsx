@@ -18,6 +18,7 @@ import { DrawingOverlay } from "../chart/DrawingOverlay";
 import type { DrawingObject, DrawingTool } from "../chart/drawingModel";
 import { chartLogicalAtTime, drawingLogicalToTime, timeAtChartLogical, timeToDrawingLogical } from "./replayDrawingCoordinates";
 import { RunSetupPanel } from "./RunSetupPanel";
+import { streamPublicM5 } from "./streamPublicM5";
 import { validateInclusiveWindow, makeWedgeRunRequest, formatRunCoordinates, onlyWedges, type RunSelection } from "./runSetup";
 type WedgeRunRequest = ReturnType<typeof makeWedgeRunRequest>;
 import "./replay.css";
@@ -580,6 +581,8 @@ export function ReplayPage() {
     setSymbol(nextSymbol);
   }, []);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyFailed, setHistoryFailed] = useState(false);
+  const [cancelNativeId, setCancelNativeId] = useState(0);
   const historyRequest = useRef<AbortController | null>(null);
   const bundledRequest = useRef<AbortController | null>(null);
   const [cursor, setCursor] = useState(0);
@@ -600,10 +603,8 @@ export function ReplayPage() {
   );
   // The synthetic fixture is available only via the explicit Example button.
   const [simulationGraphPending, setSimulationGraphPending] = useState(true);
-  const [preparedRun, setPreparedRun] = useState(false);
   const [runLoading, setRunLoading] = useState(false);
   const [runWaitingSeconds, setRunWaitingSeconds] = useState(0);
-  const [playRequestId, setPlayRequestId] = useState(0);
 
   useEffect(() => {
     if (!runLoading) { setRunWaitingSeconds(0); return; }
@@ -660,7 +661,8 @@ export function ReplayPage() {
 
   const total = document.events.length;
   const progress = Math.round(100 * cursor / total);
-  const playbackComplete = !simulationGraphPending && total > 0 && cursor >= total;
+  const playbackComplete = !simulationGraphPending && !historyLoading && !runLoading &&
+    !historyFailed && total > 0 && cursor >= total;
   const seekPoints = useMemo(() => {
     const result = [0];
     for (let i = 0; i < document.events.length; i++) {
@@ -735,11 +737,10 @@ export function ReplayPage() {
     historyRequest.current?.abort(); historyRequest.current = null;
     setHistoryLoading(false);
     setPlaying(false); setCursor(0);
-    setError(null);
+    setError(null); setHistoryFailed(false);
     setDrawings([]); setSelectedDrawing(null); setDrawingTool("crosshair");
     setFileLabel(formatRunCoordinates(request.symbol, request.start_utc, request.end_utc_inclusive));
     setSimulationGraphPending(true);
-    setPreparedRun(true);
     setRunLoading(false);
   }, []);
 
@@ -747,11 +748,10 @@ export function ReplayPage() {
     bundledRequest.current?.abort(); bundledRequest.current = null;
     historyRequest.current?.abort(); historyRequest.current = null;
     setHistoryLoading(false);
-    setPlaying(false); setCursor(0); setError(null);
+    setPlaying(false); setCursor(0); setError(null); setHistoryFailed(false);
     setDrawings([]); setSelectedDrawing(null); setDrawingTool("crosshair");
     setFileLabel(formatRunCoordinates(ticker, start, end));
     setSimulationGraphPending(true);
-    setPreparedRun(false);
     setRunLoading(false);
   }, []);
 
@@ -763,7 +763,6 @@ export function ReplayPage() {
   const onSimulationFailed = useCallback(() => {
     setPlaying(false);
     setSimulationGraphPending(true);
-    setPreparedRun(true);
     setCursor(0);
   }, []);
   const onSimulationReady = useCallback((replay: ReplayDocument) => {
@@ -775,8 +774,7 @@ export function ReplayPage() {
     setCursor(0); setTimeframe("5m");
     // The owner-selected ticker and date range stay visible in Source.
     setSimulationGraphPending(false);
-    setPreparedRun(false);
-    setPlaying(true);
+    setPlaying(false); // Apply prepares in background; owner controls playback.
   }, []);
 
   function syncImportedMarketSelection(parsed: ReplayDocument) {
@@ -842,8 +840,8 @@ export function ReplayPage() {
 
   useEffect(() => {
     // Do not stop when playback reaches the still-growing verified frontier.
-    if (cursor >= total && !runLoading) setPlaying(false);
-  }, [cursor, total, runLoading]);
+    if (cursor >= total && !runLoading && !historyLoading) setPlaying(false);
+  }, [cursor, total, runLoading, historyLoading]);
 
   async function loadFile(file?: File) {
     if (!file) return;
@@ -851,13 +849,14 @@ export function ReplayPage() {
     historyRequest.current?.abort();
     historyRequest.current = null;
     setHistoryLoading(false);
+    setCancelNativeId(id => id + 1);
     setPlaying(false);
     try {
       if (file.size > 24 * 1024 * 1024) throw new Error("Файл больше 24 МБ");
       const data: unknown = JSON.parse(await file.text());
       const parsed = parseReplayDocument(data);
       setDocument(parsed);
-      setSimulationGraphPending(false);
+      setSimulationGraphPending(false); setHistoryFailed(false);
       // Manual import also replaces the market selection, never leave stale
       // BTC/date controls beside an imported GRASSUSDT archive.
       if (parsed.mode === "MARKET_ONLY") syncImportedMarketSelection(parsed);
@@ -958,7 +957,12 @@ export function ReplayPage() {
     historyRequest.current = controller;
     setHistoryLoading(true);
     setPlaying(false);
-    setError(null);
+    setError(null); setHistoryFailed(false);
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    const armTimeout = (ms: number) => {
+      if (timeout !== null) clearTimeout(timeout);
+      timeout = setTimeout(() => controller.abort("Local M5 stalled"), ms);
+    };
     try {
       const window = validateInclusiveWindow(selectedStart, selectedEnd);
       // Public data are M5: only completely enclosed, CLOSED five-minute bars
@@ -982,44 +986,58 @@ export function ReplayPage() {
         query.set("strategies", native.join(","));
       // Only the loopback Python viewer implements this research-only GET.
       // Never call /api: Vite's /api proxy belongs to the main PAPER backend.
-      // A local request may involve several bounded public Bybit pages.
-      // Client abort prevents an indefinite loading indicator.
-      const timeout = setTimeout(() => controller.abort("Public M5 request timed out"), 90_000);
-      let response: Response;
-      try {
-        response = await fetch("/local-replay/history?" + query.toString(), {
+      // Native M5 research is expensive. Reuse the same original observer
+      // via NDJSON, advancing only after each closed bar's Scanner decision.
+      // A public M5 observation is NEVER a virtual Robot fill or a trade.
+      if (native.length && endMs - startMs <= 86_400_000) {
+        let first = true;
+        armTimeout(90_000);
+        await streamPublicM5(query, controller.signal, imported => {
+          if (historyRequest.current !== controller) return;
+          armTimeout(120_000); // Bounded inactivity, not total study time.
+          if (first) {
+            first = false;
+            setSimulationGraphPending(false);
+            setDrawings([]); setSelectedDrawing(null); setDrawingTool("crosshair");
+            setCursor(0);
+            setFileLabel("Bybit · подтверждённые M5 · без сделок · Scanner исследует");
+          }
+          setDocument(imported);
+        });
+        if (first) throw new Error("Scanner не подтвердил ни одной закрытой M5");
+        if (historyRequest.current === controller)
+          setFileLabel("Bybit · подтверждённые M5 · без сделок · Scanner завершил");
+      } else {
+        armTimeout(90_000);
+        const response = await fetch("/local-replay/history?" + query.toString(), {
           method: "GET", cache: "no-store", signal: controller.signal,
         });
-      } finally {
-        clearTimeout(timeout);
-      }
-      // Loopback returns plain-text errors (not JSON) for 400/502.
-      // A JSON.parse exception here previously concealed the actual failure.
-      // Public M5 never creates the local verified M1 + risk prerequisites
-      // for a SIMULATION strategy run.
-      if (!response.ok) {
-        if (response.status === 502) {
-          throw new Error("Публичный Bybit M5 недоступен (HTTP 502): запрос к рыночному API не завершился. График не загружен. Локальный торговый прогон отдельно требует архив M1 и профиль риска.");
+        if (!response.ok) {
+          if (response.status === 502)
+            throw new Error("Публичный Bybit M5 недоступен (HTTP 502); ни свечи, ни сделки не выдуманы.");
+          const reason = (await response.text()).slice(0, 260).trim();
+          throw new Error(`Ошибка публичной истории HTTP ${response.status}: ${reason || "нет данных"}`);
         }
-        const reason = (await response.text()).slice(0, 260).trim();
-        throw new Error(`Ошибка публичной истории HTTP ${response.status}: ${reason || "нет данных"}`);
+        const imported = parseReplayDocument(await response.json() as unknown);
+        if (imported.mode !== "MARKET_ONLY")
+          throw new Error("История не соответствует режиму MARKET_ONLY");
+        if (historyRequest.current !== controller) return;
+        setDocument(imported);
+        setSimulationGraphPending(false);
+        setDrawings([]); setSelectedDrawing(null); setDrawingTool("crosshair");
+        setCursor(0);
+        setFileLabel("Bybit · подтверждённые M5 · без сделок" +
+          (native.length > 0 ? " · без исследования паттернов" : ""));
       }
-      const raw: unknown = await response.json();
-      const imported = parseReplayDocument(raw);
-      if (imported.mode !== "MARKET_ONLY") throw new Error("История не соответствует режиму MARKET_ONLY");
-      if (historyRequest.current !== controller) return;
-      setDocument(imported);
-      setSimulationGraphPending(false);
-      setDrawings([]); setSelectedDrawing(null); setDrawingTool("crosshair");
-      setCursor(0);
-      setFileLabel("Bybit · подтверждённые M5 · без сделок" +
-        (native.length > 0 && endMs - startMs > 86_400_000 ? " · без исследования паттернов" : ""));
     } catch (e) {
       if (historyRequest.current !== controller) return;
+      setHistoryFailed(true);
+      setPlaying(false);
       setError(controller.signal.aborted
-        ? "Подготовка истории M5 прервана или превысила 90 секунд. Проверьте соединение и повторите «Применить»."
+        ? "Поток M5 не подтвердил следующую свечу в установленный срок. Уже проверенные свечи остаются частичным результатом."
         : e instanceof Error ? e.message : "Не удалось загрузить историю");
     } finally {
+      if (timeout !== null) clearTimeout(timeout);
       if (historyRequest.current === controller) {
         setHistoryLoading(false);
         historyRequest.current = null;
@@ -1039,7 +1057,8 @@ export function ReplayPage() {
         onPasteSymbol={onPasteSymbol} onSimulationStart={onSimulationStart}
         onSimulationReady={onSimulationReady} onSimulationAppend={onSimulationAppend}
         onSimulationFailed={onSimulationFailed} onSimulationBusy={setRunLoading}
-        playRequestId={playRequestId} showReport={!simulationGraphPending && !runLoading && cursor >= total}
+        cancelNativeId={cancelNativeId}
+        showReport={!simulationGraphPending && !runLoading && !historyLoading && !historyFailed && cursor >= total}
         onPublicHistoryRequest={(ticker, from, to, choices) => void loadLocalHistory(ticker, from, to, choices)}
         publicHistoryLoading={historyLoading}
         onStrategySelectionChange={setSelectedStrategies}
@@ -1062,9 +1081,10 @@ export function ReplayPage() {
         <button type="button" onClick={() => {
           bundledRequest.current?.abort(); bundledRequest.current = null;
           historyRequest.current?.abort(); historyRequest.current = null;
-          setHistoryLoading(false); setPlaying(false); setCursor(0); setError(null);
+          setHistoryLoading(false); setHistoryFailed(false);
+          setCancelNativeId(id => id + 1);
+          setPlaying(false); setCursor(0); setError(null);
           setDocument(syntheticReplay()); setSimulationGraphPending(false);
-          setPreparedRun(false);
           setFileLabel("Синтетический пример");
           setDrawings([]); setSelectedDrawing(null); setDrawingTool("crosshair");
         }}>Пример</button>
@@ -1238,11 +1258,8 @@ export function ReplayPage() {
         <button type="button" className="replay-player-button"
           title={playbackComplete ? "Прогон завершён" : playing ? "Пауза" : "Пуск"}
           aria-label={playbackComplete ? "Прогон завершён" : playing ? "Пауза" : "Пуск"}
-          disabled={(simulationGraphPending && (runLoading || !preparedRun)) || playbackComplete}
-          onClick={() => {
-            if (simulationGraphPending) { setPlayRequestId(id => id + 1); return; }
-            setPlaying(s => !s);
-          }}>
+          disabled={simulationGraphPending || playbackComplete || (historyFailed && cursor >= total)}
+          onClick={() => setPlaying(s => !s)}>
           <PlayerIcon name={playing ? "pause" : "play"} />
         </button>
         <button type="button" className="replay-player-button" title="Шаг назад"

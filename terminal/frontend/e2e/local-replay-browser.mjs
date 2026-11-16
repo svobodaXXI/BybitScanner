@@ -59,6 +59,10 @@ try {
         python_dependencies_available: simEnabled,
         archive_files_present: simEnabled,
         wedge_risk_profile_present: simEnabled,
+        ...(simEnabled ? { archive_hint: {
+          symbol: "BTCUSDT", start_utc: "2026-10-01T12:34",
+          end_utc_inclusive: "2026-10-02T12:33",
+        } } : {}),
       }),
     });
   });
@@ -66,6 +70,9 @@ try {
   // A later fixture overrides this route to test failure then success.
   await page.route("**/local-replay/history?*", async route => {
     await route.fulfill({ status: 502, contentType: "text/plain", body: "Mock public M5 unavailable" });
+  });
+  await page.route("**/local-replay/history-stream?*", async route => {
+    await route.fulfill({ status: 502, contentType: "text/plain", body: "Mock Scanner unavailable" });
   });
   await page.goto(localUrl, { waitUntil: "networkidle" });
   await page.getByRole("heading", { name: "Машина времени" }).waitFor();
@@ -210,7 +217,7 @@ try {
         scenario_type: "ORIGINAL_WEDGE_SCANNER_ROBOT_LOCAL_OHLC_SIMULATION",
         risk_terms_status: "EXPLICIT_RESEARCH_ASSUMPTIONS_NOT_EXCHANGE_VERIFIED",
         source_id: "BYBIT_PUBLIC_TRADES_RANGE_BROWSER_TEST_ONLY",
-        requested_minutes: 1008, scanner_wedge_observations: 1,
+        requested_minutes: 1440, scanner_wedge_observations: 1,
         robot_retests_in_period: 1, submitted_protected_limits: 1,
         virtual_fills: 2, stop_exits: 0, take_exits: 1,
         realized_net_pnl: "3.71", unrealized_pnl: "0", total_net_pnl: "3.71",
@@ -220,7 +227,7 @@ try {
     const frames = [
       { type: "start", simulation_run_id: fixture.simulation_run_id,
         symbol: fixture.symbol, start_utc: "2026-10-01T12:34",
-        end_utc_inclusive: "2026-10-02T05:21" },
+        end_utc_inclusive: "2026-10-02T12:33" },
       { type: "events", events: replay.events.slice(0, 1) },
       { type: "events", events: replay.events.slice(1) },
       { type: "complete", report, source_id: fixture.source_id,
@@ -235,19 +242,22 @@ try {
   const readySetup = page.getByRole("region", { name: "Настройка стратегий и периода" });
   await readySetup.getByRole("button", { name: "Только клинья" }).click();
   await readySetup.getByLabel("Начало прогона UTC").fill("2026-10-01T12:34");
-  await readySetup.getByLabel("Конец прогона UTC").fill("2026-10-02T05:21");
+  await readySetup.getByLabel("Конец прогона UTC").fill("2026-10-02T12:33");
   await readySetup.getByLabel("Виртуальный депозит").fill("1000");
   const appliedPlay = page.getByRole("button", { name: "Пуск", exact: true });
   assert.equal(await appliedPlay.isDisabled(), true, "no ticker/date applied after reload");
   await readySetup.getByRole("button", { name: "Применить" }).click();
-  assert.equal(await appliedPlay.isDisabled(), false);
-  assert.equal(posted.length, 0, "Apply prepares data without running virtual strategy");
+  // Apply starts exactly ONE original virtual producer in the background.
+  // Play controls only the verified cursor, not a second run.
+  await page.waitForFunction(() => {
+    const button = document.querySelector('button[aria-label="Пуск"]');
+    return button && !button.disabled;
+  });
+  assert.equal(posted.length, 1, "Apply must start one native session before Play");
   assert.match(await page.locator(".replay-meta").innerText(), /BTCUSDT.*2026-10-01T12:34/);
   assert.equal(await page.locator(".replay-meta").innerText().then(x => x.includes("Прогон / рынок")), false);
-  assert.equal(await page.locator(".replay-chart canvas").count(), 0,
-    "old synthetic chart must not be displayed after Apply");
-  assert.equal(await page.locator(".replay-chart-pending").count(), 1);
-  await appliedPlay.click(); // The one and only command to start the run.
+  await page.locator(".replay-chart canvas").first().waitFor();
+  await appliedPlay.click(); // Only advances the already verified stream.
   assert.equal(await page.getByRole("status", { name: "Ожидание нового графика" }).count(), 0,
     "removed pre-run explanation must remain absent during playback");
   assert.equal(await readySetup.getByRole("status", { name: "Результаты виртуального прогона" }).count(), 0,
@@ -273,7 +283,7 @@ try {
   assert.match(posted[0].url, /\/local-replay\/simulation\/wedge-stream$/);
   assert.deepEqual(posted[0].body, {
     symbol: "BTCUSDT", start_utc: "2026-10-01T12:34",
-    end_utc_inclusive: "2026-10-02T05:21",
+    end_utc_inclusive: "2026-10-02T12:33",
     selected_strategies: ["WEDGE_RISING", "WEDGE_FALLING"],
     initial_balance: "1000",
   });
@@ -446,7 +456,7 @@ try {
     ],
   };
   let publicMarketAttempts = 0;
-  await page.route("**/local-replay/history?*", async (route) => {
+  await page.route("**/local-replay/history-stream?*", async (route) => {
     publicMarketAttempts++;
     const requested = new URL(route.request().url()).searchParams.get("strategies")?.split(",") ?? [];
     assert.ok(requested.includes("WEDGE_FALLING") && requested.includes("WEDGE_RISING"),
@@ -460,20 +470,35 @@ try {
       side: "LONG", box_start_ms: t + 8*300000,
       box_end_ms: t + 11*300000, box_low: 98, box_high: 102,
     }] : [];
+    const selectedResearch = {
+      scope: "PUBLIC_M5_OBSERVATIONS_NO_ROBOT_EXECUTION",
+      detectors: requested,
+      configuration: "RESEARCH_HUNTER_SCORE50_NATIVE_WEDGE_AND_BOX",
+    };
+    const prefix = (count) => {
+      const frontier = history.events[count - 1].time_ms;
+      return {
+        ...history,
+        events: history.events.slice(0, count),
+        dmi_5m: { ...history.dmi_5m, points: history.dmi_5m.points.slice(0, count) },
+        geometry: history.geometry.filter(row => row.available_at_ms <= frontier),
+        h017_blue_risk_previews: history.h017_blue_risk_previews.filter(row => row.time_ms <= frontier),
+        observations: history.observations.filter(row => row.time_ms <= frontier),
+        scanner_research: selectedResearch,
+        scanner_observations: observed.filter(row => row.available_at_ms <= frontier),
+      };
+    };
+    const frames = [
+      { type: "start", symbol: "BTCUSDT", start: "2026-10-01T00:00", end: "2026-10-02T00:00" },
+      ...[1, 3, 40].map(count => ({ type: "snapshot", ready_count: count, document: prefix(count) })),
+      { type: "complete", simulation_run_id: history.simulation_run_id, ready_count: 40 },
+    ];
     await route.fulfill(publicMarketAttempts === 1 ? {
       status: 502, contentType: "text/plain",
       body: "Public Bybit history unavailable; nothing was simulated",
     } : {
-      status: 200, contentType: "application/json",
-      body: JSON.stringify({
-        ...history,
-        scanner_research: {
-          scope: "PUBLIC_M5_OBSERVATIONS_NO_ROBOT_EXECUTION",
-          detectors: requested,
-          configuration: "RESEARCH_HUNTER_SCORE50_NATIVE_WEDGE_AND_BOX",
-        },
-        scanner_observations: observed,
-      }),
+      status: 200, contentType: "application/x-ndjson; charset=utf-8",
+      body: frames.map(frame => JSON.stringify(frame)).join("\n") + "\n",
     });
   });
   const bounds = page.getByRole("region", { name: "Настройка стратегий и периода" });
@@ -486,9 +511,8 @@ try {
   // The actual local Python server uses text/plain for HTTP 502 failures.
   // Show the true failed boundary instead of a misleading JSON.parse error,
   // without silently replacing the selected ticker/history by demo candles.
-  const marketError = page.getByRole("alert").filter({ hasText: "Публичный Bybit M5 недоступен (HTTP 502)" });
+  const marketError = page.getByRole("alert").filter({ hasText: "История M5 недоступна: HTTP 502" });
   await marketError.waitFor();
-  assert.match(await marketError.innerText(), /архив M1 и профиль риска/);
   assert.equal(await page.locator(".replay-chart-shell").count(), 0,
     "failed public market download cannot resurrect old market candles");
   await bounds.getByRole("checkbox", { name: "Ikigai Box" }).check();

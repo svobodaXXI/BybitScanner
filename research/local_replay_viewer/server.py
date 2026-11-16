@@ -247,6 +247,7 @@ def load_public_history(
     *, symbol: str, start: str, end: str,
     fetch_candles: Callable[..., object] = fetch_public_klines,
     strategies: tuple[str, ...] = (),
+    on_ready: Callable[[dict[str, object], int, list[dict[str, object]]], None] | None = None,
 ) -> dict[str, object]:
     """Closed public M5; optionally run native research detectors, no trades."""
     if not SYMBOL_RE.fullmatch(symbol) or not symbol.endswith("USDT"):
@@ -294,21 +295,63 @@ def load_public_history(
                 or len(set(strategies)) != len(strategies)
                 or any(x not in SELECTABLE for x in strategies)):
             raise ValueError("Public research Scanner: one UTC day, only Wedge/Ikigai Box")
+        doc["scanner_research"] = {
+            "scope": "PUBLIC_M5_OBSERVATIONS_NO_ROBOT_EXECUTION",
+            "detectors": list(strategies),
+            "configuration": "RESEARCH_HUNTER_SCORE50_NATIVE_WEDGE_AND_BOX",
+        }
         try:
-            observations = scan_public_closed_m5(doc, strategies)
+            observations = scan_public_closed_m5(
+                doc, strategies,
+                on_ready=(lambda count, observed: on_ready(doc, count, observed))
+                if on_ready is not None else None,
+            )
         except (ImportError, ModuleNotFoundError, ValueError):
             raise
         except Exception as exc:
             raise NativeScannerStudyUnavailable(
                 "Native Scanner study failed; no pattern/Robot claims published"
             ) from exc
-        doc["scanner_research"] = {
-            "scope": "PUBLIC_M5_OBSERVATIONS_NO_ROBOT_EXECUTION",
-            "detectors": list(strategies),
-            "configuration": "RESEARCH_HUNTER_SCORE50_NATIVE_WEDGE_AND_BOX",
-        }
         doc["scanner_observations"] = observations
+    elif on_ready is not None:
+        for count in range(1, len(doc["events"]) + 1):
+            on_ready(doc, count, [])
     return doc
+
+
+
+def ready_public_market_snapshot(
+    document: dict[str, object], count: int,
+    observations: list[dict[str, object]],
+) -> dict[str, object]:
+    """Publish only a causally completed closed-M5 prefix, never future layers.
+
+    One original market document and one original Scanner evaluation supply
+    each prefix. This is a presentation projection, NOT a second detector.
+    """
+    events = document["events"]
+    if not isinstance(events, list) or not 1 <= count <= len(events):
+        raise ValueError("invalid public M5 readiness frontier")
+    frontier = events[count - 1]["time_ms"]
+    result = {**document, "events": events[:count]}
+    for name, clock in (
+        ("geometry", "available_at_ms"),
+        ("hourly_prior_updates", "available_at_ms"),
+        ("hourly_prior_breaks", "confirmed_at_ms"),
+        ("reference_5m_retirements", "time_ms"),
+        ("observations", "time_ms"),
+        ("h017_blue_risk_previews", "time_ms"),
+    ):
+        if name in document:
+            result[name] = [row for row in document[name] if row[clock] <= frontier]
+    if "dmi_5m" in document:
+        result["dmi_5m"] = {**document["dmi_5m"],
+                            "points": document["dmi_5m"]["points"][:count]}
+    if "scanner_research" in document:
+        result["scanner_observations"] = [
+            row for row in observations if row["available_at_ms"] <= frontier
+        ]
+    return result
 
 
 def handler_factory(static_dir: Path = STATIC_DIR,
@@ -402,7 +445,9 @@ def handler_factory(static_dir: Path = STATIC_DIR,
                 except OSError:
                     self._error(500, "Bundled public archive unavailable")
                 return
-            if url.path == "/local-replay/history":
+            if url.path in ("/local-replay/history", "/local-replay/history-stream"):
+                # Both paths are unsigned, local-only, public market research.
+                # A stream is the same original detector, never Robot trading.
                 if self.command != "GET":
                     self._error(405, "GET only")
                     return
@@ -416,21 +461,76 @@ def handler_factory(static_dir: Path = STATIC_DIR,
                     if not {"symbol", "start", "end"} <= set(fields) or not set(fields) <= {"symbol", "start", "end", "strategies"} or any(len(x) != 1 for x in fields.values()):
                         raise ValueError("Expected symbol, start and end once")
                     names = fields.get("strategies", [""])[0]
-                    if names:
-                        choices = tuple(names.split(","))
+                    choices = tuple(names.split(",")) if names else ()
+                    if choices:
                         from research.simulator_v2.public_m5_scan import SELECTABLE
                         if (len(choices) != len(set(choices))
                                 or len(choices) > 3 or any(name not in SELECTABLE for name in choices)):
                             raise ValueError("Only local Wedge and Ikigai Box M5 research supported")
-                        doc = history_loader(
-                            symbol=fields["symbol"][0], start=fields["start"][0],
-                            end=fields["end"][0], strategies=choices,
-                        )
-                    else:
-                        doc = history_loader(
-                            symbol=fields["symbol"][0], start=fields["start"][0],
-                            end=fields["end"][0],
-                        )
+                    params = {
+                        "symbol": fields["symbol"][0],
+                        "start": fields["start"][0],
+                        "end": fields["end"][0],
+                    }
+                    if choices:
+                        params["strategies"] = choices
+                except (ValueError, OverflowError) as exc:
+                    self._error(400, str(exc))
+                    return
+                if url.path == "/local-replay/history-stream":
+                    # Headers/heartbeat are emitted immediately. Readiness is
+                    # published only after each CLOSED M5 has been processed
+                    # by all requested native Scanner observers.
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("X-Content-Type-Options", "nosniff")
+                    self.send_header("X-Accel-Buffering", "no")
+                    self.end_headers()
+
+                    def emit(kind: str, fields: dict[str, object]) -> None:
+                        self.wfile.write(json.dumps(
+                            {"type": kind, **fields}, ensure_ascii=False,
+                            allow_nan=False, separators=(",", ":"),
+                        ).encode("utf-8") + b"\n")
+                        self.wfile.flush()
+
+                    try:
+                        emit("start", {
+                            "symbol": params["symbol"],
+                            "start": params["start"],
+                            "end": params["end"],
+                        })
+
+                        def ready(doc: dict[str, object], count: int,
+                                  observed: list[dict[str, object]]) -> None:
+                            if count == 1 or count % 3 == 0 or count == len(doc["events"]):
+                                emit("snapshot", {
+                                    "ready_count": count,
+                                    "document": ready_public_market_snapshot(doc, count, observed),
+                                })
+
+                        document = history_loader(**params, on_ready=ready)
+                        emit("complete", {
+                            "simulation_run_id": document["simulation_run_id"],
+                            "ready_count": len(document["events"]),
+                        })
+                    except (BrokenPipeError, ConnectionResetError):
+                        return  # Browser cancelled; no detached producer/host mutation.
+                    except (ValueError, OverflowError, ImportError, ModuleNotFoundError,
+                            NativeScannerStudyUnavailable, OSError) as exc:
+                        try:
+                            emit("error", {"error": str(exc)[:250]})
+                        except OSError:
+                            pass
+                    except Exception:
+                        try:
+                            emit("error", {"error": "Public M5 research failed; no complete result"})
+                        except OSError:
+                            pass
+                    return
+                try:
+                    doc = history_loader(**params)
                     body = json.dumps(doc, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
                     self._send(200, body, "application/json; charset=utf-8")
                 except (ValueError, OverflowError) as exc:
@@ -440,8 +540,6 @@ def handler_factory(static_dir: Path = STATIC_DIR,
                 except NativeScannerStudyUnavailable as exc:
                     self._error(503, str(exc))
                 except Exception:
-                    # Failed remote market request: no fallback to cached, stale,
-                    # proxy, PAPER or invented data.
                     self._error(502, "Public Bybit history unavailable; nothing was simulated")
                 return
             if url.path == "/":

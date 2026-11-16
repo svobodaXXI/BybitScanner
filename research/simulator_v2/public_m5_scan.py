@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 import re
+from typing import Callable
 
 from research.historical_market_replay import Candle
 from research.simulator_v2.wedge_observer import ReadOnlyWedgeScanner, WedgeScannerConfig
@@ -27,6 +28,7 @@ WEDGE_RESEARCH_PRESET = WedgeScannerConfig(
 
 def scan_public_closed_m5(
     document: dict[str, object], selected: tuple[str, ...],
+    on_ready: Callable[[int, list[dict[str, object]]], None] | None = None,
 ) -> list[dict[str, object]]:
     if (not isinstance(selected, tuple) or len(selected) != len(set(selected))
             or not all(x in SELECTABLE for x in selected)):
@@ -127,6 +129,10 @@ def scan_public_closed_m5(
                         "box_low": formation.box_low,
                         "box_high": formation.box_high,
                     })
-    if len(observed) > 512:
-        raise ValueError("Scanner study exceeds bounded candidate count")
+        if len(observed) > 512:
+            raise ValueError("Scanner study exceeds bounded candidate count")
+        # Each READY count follows the original detector's CLOSED M5.
+        # No candle/observation is released before this source-time boundary.
+        if on_ready is not None:
+            on_ready(count, observed)
     return sorted(observed, key=lambda x: (x["available_at_ms"], x["strategy"], x["signal_id"]))

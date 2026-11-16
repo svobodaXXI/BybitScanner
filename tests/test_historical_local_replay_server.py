@@ -124,7 +124,7 @@ class PublicKlineTests(unittest.TestCase):
 
 class LoopbackServerTests(unittest.TestCase):
     @contextmanager
-    def running_server(self):
+    def running_server(self, history_loader=None):
         with TemporaryDirectory() as temp:
             dist = Path(temp)
             (dist / "replay.html").write_text("<h1>Local simulation only</h1>", encoding="utf-8")
@@ -137,7 +137,7 @@ class LoopbackServerTests(unittest.TestCase):
                         "simulation_run_id": "fixture", "events": []}
 
             httpd = ThreadingHTTPServer(
-                ("127.0.0.1", 0), local.handler_factory(dist, loader),
+                ("127.0.0.1", 0), local.handler_factory(dist, history_loader or loader),
             )
             worker = Thread(target=httpd.serve_forever, daemon=True)
             worker.start()
@@ -172,6 +172,100 @@ class LoopbackServerTests(unittest.TestCase):
             code, _, _ = self.call(port, "GET", "/replay.html", host="untrusted.example")
             self.assertEqual(code, 403)
             self.assertEqual(calls, [])
+
+    def test_public_stream_emits_only_scanner_ready_prefix(self):
+        from research.simulator_v2.public_m5_scan import scan_public_closed_m5
+        start = int(datetime(2026, 1, 1, tzinfo=timezone.utc).timestamp() * 1000)
+        events = [{
+            "source": "SIMULATION", "simulation_run_id": "fixture_readiness",
+            "sequence": i+1, "kind": "CANDLE_CLOSED",
+            "time_ms": start+(i+1)*FIVE_MINUTES_MS,
+            "candle": {
+                "start_ms": start+i*FIVE_MINUTES_MS,
+                "end_ms": start+(i+1)*FIVE_MINUTES_MS,
+                "open": "100", "high": "101", "low": "99",
+                "close": "100", "volume": "1",
+            },
+        } for i in range(4)]
+        calls = []
+
+        def loader(*, symbol, start: str, end: str, strategies=(), on_ready=None):
+            self.assertEqual(symbol, "BTCUSDT")
+            self.assertEqual(strategies, ("WEDGE_FALLING",))
+            self.assertIsNotNone(on_ready)
+            doc = {
+                "source": "SIMULATION", "mode": "MARKET_ONLY",
+                "market_data_source": "BYBIT_PUBLIC_KLINE",
+                "simulation_run_id": "fixture_readiness",
+                "timeframe": "5m", "symbol": symbol, "events": events,
+                "geometry": [{
+                    "kind": "MAIN_1H", "available_at_ms": events[3]["time_ms"],
+                }],
+                "scanner_research": {
+                    "scope": "PUBLIC_M5_OBSERVATIONS_NO_ROBOT_EXECUTION",
+                    "detectors": ["WEDGE_FALLING"],
+                    "configuration": "RESEARCH_HUNTER_SCORE50_NATIVE_WEDGE_AND_BOX",
+                },
+            }
+            calls.append(True)
+            observed = scan_public_closed_m5(
+                doc, strategies,
+                on_ready=lambda count, rows: on_ready(doc, count, rows),
+            )
+            doc["scanner_observations"] = observed
+            return doc
+
+        with self.running_server(loader) as (port, _):
+            path = ("/local-replay/history-stream?symbol=BTCUSDT"
+                    "&start=2026-01-01&end=2026-01-02&strategies=WEDGE_FALLING")
+            status, body, headers = self.call(port, "GET", path)
+            self.assertEqual(status, 200)
+            self.assertIn("application/x-ndjson", headers["Content-Type"])
+            frames = [json.loads(line) for line in body.splitlines()]
+            self.assertEqual([frame["type"] for frame in frames],
+                             ["start", "snapshot", "snapshot", "snapshot", "complete"])
+            self.assertEqual([frame["ready_count"] for frame in frames[1:]],
+                             [1, 3, 4, 4])
+            self.assertEqual([len(frame["document"]["events"])
+                              for frame in frames[1:4]], [1, 3, 4])
+            self.assertEqual(frames[1]["document"]["geometry"], [])
+            self.assertEqual(len(frames[3]["document"]["geometry"]), 1)
+            self.assertEqual(frames[-1]["simulation_run_id"], "fixture_readiness")
+            forbidden_status, _, _ = self.call(
+                port, "GET", path, extra_headers={"Origin": "https://untrusted.example"})
+            self.assertEqual(forbidden_status, 403)
+            self.assertEqual(len(calls), 1)
+            forbidden_post, _, _ = self.call(port, "POST", path)
+            self.assertEqual(forbidden_post, 405)
+
+    def test_public_stream_failure_never_claims_complete(self):
+        start = int(datetime(2026, 1, 1, tzinfo=timezone.utc).timestamp() * 1000)
+        doc = {
+            "source": "SIMULATION", "mode": "MARKET_ONLY",
+            "market_data_source": "BYBIT_PUBLIC_KLINE",
+            "simulation_run_id": "failure_fixture", "symbol": "BTCUSDT",
+            "events": [{
+                "source": "SIMULATION", "simulation_run_id": "failure_fixture",
+                "sequence": 1, "kind": "CANDLE_CLOSED",
+                "time_ms": start + FIVE_MINUTES_MS,
+                "candle": {"start_ms": start, "end_ms": start + FIVE_MINUTES_MS},
+            }],
+            "scanner_research": {"detectors": ["WEDGE_FALLING"]},
+        }
+
+        def fail(*, on_ready, **_):
+            on_ready(doc, 1, [])
+            raise ValueError("deliberate native Scanner failure")
+
+        with self.running_server(fail) as (port, _):
+            status, body, _ = self.call(
+                port, "GET", "/local-replay/history-stream?symbol=BTCUSDT"
+                "&start=2026-01-01&end=2026-01-02&strategies=WEDGE_FALLING")
+            self.assertEqual(status, 200)
+            frames = [json.loads(line) for line in body.splitlines()]
+            self.assertEqual([frame["type"] for frame in frames],
+                             ["start", "snapshot", "error"])
+            self.assertIn("deliberate native Scanner failure", frames[-1]["error"])
 
     def test_history_is_get_only_without_paper_side_effects(self):
         with self.running_server() as (port, calls):
