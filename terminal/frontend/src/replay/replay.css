@@ -23,9 +23,23 @@
 .replay-meta strong { font-size: 14px; overflow-wrap: anywhere; font-weight: 600; }
 .replay-progress { height: 5px; border-radius: 5px; background: #29384c; overflow: hidden; }
 .replay-progress > div { height: 100%; background: #7db6ef; transition: width .08s linear; }
+.replay-playback-controls .replay-seek-progress {
+  flex: 1 1 180px; min-width: 125px; margin: 0 6px;
+  display: flex; flex-direction: column; gap: 2px;
+}
 .replay-playback-controls .replay-seek {
-  flex: 1 1 180px; width: auto; min-width: 125px; margin: 0 6px;
-  accent-color: #72a9ee; cursor: pointer;
+  width: 100%; margin: 0; accent-color: #72a9ee; cursor: pointer;
+}
+.replay-load-status {
+  font-size: 11px; line-height: 1.25; font-weight: 600;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.replay-load-status[data-tone="red"] { color: #fa7777; }
+.replay-load-status[data-tone="orange"] { color: #ffae64; }
+.replay-load-status[data-tone="yellow"] { color: #f4dc62; }
+.replay-load-status[data-tone="green"] { color: #41d28b; }
+.replay-run-complete {
+  color: #41d28b; font-weight: 700;
 }
 .replay-player-icon { display: block; width: 21px; height: 21px; fill: currentColor; pointer-events: none; }
 .replay-note { padding: 9px 12px; background: #28251b; border: 1px solid #55442e; color: #d4be85; border-radius: 7px; }
