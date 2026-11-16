@@ -55,6 +55,44 @@ On subsequent sessions, try this **known-good route once**. If the Windows ssh-a
 
 **Acceptance boundary:** Codex authenticated successfully to the expected VPS with exit code `0`; no STOP, deployment, release journal, systemd operation, PAPER DB or trading mutation was performed. Keep the *laptop* route separate from the PC's `ssh bybitscanner-vps` alias targeting `212.193.14.116`.
 
+### Проверенный ноутбук: восстановление Windows ssh-agent (16.11.2026)
+
+Владелец подтвердил на ноутбуке `C:\Users\SVOBODA21`: защищённый
+`root@83.217.213.181` с прежним `bybitscanner_laptop` получил
+`Permission denied (publickey,password)`, SSH exit 255. Локальный `ssh-agent`
+был `Stopped / Manual`, `ssh-add.exe -l` не подключался (exit 2).
+После `Start-Service ssh-agent` без изменения StartType прежний агент
+вернул ключ ED25519 с публичным fingerprint
+`SHA256:NcIbbPki11WrAx0RjjtAuUnY/bsgsnou2Syp6fNRRc0`.
+Точно тот же Windows OpenSSH и маршрутизатор вернули `SSH_OK`,
+`v3286418.hosted-by-vdsina.ru`, SSH exit 0. Это доказательство транспорта
+только в указанном сеансе, не текущего состояния VPS/PAPER.
+
+Штатный Windows VPS Manager (GUI/CLI) применяет **ограниченное**
+восстановление только для read-only SSH по точному штатному маршруту ноутбука
+при ответе `Permission denied (publickey...)`: один локальный запрос
+`Get-Service ssh-agent`; исключительно при `Stopped/Manual` — один
+`Start-Service`; затем один `ssh-add -l` и сравнение публичного
+fingerprint; при совпадении — **однократное повторение точно того же
+read-only SSH-запроса**. Если службы/прав/загруженного ключа нет — блокировка
+без SSH-повтора; разблокировка ключа только владельцем при необходимости.
+Изменять StartType, ACL, SSH config, VPN, known_hosts или sshd запрещено;
+приватный ключ и passphrase не читаются и не сохраняются. SSH banner/transport
+timeouts, основной ПК и отправка любых монолитных submit-операций этим
+восстановлением не затрагиваются. SSH_OK не разрешает STOP/START/UPDATE,
+PAPER_AUTO или LIVE.
+
+Перед уже отдельно подтверждённым владельцем `submit` на ноутбуке
+Windows Manager выполняет **только read-only** `tools.vps_owner_control list`
+через те же SSH host/key/flags. Если `publickey` отклонён, используется
+описанное выше однократное восстановление локального агента; если список
+не удалось прочитать, `SUBMISSION=NOT_SENT` и изменяющая команда
+**не отправляется**. При успешном соединении `submit` уходит один раз
+по исходному UUID. Если ответ потерян, допускаются только status-запросы
+по этому UUID с ограниченным числом неизвестных ответов; реотправка
+`submit` запрещена. Повторённая SSH-проверка удостоверяет лишь транспорт,
+а не право на релиз/торговлю. ПК и внешние клиентские маршруты не изменяются.
+
 ## WINDOWS POWERSHELL PC SSH ROUTE — separate host-shell route (owner-verified 2026-11-14)
 
 **Main/default connection from the desktop PC (including with Happ/VPN enabled):**

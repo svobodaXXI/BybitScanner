@@ -181,7 +181,10 @@ def watch_owner_request(
     status_command: list[str], request: str, *, initially_submitted: bool,
     run=None, sleep=None, attempts: int = OWNER_POLL_LIMIT,
 ) -> tuple[str, str]:
-    run = run or subprocess.run
+    if run is None:
+        # Recovery belongs to the read-only status query, never to submit.
+        def run(command: list[str], **kwargs):
+            return run_readonly_ssh_with_laptop_agent_recovery(command, **kwargs)[0]
     sleep = sleep or time.sleep
     state = "submitted" if initially_submitted else "unproven"
     latest = ""
@@ -351,6 +354,114 @@ def preflight_failure_class(stderr: str, exit_code: int) -> str:
     return "REMOTE_COMMAND_FAILED"
 
 
+
+# Owner-confirmed Windows laptop fingerprint, public metadata only.
+LAPTOP_AGENT_FINGERPRINT = "SHA256:NcIbbPki11WrAx0RjjtAuUnY/bsgsnou2Syp6fNRRc0"
+
+
+def _pinned_laptop_ssh(command: list[str]) -> bool:
+    """Exclude PC, custom routes, unknown identities and any noncanonical SSH."""
+    if (known_windows_device() != "laptop" or len(command) < 4
+            or command[0] != "ssh" or command[1:3] != ["-F", "none"]
+            or command[-2] != "root@83.217.213.181"):
+        return False
+    if not all(flag in command for flag in
+               ("IdentitiesOnly=yes", "BatchMode=yes", "StrictHostKeyChecking=yes")):
+        return False
+    try:
+        return command[command.index("-i") + 1] == str(
+            Path.home() / ".ssh" / "bybitscanner_laptop")
+    except (ValueError, IndexError):
+        return False
+
+
+def _local_agent_call(argv: list[str]) -> subprocess.CompletedProcess | None:
+    try:
+        return subprocess.run(
+            argv, capture_output=True, text=True, errors="replace",
+            stdin=subprocess.DEVNULL, timeout=12, creationflags=NO_WINDOW,
+            check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def run_readonly_ssh_with_laptop_agent_recovery(
+    command: list[str], **kwargs,
+) -> tuple[subprocess.CompletedProcess, str]:
+    """At most one same-request SSH retry after observed laptop publickey denial.
+
+    Intended only for read-only callers. No key loading, passwords, config
+    updates, SSH retries on banner timeout or retry of a mutating submit.
+    """
+    # Even an accidental call with a write-command must be rejected BEFORE
+    # the first SSH launch, not merely excluded from its second attempt.
+    if command and "tools.vps_owner_control submit " in command[-1]:
+        raise ValueError("readonly_recovery_cannot_submit")
+    first = subprocess.run(command, **kwargs)
+    if (not _pinned_laptop_ssh(command) or first.returncode != 255
+            or "permission denied (publickey" not in (first.stderr or "").casefold()):
+        return first, ""
+
+    windows = Path(os.environ.get("WINDIR", r"C:\Windows"))
+    ps = [str(windows / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"),
+          "-NoProfile", "-NonInteractive", "-Command"]
+    service = _local_agent_call(
+        ps + ["$s=Get-Service -Name ssh-agent -ErrorAction Stop; "
+              "$s.Status.ToString() + '/' + $s.StartType.ToString()"])
+    if service is None or service.returncode != 0:
+        return first, "SSH_AGENT_RECOVERY=BLOCKED_SERVICE_STATUS_UNKNOWN"
+    if service.stdout.strip().casefold() != "stopped/manual":
+        return first, "SSH_AGENT_RECOVERY=BLOCKED_SERVICE_NOT_STOPPED_MANUAL"
+
+    started = _local_agent_call(
+        ps + ["Start-Service -Name ssh-agent -ErrorAction Stop"])
+    if started is None or started.returncode != 0:
+        return first, "SSH_AGENT_RECOVERY=BLOCKED_SERVICE_START_FAILED"
+
+    ssh_add = str(windows / "System32" / "OpenSSH" / "ssh-add.exe")
+    identities = _local_agent_call([ssh_add, "-l"])
+    if (identities is None or identities.returncode != 0
+            or LAPTOP_AGENT_FINGERPRINT not in (identities.stdout or "").split()):
+        return first, "SSH_AGENT_RECOVERY=BLOCKED_PINNED_KEY_NOT_IN_AGENT"
+
+    # Same *read-only* request, once; no alternate IP, key, auth or SSH settings.
+    second = subprocess.run(command, **kwargs)
+    return second, ("SSH_AGENT_RECOVERY=RETRY_ONCE_OK" if second.returncode == 0
+                    else "SSH_AGENT_RECOVERY=RETRY_ONCE_UNPROVEN")
+
+
+def precheck_laptop_owner_submit(
+    command: list[str],
+) -> tuple[bool, str]:
+    """Prove laptop transport using the canonical read-only owner list first.
+
+    This is NOT a submit retry. On unproven transport there is no submit.
+    A successful check says only that the remote owner-list request completed.
+    """
+    if not _pinned_laptop_ssh(command):
+        return True, ""
+    if "tools.vps_owner_control submit " not in command[-1]:
+        raise ValueError("expected_canonical_owner_submit")
+
+    probe = command.copy()
+    probe[-1] = CONTROL_MODULE + " list"  # read-only, same host/key/SSH options
+    try:
+        receipt, agent = run_readonly_ssh_with_laptop_agent_recovery(
+            probe, capture_output=True, text=True, errors="replace",
+            stdin=subprocess.DEVNULL, timeout=35, creationflags=NO_WINDOW,
+            check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return False, "SSH_SUBMIT_PREFLIGHT=CLIENT_TIMEOUT_OR_SPAWN_FAILURE"
+
+    if receipt.returncode != 0:
+        reason = preflight_failure_class(receipt.stderr or "", receipt.returncode)
+        return False, ("SSH_SUBMIT_PREFLIGHT=UNPROVEN\n"
+                       "SSH_SUBMIT_PREFLIGHT_FAILURE_CLASS=" + reason
+                       + ("\n" + agent if agent else ""))
+    return True, ("SSH_SUBMIT_PREFLIGHT=REMOTE_LIST_OBSERVED"
+                  + ("\n" + agent if agent else ""))
+
+
 def run_cli(options: argparse.Namespace) -> int:
     host, user = (options.host, options.user) if options.host else preferred_route()
     if not host:
@@ -374,9 +485,22 @@ def run_cli(options: argparse.Namespace) -> int:
             print("BLOCKED: request ID cannot be preserved; no operation sent")
             return 2
         print("REQUEST_ID=" + req, flush=True)
+    if options.operation in CONTROL_ACTIONS.values():
+        confirmed, proof = precheck_laptop_owner_submit(argv)
+        if proof:
+            print(proof, flush=True)
+        if not confirmed:
+            print("SUBMISSION=NOT_SENT; request_id=" + req)
+            return 2
     try:
-        completed = subprocess.run(argv, capture_output=True, text=True,
-                                   timeout=35, stdin=subprocess.DEVNULL, check=False)
+        if options.operation in ("status", "list", "preflight"):
+            completed, recovery = run_readonly_ssh_with_laptop_agent_recovery(
+                argv, capture_output=True, text=True, timeout=35,
+                stdin=subprocess.DEVNULL, check=False)
+        else:
+            completed = subprocess.run(argv, capture_output=True, text=True,
+                                       timeout=35, stdin=subprocess.DEVNULL, check=False)
+            recovery = ""
     except (OSError, subprocess.TimeoutExpired) as exc:
         if options.operation == "preflight":
             failure = ("SSH_CLIENT_TIMEOUT" if isinstance(exc, subprocess.TimeoutExpired)
@@ -388,6 +512,8 @@ def run_cli(options: argparse.Namespace) -> int:
         return 2
     output = completed.stdout.strip()
     print(output)
+    if recovery:
+        print(recovery)
     if options.operation == "preflight":
         print("PREFLIGHT_SSH_EXIT_CODE=" + str(completed.returncode))
         if completed.returncode == 0 and "PREFLIGHT_READ_ONLY_DATA_COLLECTED_NOT_ACCEPTED" in output:
@@ -438,6 +564,7 @@ class VPSManager(tk.Tk):
             key = preferred_key(*automatic)
         self.sha = tk.StringVar(value="")
         self.last_request_id = recover_last_request_id()
+        self.request_id = tk.StringVar(value=self.last_request_id)
         self.origin = device_origin()
         self.key = tk.StringVar(value=key)
         self.status = tk.StringVar(value="Не подключено · PAPER only")
@@ -460,6 +587,16 @@ class VPSManager(tk.Tk):
             row=3, column=1, columnspan=3, sticky="we")
         ttk.Label(top, text="Устройство: " + self.origin).grid(
             row=4, column=0, columnspan=4, sticky="w")
+        ttk.Label(top, text="ID операции (для статуса):").grid(
+            row=5, column=0, sticky="w", pady=(5, 0))
+        id_controls = ttk.Frame(top)
+        id_controls.grid(row=5, column=1, columnspan=3, sticky="w", pady=(5, 0))
+        self.request_id_entry = ttk.Entry(
+            id_controls, textvariable=self.request_id, width=36, show="")
+        self.request_id_entry.pack(side="left", padx=6)
+        self.request_id_entry.bind("<Control-KeyPress>", self.paste_request_id_hotkey)
+        ttk.Button(id_controls, text="Вставить ID",
+                   command=self.paste_request_id).pack(side="left", padx=6)
         buttons = ttk.Frame(self, padding=(12, 0, 12, 9))
         buttons.pack(fill="x")
         self.buttons = []
@@ -474,7 +611,7 @@ class VPSManager(tk.Tk):
             self.buttons.append(button)
         for index, (label, mode) in enumerate((
             ("Автопроверка VPS (только чтение)", "preflight"),
-            ("Статус последней операции", "status"),
+            ("Статус по ID операции", "status"),
             ("Все операции монолита", "list"),
         ), start=len(ACTIONS) + len(CONTROL_ACTIONS)):
             button = ttk.Button(buttons, text=label,
@@ -499,25 +636,36 @@ class VPSManager(tk.Tk):
         self.log.see("end")
         self.log.configure(state="disabled")
 
-    def copy_result(self, result: str) -> None:
-        """Copy the complete output of one finished action to the clipboard."""
+    def copy_result(self, result: str, tag: str | None = None) -> None:
+        """Copy one finished action and visibly acknowledge a successful click."""
         try:
             self.clipboard_clear()
             self.clipboard_append(result)
             self.update_idletasks()
         except tk.TclError:
             messagebox.showerror("VPS Manager", "Не удалось скопировать результат")
+            return
+        if tag is not None:
+            self.log.configure(state="normal")
+            try:
+                first = self.log.index(f"{tag}.first")
+                self.log.replace(first, f"{tag}.last", "✓ Скопировано", tag)
+                self.log.tag_configure(tag, foreground="#17803d", underline=False)
+            finally:
+                self.log.configure(state="disabled")
 
     def write_result(self, result: str) -> None:
-        """Offer an independent copy link for each completed journal entry."""
+        """Append an action's output, then its visible independent copy link."""
         self._copy_seq += 1
         tag = f"copy_result_{self._copy_seq}"
         self.log.configure(state="normal")
-        self.log.insert("end", "📋 Скопировать результат\n", (tag,))
-        self.log.insert("end", result + "\n\n")
+        self.log.insert("end", result + "\n")
+        self.log.insert("end", "📋 Скопировать результат", (tag,))
+        self.log.insert("end", "\n\n")
         self.log.tag_configure(tag, foreground="#0066bb", underline=True)
         self.log.tag_bind(tag, "<Button-1>",
-                          lambda _event, output=result: self.copy_result(output))
+                          lambda _event, output=result, target=tag:
+                          self.copy_result(output, target))
         self.log.see("end")
         self.log.configure(state="disabled")
 
@@ -536,15 +684,39 @@ class VPSManager(tk.Tk):
         self.write(f"\n> {name}")
         threading.Thread(target=self.worker, args=(command,), daemon=True).start()
 
+    def paste_request_id(self) -> None:
+        """Paste and show the exact operation ID without an SSH call."""
+        try:
+            request = self.clipboard_get().strip().lower()
+        except tk.TclError:
+            messagebox.showerror("VPS Manager", "Буфер обмена пуст или недоступен")
+            return
+        if REQUEST_ID.fullmatch(request) is None:
+            messagebox.showerror(
+                "VPS Manager", "В буфере нет ID операции (32 шестнадцатеричных символа)")
+            return
+        self.request_id.set(request)
+        self.request_id_entry.icursor("end")
+        self.request_id_entry.focus_set()
+
+    def paste_request_id_hotkey(self, event: tk.Event) -> str | None:
+        """Handle Ctrl+V regardless of English or Russian keyboard layout."""
+        if (event.keysym.casefold() in ("v", "cyrillic_em")
+                or event.keycode == 86):
+            self.paste_request_id()
+            return "break"
+        return None
+
     def run_control(self, mode: str) -> None:
         if self.busy:
             return
         sha = self.sha.get().strip() or (
             "installed" if mode in ("start", "stop") else "")
         request = (uuid.uuid4().hex if mode in CONTROL_ACTIONS.values()
+                   else self.request_id.get().strip() if mode == "status"
                    else self.last_request_id)
         if mode == "status" and not request:
-            messagebox.showinfo("VPS Manager", "Операций в этом сеансе пока нет")
+            messagebox.showinfo("VPS Manager", "Введите точный ID операции (32 символа)")
             return
         try:
             command = control_ssh_command(
@@ -565,6 +737,7 @@ class VPSManager(tk.Tk):
                 )
                 return
             self.last_request_id = request
+            self.request_id.set(request)
         self.busy = True
         self.status.set("Выполняется: " + mode)
         for button in self.buttons:
@@ -575,10 +748,25 @@ class VPSManager(tk.Tk):
 
     def worker_control(self, command: list[str], mode: str, request: str) -> None:
         try:
-            result = subprocess.run(
-                command, capture_output=True, text=True, errors="replace",
-                timeout=35, stdin=subprocess.DEVNULL, creationflags=NO_WINDOW,
-                check=False)
+            precheck_receipt = ""
+            if mode in CONTROL_ACTIONS.values():
+                confirmed, precheck_receipt = precheck_laptop_owner_submit(command)
+                if not confirmed:
+                    self.events.put(("unproven",
+                                     ("SUBMISSION=NOT_SENT; REQUEST_ID=" + request
+                                      + "\n" + precheck_receipt)))
+                    return
+            if mode not in CONTROL_ACTIONS.values():
+                result, recovery = run_readonly_ssh_with_laptop_agent_recovery(
+                    command, capture_output=True, text=True, errors="replace",
+                    timeout=35, stdin=subprocess.DEVNULL, creationflags=NO_WINDOW,
+                    check=False)
+            else:
+                result = subprocess.run(
+                    command, capture_output=True, text=True, errors="replace",
+                    timeout=35, stdin=subprocess.DEVNULL, creationflags=NO_WINDOW,
+                    check=False)
+                recovery = ""
             output = result.stdout.strip()
             if mode not in CONTROL_ACTIONS.values():
                 if mode == "status":
@@ -587,13 +775,30 @@ class VPSManager(tk.Tk):
                     state = ("observed" if result.returncode == 0 and
                              "PREFLIGHT_READ_ONLY_DATA_COLLECTED_NOT_ACCEPTED" in output
                              else "unproven")
+                elif mode == "list":
+                    if result.returncode != 0 or output == "REQUEST_LIST=UNPROVEN":
+                        state = "unproven"
+                        output = ("REQUEST_LIST=UNPROVEN\nLIST_EXIT_CODE=" +
+                                  str(result.returncode) +
+                                  "\nLIST_FAILURE_CLASS=" +
+                                  preflight_failure_class(result.stderr or "",
+                                                          result.returncode))
+                    elif not output:
+                        state = "observed"
+                        output = ("REQUEST_LIST=EMPTY\n"
+                                  "Список сохранённых операций пуст; это не "
+                                  "доказательство отсутствия прежних операций.")
+                    else:
+                        state = "observed"
                 else:
-                    state = "success" if result.returncode == 0 else "failure"
+                    state = "observed" if result.returncode == 0 else "unproven"
                 if mode == "preflight" and state == "unproven":
                     reason = (preflight_failure_class(result.stderr or "", result.returncode)
                               if result.returncode != 0 else "REMOTE_RECEIPT_MISSING")
                     output += ("\nPREFLIGHT_SSH_EXIT_CODE=" + str(result.returncode) +
                                "\nPREFLIGHT_FAILURE_CLASS=" + reason)
+                if recovery:
+                    output = (output + "\n" + recovery).strip()
                 self.events.put((state, output or "Статус не доказан"))
                 return
             # Lost submit reply => only query the same request; never replay it.
@@ -607,21 +812,30 @@ class VPSManager(tk.Tk):
                      else "unproven")
             state, details = watch_owner_request(
                 status_command, request, initially_submitted=(state == "submitted"))
-            self.events.put((state, (output or "Ответ запуска неизвестен")
+            self.events.put((state, (precheck_receipt + "\n" if precheck_receipt else "")
+                             + (output or "Ответ запуска неизвестен")
                              + "\n" + details + "\nREQUEST_ID=" + request))
-        except (OSError, subprocess.TimeoutExpired, ValueError):
-            self.events.put(("failure", "SSH_STATUS_UNPROVEN; REQUEST_ID=" + request
-                             + "; повторять операцию нельзя, проверяйте статус"))
+        except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
+            if mode == "list":
+                reason = ("SSH_CLIENT_TIMEOUT" if isinstance(exc, subprocess.TimeoutExpired)
+                          else "SSH_CLIENT_SPAWN_FAILURE")
+                self.events.put(("unproven", "REQUEST_LIST=UNPROVEN\n"
+                                 "LIST_FAILURE_CLASS=" + reason))
+            else:
+                self.events.put(("failure", "SSH_STATUS_UNPROVEN; REQUEST_ID=" + request
+                                 + "; повторять операцию нельзя, проверяйте статус"))
 
     def worker(self, command: list[str]) -> None:
         try:
-            result = subprocess.run(
+            result, recovery = run_readonly_ssh_with_laptop_agent_recovery(
                 command, capture_output=True, text=True, errors="replace",
                 timeout=45, stdin=subprocess.DEVNULL, creationflags=NO_WINDOW,
                 env=os.environ.copy(), check=False,
             )
             output = "\n".join(part for part in (result.stdout.strip(), result.stderr.strip()) if part)
-            status = "success" if result.returncode == 0 else "failure"
+            if recovery:
+                output = (output + "\n" + recovery).strip()
+            status = "observed" if result.returncode == 0 else "failure"
             self.events.put((status, f"{output or '(нет вывода)'}\nExit code: {result.returncode}"))
         except (OSError, subprocess.TimeoutExpired) as exc:
             self.events.put(("failure", f"Ошибка SSH: {type(exc).__name__}"))

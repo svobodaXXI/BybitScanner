@@ -14,7 +14,9 @@ from tools.windows_vps_manager import (ACTIONS, VPSManager, control_ssh_command,
                                        preferred_route, parse_args, ssh_command,
                                        remember_request_id, recover_last_request_id, run_cli,
                                        known_windows_device, preferred_key, PREFLIGHT,
-                                       watch_owner_request)
+                                       watch_owner_request,
+                                       run_readonly_ssh_with_laptop_agent_recovery,
+                                       LAPTOP_AGENT_FINGERPRINT)
 
 
 class TestWindowsVpsManager(unittest.TestCase):
@@ -61,9 +63,109 @@ class TestWindowsVpsManager(unittest.TestCase):
                 self.assertNotIn("systemctl start", remote)
                 self.assertNotIn("systemctl stop", remote)
 
+
+    def _pinned_laptop_command_for_agent_test(self):
+        from tools.windows_vps_manager import Path as ManagerPath
+        return ["ssh", "-F", "none", "-o", "BatchMode=yes",
+                "-o", "StrictHostKeyChecking=yes", "-o", "IdentitiesOnly=yes",
+                "-i", str(ManagerPath.home() / ".ssh" / "bybitscanner_laptop"),
+                "root@83.217.213.181", "echo SSH_OK"]
+
+    def test_laptop_readonly_publickey_failure_starts_stopped_manual_agent_once(self):
+        cmd = self._pinned_laptop_command_for_agent_test()
+        replies = [
+            subprocess.CompletedProcess(cmd, 255, "", "Permission denied (publickey,password)."),
+            subprocess.CompletedProcess(["powershell", "Get-Service"], 0, "Stopped/Manual\n", ""),
+            subprocess.CompletedProcess(["powershell", "Start-Service"], 0, "", ""),
+            subprocess.CompletedProcess(["ssh-add", "-l"], 0,
+                "256 " + LAPTOP_AGENT_FINGERPRINT + " bybitscanner-laptop (ED25519)\n", ""),
+            subprocess.CompletedProcess(cmd, 0, "SSH_OK\n", ""),
+        ]
+        with (patch("tools.windows_vps_manager.known_windows_device", return_value="laptop"),
+              patch("tools.windows_vps_manager.subprocess.run", side_effect=replies) as runner):
+            result, recovery = run_readonly_ssh_with_laptop_agent_recovery(
+                cmd, capture_output=True, check=False)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(recovery, "SSH_AGENT_RECOVERY=RETRY_ONCE_OK")
+        self.assertEqual(runner.call_count, 5)
+        self.assertEqual(runner.call_args_list[0].args[0], cmd)
+        self.assertEqual(runner.call_args_list[-1].args[0], cmd)
+        self.assertIn("Get-Service -Name ssh-agent",
+                      runner.call_args_list[1].args[0][-1])
+        self.assertIn("Start-Service -Name ssh-agent",
+                      runner.call_args_list[2].args[0][-1])
+        self.assertEqual(runner.call_args_list[3].args[0][-1], "-l")
+
+    def test_laptop_agent_does_not_retry_on_banner_timeout_or_different_device(self):
+        cmd = self._pinned_laptop_command_for_agent_test()
+        for profile, command, err in (
+            ("laptop", cmd, "Connection timed out during banner exchange"),
+            ("pc", cmd, "Permission denied (publickey,password)"),
+            ("laptop", [*cmd[:-2], "root@212.193.14.116", cmd[-1]],
+             "Permission denied (publickey,password)"),
+        ):
+            with self.subTest(profile=profile, target=command[-2], err=err):
+                reply = subprocess.CompletedProcess(command, 255, "", err)
+                with (patch("tools.windows_vps_manager.known_windows_device",
+                            return_value=profile),
+                      patch("tools.windows_vps_manager.subprocess.run",
+                            return_value=reply) as runner):
+                    result, recovery = run_readonly_ssh_with_laptop_agent_recovery(
+                        command, capture_output=True, check=False)
+                self.assertIs(result, reply)
+                self.assertEqual(recovery, "")
+                runner.assert_called_once()
+
+    def test_laptop_agent_cannot_start_if_not_stopped_manual(self):
+        cmd = self._pinned_laptop_command_for_agent_test()
+        result = subprocess.CompletedProcess(cmd, 255, "", "Permission denied (publickey)")
+        cases = (
+            ("Running/Manual", 0, "BLOCKED_SERVICE_NOT_STOPPED_MANUAL"),
+            ("Stopped/Disabled", 0, "BLOCKED_SERVICE_NOT_STOPPED_MANUAL"),
+            ("Stopped/Manual", 1, "BLOCKED_SERVICE_STATUS_UNKNOWN"),
+        )
+        for service_out, code, expected in cases:
+            with self.subTest(service=service_out, code=code):
+                with (patch("tools.windows_vps_manager.known_windows_device",
+                            return_value="laptop"),
+                      patch("tools.windows_vps_manager.subprocess.run",
+                            side_effect=[result, subprocess.CompletedProcess(
+                                ["powershell", "Get-Service"], code, service_out, "SECRET")]) as runner):
+                    reply, state = run_readonly_ssh_with_laptop_agent_recovery(
+                        cmd, capture_output=True)
+                self.assertIs(reply, result)
+                self.assertEqual(state, "SSH_AGENT_RECOVERY=" + expected)
+                self.assertEqual(runner.call_count, 2)
+                self.assertNotIn("SECRET", state)
+
+    def test_laptop_agent_start_denied_and_missing_identity_fail_closed(self):
+        cmd = self._pinned_laptop_command_for_agent_test()
+        denied = subprocess.CompletedProcess(cmd, 255, "", "Permission denied (publickey,password)")
+        status = subprocess.CompletedProcess(["powershell"], 0, "Stopped/Manual", "")
+        for start_code, expected_calls, expected in (
+            (1, 3, "BLOCKED_SERVICE_START_FAILED"),
+            (0, 4, "BLOCKED_PINNED_KEY_NOT_IN_AGENT"),
+        ):
+            replies = [denied, status,
+                       subprocess.CompletedProcess(["powershell"], start_code, "", "ACCESS DENIED")]
+            if start_code == 0:
+                replies.append(subprocess.CompletedProcess(
+                    ["ssh-add"], 0, "256 SHA256:untrusted different-key (ED25519)", ""))
+            with self.subTest(start_code=start_code):
+                with (patch("tools.windows_vps_manager.known_windows_device",
+                            return_value="laptop"),
+                      patch("tools.windows_vps_manager.subprocess.run",
+                            side_effect=replies) as runner):
+                    reply, recovery = run_readonly_ssh_with_laptop_agent_recovery(
+                        cmd, capture_output=True)
+                self.assertIs(reply, denied)
+                self.assertEqual(recovery, "SSH_AGENT_RECOVERY=" + expected)
+                self.assertEqual(runner.call_count, expected_calls)
+                self.assertNotIn("ACCESS DENIED", recovery)
+
     def test_failed_ssh_and_timeout_are_not_reported_as_success(self) -> None:
         for result, expected in (
-            (subprocess.CompletedProcess(["ssh"], 0, stdout="healthy", stderr=""), "success"),
+            (subprocess.CompletedProcess(["ssh"], 0, stdout="healthy", stderr=""), "observed"),
             (subprocess.CompletedProcess(["ssh"], 255, stdout="", stderr="denied"), "failure"),
         ):
             with self.subTest(exit_code=result.returncode):
@@ -232,16 +334,23 @@ class TestWindowsVpsManager(unittest.TestCase):
         VPSManager.write_result(fake, second)
         self.assertEqual(fake._copy_seq, 2)
         self.assertEqual(fake.log.tag_bind.call_count, 2)
-        self.assertEqual(fake.log.insert.call_args_list[1].args[1], first + "\n\n")
-        self.assertEqual(fake.log.insert.call_args_list[3].args[1], second + "\n\n")
+        self.assertEqual(fake.log.insert.call_args_list[0].args[1], first + "\n")
+        self.assertEqual(fake.log.insert.call_args_list[1].args[1],
+                         "📋 Скопировать результат")
+        self.assertEqual(fake.log.insert.call_args_list[2].args[1], "\n\n")
+        self.assertEqual(fake.log.insert.call_args_list[3].args[1], second + "\n")
+        self.assertEqual(fake.log.insert.call_args_list[4].args[1],
+                         "📋 Скопировать результат")
+        self.assertEqual(fake.log.insert.call_args_list[5].args[1], "\n\n")
         self.assertNotEqual(
             fake.log.tag_bind.call_args_list[0].args[0],
             fake.log.tag_bind.call_args_list[1].args[0],
         )
         fake.log.tag_bind.call_args_list[0].args[2](None)
         fake.log.tag_bind.call_args_list[1].args[2](None)
-        self.assertEqual([c.args[0] for c in fake.copy_result.call_args_list],
-                         [first, second])
+        self.assertEqual([c.args for c in fake.copy_result.call_args_list],
+                         [(first, "copy_result_1"), (second, "copy_result_2")])
+        self.assertEqual(fake.log.see.call_count, 2)
 
     def test_copy_result_uses_only_one_result_and_no_remote_call(self):
         fake = SimpleNamespace(
@@ -252,6 +361,138 @@ class TestWindowsVpsManager(unittest.TestCase):
         fake.clipboard_clear.assert_called_once_with()
         fake.clipboard_append.assert_called_once_with(output)
         fake.update_idletasks.assert_called_once_with()
+
+    def test_successful_copy_shows_green_confirmation_for_only_that_entry(self):
+        log = Mock()
+        log.index.return_value = "7.0"
+        fake = SimpleNamespace(
+            clipboard_clear=Mock(), clipboard_append=Mock(),
+            update_idletasks=Mock(), log=log)
+        output = "Preflight\nwhole result"
+        VPSManager.copy_result(fake, output, "copy_result_2")
+        fake.clipboard_append.assert_called_once_with(output)
+        log.replace.assert_called_once_with(
+            "7.0", "copy_result_2.last", "✓ Скопировано", "copy_result_2")
+        log.tag_configure.assert_called_once_with(
+            "copy_result_2", foreground="#17803d", underline=False)
+        self.assertEqual(log.configure.call_args_list[0].kwargs["state"], "normal")
+        self.assertEqual(log.configure.call_args_list[-1].kwargs["state"], "disabled")
+
+    def test_failed_clipboard_copy_does_not_show_success(self):
+        from tkinter import TclError
+        fake = SimpleNamespace(
+            clipboard_clear=Mock(),
+            clipboard_append=Mock(side_effect=TclError("clipboard unavailable")),
+            update_idletasks=Mock(), log=Mock())
+        with patch("tools.windows_vps_manager.messagebox.showerror") as error:
+            VPSManager.copy_result(fake, "result", "copy_result_1")
+        error.assert_called_once()
+        fake.log.replace.assert_not_called()
+        fake.log.tag_configure.assert_not_called()
+
+    def test_list_readonly_empty_is_not_monolith_success(self):
+        cmd = ["ssh", "list-only"]
+        cases = (
+            (0, "", "", "observed", "REQUEST_LIST=EMPTY"),
+            (0, "bybitscanner-owner-abc.service loaded active exited", "",
+             "observed", "bybitscanner-owner-abc"),
+            (255, "", "banner exchange timeout SECRET", "unproven",
+             "LIST_FAILURE_CLASS=SSH_BANNER_FAILURE"),
+            (2, "REQUEST_LIST=UNPROVEN", "secret message", "unproven",
+             "LIST_FAILURE_CLASS=REMOTE_COMMAND_FAILED"),
+        )
+        for exit_code, stdout, stderr, expected_kind, expected_text in cases:
+            with self.subTest(code=exit_code, stdout=stdout):
+                fake = SimpleNamespace(events=queue.Queue())
+                reply = subprocess.CompletedProcess(cmd, exit_code, stdout, stderr)
+                with patch("tools.windows_vps_manager.subprocess.run",
+                           return_value=reply) as remote:
+                    VPSManager.worker_control(fake, cmd, "list", "")
+                remote.assert_called_once()
+                kind, output = fake.events.get_nowait()
+                self.assertEqual(kind, expected_kind)
+                self.assertIn(expected_text, output)
+                self.assertNotIn("SECRET", output)
+                self.assertNotIn("secret message", output)
+
+    def test_list_transport_timeout_remains_unknown_without_retry(self):
+        cmd = ["ssh", "list-only"]
+        fake = SimpleNamespace(events=queue.Queue())
+        with patch("tools.windows_vps_manager.subprocess.run",
+                   side_effect=subprocess.TimeoutExpired("ssh", 35)) as remote:
+            VPSManager.worker_control(fake, cmd, "list", "")
+        remote.assert_called_once()
+        kind, output = fake.events.get_nowait()
+        self.assertEqual(kind, "unproven")
+        self.assertIn("LIST_FAILURE_CLASS=SSH_CLIENT_TIMEOUT", output)
+        self.assertNotIn("повторять операцию нельзя", output)
+
+    def test_visible_id_paste_copies_32_hex_characters_to_entry_without_ssh(self):
+        request = "ABCDEF0123456789ABCDEF0123456789"
+        entry = Mock()
+        fake = SimpleNamespace(
+            clipboard_get=Mock(return_value=request + "\n"),
+            request_id=Mock(), request_id_entry=entry)
+        VPSManager.paste_request_id(fake)
+        fake.request_id.set.assert_called_once_with(request.lower())
+        entry.icursor.assert_called_once_with("end")
+        entry.focus_set.assert_called_once_with()
+
+    def test_id_paste_rejects_invalid_clipboard_without_overwriting_entry(self):
+        from tkinter import TclError
+        for value in ("", "status", "f" * 31, None):
+            with self.subTest(value=value):
+                clipboard = (Mock(side_effect=TclError("clipboard unavailable"))
+                             if value is None else Mock(return_value=value))
+                fake = SimpleNamespace(
+                    clipboard_get=clipboard, request_id=Mock(),
+                    request_id_entry=Mock())
+                with patch("tools.windows_vps_manager.messagebox.showerror") as err:
+                    VPSManager.paste_request_id(fake)
+                err.assert_called_once()
+                fake.request_id.set.assert_not_called()
+                fake.request_id_entry.icursor.assert_not_called()
+
+    def test_id_ctrl_v_works_with_english_and_russian_layout(self):
+        for keysym, keycode in (("v", 86), ("V", 86), ("Cyrillic_em", 0),
+                                ("unknown", 86)):
+            with self.subTest(keysym=keysym):
+                fake = SimpleNamespace(paste_request_id=Mock())
+                event = SimpleNamespace(keysym=keysym, keycode=keycode)
+                self.assertEqual(VPSManager.paste_request_id_hotkey(fake, event),
+                                 "break")
+                fake.paste_request_id.assert_called_once_with()
+        fake = SimpleNamespace(paste_request_id=Mock())
+        result = VPSManager.paste_request_id_hotkey(
+            fake, SimpleNamespace(keysym="a", keycode=65))
+        self.assertIsNone(result)
+        fake.paste_request_id.assert_not_called()
+
+    def test_status_gui_uses_explicit_exact_id_across_devices_read_only(self):
+        request = "a" * 32
+        fake = SimpleNamespace(
+            busy=False, sha=Mock(), request_id=Mock(), last_request_id="b" * 32,
+            host=Mock(), user=Mock(), key=Mock(), origin="win-pc-test",
+            status=Mock(), buttons=[Mock()], write=Mock(),
+            worker_control=Mock(),
+        )
+        fake.sha.get.return_value = ""
+        fake.request_id.get.return_value = request
+        fake.host.get.return_value = "bybitscanner-vps"
+        fake.user.get.return_value = ""
+        fake.key.get.return_value = ""
+        with (patch("tools.windows_vps_manager.control_ssh_command",
+                    return_value=["ssh", "status-only"]) as cmd,
+              patch("tools.windows_vps_manager.threading.Thread") as worker):
+            VPSManager.run_control(fake, "status")
+        cmd.assert_called_once()
+        self.assertEqual(cmd.call_args.args[3], "status")
+        self.assertEqual(cmd.call_args.kwargs["request_id"], request)
+        self.assertNotEqual(cmd.call_args.kwargs["request_id"],
+                            fake.last_request_id)
+        worker.assert_called_once()
+        self.assertEqual(worker.call_args.kwargs["args"][1:], ("status", request))
+        fake.buttons[0].state.assert_called_once_with(["disabled"])
 
     def test_gui_automatically_watches_same_uuid_until_terminal_success(self):
         req = "9" * 32
@@ -296,6 +537,67 @@ class TestWindowsVpsManager(unittest.TestCase):
         self.assertEqual(state, "unproven")
         self.assertIn("STATUS_UNPROVEN", details)
         self.assertEqual(run.call_count, 3)
+
+    def test_readonly_recovery_refuses_submit_before_any_ssh(self):
+        command = ["ssh", "tools.vps_owner_control submit stop installed"]
+        with patch("tools.windows_vps_manager.subprocess.run") as remote:
+            with self.assertRaisesRegex(ValueError, "readonly_recovery_cannot_submit"):
+                run_readonly_ssh_with_laptop_agent_recovery(command)
+        remote.assert_not_called()
+
+    def test_laptop_submit_precheck_uses_only_same_route_readonly_list(self):
+        from tools.windows_vps_manager import precheck_laptop_owner_submit
+        command = ["ssh", "-F", "none", "root@83.217.213.181",
+                   "cd /opt/BybitScanner && /opt/BybitScanner/venv/bin/python "
+                   "-m tools.vps_owner_control submit stop installed"]
+        expected = subprocess.CompletedProcess(
+            command, 0, "", "")
+        with (patch("tools.windows_vps_manager._pinned_laptop_ssh", return_value=True),
+              patch("tools.windows_vps_manager.run_readonly_ssh_with_laptop_agent_recovery",
+                    return_value=(expected, "SSH_AGENT_RECOVERY=RETRY_ONCE_OK")) as read):
+            okay, msg = precheck_laptop_owner_submit(command)
+        self.assertTrue(okay)
+        self.assertIn("REMOTE_LIST_OBSERVED", msg)
+        self.assertIn("RETRY_ONCE_OK", msg)
+        checked = read.call_args.args[0]
+        self.assertEqual(checked[:-1], command[:-1])
+        self.assertIn("tools.vps_owner_control list", checked[-1])
+        self.assertNotIn(" submit ", checked[-1])
+
+    def test_laptop_precheck_failure_prevents_any_mutating_submit(self):
+        from tools.windows_vps_manager import precheck_laptop_owner_submit
+        fake = SimpleNamespace(events=queue.Queue(), host=Mock(), user=Mock(), key=Mock())
+        request = "3" * 32
+        command = ["ssh", "read-only-approved-ssh", "root@83.217.213.181",
+                   "cd /opt/BybitScanner && /opt/BybitScanner/venv/bin/python "
+                   "-m tools.vps_owner_control submit update " + "a" * 40]
+        with (patch("tools.windows_vps_manager._pinned_laptop_ssh", return_value=True),
+              patch("tools.windows_vps_manager.run_readonly_ssh_with_laptop_agent_recovery",
+                    return_value=(subprocess.CompletedProcess(
+                        command, 255, "", "Permission denied (publickey,password)"),
+                        "SSH_AGENT_RECOVERY=BLOCKED_SERVICE_START_FAILED")),
+              patch("tools.windows_vps_manager.subprocess.run") as remote):
+            VPSManager.worker_control(fake, command, "update", request)
+        remote.assert_not_called()
+        kind, result = fake.events.get_nowait()
+        self.assertEqual(kind, "unproven")
+        self.assertIn("SUBMISSION=NOT_SENT", result)
+        self.assertIn("SSH_AUTH_REJECTED", result)
+        self.assertIn(request, result)
+        self.assertNotIn("Permission denied", result)
+
+    def test_status_watcher_uses_readonly_laptop_agent_recovery_not_submit(self):
+        request = "7" * 32
+        command = ["ssh", "tools.vps_owner_control status " + request]
+        response = subprocess.CompletedProcess(
+            command, 0, "REQUEST_ID=" + request + "\nSTATUS=FINISHED_OK\n", "")
+        with patch("tools.windows_vps_manager.run_readonly_ssh_with_laptop_agent_recovery",
+                   return_value=(response, "SSH_AGENT_RECOVERY=RETRY_ONCE_OK")) as runner:
+            state, _details = watch_owner_request(
+                command, request, initially_submitted=True)
+        self.assertEqual(state, "success")
+        runner.assert_called_once()
+        self.assertIs(runner.call_args.args[0], command)
 
     def test_gui_unknown_submit_checks_status_without_resubmitting(self):
         fake = SimpleNamespace(events=queue.Queue(), host=Mock(), user=Mock(), key=Mock())
