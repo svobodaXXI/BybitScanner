@@ -607,5 +607,73 @@ class StopReentryPaperFillE2E(MirrorStandaloneHarness):
                         "SELECT COUNT(*) FROM robot_reentry_attempts",
                     ).fetchone()[0],
                 ), 2)
+
+                # A protected retry must also EXIT through the real matcher:
+                # OPEN+STOP/TAKE alone is not a completed PAPER lifecycle.
+                exit_bid = second_protection.take_profit + instrument.tick_size
+                exit_ask = exit_bid + instrument.tick_size
+                book.set(SYMBOL, bid=exit_bid, ask=exit_ask)
+                take_book = _event_book(SYMBOL, bid=exit_bid, ask=exit_ask)
+                runtime.call(lambda owner: owner.process_robot_market_event(
+                    SYMBOL, take_book, event_id="wedge-reentry-second-take",
+                    received_at_ms=take_book.received_at_ms,
+                ))
+                taken = _wait_until(lambda: (lambda trade:
+                    trade if trade and trade.exit_time_ms else None
+                )(runtime.call(lambda owner:
+                    owner.store.get_robot_trade(second_trade.trade_id)
+                )))
+                self.assertEqual(taken.exit_reason, "TAKE")
+                self.assertEqual(record(second_id).status, "CLOSED")
+                self.assertIsNone(runtime.call(lambda owner:
+                    owner.store.get_open_robot_trade_for_symbol(ACCOUNT, Symbol(SYMBOL))
+                ))
+
+                diary = ReentryDiaryReader(self.db).load()
+                self.assertEqual(len(diary), 1)
+                self.assertEqual(
+                    [attempt.pattern for attempt in diary[0].attempts],
+                    ["MIRROR", "Falling Wedge"],
+                )
+                self.assertEqual(
+                    [attempt.exit_reason for attempt in diary[0].attempts],
+                    ["STOP", "TAKE"],
+                )
+                self.assertEqual(diary[0].filled_attempt_count, 2)
+                self.assertIsNotNone(stopped.fees_costs_usdt)
+                self.assertIsNotNone(taken.fees_costs_usdt)
+                net_first = stopped.realized_pnl_usdt - stopped.fees_costs_usdt
+                net_second = taken.realized_pnl_usdt - taken.fees_costs_usdt
+                self.assertEqual(
+                    [attempt.known_net_pnl_usdt for attempt in diary[0].attempts],
+                    [net_first, net_second],
+                )
+                self.assertEqual(diary[0].known_net_pnl_usdt, net_first + net_second)
+                executions = runtime.call(lambda owner:
+                    owner.store.load_executions_for_symbol(ACCOUNT, Symbol(SYMBOL))
+                )
+                self.assertEqual(
+                    sum((fill.fee for fill in executions), Decimal("0")),
+                    stopped.fees_costs_usdt + taken.fees_costs_usdt,
+                )
+
+                # Reopen this same PAPER DB: neither a duplicate order nor a
+                # third campaign attempt may arise from the settled retry.
+                runtime.close()
+                runtime, _ = self.runtime(cache, book)
+                _start_robot_monitor(runtime)
+                time.sleep(0.25)
+                self.assertEqual(len(runtime.call(lambda owner:
+                    owner.store.load_executions_for_symbol(ACCOUNT, Symbol(SYMBOL))
+                )), len(executions))
+                self.assertEqual(record(second_id).status, "CLOSED")
+                self.assertIsNone(runtime.call(lambda owner:
+                    owner.store.get_open_robot_trade_for_symbol(ACCOUNT, Symbol(SYMBOL))
+                ))
+                self.assertEqual(runtime.call(lambda owner:
+                    owner.store._connection.execute(
+                        "SELECT COUNT(*) FROM robot_reentry_attempts",
+                    ).fetchone()[0]
+                ), 2)
             finally:
                 runtime.close()
