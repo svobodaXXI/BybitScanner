@@ -4442,9 +4442,17 @@ class PaperRuntime:
         if (
             position is None or position.side is not expected_side
             or position.sync_state not in ("synced", "synchronized")
+            or position.quantity.value != (
+                trade.entry_quantity - Decimal(str(intent["partial_quantity"]))
+            )
             or projection is None or projection.status != "confirmed_active"
             or projection.pending_command_id is not None or projection.stop_loss is None
             or projection.take_profit != trade.take_price
+            or (
+                trade.direction == "LONG" and projection.stop_loss < trade.stop_price
+            ) or (
+                trade.direction == "SHORT" and projection.stop_loss > trade.stop_price
+            )
             or self.store.load_unresolved_paper_protection_obligations(self._paper_account_id)
             or active_robot_owner_candidate_ids(
                 self.store, self._paper_account_id, candidate.symbol,
