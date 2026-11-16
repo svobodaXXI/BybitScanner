@@ -1,0 +1,142 @@
+"""Non-executing observation of Bybit V5 publicTrade for an existing symbol context.
+
+Public WebSocket prints do not carry a replayable gap-free sequence. Consequently
+this observer NEVER asserts complete flow, even after a healthy subscribe ACK.
+No candidates, Robot commands, PnL or admission are produced here.
+"""
+from __future__ import annotations
+
+from collections import deque
+from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
+from threading import Lock
+
+
+@dataclass(frozen=True, slots=True)
+class ObservedPrint:
+    trade_id: str
+    timestamp_ms: int
+    side: str
+    price: Decimal
+    quantity: Decimal
+
+    @property
+    def notional(self) -> Decimal:
+        return self.price * self.quantity
+
+
+class PublicTradeObservation:
+    """Bounded, generation-fenced, atomic per-frame read-only observation."""
+
+    LIMIT = 512
+    FRAME_LIMIT = 1024
+
+    def __init__(self, symbol: str) -> None:
+        self.symbol = symbol
+        self._lock = Lock()
+        self._generation = 0
+        self._prints: deque[ObservedPrint] = deque(maxlen=self.LIMIT)
+        self._ids: dict[str, ObservedPrint] = {}
+        self._last_ms: int | None = None
+        self._frames = 0
+        self._invalid_frames = 0
+        self._gap = True  # startup/subscription history is unproven
+
+    def mark_gap(self) -> None:
+        """A disconnect/reconnect invalidates continuity and per-generation IDs."""
+        with self._lock:
+            self._generation += 1
+            self._gap = True
+            self._prints.clear()
+            self._ids.clear()
+            self._last_ms = None
+
+    @staticmethod
+    def _positive(value: object) -> Decimal:
+        if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+            raise ValueError("invalid numeric type")
+        try:
+            parsed = Decimal(str(value))
+        except (ValueError, InvalidOperation) as error:
+            raise ValueError("invalid decimal") from error
+        if not parsed.is_finite() or parsed <= 0:
+            raise ValueError("non-positive or non-finite value")
+        return parsed
+
+    def _parse(self, message: object) -> list[ObservedPrint]:
+        if not isinstance(message, dict) or message.get("topic") != f"publicTrade.{self.symbol}":
+            raise ValueError("unexpected publicTrade topic")
+        data = message.get("data")
+        if not isinstance(data, list) or len(data) > self.FRAME_LIMIT:
+            raise ValueError("invalid trade batch")
+        parsed: list[ObservedPrint] = []
+        for item in data:
+            if not isinstance(item, dict) or item.get("s") != self.symbol:
+                raise ValueError("trade symbol mismatch")
+            identifier = item.get("i")
+            timestamp = item.get("T")
+            side = item.get("S")
+            if (not isinstance(identifier, str) or not identifier or len(identifier) > 128
+                    or type(timestamp) is not int or timestamp < 0
+                    or side not in ("Buy", "Sell")):
+                raise ValueError("invalid exact trade identity, time or side")
+            parsed.append(ObservedPrint(
+                identifier, timestamp, side,
+                self._positive(item.get("p")), self._positive(item.get("v")),
+            ))
+        return parsed
+
+    def observe(self, message: object) -> bool:
+        """Return false on invalid/stale frames, without accepting any partial batch."""
+        try:
+            parsed = self._parse(message)
+        except (TypeError, ValueError):
+            with self._lock:
+                self._invalid_frames += 1
+                self._gap = True
+            return False
+        with self._lock:
+            # A frame must be atomic: duplicates with conflicting contents, backward
+            # timestamps, and conflicting IDs *inside* the frame are all rejected.
+            pending: dict[str, ObservedPrint] = {}
+            timestamp = self._last_ms
+            for item in parsed:
+                old = pending.get(item.trade_id) or self._ids.get(item.trade_id)
+                if old is not None:
+                    if old != item:
+                        self._invalid_frames += 1
+                        self._gap = True
+                        return False
+                    continue
+                if timestamp is not None and item.timestamp_ms < timestamp:
+                    self._invalid_frames += 1
+                    self._gap = True
+                    return False
+                pending[item.trade_id] = item
+                timestamp = item.timestamp_ms
+            for item in pending.values():
+                if len(self._prints) == self.LIMIT:
+                    evicted = self._prints.popleft()
+                    self._ids.pop(evicted.trade_id, None)
+                    self._gap = True  # evicted evidence cannot support full-history claims
+                self._prints.append(item)
+                self._ids[item.trade_id] = item
+            self._last_ms = timestamp
+            self._frames += 1
+            return True
+
+    def snapshot(self) -> dict:
+        """Diagnostic only: NO signal eligibility or inferred completeness."""
+        with self._lock:
+            return {
+                "symbol": self.symbol,
+                "generation": self._generation,
+                "observed_prints": len(self._prints),
+                "observed_frames": self._frames,
+                "invalid_frames": self._invalid_frames,
+                "last_trade_ms": self._last_ms,
+                "gap_or_truncation": self._gap,
+                "continuity": "UNPROVEN",
+                "order_authority": False,
+                "prints": tuple(self._prints),
+            }
