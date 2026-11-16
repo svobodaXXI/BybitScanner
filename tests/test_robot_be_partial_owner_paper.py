@@ -120,5 +120,68 @@ class RobotBePartialOwnerPaperTests(unittest.TestCase):
         )
 
 
+    def test_verified_partial_tightens_stop_once_using_actual_execution_fees(self):
+        initial_executions = len(self.runtime.store.load_executions())
+        self.assertEqual(self.run_partial().status, CommandResultStatus.COMPLETED)
+        book_after_fill = _crossing_book(
+            self.symbol.value, bid="64800", ask="64800.5",
+        )
+        response = self.runtime._robot_wedge_be_reconcile_partial(
+            self.candidate_id, book=book_after_fill,
+            worst_case_slippage_ticks=2,
+        )
+        self.assertEqual(response.status, CommandResultStatus.COMPLETED)
+        protection = self.runtime.store.get_protection_projection(self.key)
+        self.assertGreater(protection.stop_loss, Decimal("64000"))
+        self.assertLess(protection.stop_loss, Decimal("64800"))
+        self.assertEqual(protection.take_profit, Decimal("65300"))
+        self.assertIsNone(self.runtime.store.get_robot_trade(self.trade_id).exit_time_ms)
+        persisted = self.runtime.store.get_robot_candidate(self.candidate_id)
+        stop_intent = persisted.robot_state["execution"]["wedge_be_stop_intent"]
+        self.assertEqual(str(protection.stop_loss), stop_intent["stop_price"])
+        # Reconciliation is a durable projection read, not another STOP
+        # command and absolutely not another partial market execution.
+        repeated = self.runtime._robot_wedge_be_reconcile_partial(
+            self.candidate_id,
+            book=_crossing_book(self.symbol.value, bid="64801", ask="64801.5"),
+            worst_case_slippage_ticks=2,
+        )
+        self.assertEqual(repeated.status, CommandResultStatus.COMPLETED)
+        self.assertEqual(
+            self.runtime.store.get_protection_projection(self.key).stop_loss,
+            protection.stop_loss,
+        )
+        self.assertEqual(
+            len(self.runtime.store.load_executions()), initial_executions + 1,
+        )
+
+    def test_unknown_stop_result_does_not_replay_amendment(self):
+        from unittest.mock import patch
+
+        self.assertEqual(self.run_partial().status, CommandResultStatus.COMPLETED)
+        from terminal.api.models import PaperStopMutationResult
+        fake_unknown = PaperStopMutationResult(
+            "fake-be-stop", CommandResultStatus.UNKNOWN, "unknown",
+        )
+        with patch.object(self.runtime, "_robot_amend_stop", return_value=fake_unknown) as amend:
+            result = self.runtime._robot_wedge_be_reconcile_partial(
+                self.candidate_id,
+                book=_crossing_book(self.symbol.value, bid="64800", ask="64800.5"),
+                worst_case_slippage_ticks=2,
+            )
+            self.assertEqual(result.status, CommandResultStatus.UNKNOWN)
+            self.assertEqual(amend.call_count, 1)
+            result = self.runtime._robot_wedge_be_reconcile_partial(
+                self.candidate_id,
+                book=_crossing_book(self.symbol.value, bid="64800", ask="64800.5"),
+                worst_case_slippage_ticks=2,
+            )
+            self.assertEqual(result.status, CommandResultStatus.UNKNOWN)
+            self.assertEqual(amend.call_count, 1)
+        protection = self.runtime.store.get_protection_projection(self.key)
+        self.assertEqual(protection.stop_loss, Decimal("64000"))
+        self.assertEqual(protection.take_profit, Decimal("65300"))
+
+
 if __name__ == "__main__":
     unittest.main()
