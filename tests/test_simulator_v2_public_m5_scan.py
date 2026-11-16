@@ -146,6 +146,46 @@ class PublicM5ScannerResearchTests(unittest.TestCase):
             f"parallel_62_bars_s={parallel_seconds:.3f}"
         )
 
+    def test_native_wedge_cpu_profile_on_oscillating_history(self):
+        """Diagnostic: representative pivots, same truth under concurrency.
+
+        Wall-clock figures are evidence, not a CI speed threshold: machines
+        differ and thread/process startup overhead must remain visible.
+        """
+        import math
+        from time import perf_counter
+
+        doc = public_doc(120)
+        previous = 100.0
+        for i, event in enumerate(doc["events"]):
+            close = 100 + (6 - i / 50) * math.sin(i / 3.0)
+            event["candle"].update({
+                "open": previous,
+                "close": close,
+                "high": max(previous, close) + 0.5,
+                "low": min(previous, close) - 0.5,
+            })
+            previous = close
+
+        start = perf_counter()
+        serial = scan_public_closed_m5(
+            doc, ("WEDGE_RISING", "WEDGE_FALLING"),
+            on_ready=lambda *_: None, parallel_workers=1,
+        )
+        serial_s = perf_counter() - start
+        start = perf_counter()
+        parallel = scan_public_closed_m5(
+            doc, ("WEDGE_RISING", "WEDGE_FALLING"),
+            on_ready=lambda *_: None, parallel_workers=2,
+        )
+        parallel_s = perf_counter() - start
+        self.assertEqual(serial, parallel)
+        print(
+            "PUBLIC_M5_OSCILLATING_NATIVE_DIAGNOSTIC "
+            f"serial_120_bars_s={serial_s:.3f} "
+            f"parallel_120_bars_s={parallel_s:.3f}"
+        )
+
     def test_parallel_worker_bounds_are_fail_closed(self):
         doc = public_doc(60)
         for workers in (0, 4, True, -1, "2"):
