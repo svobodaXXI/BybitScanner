@@ -275,6 +275,41 @@ class AtrPerWindowReuseTests(unittest.TestCase):
         self.assertTrue(all(atr is passed[0] for atr in passed))
         self.assertTrue(passed[0].equals(calculate_atr(candles, period=ATR_PERIOD)))
 
+    def test_line_memo_reuses_touch_evaluation_with_identical_results(self):
+        candles = _flat_candles()
+        atr = calculate_atr(candles, period=ATR_PERIOD)
+        upper = {"slope": -.1, "intercept": 112.}
+        highs = [{"index": i, "price": 112 - .1*i} for i in (15, 20, 35)]
+        lows = [{"index": i, "price": 88 + .1*i} for i in (15, 20, 35)]
+        lower_lines = [
+            {"slope": .1, "intercept": 88. + shift}
+            for shift in range(4)
+        ]
+        cache = {}
+        with patch("geometry.touches.count_touches", wraps=count_touches) as count:
+            optimized = [
+                analyze_touches(upper, lower, highs, lows, candles=candles,
+                                atr_series=atr, touch_cache=cache)
+                for lower in lower_lines
+            ]
+        # Four paired structures have one identical upper and four different
+        # lowers: 5 line valuations instead of 8; all outputs retain fresh
+        # mutable ownership (a model cannot contaminate another model).
+        self.assertEqual(count.call_count, 5)
+        baseline = [
+            analyze_touches(upper, lower, highs, lows, candles=candles)
+            for lower in lower_lines
+        ]
+        self.assertEqual(optimized, baseline)
+        self.assertIsNot(
+            optimized[0]["upper_touch_points"], optimized[1]["upper_touch_points"],
+        )
+        optimized[0]["upper_touch_points"][0]["score"] = -999.
+        self.assertNotEqual(
+            optimized[0]["upper_touch_points"][0]["score"],
+            optimized[1]["upper_touch_points"][0]["score"],
+        )
+
     def test_different_windows_do_not_share_atr(self):
         first = _flat_candles(40, half_range=1.)
         second = _flat_candles(40, half_range=4.)
