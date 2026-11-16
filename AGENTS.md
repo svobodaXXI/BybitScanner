@@ -15,6 +15,29 @@ specialist chats finish **only their active bounded task**, record a handoff and
 report READY_FOR_ARCHIVE or an exact blocker; do not start the proposed next
 workstreams. This is routing, not a new approval or trading authority.
 
+## Owner directive — acceptance and Codex boundaries (2026-11-16)
+
+**Owner-only real-world acceptance:** the owner personally performs and confirms all
+local, UI, Simulator, PAPER and VPS acceptance. Agents may prepare code, CI,
+reproduction steps and acceptance criteria, but may not treat automated tests,
+GitHub CI, technical receipts or their own statements as the owner's acceptance.
+Do not claim `ACCEPTED` without explicit first-hand owner confirmation.
+
+**No Codex access to the owner's computer:** do not use Codex as a routine local
+PC/laptop operator, synchronize local checkouts through it, perform laptop
+installs, SSH preflight, or collect local acceptance evidence by delegating
+desktop access. Codex is reserved for exceptional tasks explicitly assigned by
+the owner and VPS synchronization in the specifically authorized scope. Neither
+category implies standing access to the owner's computer or blanket approval
+for VPS/PAPER/trading operations. Prepare the minimum necessary owner-operated
+acceptance step instead. The prior Codex Desktop laptop preflight request is
+withdrawn; installed VPS SHA and host readiness remain unproven.
+
+This current owner instruction supersedes older access/delegation examples below
+where they would otherwise suggest routine Codex Desktop access to the PC.
+Maintain all independent merge, deployment, STOP/START, admission, PAPER and LIVE
+safety gates. See current coordination in issue #1077.
+
 ## Owner time and trust — mandatory at every new task
 
 **Overarching owner priority (reconfirmed 2026-11-04): maximize saved owner time**, including the shortest safe, efficient, autonomous development workflow. Technical BACKLOG P0 describes the current engineering task, **not** the project's overriding priority. Prefer end-to-end delivery with minimal owner interventions, approvals only at required boundaries, and observed outcomes over process/PR churn. This priority is **fixed across quests, backlogs, releases, and chats**: do not rename, replace, demote, or reinterpret it because the current technical P0 changes. Only a new **explicit owner instruction specifically changing this overarching priority** may revise it; ordinary task requests, planning, documents, and automation cannot. All trading/runtime safety gates and owner approvals remain binding.
