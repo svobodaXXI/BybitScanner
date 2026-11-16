@@ -499,25 +499,36 @@ class VPSManager(tk.Tk):
         self.log.see("end")
         self.log.configure(state="disabled")
 
-    def copy_result(self, result: str) -> None:
-        """Copy the complete output of one finished action to the clipboard."""
+    def copy_result(self, result: str, tag: str | None = None) -> None:
+        """Copy one finished action and visibly acknowledge a successful click."""
         try:
             self.clipboard_clear()
             self.clipboard_append(result)
             self.update_idletasks()
         except tk.TclError:
             messagebox.showerror("VPS Manager", "Не удалось скопировать результат")
+            return
+        if tag is not None:
+            self.log.configure(state="normal")
+            try:
+                first = self.log.index(f"{tag}.first")
+                self.log.replace(first, f"{tag}.last", "✓ Скопировано", tag)
+                self.log.tag_configure(tag, foreground="#17803d", underline=False)
+            finally:
+                self.log.configure(state="disabled")
 
     def write_result(self, result: str) -> None:
-        """Offer an independent copy link for each completed journal entry."""
+        """Append an action's output, then its visible independent copy link."""
         self._copy_seq += 1
         tag = f"copy_result_{self._copy_seq}"
         self.log.configure(state="normal")
-        self.log.insert("end", "📋 Скопировать результат\n", (tag,))
-        self.log.insert("end", result + "\n\n")
+        self.log.insert("end", result + "\n")
+        self.log.insert("end", "📋 Скопировать результат", (tag,))
+        self.log.insert("end", "\n\n")
         self.log.tag_configure(tag, foreground="#0066bb", underline=True)
         self.log.tag_bind(tag, "<Button-1>",
-                          lambda _event, output=result: self.copy_result(output))
+                          lambda _event, output=result, target=tag:
+                          self.copy_result(output, target))
         self.log.see("end")
         self.log.configure(state="disabled")
 

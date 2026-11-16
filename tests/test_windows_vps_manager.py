@@ -232,16 +232,23 @@ class TestWindowsVpsManager(unittest.TestCase):
         VPSManager.write_result(fake, second)
         self.assertEqual(fake._copy_seq, 2)
         self.assertEqual(fake.log.tag_bind.call_count, 2)
-        self.assertEqual(fake.log.insert.call_args_list[1].args[1], first + "\n\n")
-        self.assertEqual(fake.log.insert.call_args_list[3].args[1], second + "\n\n")
+        self.assertEqual(fake.log.insert.call_args_list[0].args[1], first + "\n")
+        self.assertEqual(fake.log.insert.call_args_list[1].args[1],
+                         "📋 Скопировать результат")
+        self.assertEqual(fake.log.insert.call_args_list[2].args[1], "\n\n")
+        self.assertEqual(fake.log.insert.call_args_list[3].args[1], second + "\n")
+        self.assertEqual(fake.log.insert.call_args_list[4].args[1],
+                         "📋 Скопировать результат")
+        self.assertEqual(fake.log.insert.call_args_list[5].args[1], "\n\n")
         self.assertNotEqual(
             fake.log.tag_bind.call_args_list[0].args[0],
             fake.log.tag_bind.call_args_list[1].args[0],
         )
         fake.log.tag_bind.call_args_list[0].args[2](None)
         fake.log.tag_bind.call_args_list[1].args[2](None)
-        self.assertEqual([c.args[0] for c in fake.copy_result.call_args_list],
-                         [first, second])
+        self.assertEqual([c.args for c in fake.copy_result.call_args_list],
+                         [(first, "copy_result_1"), (second, "copy_result_2")])
+        self.assertEqual(fake.log.see.call_count, 2)
 
     def test_copy_result_uses_only_one_result_and_no_remote_call(self):
         fake = SimpleNamespace(
@@ -252,6 +259,34 @@ class TestWindowsVpsManager(unittest.TestCase):
         fake.clipboard_clear.assert_called_once_with()
         fake.clipboard_append.assert_called_once_with(output)
         fake.update_idletasks.assert_called_once_with()
+
+    def test_successful_copy_shows_green_confirmation_for_only_that_entry(self):
+        log = Mock()
+        log.index.return_value = "7.0"
+        fake = SimpleNamespace(
+            clipboard_clear=Mock(), clipboard_append=Mock(),
+            update_idletasks=Mock(), log=log)
+        output = "Preflight\nwhole result"
+        VPSManager.copy_result(fake, output, "copy_result_2")
+        fake.clipboard_append.assert_called_once_with(output)
+        log.replace.assert_called_once_with(
+            "7.0", "copy_result_2.last", "✓ Скопировано", "copy_result_2")
+        log.tag_configure.assert_called_once_with(
+            "copy_result_2", foreground="#17803d", underline=False)
+        self.assertEqual(log.configure.call_args_list[0].kwargs["state"], "normal")
+        self.assertEqual(log.configure.call_args_list[-1].kwargs["state"], "disabled")
+
+    def test_failed_clipboard_copy_does_not_show_success(self):
+        from tkinter import TclError
+        fake = SimpleNamespace(
+            clipboard_clear=Mock(),
+            clipboard_append=Mock(side_effect=TclError("clipboard unavailable")),
+            update_idletasks=Mock(), log=Mock())
+        with patch("tools.windows_vps_manager.messagebox.showerror") as error:
+            VPSManager.copy_result(fake, "result", "copy_result_1")
+        error.assert_called_once()
+        fake.log.replace.assert_not_called()
+        fake.log.tag_configure.assert_not_called()
 
     def test_gui_automatically_watches_same_uuid_until_terminal_success(self):
         req = "9" * 32
