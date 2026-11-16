@@ -567,15 +567,18 @@ try {
   assert.match(await strategyNote.innerText(), /1 Ikigai Box/);
   assert.match(await page.getByRole("status", { name: "Результат Scanner M5" }).innerText(),
     /1 из 1/);
-  await page.waitForFunction(() =>
-    document.querySelector(".replay-execution-overlay")?.dataset.visibleScannerObservations === "1");
+  // Public scanner detections are observations, not executions. Keep them
+  // in the journal without painting the old diamond/square chart markers.
+  assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-scanner-observations"), "0");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "0");
+  assert.match(await page.getByRole("heading", { name: "Журнал событий" })
+    .locator("..").innerText(), /Ikigai Box/);
   await page.getByRole("button", { name: "В начало" }).click();
   await page.waitForFunction(() =>
     document.querySelector(".replay-execution-overlay")?.dataset.visibleScannerObservations === "0");
   await page.getByRole("button", { name: "Пуск", exact: true }).click();
-  await page.waitForFunction(() =>
-    document.querySelector(".replay-execution-overlay")?.dataset.visibleScannerObservations === "1");
+  assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-scanner-observations"), "0",
+    "replaying a public Scanner observation never draws a trade marker");
   // A detection at the 33rd close precedes the end of the 40-bar replay.
   // Continue to the final CLOSED M5 before verifying 100% playback.
   await page.waitForFunction(() =>
@@ -731,7 +734,7 @@ try {
   });
   const factNote = page.getByRole("status", { name: "PAPER факты сделки" });
   await factNote.waitFor();
-  assert.match(await factNote.innerText(), /Кружки на закрытых свечах/);
+  assert.match(await factNote.innerText(), /Треугольники на закрытых свечах/);
   assert.match(await factNote.innerText(), /JSON без криптографической подписи/);
   assert.match(await factNote.innerText(), /Falling Wedge · 5m · версия v1/);
   assert.match(await factNote.innerText(), /архивная исходная геометрия/);
@@ -741,6 +744,7 @@ try {
   assert.match(await d2Journal.innerText(), /не полный журнал Robot/);
   await page.waitForFunction(() =>
     document.querySelector(".replay-execution-overlay")?.dataset.visiblePaperFills === "2");
+  assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-scanner-observations"), "0");
   await page.waitForFunction(() =>
     document.querySelector(".replay-execution-overlay")?.dataset.visibleOriginalGeometry === "1");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "0",
