@@ -68,7 +68,7 @@ On subsequent sessions, try this **known-good route once**. If the Windows ssh-a
 `v3286418.hosted-by-vdsina.ru`, SSH exit 0. Это доказательство транспорта
 только в указанном сеансе, не текущего состояния VPS/PAPER.
 
-Штатный Windows VPS Manager (GUI/CLI) теперь применяет **ограниченное**
+Штатный Windows VPS Manager (GUI/CLI) применяет **ограниченное**
 восстановление только для read-only SSH по точному штатному маршруту ноутбука
 при ответе `Permission denied (publickey...)`: один локальный запрос
 `Get-Service ssh-agent`; исключительно при `Stopped/Manual` — один
@@ -81,6 +81,17 @@ read-only SSH-запроса**. Если службы/прав/загружен�
 timeouts, основной ПК и отправка любых монолитных submit-операций этим
 восстановлением не затрагиваются. SSH_OK не разрешает STOP/START/UPDATE,
 PAPER_AUTO или LIVE.
+
+Перед уже отдельно подтверждённым владельцем `submit` на ноутбуке
+Windows Manager выполняет **только read-only** `tools.vps_owner_control list`
+через те же SSH host/key/flags. Если `publickey` отклонён, используется
+описанное выше однократное восстановление локального агента; если список
+не удалось прочитать, `SUBMISSION=NOT_SENT` и изменяющая команда
+**не отправляется**. При успешном соединении `submit` уходит один раз
+по исходному UUID. Если ответ потерян, допускаются только status-запросы
+по этому UUID с ограниченным числом неизвестных ответов; реотправка
+`submit` запрещена. Повторённая SSH-проверка удостоверяет лишь транспорт,
+а не право на релиз/торговлю. ПК и внешние клиентские маршруты не изменяются.
 
 ## WINDOWS POWERSHELL PC SSH ROUTE — separate host-shell route (owner-verified 2026-11-14)
 

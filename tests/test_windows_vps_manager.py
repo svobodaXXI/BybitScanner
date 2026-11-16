@@ -538,6 +538,67 @@ class TestWindowsVpsManager(unittest.TestCase):
         self.assertIn("STATUS_UNPROVEN", details)
         self.assertEqual(run.call_count, 3)
 
+    def test_readonly_recovery_refuses_submit_before_any_ssh(self):
+        command = ["ssh", "tools.vps_owner_control submit stop installed"]
+        with patch("tools.windows_vps_manager.subprocess.run") as remote:
+            with self.assertRaisesRegex(ValueError, "readonly_recovery_cannot_submit"):
+                run_readonly_ssh_with_laptop_agent_recovery(command)
+        remote.assert_not_called()
+
+    def test_laptop_submit_precheck_uses_only_same_route_readonly_list(self):
+        from tools.windows_vps_manager import precheck_laptop_owner_submit
+        command = ["ssh", "-F", "none", "root@83.217.213.181",
+                   "cd /opt/BybitScanner && /opt/BybitScanner/venv/bin/python "
+                   "-m tools.vps_owner_control submit stop installed"]
+        expected = subprocess.CompletedProcess(
+            command, 0, "", "")
+        with (patch("tools.windows_vps_manager._pinned_laptop_ssh", return_value=True),
+              patch("tools.windows_vps_manager.run_readonly_ssh_with_laptop_agent_recovery",
+                    return_value=(expected, "SSH_AGENT_RECOVERY=RETRY_ONCE_OK")) as read):
+            okay, msg = precheck_laptop_owner_submit(command)
+        self.assertTrue(okay)
+        self.assertIn("REMOTE_LIST_OBSERVED", msg)
+        self.assertIn("RETRY_ONCE_OK", msg)
+        checked = read.call_args.args[0]
+        self.assertEqual(checked[:-1], command[:-1])
+        self.assertIn("tools.vps_owner_control list", checked[-1])
+        self.assertNotIn(" submit ", checked[-1])
+
+    def test_laptop_precheck_failure_prevents_any_mutating_submit(self):
+        from tools.windows_vps_manager import precheck_laptop_owner_submit
+        fake = SimpleNamespace(events=queue.Queue(), host=Mock(), user=Mock(), key=Mock())
+        request = "3" * 32
+        command = ["ssh", "read-only-approved-ssh", "root@83.217.213.181",
+                   "cd /opt/BybitScanner && /opt/BybitScanner/venv/bin/python "
+                   "-m tools.vps_owner_control submit update " + "a" * 40]
+        with (patch("tools.windows_vps_manager._pinned_laptop_ssh", return_value=True),
+              patch("tools.windows_vps_manager.run_readonly_ssh_with_laptop_agent_recovery",
+                    return_value=(subprocess.CompletedProcess(
+                        command, 255, "", "Permission denied (publickey,password)"),
+                        "SSH_AGENT_RECOVERY=BLOCKED_SERVICE_START_FAILED")),
+              patch("tools.windows_vps_manager.subprocess.run") as remote):
+            VPSManager.worker_control(fake, command, "update", request)
+        remote.assert_not_called()
+        kind, result = fake.events.get_nowait()
+        self.assertEqual(kind, "unproven")
+        self.assertIn("SUBMISSION=NOT_SENT", result)
+        self.assertIn("SSH_AUTH_REJECTED", result)
+        self.assertIn(request, result)
+        self.assertNotIn("Permission denied", result)
+
+    def test_status_watcher_uses_readonly_laptop_agent_recovery_not_submit(self):
+        request = "7" * 32
+        command = ["ssh", "tools.vps_owner_control status " + request]
+        response = subprocess.CompletedProcess(
+            command, 0, "REQUEST_ID=" + request + "\nSTATUS=FINISHED_OK\n", "")
+        with patch("tools.windows_vps_manager.run_readonly_ssh_with_laptop_agent_recovery",
+                   return_value=(response, "SSH_AGENT_RECOVERY=RETRY_ONCE_OK")) as runner:
+            state, _details = watch_owner_request(
+                command, request, initially_submitted=True)
+        self.assertEqual(state, "success")
+        runner.assert_called_once()
+        self.assertIs(runner.call_args.args[0], command)
+
     def test_gui_unknown_submit_checks_status_without_resubmitting(self):
         fake = SimpleNamespace(events=queue.Queue(), host=Mock(), user=Mock(), key=Mock())
         fake.host.get.return_value = "bybitscanner-vps"

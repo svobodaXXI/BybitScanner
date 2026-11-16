@@ -181,7 +181,10 @@ def watch_owner_request(
     status_command: list[str], request: str, *, initially_submitted: bool,
     run=None, sleep=None, attempts: int = OWNER_POLL_LIMIT,
 ) -> tuple[str, str]:
-    run = run or subprocess.run
+    if run is None:
+        # Recovery belongs to the read-only status query, never to submit.
+        def run(command: list[str], **kwargs):
+            return run_readonly_ssh_with_laptop_agent_recovery(command, **kwargs)[0]
     sleep = sleep or time.sleep
     state = "submitted" if initially_submitted else "unproven"
     latest = ""
@@ -390,6 +393,10 @@ def run_readonly_ssh_with_laptop_agent_recovery(
     Intended only for read-only callers. No key loading, passwords, config
     updates, SSH retries on banner timeout or retry of a mutating submit.
     """
+    # Even an accidental call with a write-command must be rejected BEFORE
+    # the first SSH launch, not merely excluded from its second attempt.
+    if command and "tools.vps_owner_control submit " in command[-1]:
+        raise ValueError("readonly_recovery_cannot_submit")
     first = subprocess.run(command, **kwargs)
     if (not _pinned_laptop_ssh(command) or first.returncode != 255
             or "permission denied (publickey" not in (first.stderr or "").casefold()):
@@ -423,6 +430,38 @@ def run_readonly_ssh_with_laptop_agent_recovery(
                     else "SSH_AGENT_RECOVERY=RETRY_ONCE_UNPROVEN")
 
 
+def precheck_laptop_owner_submit(
+    command: list[str],
+) -> tuple[bool, str]:
+    """Prove laptop transport using the canonical read-only owner list first.
+
+    This is NOT a submit retry. On unproven transport there is no submit.
+    A successful check says only that the remote owner-list request completed.
+    """
+    if not _pinned_laptop_ssh(command):
+        return True, ""
+    if "tools.vps_owner_control submit " not in command[-1]:
+        raise ValueError("expected_canonical_owner_submit")
+
+    probe = command.copy()
+    probe[-1] = CONTROL_MODULE + " list"  # read-only, same host/key/SSH options
+    try:
+        receipt, agent = run_readonly_ssh_with_laptop_agent_recovery(
+            probe, capture_output=True, text=True, errors="replace",
+            stdin=subprocess.DEVNULL, timeout=35, creationflags=NO_WINDOW,
+            check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return False, "SSH_SUBMIT_PREFLIGHT=CLIENT_TIMEOUT_OR_SPAWN_FAILURE"
+
+    if receipt.returncode != 0:
+        reason = preflight_failure_class(receipt.stderr or "", receipt.returncode)
+        return False, ("SSH_SUBMIT_PREFLIGHT=UNPROVEN\n"
+                       "SSH_SUBMIT_PREFLIGHT_FAILURE_CLASS=" + reason
+                       + ("\n" + agent if agent else ""))
+    return True, ("SSH_SUBMIT_PREFLIGHT=REMOTE_LIST_OBSERVED"
+                  + ("\n" + agent if agent else ""))
+
+
 def run_cli(options: argparse.Namespace) -> int:
     host, user = (options.host, options.user) if options.host else preferred_route()
     if not host:
@@ -446,6 +485,13 @@ def run_cli(options: argparse.Namespace) -> int:
             print("BLOCKED: request ID cannot be preserved; no operation sent")
             return 2
         print("REQUEST_ID=" + req, flush=True)
+    if options.operation in CONTROL_ACTIONS.values():
+        confirmed, proof = precheck_laptop_owner_submit(argv)
+        if proof:
+            print(proof, flush=True)
+        if not confirmed:
+            print("SUBMISSION=NOT_SENT; request_id=" + req)
+            return 2
     try:
         if options.operation in ("status", "list", "preflight"):
             completed, recovery = run_readonly_ssh_with_laptop_agent_recovery(
@@ -702,6 +748,14 @@ class VPSManager(tk.Tk):
 
     def worker_control(self, command: list[str], mode: str, request: str) -> None:
         try:
+            precheck_receipt = ""
+            if mode in CONTROL_ACTIONS.values():
+                confirmed, precheck_receipt = precheck_laptop_owner_submit(command)
+                if not confirmed:
+                    self.events.put(("unproven",
+                                     ("SUBMISSION=NOT_SENT; REQUEST_ID=" + request
+                                      + "\n" + precheck_receipt)))
+                    return
             if mode not in CONTROL_ACTIONS.values():
                 result, recovery = run_readonly_ssh_with_laptop_agent_recovery(
                     command, capture_output=True, text=True, errors="replace",
@@ -758,7 +812,8 @@ class VPSManager(tk.Tk):
                      else "unproven")
             state, details = watch_owner_request(
                 status_command, request, initially_submitted=(state == "submitted"))
-            self.events.put((state, (output or "Ответ запуска неизвестен")
+            self.events.put((state, (precheck_receipt + "\n" if precheck_receipt else "")
+                             + (output or "Ответ запуска неизвестен")
                              + "\n" + details + "\nREQUEST_ID=" + request))
         except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
             if mode == "list":
