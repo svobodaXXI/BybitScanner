@@ -228,9 +228,9 @@ class TestWindowsVpsManager(unittest.TestCase):
         req = "9" * 32
         command = ["ssh", "exact-status"]
         sequence = iter([
-            subprocess.CompletedProcess(command, 3, stdout=f"REQUEST_ID={req}\\nSTATUS=RUNNING\\n", stderr=""),
-            subprocess.CompletedProcess(command, 3, stdout=f"REQUEST_ID={req}\\nSTATUS=RUNNING\\n", stderr=""),
-            subprocess.CompletedProcess(command, 0, stdout=f"REQUEST_ID={req}\\nSTATUS=FINISHED_OK\\n", stderr=""),
+            subprocess.CompletedProcess(command, 3, stdout=f"REQUEST_ID={req}\nSTATUS=RUNNING\n", stderr=""),
+            subprocess.CompletedProcess(command, 3, stdout=f"REQUEST_ID={req}\nSTATUS=RUNNING\n", stderr=""),
+            subprocess.CompletedProcess(command, 0, stdout=f"REQUEST_ID={req}\nSTATUS=FINISHED_OK\n", stderr=""),
         ])
         sleep = Mock()
         run = Mock(side_effect=lambda *_a, **_kw: next(sequence))
@@ -258,7 +258,7 @@ class TestWindowsVpsManager(unittest.TestCase):
         req = "b" * 32
         command = ["ssh", "status-only"]
         reply = subprocess.CompletedProcess(
-            command, 0, stdout="REQUEST_ID=" + "c" * 32 + "\\nSTATUS=FINISHED_OK\\n",
+            command, 0, stdout="REQUEST_ID=" + "c" * 32 + "\nSTATUS=FINISHED_OK\n",
             stderr="")
         run = Mock(return_value=reply)
         state, details = watch_owner_request(
