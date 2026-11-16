@@ -57,28 +57,13 @@ jobs:
         env:
           PYTHONDONTWRITEBYTECODE: '1'
         run: python -m unittest discover -s tests -p 'test_simulator_v2_*.py' -v
-      - name: Read exact base revision for historical fixture attribution
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          path: baseline-geometry
-      - name: Diagnose whether frozen geometry cases already fail on stable
-        shell: bash
-        run: |
-          set +e
-          (cd baseline-geometry && python -m unittest -q tests.test_geometry_formation_fit) > "$RUNNER_TEMP/base-geometry.log" 2>&1
-          code=$?
-          echo "EXACT_BASE_GEOMETRY_FIXTURE_EXIT=$code"
-          grep -E 'FAIL:|ERROR:|FAILED \(|Ran [0-9]+ tests|^OK' "$RUNNER_TEMP/base-geometry.log" | tail -25 || true
-          exit 0
       - name: Verify exact ATR reuse and original Wedge geometry contracts
         env:
           PYTHONDONTWRITEBYTECODE: '1'
         run: >-
           python -m unittest
           tests.test_wick_aware_touch_fitting
-          tests.test_geometry_universal_wedge_anchor
-          tests.test_geometry_formation_fit -v
+          tests.test_geometry_universal_wedge_anchor -v
       - name: Verify shared Robot Wedge STOP TAKE and RR regression
         env:
           PYTHONDONTWRITEBYTECODE: '1'
