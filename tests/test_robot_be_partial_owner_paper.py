@@ -320,6 +320,51 @@ class RobotBePartialOwnerPaperTests(unittest.TestCase):
             1,
         )
 
+    def test_reopened_runtime_resumes_filled_partial_to_tighter_stop_once(self):
+        """Recovered filled partial gets STOP after independent READY proof."""
+        from unittest.mock import patch
+
+        self.assertEqual(self.run_partial().status, CommandResultStatus.COMPLETED)
+        before = len(self.runtime.store.load_executions_for_symbol(
+            self.account, self.symbol,
+        ))
+        self.assertEqual(
+            self.runtime.store.get_protection_projection(self.key).stop_loss,
+            Decimal("64000"),
+        )
+        self.runtime.close()
+        reopened = _runtime(self.db)
+        self.addCleanup(reopened.close)
+        # The owner/operator must independently reestablish READY after
+        # startup recovery; a BE handler must never grant itself admission.
+        _set_admission(reopened, mode="ROBOT_RUNNING", recovery_status="READY")
+        reopened._wedge_be_auto_paper_enabled = True
+        with patch.object(
+            reopened._robot_api, "full_close",
+            side_effect=AssertionError("filled BE must not issue a new partial"),
+        ):
+            result = reopened._robot_wedge_be_auto_step(
+                self.candidate_id, symbol=self.symbol.value, candle=None,
+                book=_crossing_book(self.symbol.value, bid="64800", ask="64800.5"),
+            )
+        self.assertEqual(result.status, CommandResultStatus.COMPLETED)
+        protection = reopened.store.get_protection_projection(self.key)
+        self.assertGreater(protection.stop_loss, Decimal("64000"))
+        self.assertEqual(protection.take_profit, Decimal("65300"))
+        self.assertEqual(
+            len(reopened.store.load_executions_for_symbol(self.account, self.symbol)),
+            before,
+        )
+        again = reopened._robot_wedge_be_auto_step(
+            self.candidate_id, symbol=self.symbol.value, candle=None,
+            book=_crossing_book(self.symbol.value, bid="64800", ask="64800.5"),
+        )
+        self.assertEqual(again.status, CommandResultStatus.COMPLETED)
+        self.assertEqual(
+            reopened.store.get_protection_projection(self.key).stop_loss,
+            protection.stop_loss,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
