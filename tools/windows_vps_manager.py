@@ -170,6 +170,46 @@ def gui_owner_status(stdout: str, returncode: int, request: str) -> str:
 
 
 
+# Only the original request ID is polled. This is read-only monitoring, never
+# a submission retry; bounded SSH failures preserve the original owner operation.
+OWNER_POLL_LIMIT = 180  # up to 15 minutes of ordinary five-second polling
+OWNER_POLL_SECONDS = 5
+OWNER_POLL_UNKNOWN_LIMIT = 3
+
+
+def watch_owner_request(
+    status_command: list[str], request: str, *, initially_submitted: bool,
+    run=subprocess.run, sleep=time.sleep, attempts: int = OWNER_POLL_LIMIT,
+) -> tuple[str, str]:
+    state = "submitted" if initially_submitted else "unproven"
+    latest = ""
+    unknown = 0
+    for attempt in range(attempts):
+        if attempt:
+            sleep(OWNER_POLL_SECONDS)
+        try:
+            reply = run(
+                status_command, capture_output=True, text=True, errors="replace",
+                timeout=20, stdin=subprocess.DEVNULL, creationflags=NO_WINDOW,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            unknown += 1
+        else:
+            observed = gui_owner_status(reply.stdout, reply.returncode, request)
+            if observed in ("success", "failed"):
+                return observed, reply.stdout.strip()
+            if observed == "submitted":
+                state = "submitted"
+                latest = reply.stdout.strip()
+                unknown = 0
+            else:
+                unknown += 1
+        if unknown >= OWNER_POLL_UNKNOWN_LIMIT:
+            return state, latest + "\nSTATUS_UNPROVEN; operation not resubmitted"
+    return state, latest + "\nSTATUS_POLL_LIMIT; use the same request ID"
+
+
 def ssh_command(host: str, user: str, action: str, key: str = "") -> list[str]:
     host = host.strip()
     user = user.strip()
@@ -540,20 +580,10 @@ class VPSManager(tk.Tk):
                      and any(line.startswith("SUBMISSION=ACCEPTED")
                              for line in output.splitlines())
                      else "unproven")
-            for attempt in range(3):
-                if attempt:
-                    time.sleep(2)
-                probe = subprocess.run(
-                    status_command, capture_output=True, text=True, errors="replace",
-                    timeout=20, stdin=subprocess.DEVNULL, creationflags=NO_WINDOW,
-                    check=False)
-                verified = gui_owner_status(probe.stdout, probe.returncode, request)
-                if verified != "unproven":
-                    state = verified
-                    output += "\n" + probe.stdout.strip()
-                    break
+            state, details = watch_owner_request(
+                status_command, request, initially_submitted=(state == "submitted"))
             self.events.put((state, (output or "Ответ запуска неизвестен")
-                             + "\nREQUEST_ID=" + request))
+                             + "\n" + details + "\nREQUEST_ID=" + request))
         except (OSError, subprocess.TimeoutExpired, ValueError):
             self.events.put(("failure", "SSH_STATUS_UNPROVEN; REQUEST_ID=" + request
                              + "; повторять операцию нельзя, проверяйте статус"))
@@ -578,7 +608,7 @@ class VPSManager(tk.Tk):
                 self.write(result)
                 self.busy = False
                 labels = {
-                    "success": "Успешно · подтверждён результат",
+                    "success": "Монолит завершил операцию · приёмка владельцем отдельно",
                     "observed": "Данные VPS получены · готовность ещё не доказана",
                     "submitted": "Отправлено / выполняется",
                     "failed": "Операция завершилась ошибкой",
