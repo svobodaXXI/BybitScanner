@@ -802,7 +802,7 @@ class DurableWedgePartialIntentTests(unittest.TestCase):
             {"executable_price": Decimal("0")},
             {"trigger_candle_end_ms": 100001},
             {"trigger_candle_end_ms": True},
-            {"account_id": "OTHER\\x00PAPER"},
+            {"account_id": "OTHER" + chr(0) + "PAPER"},
             {"symbol": "testusdt"},
             {"direction": "SIDEWAYS"},
         ):
