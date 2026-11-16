@@ -445,7 +445,9 @@ def handler_factory(static_dir: Path = STATIC_DIR,
                 except OSError:
                     self._error(500, "Bundled public archive unavailable")
                 return
-            if url.path == "/local-replay/history":
+            if url.path in ("/local-replay/history", "/local-replay/history-stream"):
+                # Both paths are unsigned, local-only, public market research.
+                # A stream is the same original detector, never Robot trading.
                 if self.command != "GET":
                     self._error(405, "GET only")
                     return
@@ -459,21 +461,76 @@ def handler_factory(static_dir: Path = STATIC_DIR,
                     if not {"symbol", "start", "end"} <= set(fields) or not set(fields) <= {"symbol", "start", "end", "strategies"} or any(len(x) != 1 for x in fields.values()):
                         raise ValueError("Expected symbol, start and end once")
                     names = fields.get("strategies", [""])[0]
-                    if names:
-                        choices = tuple(names.split(","))
+                    choices = tuple(names.split(",")) if names else ()
+                    if choices:
                         from research.simulator_v2.public_m5_scan import SELECTABLE
                         if (len(choices) != len(set(choices))
                                 or len(choices) > 3 or any(name not in SELECTABLE for name in choices)):
                             raise ValueError("Only local Wedge and Ikigai Box M5 research supported")
-                        doc = history_loader(
-                            symbol=fields["symbol"][0], start=fields["start"][0],
-                            end=fields["end"][0], strategies=choices,
-                        )
-                    else:
-                        doc = history_loader(
-                            symbol=fields["symbol"][0], start=fields["start"][0],
-                            end=fields["end"][0],
-                        )
+                    params = {
+                        "symbol": fields["symbol"][0],
+                        "start": fields["start"][0],
+                        "end": fields["end"][0],
+                    }
+                    if choices:
+                        params["strategies"] = choices
+                except (ValueError, OverflowError) as exc:
+                    self._error(400, str(exc))
+                    return
+                if url.path == "/local-replay/history-stream":
+                    # Headers/heartbeat are emitted immediately. Readiness is
+                    # published only after each CLOSED M5 has been processed
+                    # by all requested native Scanner observers.
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("X-Content-Type-Options", "nosniff")
+                    self.send_header("X-Accel-Buffering", "no")
+                    self.end_headers()
+
+                    def emit(kind: str, fields: dict[str, object]) -> None:
+                        self.wfile.write(json.dumps(
+                            {"type": kind, **fields}, ensure_ascii=False,
+                            allow_nan=False, separators=(",", ":"),
+                        ).encode("utf-8") + b"\n")
+                        self.wfile.flush()
+
+                    try:
+                        emit("start", {
+                            "symbol": params["symbol"],
+                            "start": params["start"],
+                            "end": params["end"],
+                        })
+
+                        def ready(doc: dict[str, object], count: int,
+                                  observed: list[dict[str, object]]) -> None:
+                            if count == 1 or count % 3 == 0 or count == len(doc["events"]):
+                                emit("snapshot", {
+                                    "ready_count": count,
+                                    "document": ready_public_market_snapshot(doc, count, observed),
+                                })
+
+                        document = history_loader(**params, on_ready=ready)
+                        emit("complete", {
+                            "simulation_run_id": document["simulation_run_id"],
+                            "ready_count": len(document["events"]),
+                        })
+                    except (BrokenPipeError, ConnectionResetError):
+                        return  # Browser cancelled; no detached producer/host mutation.
+                    except (ValueError, OverflowError, ImportError, ModuleNotFoundError,
+                            NativeScannerStudyUnavailable, OSError) as exc:
+                        try:
+                            emit("error", {"error": str(exc)[:250]})
+                        except OSError:
+                            pass
+                    except Exception:
+                        try:
+                            emit("error", {"error": "Public M5 research failed; no complete result"})
+                        except OSError:
+                            pass
+                    return
+                try:
+                    doc = history_loader(**params)
                     body = json.dumps(doc, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
                     self._send(200, body, "application/json; charset=utf-8")
                 except (ValueError, OverflowError) as exc:
@@ -483,8 +540,6 @@ def handler_factory(static_dir: Path = STATIC_DIR,
                 except NativeScannerStudyUnavailable as exc:
                     self._error(503, str(exc))
                 except Exception:
-                    # Failed remote market request: no fallback to cached, stale,
-                    # proxy, PAPER or invented data.
                     self._error(502, "Public Bybit history unavailable; nothing was simulated")
                 return
             if url.path == "/":
