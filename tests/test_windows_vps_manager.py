@@ -90,7 +90,7 @@ class TestWindowsVpsManager(unittest.TestCase):
                 status = Mock()
                 button = Mock()
                 fake = SimpleNamespace(
-                    events=queue.Queue(), write=Mock(), status=status,
+                    events=queue.Queue(), write_result=Mock(), status=status,
                     buttons=[button], after=Mock(), drain=Mock(), busy=True,
                 )
                 fake.events.put((kind, "diagnostic output"))
@@ -98,7 +98,7 @@ class TestWindowsVpsManager(unittest.TestCase):
                 self.assertFalse(fake.busy)
                 self.assertTrue(status.set.call_args.args[0].startswith(expected))
                 button.state.assert_called_with(["!disabled"])
-                fake.write.assert_called_once_with("diagnostic output")
+                fake.write_result.assert_called_once_with("diagnostic output")
 
     def test_git_actions_are_safe_directory_scoped(self) -> None:
         for action, remote in ACTIONS.items():
