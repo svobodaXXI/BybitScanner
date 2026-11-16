@@ -253,10 +253,14 @@ class RobotBreakoutMonitor:
         incident_dir=None,
         emergency_close_path: EmergencyClosePath | None = None,
         mirror_policy: "mirror.MirrorRobotPolicy | None" = None,
+        wedge_be_auto_paper_enabled: bool = False,
     ) -> None:
         self._emergency_close_path = emergency_close_path
         # MIRROR RETEST overlay for Box attempts (OFF unless a policy is bound; see mirror_retest_robot).
         self._mirror_policy = mirror_policy
+        if type(wedge_be_auto_paper_enabled) is not bool:
+            raise ValueError("Wedge BE PAPER auto gate must be explicit bool")
+        self._wedge_be_auto_paper_enabled = wedge_be_auto_paper_enabled
         # Resting entry LIMITs become fill-capable the moment they are durable, so
         # protection coverage for the symbol must already be listening. Without a
         # bound arm this monitor never creates a resting entry LIMIT (fail closed).
@@ -361,6 +365,14 @@ class RobotBreakoutMonitor:
                         )
                     ):
                         advanced.append(record.candidate_id)
+                    if (
+                        self._wedge_be_auto_paper_enabled
+                        and record.robot_state is not None
+                        and record.signal_snapshot.get("pattern")
+                        in ("Falling Wedge", "Rising Wedge")
+                        and self._advance_open_wedge_be(record)
+                    ):
+                        advanced.append(record.candidate_id)
                     continue
                 if self._advance_one(record):
                     advanced.append(record.candidate_id)
@@ -372,6 +384,49 @@ class RobotBreakoutMonitor:
                 self._record_execution_error(record, error)
                 continue
         return tuple(advanced)
+
+    def _advance_open_wedge_be(self, record: RobotCandidateRecord) -> bool:
+        """Run Wedge-only PAPER BE through the canonical owner; never locally mutate.
+
+        First invocation requires a recent, fully CLOSED Scanner M1.
+        If a prior partial was latched, recovery does not need a candle and
+        never makes a fresh partial-entry decision from a later quote.
+        The owner independently revalidates ALL trade/position/protection
+        evidence and handles the only durable MARKET/STOP mutations.
+        """
+        step = getattr(self._action_executor, "wedge_be_step", None)
+        if not callable(step):
+            raise RobotBreakoutMonitorError("enabled BE has no serialized owner execution port")
+        state = record.robot_state or {}
+        execution = state.get("execution") or {}
+        if not isinstance(execution, Mapping):
+            raise RobotBreakoutMonitorError("Wedge BE execution state is malformed")
+        candle = None
+        if "wedge_be_partial_intent" not in execution:
+            source = self._get_closed_candle(record.symbol.value)
+            if not isinstance(source, Mapping):
+                return False
+            timestamp = source.get("time_ms")
+            if type(timestamp) is not int or timestamp <= 0 or timestamp % 60_000:
+                return False
+            end_ms = timestamp + 60_000
+            age_ms = self._clock_ms() - end_ms
+            if age_ms < 0 or age_ms > 90_000:
+                # Never trade on a still forming, delayed or stale bar.
+                return False
+            try:
+                high = Decimal(str(source["high"]))
+                low = Decimal(str(source["low"]))
+            except (KeyError, ValueError, TypeError, ArithmeticError):
+                return False
+            if (
+                not high.is_finite() or not low.is_finite()
+                or low <= 0 or high < low
+            ):
+                return False
+            candle = {"time_ms": timestamp, "high": high, "low": low}
+        result = step(record.candidate_id, candle)
+        return getattr(result, "status", None) is CommandResultStatus.COMPLETED
 
     def process_authoritative_fill(self, symbol: str) -> tuple[str, ...]:
         normalized = symbol.strip().upper()
