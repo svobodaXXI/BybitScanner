@@ -319,10 +319,11 @@ try {
     "seek must live in icon player row");
   assert.equal(await page.locator(".replay-shell > .replay-seek").count(), 0,
     "separate seek above chart must stay removed");
-  assert.equal(await playbackBar.locator(".replay-seek").evaluate(el =>
+  assert.equal(await playbackBar.locator(".replay-seek-progress").evaluate(el =>
     el.previousElementSibling?.matches(".replay-player-button") &&
-    el.nextElementSibling?.matches(".replay-rate")), true,
-    "player order: icons → seek → speed");
+    el.nextElementSibling?.matches(".replay-rate") &&
+    el.querySelector(".replay-seek") !== null), true,
+    "player order: icons → seek with progress label → speed");
   assert.equal(await page.locator(".replay-events").count(), 1,
     "owner requested a read-only causal events journal on the right");
   assert.equal(await page.getByRole("heading", { name: "Журнал событий" }).count(), 1);
