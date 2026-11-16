@@ -1060,7 +1060,6 @@ export function ReplayPage() {
         cancelNativeId={cancelNativeId}
         showReport={!simulationGraphPending && !runLoading && !historyLoading && !historyFailed && cursor >= total}
         onPublicHistoryRequest={(ticker, from, to, choices) => void loadLocalHistory(ticker, from, to, choices)}
-        publicHistoryLoading={historyLoading}
         onStrategySelectionChange={setSelectedStrategies}
         onEpisodeLookup={lookupLocalEpisode} />
       <section className="replay-controls" aria-label="Управление воспроизведением">

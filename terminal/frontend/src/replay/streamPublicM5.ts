@@ -68,11 +68,15 @@ export async function streamPublicM5(
     }
     throw new Error("Неизвестный пакет публичных M5");
   };
+  let reachedEof = false;
   try {
-    while (true) {
+    // The validated 'complete' frame is the protocol's terminal marker.
+    // It may arrive before HTTP EOF; do not keep the Apply button waiting
+    // for a socket the transport has not yet closed.
+    while (!completed) {
       const { done, value } = await reader.read();
       if (signal.aborted) throw new Error("Загрузка M5 отменена");
-      if (done) break;
+      if (done) { reachedEof = true; break; }
       pending += decoder.decode(value, { stream: true });
       if (pending.length > 2_000_000) throw new Error("Превышен размер пакета M5");
       let cut = pending.indexOf("\n");
@@ -86,6 +90,7 @@ export async function streamPublicM5(
     if (pending.trim() || !completed)
       throw new Error("Публичный поток M5 оборвался до подтверждения результата");
   } finally {
-    if (!completed) await reader.cancel().catch(() => undefined);
+    // Explicitly release the open reader when the protocol completes before EOF.
+    if (!reachedEof) await reader.cancel().catch(() => undefined);
   }
 }

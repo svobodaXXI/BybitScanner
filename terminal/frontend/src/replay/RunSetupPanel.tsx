@@ -23,7 +23,7 @@ const STEPS: Array<{ id: PeriodIncrement; name: string }> = [
 export function RunSetupPanel({
   symbol, onPasteSymbol, onSimulationStart, onSimulationReady,
   onSimulationAppend, onSimulationFailed, onSimulationBusy, showReport, cancelNativeId,
-  onPublicHistoryRequest, publicHistoryLoading, onStrategySelectionChange, onHistoryPreparation,
+  onPublicHistoryRequest, onStrategySelectionChange, onHistoryPreparation,
   onEpisodeLookup,
 }: {
   symbol: string;
@@ -37,7 +37,6 @@ export function RunSetupPanel({
   onSimulationFailed: () => void;
   onPublicHistoryRequest: (symbol: string, start: string, endInclusive: string, selected: readonly StrategyId[]) => void;
   onHistoryPreparation: (symbol: string, start: string, endInclusive: string) => void;
-  publicHistoryLoading: boolean;
   onStrategySelectionChange: (selection: RunSelection) => void;
   onEpisodeLookup: (episodeId: string) => Promise<void>;
 }) {
@@ -302,9 +301,8 @@ export function RunSetupPanel({
             </label>
             <div className="replay-run-coordinate-actions">
               <button type="button" onClick={() => void pasteCoordinates()}>Вставить из буфера</button>
-              <button type="button" disabled={publicHistoryLoading}
-                onClick={() => applyCoordinates(coordinateText)}>
-                {publicHistoryLoading ? "Загружаю свечи…" : "Применить"}
+              <button type="button" onClick={() => applyCoordinates(coordinateText)}>
+                Применить
               </button>
             </div>
             {coordinateError && <p role="alert" className="replay-run-error">{coordinateError}</p>}
