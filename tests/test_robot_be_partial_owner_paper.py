@@ -257,12 +257,12 @@ class RobotBePartialOwnerPaperTests(unittest.TestCase):
             None, True,
         )
         with patch.object(self.runtime, "_streamed_book", side_effect=lambda symbol:
-                          _crossing_book(self.symbol.value, bid="64800", ask="64800.5")), \\
-             patch.object(self.runtime._robot_api, "full_close", return_value=unknown) as send:
-            self.assertEqual(monitor.tick(), ())
-            self.assertEqual(send.call_count, 1)
-            self.assertEqual(monitor.tick(), ())
-            self.assertEqual(send.call_count, 1)
+                          _crossing_book(self.symbol.value, bid="64800", ask="64800.5")):
+            with patch.object(self.runtime._robot_api, "full_close", return_value=unknown) as send:
+                self.assertEqual(monitor.tick(), ())
+                self.assertEqual(send.call_count, 1)
+                self.assertEqual(monitor.tick(), ())
+                self.assertEqual(send.call_count, 1)
         self.assertEqual(len(self.runtime.store.load_executions()), original)
         self.assertIn(
             "wedge_be_partial_intent",
