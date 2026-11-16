@@ -70,10 +70,10 @@ function PlayerIcon({ name }: { name: keyof typeof PLAYER_PATHS }) {
     <path d={PLAYER_PATHS[name]} />
   </svg>;
 }
-function ReplayChart({ document, cursor, paperOverlay, paperFacts, selectedStrategies, showTrendGeometry, showDebug, timeframe, drawings, selectedId,
+function ReplayChart({ document, cursor, paperOverlay, paperFacts, showTrendGeometry, showDebug, timeframe, drawings, selectedId,
   drawingTool, onDrawingsChange, onSelectDrawing, onDrawingGesture }: {
   document: ReplayDocument; cursor: number; paperOverlay: PaperOverlay;
-  paperFacts: PaperEpisodeFacts | null; selectedStrategies: readonly string[];
+  paperFacts: PaperEpisodeFacts | null;
   showTrendGeometry: boolean; showDebug: boolean; timeframe: "5m" | "1h";
   drawings: DrawingObject[]; selectedId: string | null; drawingTool: DrawingTool;
   onDrawingsChange: (next: DrawingObject[]) => void;
@@ -442,7 +442,7 @@ function ReplayChart({ document, cursor, paperOverlay, paperFacts, selectedStrat
         context.stroke();
         rendered += 1;
       }
-      // PAPER observations are a separate, hollow-ring overlay. These are
+      // PAPER execution facts are a separate, read-only overlay. These are
       // original owner-imported execution prices, NOT SIMULATION fill events.
       // Only plot a factual fill once its independently closed M5 is revealed.
       let paintedPaper = 0;
@@ -456,51 +456,31 @@ function ReplayChart({ document, cursor, paperOverlay, paperFacts, selectedStrat
         if (x === null || y === null || !Number.isFinite(x) || !Number.isFinite(y) ||
             x < 0 || x > priceWidth || y < 0 || y > paneHeight) continue;
         context.beginPath();
-        context.arc(x, y, 5.5, 0, 2 * Math.PI);
-        context.fillStyle = "#121923";
+        // Same true-price Buy ^ / Sell v geometry and colors as Telegram
+        // Robot position cards. Imported PAPER fills remain separate from
+        // SIMULATION accounting and are never promoted to virtual executions.
+        if (fill.order_side === "Buy") {
+          context.moveTo(x, y - 7);
+          context.lineTo(x - 7, y + 6);
+          context.lineTo(x + 7, y + 6);
+        } else {
+          context.moveTo(x, y + 7);
+          context.lineTo(x - 7, y - 6);
+          context.lineTo(x + 7, y - 6);
+        }
+        context.closePath();
+        context.fillStyle = fill.order_side === "Buy" ? TELEGRAM_BUY_COLOR : TELEGRAM_SELL_COLOR;
         context.fill();
-        context.strokeStyle = fill.order_side === "Buy" ? TELEGRAM_BUY_COLOR : TELEGRAM_SELL_COLOR;
-        context.lineWidth = 2;
+        context.lineWidth = 0.8;
+        context.strokeStyle = "#000000";
         context.stroke();
         paintedPaper++;
       }
-      // Real native Scanner research on public, CLOSED M5 only: small
-      // outlined markers, never ENTRY_SIGNAL/Robot order/fill triangles.
-      let paintedScanner = 0;
-      const revealedScanner = document.mode === "MARKET_ONLY" &&
-        shown.lastTimeMs !== null
-          ? (document.scanner_observations ?? []).filter(item =>
-              selectedStrategies.includes(item.strategy) &&
-              item.available_at_ms <= shown.lastTimeMs!)
-          : [];
-      for (const item of revealedScanner) {
-        const stamp = timeframe === "1h"
-          ? Math.floor(item.source_candle_start_ms / 3_600_000) * 3_600_000
-          : item.source_candle_start_ms;
-        if (!displayCandles.some(bar => bar.start_ms === stamp)) continue;
-        const x = api.timeScale().timeToCoordinate((stamp / 1000) as UTCTimestamp);
-        const y = candleSeries.priceToCoordinate(item.close_price);
-        if (x === null || y === null || !Number.isFinite(x) || !Number.isFinite(y) ||
-            x < 8 || x > priceWidth - 8 || y < 8 || y > paneHeight - 8) continue;
-        context.beginPath();
-        const isBox = item.strategy === "IKIGAI_BOX";
-        if (isBox) {
-          context.rect(x - 6, y - 6, 12, 12);
-        } else {
-          context.moveTo(x, y - 7);
-          context.lineTo(x + 7, y);
-          context.lineTo(x, y + 7);
-          context.lineTo(x - 7, y);
-          context.closePath();
-        }
-        context.strokeStyle = item.status === "FILTER_REJECTED"
-          ? "#f39b7e" : isBox ? "#4ce0bd" : "#d4b3ff";
-        context.lineWidth = 2;
-        context.stroke();
-        paintedScanner++;
-      }
+      // Scanner research observations remain in the chronological journal only.
+      // MARKET_ONLY contains no factual executions: never paint diamonds,
+      // squares, or any other signal marker as if they were trade fills.
       context.restore();
-      canvas.dataset.visibleScannerObservations = String(paintedScanner);
+      canvas.dataset.visibleScannerObservations = "0";
       canvas.dataset.visibleFills = String(rendered);
       canvas.dataset.visiblePaperFills = String(paintedPaper);
       canvas.dataset.visibleOriginalGeometry = String(paintedOriginal);
@@ -516,7 +496,7 @@ function ReplayChart({ document, cursor, paperOverlay, paperFacts, selectedStrat
     // Chart recalculates pixel coordinates after updating series/timescale.
     const redrawId = requestAnimationFrame(() => renderExecutions.current());
     return () => cancelAnimationFrame(redrawId);
-  }, [shown, document, cursor, paperOverlay, paperFacts, observedDmi, observedTouches, blueRiskPreviews, priorBreaks, selectedStrategies, showTrendGeometry, showDebug, timeframe, displayCandles, earlyGeometry]);
+  }, [shown, document, cursor, paperOverlay, paperFacts, observedDmi, observedTouches, blueRiskPreviews, priorBreaks, showTrendGeometry, showDebug, timeframe, displayCandles, earlyGeometry]);
 
   // The editable layer reuses the terminal's drawing tools, but stores its X
   // anchors in absolute UTC M5 slots rather than indices of the selected TF.
@@ -1111,7 +1091,7 @@ export function ReplayPage() {
         PAPER · {paperFacts.symbol} · {paperFacts.trade_episode_id}
         {" · "}{paperFacts.execution_allocations.length} фактических исполнений
         {" · "}{paperOverlay.status === "MATCHED"
-          ? "Кружки на закрытых свечах · цена оригинального исполнения"
+          ? "Треугольники на закрытых свечах · цена оригинального исполнения"
           : paperOverlay.reason}
         {" · "}Gross PnL: {paperFacts.realized_price_pnl_usdt} USDT
         {" · "}Комиссии всего: {paperFacts.known_execution_fees_usdt} USDT
@@ -1313,7 +1293,7 @@ export function ReplayPage() {
                   "График нового прогона появится после нажатия ▶"}
               </div>
             : <ReplayChart document={document} cursor={cursor} paperOverlay={paperOverlay}
-                paperFacts={paperFacts} selectedStrategies={selectedStrategies.selected}
+                paperFacts={paperFacts}
                 showTrendGeometry={showTrendGeometry}
                 showDebug={showDebug} timeframe={timeframe}
                 drawings={drawings} selectedId={selectedDrawing} drawingTool={drawingTool}
