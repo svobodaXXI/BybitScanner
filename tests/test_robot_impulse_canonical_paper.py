@@ -316,5 +316,95 @@ class ImpulseDurablePaperCycleTests(unittest.TestCase):
         self.assertEqual(self.executor.limit_calls, [])
 
 
+class CertifiedImpulseProducerTests(unittest.TestCase):
+    """Two independent closed-M1 windows, true late decision, no invented tape."""
+
+    CLOSE = 1_800_000
+
+    @classmethod
+    def source(cls, *, drop_ws=False, late=False, wrong_kline=False):
+        from terminal.market_data.impulse_observation import ObservedPrint
+        from terminal.market_data.impulse_producer import certified_snapshot
+        c = cls.CLOSE
+        trades = [
+            ("pre", c - 120_100, 1, "Sell", "99", "1"),
+            ("a", c - 119_000, 2, "Buy", "100", "1"),
+            ("b", c - 118_000, 3, "Sell", "99", "1"),
+            ("c", c - 59_000, 4, "Buy", "100", "2"),
+            ("d", c - 58_000, 5, "Buy", "102", "2"),
+            ("post", c + 100, 6, "Sell", "102", "1"),
+        ]
+        prints = tuple(
+            ObservedPrint(
+                tid, ts, seq, side, Decimal(px), Decimal(size),
+                c + 20_000 if late and tid == "d" else ts + 50,
+            )
+            for tid, ts, seq, side, px, size in trades[1:5]
+            if not (drop_ws and tid == "c")
+        )
+        observation = {
+            "symbol": "BTCUSDT", "generation": 3, "observed_frames": 4,
+            "invalid_frames": 0, "order_authority": False,
+            "continuity": "UNPROVEN", "gap_or_truncation": True,
+            "prints": prints,
+        }
+        recent = {
+            "retCode": 0, "time": c + 5,
+            "result": {"category": "linear", "list": [
+                {"execId": tid, "symbol": "BTCUSDT", "time": str(ts),
+                 "seq": str(seq), "side": side, "price": px, "size": size}
+                for tid, ts, seq, side, px, size in trades
+            ]},
+        }
+        def kline(start, o, h, l, cl, vol, turnover):
+            return {
+                "retCode": 0, "time": c + 5,
+                "result": {"category": "linear", "symbol": "BTCUSDT",
+                           "list": [[str(start), o, h, l, cl, vol, turnover]]},
+            }
+        previous = kline(c - 120_000, "100", "100", "99", "99", "2", "199")
+        current = kline(c - 60_000, "100", "102", "100", "102",
+                        "3" if wrong_kline else "4", "404")
+        return observation, recent, previous, current
+
+    def test_two_exact_certified_minutes_create_source_valid_long(self):
+        from terminal.market_data.impulse_producer import certified_snapshot
+        args = self.source()
+        item = certified_snapshot(*args, closed_at_ms=self.CLOSE, decision_ms=self.CLOSE + 10)
+        self.assertIsNotNone(item)
+        self.assertEqual(item["impulse"]["known_at_ms"], self.CLOSE + 10)
+        self.assertEqual(item["impulse"]["direction"], "LONG")
+        self.assertEqual(item["impulse_source"]["scope"], "TWO_CLOSED_M1")
+        self.assertEqual(item["impulse_source"]["print_count"], 4)
+        with patch.dict(os.environ, {robot_impulse.PAPER_OPT_IN: "1"}):
+            self.assertTrue(is_robot_executable_signal(item, timeframe="1"))
+        self.assertEqual(robot_impulse.frozen_terms(item).closed_at_ms, self.CLOSE)
+
+    def test_unmatched_volume_missing_ws_and_late_print_refuse_signal(self):
+        from terminal.market_data.impulse_producer import certified_snapshot
+        for fault in ("drop_ws", "late", "wrong_kline"):
+            with self.subTest(fault=fault):
+                result = certified_snapshot(
+                    *self.source(**{fault: True}),
+                    closed_at_ms=self.CLOSE, decision_ms=self.CLOSE + 10,
+                )
+                self.assertIsNone(result)
+        self.assertIsNone(certified_snapshot(
+            *self.source(), closed_at_ms=self.CLOSE,
+            decision_ms=self.CLOSE + robot_impulse.MAX_SIGNAL_AGE_MS + 1,
+        ))
+
+    def test_invalid_symbol_allowlist_and_default_off(self):
+        from terminal.market_data.impulse_producer import configured_symbols
+        key = robot_impulse.PAPER_OPT_IN
+        with patch.dict(os.environ, {key: "0", "BYBITSCANNER_ROBOT_IMPULSE_SYMBOLS": "BTCUSDT"}):
+            self.assertEqual(configured_symbols(), ())
+        with patch.dict(os.environ, {key: "1", "BYBITSCANNER_ROBOT_IMPULSE_SYMBOLS": "BTCUSDT,ETHUSDT"}):
+            self.assertEqual(configured_symbols(), ("BTCUSDT", "ETHUSDT"))
+        with patch.dict(os.environ, {key: "1", "BYBITSCANNER_ROBOT_IMPULSE_SYMBOLS": "BTCUSDT,BTCUSDT"}):
+            with self.assertRaises(ValueError):
+                configured_symbols()
+
+
 if __name__ == "__main__":
     unittest.main()
