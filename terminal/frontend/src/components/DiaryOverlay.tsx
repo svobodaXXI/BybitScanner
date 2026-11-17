@@ -327,10 +327,68 @@ function verifiedEntryNotionalReturn(deal: ClosedEpisodeLocator): string | null 
 const ENTRY_RETURN_EXPLANATION =
   "PnL после известных комиссий / сумма номиналов фактических входов × 100. Не ROI на маржу, без учёта плеча и неизвестных внешних затрат.";
 
+/** One authenticated owner click authorizes one exact closed PAPER episode.
+ * The paired device later fetches JSON with its separate token; the browser
+ * never sends PAPER data, a private DB path or a device credential.
+ */
+async function queueScopedEpisodeFacts(episodeId: string, owner: "ROBOT" | "MANUAL",
+  revision: number, onNotice: (message: string) => void): Promise<void> {
+  if (!/^te_[a-f0-9]{24}$/.test(episodeId) ||
+      !Number.isSafeInteger(revision) || revision < 1)
+    throw new Error("Неверная идентичность закрытой сделки");
+  const response = await fetch("/api/diary/simulator-bridge/request", {
+    method: "POST", credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      episode_id: episodeId, owner, source_revision: revision,
+    }),
+  });
+  if (!response.ok) throw new Error("Нет сопряжённого Симулятора для передачи JSON");
+  const raw: unknown = await response.json();
+  if (!raw || typeof raw !== "object") throw new Error("Нет подтверждения запроса");
+  const receipt = raw as Record<string, unknown>;
+  if (receipt.ok !== true || receipt.state !== "QUEUED" ||
+      typeof receipt.request_id !== "string" || !/^[a-f0-9]{32}$/.test(receipt.request_id))
+    throw new Error("Неверное подтверждение передачи");
+  onNotice("Запрос подтверждённых исполнений передан локальному адаптеру. ID: " + episodeId);
+  for (let i = 0; i < 12; i++) {
+    if (i) await new Promise<void>(resolve => window.setTimeout(resolve, 1000));
+    const check = await fetch("/api/diary/simulator-bridge/status", {
+      method: "POST", credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ request_id: receipt.request_id }),
+    });
+    if (!check.ok) throw new Error("Статус передачи недоступен");
+    const status: unknown = await check.json();
+    if (!status || typeof status !== "object") throw new Error("Неверный статус передачи");
+    const result = status as Record<string, unknown>;
+    if (result.ok !== true || result.request_id !== receipt.request_id ||
+        !["QUEUED", "DELIVERED", "LAUNCHED", "FAILED", "EXPIRED"].includes(String(result.state)))
+      throw new Error("Неверное подтверждение Симулятора");
+    if (result.state === "LAUNCHED") {
+      onNotice("Локальный адаптер сохранил JSON исполнений и запросил открытие сделки. " +
+        "Полный журнал решений Робота не подтверждён. ID: " + episodeId);
+      return;
+    }
+    if (result.state === "FAILED" || result.state === "EXPIRED")
+      throw new Error("Адаптер не подтвердил получение JSON сделки");
+  }
+  throw new Error("Подтверждение синхронизации не получено");
+}
+
 /** The filmstrip carries only a typed ID, never a claimed full replay. */
-function requestSimulatorLocator(episodeId: string, onNotice: (message: string) => void) {
+function requestSimulatorLocator(episodeId: string, onNotice: (message: string) => void,
+  scope?: { owner: "ROBOT" | "MANUAL"; revision: number }) {
   if (!/^te_[0-9a-f]{24}$/.test(episodeId)) {
     onNotice("Нет подтверждённого ID формата te_… для локального Симулятора.");
+    return;
+  }
+  if (scope) {
+    void queueScopedEpisodeFacts(episodeId, scope.owner, scope.revision, onNotice)
+      .catch((error: unknown) => onNotice(
+        (error instanceof Error ? error.message : "JSON сделки не передан") +
+        ". ID для ручного поиска: " + episodeId,
+      ));
     return;
   }
   try {
@@ -374,7 +432,7 @@ function TradeActionButtons({ onDetails, onReplay }: {
       </button>
       <button type="button" className="diary-trade-icon"
         aria-label="Открыть сделку в Симуляторе" title={onReplay
-          ? "Открыть локальный Симулятор по ID без передачи свечей и решений"
+          ? "Открыть локальный Симулятор по ID сделки"
           : "Для открытия по ID нужен подтверждённый PAPER episode te_…"}
         disabled={!onReplay} onClick={onReplay}>
         <svg className="diary-filmstrip-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -502,8 +560,9 @@ function Value({ value }: { value: string | null | undefined }) {
 /** Owner click routes only a typed ID: local Windows link or paired VPS relay.
  * Neither path transfers PAPER facts or implies a complete historical replay.
  */
-function SimulatorLaunchAction({ episodeId, allowLocalLaunch }: {
+function SimulatorLaunchAction({ episodeId, allowLocalLaunch, owner = null, sourceRevision = null }: {
   episodeId: string; allowLocalLaunch: boolean;
+  owner?: "ROBOT" | "MANUAL" | null; sourceRevision?: number | null;
 }) {
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
@@ -577,6 +636,17 @@ function SimulatorLaunchAction({ episodeId, allowLocalLaunch }: {
   async function requestLaunch() {
     if (busy) return;
     setBusy(true);
+    if (allowLocalLaunch && owner && sourceRevision !== null) {
+      try {
+        await queueScopedEpisodeFacts(episodeId, owner, sourceRevision, setNotice);
+      } catch (error) {
+        setNotice((error instanceof Error ? error.message : "JSON сделки не передан") +
+          ". ID: " + episodeId);
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     // Clipboard permission belongs to the initial owner click, not an HTTP
     // response. Even when unavailable, display the exact ID for manual copy.
     let copied: Promise<boolean>;
@@ -1164,7 +1234,8 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, pnlFilter, sideF
           closedAtMs={selected.closed_at_ms} executions={executionPoints} />
         <TradeExecutionPriceChart points={executionPoints} />
         <SimulatorLaunchAction episodeId={selected.trade_episode_id}
-          allowLocalLaunch={report.account_id === "paper"} />
+          allowLocalLaunch={report.account_id === "paper"}
+          owner={report.owner} sourceRevision={report.source_revision} />
         <button className="diary-detail-back" type="button" disabled={downloading}
           onClick={() => void downloadFacts(selected)}>
           {downloading ? "Выгружаю факты…" : "Скачать JSON исполнений"}
@@ -1256,7 +1327,8 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, pnlFilter, sideF
               </button>
               <TradeActionButtons onDetails={() => setSelectedId(deal.trade_episode_id)}
                 onReplay={/^te_[0-9a-f]{24}$/.test(deal.trade_episode_id) && report.account_id === "paper"
-                  ? () => requestSimulatorLocator(deal.trade_episode_id, setFilmNotice) : undefined} />
+                  ? () => requestSimulatorLocator(deal.trade_episode_id, setFilmNotice,
+              { owner: report.owner, revision: report.source_revision }) : undefined} />
             </div>
           ))}
         </div>
@@ -1264,7 +1336,7 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, pnlFilter, sideF
       {filmNotice ? <p className="diary-finrez-coverage" role="status">{filmNotice}</p> : null}
       {downloadError ? <p className="diary-finrez-coverage" role="alert">{downloadError}</p> : null}
       <p className="diary-finrez-basis">
-        Киноплёнка передаёт в локальный Симулятор только ID сделки. История свечей и решения робота автоматически не загружаются. Фактические исполнения доступны через JSON в карточке сделки.
+        Киноплёнка передаёт подтверждённый JSON исполнений по ID при наличии сопряжённого Симулятора. Свечи подгружаются локально с Bybit; полный журнал решений Робота может отсутствовать.
       </p>
     </div>
   );
