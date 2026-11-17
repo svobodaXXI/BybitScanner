@@ -151,10 +151,19 @@ class SimulatorLaunchRelay:
                       if now - when <= ONLINE_SECONDS]
             if not online:
                 raise RelayUnavailable("no_connected_simulator_adapter")
-            # Prefer a paired device already running the local viewer.
-            # If neither viewer is open, launch on the most recently seen
-            # device. No arbitrary host, URL or path can be selected.
-            device = max(online)[2]
+            # Exact PAPER facts may never be routed to a different device by
+            # last-heartbeat timing. Prefer the sole running viewer, or the sole
+            # paired online device. With multiple eligible devices, require
+            # an explicit future owner selection rather than guessing.
+            if owner is not None:
+                running = [item for item in online if item[0]]
+                eligible = running if running else online
+                if len(eligible) != 1:
+                    raise RelayUnavailable("simulator_target_ambiguous")
+                device = eligible[0][2]
+            else:
+                # Preserve existing ID-only locator routing.
+                device = max(online)[2]
             if any(r.device_id == device and r.state in {"QUEUED", "DELIVERED"}
                    for r in self._requests.values()):
                 raise RelayUnavailable("simulator_adapter_busy")
