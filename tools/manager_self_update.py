@@ -28,6 +28,9 @@ def stage_manager() -> str:
     """Called only on owner click, never in a timer or startup hook."""
     current = _installed_path()
     release = find_asset("manager")
+    marker = Path(getattr(sys, "_MEIPASS", "")) / "desktop-build-sha.txt"
+    if marker.is_file() and marker.read_text(encoding="ascii").strip() == release.sha:
+        raise UpdateBlocked("manager_already_current")
     stage_dir = current.parent / (".desktop-update-" + release.sha)
     stage_dir.mkdir(exist_ok=True)
     executable = stage_dir / NAME
@@ -66,8 +69,8 @@ def commit_manager(*, original: str, old_pid: int) -> int:
             or not source.parent.parent == target.parent
             or not 1 <= old_pid <= 2**31 - 1 or old_pid == os.getpid()):
         return 2
-    old = target.with_suffix(".previous.exe")
-    # Explicit owner backup is never deleted, nor replaced by an unknown old file.
+    old = target.with_name(target.stem + "-previous-" + str(int(time.time_ns())) + ".exe")
+    # Every successful update keeps the prior owner executable; no cleanup.
     if old.exists() or old.is_symlink():
         return 2
     for _ in range(40):
