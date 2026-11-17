@@ -28,7 +28,9 @@ on:
       - "robot_market_confirmation.py"
       - "robot_protection.py"
       - "robot_entry_flow_evidence.py"
+      - "robot_impulse.py"
       - "tests/test_robot_entry_flow_evidence.py"
+      - "tests/test_robot_impulse_canonical_paper.py"
       - "terminal/market_data/impulse_observation.py"
       - "tests/test_public_trade_impulse_observation.py"
       - "robot_flat_closure.py"
@@ -143,6 +145,8 @@ jobs:
           six==1.17.0
       - name: Verify shared causal Impulse Flow rules without order runtime
         run: python -m unittest tests.test_robot_entry_flow_evidence -v
+      - name: Verify gated Impulse through canonical Robot PAPER admission and protection
+        run: python -m unittest tests.test_robot_impulse_canonical_paper -v
       - name: Verify publicTrade observation without order runtime
         run: python -m unittest tests.test_public_trade_impulse_observation -v
       - name: Verify subscribed-only Scanner source diagnostics
@@ -191,6 +195,8 @@ jobs:
           analyzer/core.py
           notification.py
           pattern_robot_integration.py
+          robot_impulse.py
+          tests/test_robot_impulse_canonical_paper.py
           robot_l_shape.py
           l_shape_scanner.py
           tools/stop_robot_runtime.py
