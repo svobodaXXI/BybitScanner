@@ -20,6 +20,7 @@ import time
 
 ORIGIN = "https://83.217.213.181"  # Owner verified TLS and anonymous 401 on main PC.
 OWNER_ENV = Path("/etc/bybitscanner/owner.env")
+SIMULATOR_ENV = Path("/etc/bybitscanner/simulator.env")
 PAPER_ENV = Path("/etc/bybitscanner/paper.env")
 ROOT = Path("/opt/BybitScanner")
 UNIT = "bybitscanner-paper-backend.service"
@@ -135,20 +136,35 @@ def _robot_stopped(*, root: Path, env_file: Path) -> bool:
     return states == [("ROBOT_STOPPED", "ROBOT_STOPPED")]
 
 
-def _atomic_install(path: Path, prior: bytes | None, new: bytes, *, uid: int) -> None:
-    if _owner_bytes(path, uid=uid) != prior:
-        raise ProvisionBlocked("owner_env_changed_after_stop")
-    fd, name = tempfile.mkstemp(prefix=".owner-env-pair-", dir=str(path.parent))
+def _simulator_unconfigured(path: Path, *, uid: int) -> None:
+    parent = path.parent.lstat()
+    if (not stat.S_ISDIR(parent.st_mode) or parent.st_uid != uid
+            or parent.st_mode & 0o022 or path.parent.is_symlink()):
+        raise ProvisionBlocked("simulator_env_directory_untrusted")
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return
+    raise ProvisionBlocked("existing_simulator_device_file_preserved")
+
+
+def _atomic_create(path: Path, payload: bytes, *, uid: int) -> None:
+    """No replacement of existing owner files: atomic O_EXCL-equivalent link."""
+    _simulator_unconfigured(path, uid=uid)
+    fd, name = tempfile.mkstemp(prefix=".simulator-pair-", dir=str(path.parent))
     tmp = Path(name)
     try:
         with os.fdopen(fd, "wb") as stream:
             os.fchmod(stream.fileno(), 0o600)
-            stream.write(new)
+            stream.write(payload)
             stream.flush()
             os.fsync(stream.fileno())
-        if _owner_bytes(path, uid=uid) != prior:
-            raise ProvisionBlocked("owner_env_changed_during_write")
-        os.replace(tmp, path)
+        # os.link creates the final name only if ABSENT. No os.replace on any
+        # existing root-owned configuration, including the Autopilot token.
+        try:
+            os.link(tmp, path, follow_symlinks=False)
+        except FileExistsError as exc:
+            raise ProvisionBlocked("simulator_env_created_concurrently") from exc
         directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
             os.fsync(directory)
@@ -161,8 +177,8 @@ def _atomic_install(path: Path, prior: bytes | None, new: bytes, *, uid: int) ->
 
 def provision_owner_pc(target: str, *, root: Path = ROOT,
                        env_file: Path = PAPER_ENV, owner_env: Path = OWNER_ENV,
-                       uid: int = 0) -> str:
-    """One guarded STOP -> secret in root-only existing owner.env -> EDITOR_ONLY resume.
+                       simulator_env: Path = SIMULATOR_ENV, uid: int = 0) -> str:
+    """One guarded STOP -> create-only root-owned simulator.env -> EDITOR_ONLY resume.
 
     Unknown STOP or start outcomes are never retried. No PAPER_AUTO start, SQL
     writes, new Nginx route, second process, LIVE or arbitrary device selection.
@@ -180,6 +196,7 @@ def provision_owner_pc(target: str, *, root: Path = ROOT,
             raise ProvisionBlocked("installed_release_mismatch")
         prior = _owner_bytes(owner_env, uid=uid)
         _ensure_unconfigured(prior)
+        _simulator_unconfigured(simulator_env, uid=uid)
         paper_prior = _paper_env_bytes(env_file, uid=uid)
         active_env = _runtime_env()
         if active_env.get(KEY_ORIGIN) or active_env.get(KEY_DEVICES):
@@ -214,18 +231,16 @@ def provision_owner_pc(target: str, *, root: Path = ROOT,
         if (m._durable_editor_freeze(root, env_file) != identity
                 or not m._paper_start_quiescent(root, env_file)
                 or not _robot_stopped(root=root, env_file=env_file)
-                or _paper_env_bytes(env_file, uid=uid) != paper_prior):
+                or _paper_env_bytes(env_file, uid=uid) != paper_prior
+                or _owner_bytes(owner_env, uid=uid) != prior):
             return "BLOCKED: post_stop_editor_freeze_unproven; no_env_change_or_retry"
 
         token = secrets.token_urlsafe(48)
         devices = {"owner-pc": token}
         SimulatorLaunchRelay(origin=ORIGIN, devices=devices)
-        prefix = prior or b""
-        if prefix and not prefix.endswith(b"\n"):
-            prefix += b"\n"
         line = (KEY_ORIGIN + "=" + ORIGIN + "\n"
                 + KEY_DEVICES + "='" + json.dumps(devices, separators=(",", ":")) + "'\n")
-        _atomic_install(owner_env, prior, prefix + line.encode("ascii"), uid=uid)
+        _atomic_create(simulator_env, line.encode("ascii"), uid=uid)
 
         resumed = m.resume_installed_release(target, root=root, env_file=env_file)
         if not resumed.startswith("READY:"):
@@ -236,6 +251,7 @@ def provision_owner_pc(target: str, *, root: Path = ROOT,
         except (ValueError, TypeError):
             applied = None
         if (observed.get(KEY_ORIGIN) != ORIGIN or applied != devices
+                or _owner_bytes(owner_env, uid=uid) != prior
                 or not m._editor_runtime_ready(target, identity)
                 or m._durable_editor_freeze(root, env_file) != identity
                 or not _robot_stopped(root=root, env_file=env_file)
