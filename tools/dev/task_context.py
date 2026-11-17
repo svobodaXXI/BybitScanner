@@ -15,6 +15,25 @@ SCHEMA = "bybitscanner.task-context.v1"
 AUTHORITY = "NON_AUTHORITATIVE_DERIVED"
 
 
+def _derived_context_boundary(agents: str) -> bool:
+    """Accept either the legacy full guide or the current slim routing index."""
+    legacy = "Generated ContextDumps" in agents and "derived context" in agents
+    slim_router = (
+        "This file owns **routing only**" in agents
+        and "Current owner instruction and actual repository/host evidence outrank" in agents
+    )
+    return legacy or slim_router
+
+
+def _current_backlog_priority(backlog: str) -> dict[str, str]:
+    """Expose only the first P0 heading as a pointer, never as task authority."""
+    match = re.search(r"^##[ \t]+(P0\\b[^\r\n]*)$", backlog, re.MULTILINE)
+    return {
+        "source": "DOCUMENTS/BACKLOG.md",
+        "heading": match.group(1).strip() if match else "UNRESOLVED",
+    }
+
+
 def _read_required(root: Path, relative: str) -> str:
     path = root / relative
     try:
@@ -67,6 +86,7 @@ def _authority_refs(kind: str) -> list[str]:
         "DOCUMENTS/PROJECT_STATE.md#CURRENT_DEVELOPMENT_PRIORITY",
         "DOCUMENTS/ASSISTANT_PROTOCOL.md#3.1 AUTO_SESSION_BOOTSTRAP_RULE",
         "DOCUMENTS/ASSISTANT_PROTOCOL.md#3.2 CONTEXT_AND_LIMIT_ECONOMY_RULE",
+        "DOCUMENTS/BACKLOG.md",
     ]
     routed = {
         "frontend": [
@@ -123,8 +143,9 @@ def build_task_context(
     exact_paths, _ = normalize_task_paths(root, path_values)
     agents = _read_required(root, "AGENTS.md")
     state = _read_required(root, "DOCUMENTS/PROJECT_STATE.md")
+    backlog = _read_required(root, "DOCUMENTS/BACKLOG.md")
     protocol = _read_required(root, "DOCUMENTS/ASSISTANT_PROTOCOL.md")
-    if "Generated ContextDumps" not in agents or "derived context" not in agents:
+    if not _derived_context_boundary(agents):
         raise RuntimeError("AGENTS.md derived-context authority boundary cannot be confirmed")
     branch = require_ok(active_git.run("branch", "--show-current"), "branch discovery")
     head = require_ok(active_git.run("rev-parse", "HEAD"), "HEAD discovery")
@@ -139,6 +160,7 @@ def build_task_context(
         "git": {"branch": branch, "head": head, "last_safe_commit": head},
         "task": {"paths": exact_paths, "scope_kind": kind},
         "current": active,
+        "project_priority": _current_backlog_priority(backlog),
         "workflow": {
             "lifecycle": "TASK -> SPEC -> CONTEXT -> IMPLEMENT -> VERIFY -> RECORD",
             "assistant_protocol_version": _version(protocol),
