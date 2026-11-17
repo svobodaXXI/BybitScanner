@@ -675,8 +675,18 @@ class RobotBreakoutMonitor:
                 return False
             # A causal closed-M1 print observation cannot be substituted by
             # a different or still-forming Scanner candle.
-            if (candle.get("time_ms") != terms.closed_at_ms - 60_000
-                    or Decimal(str(candle.get("close"))) != terms.closed_price):
+            # The Robot monitor ticks every 60s, AFTER the asynchronous
+            # source certificate. Its latest closed candle can legitimately
+            # advance by one minute before this tick. The ORIGINAL source M1
+            # is already exact REST+kline certified; never demand that a
+            # later cache still expose the old bar, but reject an inconsistent
+            # same-minute close or an out-of-window/future bar.
+            candle_start = candle.get("time_ms")
+            if (type(candle_start) is not int
+                    or not terms.closed_at_ms - 60_000 <= candle_start <= terms.closed_at_ms):
+                return False
+            if (candle_start == terms.closed_at_ms - 60_000
+                    and Decimal(str(candle.get("close"))) != terms.closed_price):
                 return False
             new_entry_admitted, terminal_stop = self._read_admission_gate()
             if not new_entry_admitted:
