@@ -86,19 +86,28 @@ def _simulator_bridge_from_source(root: Path) -> str:
         block = contents[start:end]
     except (OSError, UnicodeError, ValueError) as exc:
         raise MainGatewayBlocked("reviewed_simulator_bridge_unavailable") from exc
+    # Two immutable, precisely constrained source shapes are reviewed:
+    # migration release poll+ack (accepted by the installed old monolith),
+    # and the successor poll+ack+facts. Nothing in between is admissible.
+    with_facts = (BRIDGE_FACTS_ROUTE in block or BRIDGE_FACTS_START in block)
+    count = 3 if with_facts else 2
     _require(
         block.count("location = /api/diary/simulator-bridge/poll {") == 1
         and block.count("location = /api/diary/simulator-bridge/ack {") == 1
-        and block.count(BRIDGE_FACTS_ROUTE) == 1
-        and block.count(BRIDGE_FACTS_START) == 1
-        and block.count("limit_except GET { deny all; }") == 2
+        and block.count(BRIDGE_FACTS_ROUTE) == int(with_facts)
+        and block.count(BRIDGE_FACTS_START) == int(with_facts)
+        and len(re.findall(
+            r"location\s*=\s*/api/diary/simulator-bridge/[a-z-]+\s*\{", block,
+        )) == count
+        and block.count("limit_except GET { deny all; }") == 1 + int(with_facts)
         and block.count("limit_except POST { deny all; }") == 1
-        and block.count("proxy_pass http://127.0.0.1:8765;") == 3
-        and block.count('proxy_set_header Cookie "";') == 3
-        and block.count('proxy_set_header Authorization "";') == 3
-        and block.count("client_max_body_size 1k;") == 3
+        and block.count("proxy_pass http://127.0.0.1:8765;") == count
+        and block.count('proxy_set_header Cookie "";') == count
+        and block.count('proxy_set_header Authorization "";') == count
+        and block.count("client_max_body_size 1k;") == count
         and block.count("proxy_set_header X-BybitScanner-Simulator-Device-Token"
-                        " $http_x_bybitscanner_simulator_device_token;") == 1
+                        " $http_x_bybitscanner_simulator_device_token;")
+            == int(with_facts)
         and "auth_request" not in block,
         "reviewed_simulator_bridge_invalid",
     )
@@ -197,23 +206,34 @@ def inspect_authenticated_site(
                  and count_route == 0, "unknown_main_gateway_route")
         contents = contents.replace(BACKEND_BLOCK, route + BACKEND_BLOCK, 1)
         updated = contents.encode("utf-8")
-    # The existing MAIN route may already be installed from an earlier
-    # release; adopt only the exact reviewed bridge without replacing it.
+    # Phase A must never inherit an unreviewed facts route. Phase B may
+    # upgrade only byte-identical legacy poll/ack routes, never arbitrary site
+    # contents. Installed site and other Nginx files remain protected.
+    with_facts = BRIDGE_FACTS_ROUTE in bridge
+    if not with_facts:
+        _require(bridge_facts not in contents and dump.count(bridge_facts) == 0,
+                 "unknown_simulator_bridge_route")
     if bridge not in contents:
-        legacy = _legacy_simulator_bridge_from_reviewed(bridge)
-        if legacy in contents:
-            # Upgrade only the exact previously reviewed poll/ack block.
-            # Never overwrite an unknown installed device route or site.
-            _require(bridge_facts not in contents and dump.count(bridge_facts) == 0
-                     and contents.count(legacy) == 1,
-                     "unknown_simulator_bridge_route")
-            contents = contents.replace(legacy, bridge, 1)
+        if with_facts:
+            legacy = _legacy_simulator_bridge_from_reviewed(bridge)
+            if legacy in contents:
+                _require(bridge_facts not in contents
+                         and dump.count(bridge_facts) == 0
+                         and contents.count(legacy) == 1,
+                         "unknown_simulator_bridge_route")
+                contents = contents.replace(legacy, bridge, 1)
+            else:
+                _require(bridge_poll not in contents and bridge_ack not in contents
+                         and bridge_facts not in contents
+                         and dump.count(bridge_poll) == 0
+                         and dump.count(bridge_ack) == 0
+                         and dump.count(bridge_facts) == 0,
+                         "unknown_simulator_bridge_route")
+                contents = contents.replace(BACKEND_BLOCK, bridge + BACKEND_BLOCK, 1)
         else:
             _require(bridge_poll not in contents and bridge_ack not in contents
-                     and bridge_facts not in contents
                      and dump.count(bridge_poll) == 0
-                     and dump.count(bridge_ack) == 0
-                     and dump.count(bridge_facts) == 0,
+                     and dump.count(bridge_ack) == 0,
                      "unknown_simulator_bridge_route")
             contents = contents.replace(BACKEND_BLOCK, bridge + BACKEND_BLOCK, 1)
         updated = contents.encode("utf-8")
@@ -221,7 +241,7 @@ def inspect_authenticated_site(
              "main_gateway_route_not_unique")
     _require(updated.decode("utf-8").count(bridge_poll) == 1
              and updated.decode("utf-8").count(bridge_ack) == 1
-             and updated.decode("utf-8").count(bridge_facts) == 1,
+             and updated.decode("utf-8").count(bridge_facts) == int(with_facts),
              "simulator_bridge_route_not_unique")
     return site, original, updated
 
