@@ -35,10 +35,13 @@ class ProvisionBlocked(ValueError):
 def _owner_bytes(path: Path, *, uid: int) -> bytes | None:
     try:
         parent = path.parent.lstat()
-        if not stat.S_ISDIR(parent.st_mode) or parent.st_uid != uid or parent.st_mode & 0o022:
-            raise ProvisionBlocked("owner_env_directory_untrusted")
-        if path.is_symlink():
-            raise ProvisionBlocked("owner_env_symlink")
+    except OSError as exc:
+        raise ProvisionBlocked("owner_env_directory_unreadable") from exc
+    if not stat.S_ISDIR(parent.st_mode) or parent.st_uid != uid or parent.st_mode & 0o022:
+        raise ProvisionBlocked("owner_env_directory_untrusted")
+    if path.is_symlink():
+        raise ProvisionBlocked("owner_env_symlink")
+    try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
     except FileNotFoundError:
         return None
@@ -187,6 +190,13 @@ def provision_owner_pc(target: str, *, root: Path = ROOT,
             if attempt == 29:
                 return "BLOCKED: stopped_systemd_resume_unproven; no_retry_or_env_change"
             time.sleep(0.5)
+
+        # Re-prove PAPER source/FLAT and quiescence after STOP before
+        # touching even a protected configuration file.
+        if (m._durable_editor_freeze(root, env_file) != identity
+                or not m._paper_start_quiescent(root, env_file)
+                or not _robot_stopped(root=root, env_file=env_file)):
+            return "BLOCKED: post_stop_editor_freeze_unproven; no_env_change_or_retry"
 
         token = secrets.token_urlsafe(48)
         devices = {"owner-pc": token}
