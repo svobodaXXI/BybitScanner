@@ -5520,11 +5520,34 @@ def main() -> None:
         server.diary_setup_store_path = decision_store_path(database_path)
         server.diary_factor_store_path = server.diary_setup_store_path
 
+        impulse_worker = None
         try:
+            # Same existing hub/Scanner handoff and serialized PAPER owner.
+            # OFF unless the owner explicitly configures BOTH the feature and
+            # a bounded symbol allowlist; this does not enable PAPER_AUTO.
+            from terminal.market_data.impulse_producer import (
+                ImpulsePaperScannerWorker, configured_symbols,
+            )
+            impulse_symbols = configured_symbols()
+            if impulse_symbols:
+                # Obtain the Scanner candidate observer on the owner, but
+                # INVOKE it later from the off-owner worker: it already uses
+                # the canonical deferred SHADOW/PAPER_AUTO admission path.
+                callback = runtime.call(
+                    lambda owned: owned._dispatch_autopilot_shadow_scanner_candidate
+                )
+                impulse_worker = ImpulsePaperScannerWorker(
+                    hub, create_bybit_rest_session(), callback,
+                    symbols=impulse_symbols,
+                )
+                impulse_worker.start()
+
             print(f"PAPER HTTP runtime listening on http://{HOST}:{port}")
             print("Bybit public market data streams: active workspace symbol (initial ONGUSDT)")
             server.serve_forever()
         finally:
+            if impulse_worker is not None:
+                impulse_worker.close()
             robot_protection_coverage.close()
             market_data.close()
             runtime.close()
