@@ -1,0 +1,35 @@
+name: Owner desktop release registration CI
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/desktop-release-packages.yml'
+      - '.github/workflows/desktop-release-registration-ci.yml'
+permissions:
+  contents: read
+jobs:
+  verify-manual-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify owner-only release registration
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import subprocess
+          path = Path('.github/workflows/desktop-release-packages.yml')
+          raw = path.read_bytes()
+          actual = subprocess.check_output(['git', 'hash-object', str(path)], text=True).strip()
+          assert actual == 'c8062c92cb1a1076d5cff8b5865008701c2300c0', 'SOURCE_WORKFLOW_CHANGED'
+          assert b'  workflow_dispatch:' in raw, 'MISSING_MANUAL_DISPATCH'
+          assert b'ref: stable/adfb50b-forward' in raw, 'SOURCE_NOT_PINNED_TO_STABLE'
+          assert b'STABLE_MOVED_OR_UNKNOWN' in raw, 'MISSING_STABLE_GUARD'
+          assert b'DESKTOP_TAG_ALREADY_EXISTS' in raw, 'MISSING_NO_OVERWRITE_GUARD'
+          assert b'STABLE_MOVED_BEFORE_PUBLISH' in raw, 'MISSING_PUBLISH_GUARD'
+          assert b'  push:' not in raw and b'  schedule:' not in raw and b'  pull_request:' not in raw, 'AUTOMATIC_RELEASE_TRIGGER'
+          print('MANUAL_RELEASE_REGISTRATION_OK')
+          PY
+          git diff --check HEAD^ HEAD
