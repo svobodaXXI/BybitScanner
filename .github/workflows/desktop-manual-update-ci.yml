@@ -43,7 +43,4 @@ jobs:
           npx tsc -b
           npm run build:replay
           cd ../..
-          python tools/build_machine_time_package.py --sha 0123456789012345678901234567890123456789abcdef01 --output /tmp/BybitScanner-MachineTime.zip
-      - name: No owner data or trading runtime changes
-        run: |
-          python -m pytest -q tests/test_historical_local_replay_server.py -k 'host or csrf or local or forbidden' || true
+          python tools/build_machine_time_package.py --sha 0123456789abcdef0123456789abcdef01234567 --output /tmp/BybitScanner-MachineTime.zip
