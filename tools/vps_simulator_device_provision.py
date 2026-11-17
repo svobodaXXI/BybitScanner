@@ -70,6 +70,23 @@ def _ensure_unconfigured(original: bytes | None) -> None:
         raise ProvisionBlocked("existing_pairing_preserved")
 
 
+def _paper_env_bytes(path: Path, *, uid: int) -> bytes:
+    """The other effective EnvironmentFile must not carry conflicting relay keys."""
+    try:
+        if path.is_symlink():
+            raise ProvisionBlocked("paper_env_symlink")
+        info = path.stat()
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != uid
+                or info.st_mode & 0o022):
+            raise ProvisionBlocked("paper_env_untrusted")
+        data = path.read_bytes()
+        if len(data) > 65536 or b"BYBITSCANNER_SIMULATOR_BRIDGE_" in data:
+            raise ProvisionBlocked("paper_env_relay_conflict")
+        return data
+    except OSError as exc:
+        raise ProvisionBlocked("paper_env_unavailable") from exc
+
+
 def _runtime_env(*, runner=subprocess.run) -> dict[str, str]:
     try:
         reply = runner(
@@ -163,6 +180,7 @@ def provision_owner_pc(target: str, *, root: Path = ROOT,
             raise ProvisionBlocked("installed_release_mismatch")
         prior = _owner_bytes(owner_env, uid=uid)
         _ensure_unconfigured(prior)
+        paper_prior = _paper_env_bytes(env_file, uid=uid)
         active_env = _runtime_env()
         if active_env.get(KEY_ORIGIN) or active_env.get(KEY_DEVICES):
             raise ProvisionBlocked("runtime_relay_already_configured")
@@ -195,7 +213,8 @@ def provision_owner_pc(target: str, *, root: Path = ROOT,
         # touching even a protected configuration file.
         if (m._durable_editor_freeze(root, env_file) != identity
                 or not m._paper_start_quiescent(root, env_file)
-                or not _robot_stopped(root=root, env_file=env_file)):
+                or not _robot_stopped(root=root, env_file=env_file)
+                or _paper_env_bytes(env_file, uid=uid) != paper_prior):
             return "BLOCKED: post_stop_editor_freeze_unproven; no_env_change_or_retry"
 
         token = secrets.token_urlsafe(48)
