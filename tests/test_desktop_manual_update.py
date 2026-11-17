@@ -28,7 +28,10 @@ def opener(request, timeout=0):
     metadata = {
         updates.API + "/branches/" + updates.BRANCH: {"commit": {"sha": SHA}},
         updates.API + "/git/ref/tags/" + tag: {"object": {"type": "commit", "sha": SHA}},
-        updates.API + "/releases/tags/" + tag: {
+        updates.API + "/compare/" + SHA + "..." + SHA: {
+            "status": "identical", "behind_by": 0, "ahead_by": 0,
+        },
+        updates.API + "/releases?per_page=30": [{
             "tag_name": tag, "draft": False, "prerelease": False, "assets": [{
                 "name": updates.ASSETS["manager"], "state": "uploaded", "size": len(ASSET),
                 "digest": "sha256:" + DIGEST,
@@ -37,7 +40,7 @@ def opener(request, timeout=0):
                     + tag + "/" + updates.ASSETS["manager"]
                 ),
             }],
-        },
+        }],
     }
     if url in metadata:
         return Reply(json.dumps(metadata[url]).encode())
@@ -177,3 +180,33 @@ def test_local_update_requires_explicit_same_origin_browser_click(tmp_path):
         host.shutdown()
         host.server_close()
         worker.join(timeout=5)
+
+
+def test_later_unrelated_stable_commits_do_not_invalidate_desktop_release():
+    newer = "b" * 40
+
+    def advanced(request, timeout=0):
+        url = request.full_url
+        if url == updates.API + "/branches/" + updates.BRANCH:
+            return Reply(json.dumps({"commit": {"sha": newer}}).encode())
+        if url == updates.API + "/compare/" + SHA + "..." + newer:
+            return Reply(json.dumps({"status": "ahead", "behind_by": 0, "ahead_by": 1}).encode())
+        return opener(request, timeout=timeout)
+
+    assert updates.find_asset("manager", opener=advanced).sha == SHA
+
+
+def test_divergent_releases_fail_closed():
+    newer = "b" * 40
+
+    def diverged(request, timeout=0):
+        url = request.full_url
+        if url == updates.API + "/branches/" + updates.BRANCH:
+            return Reply(json.dumps({"commit": {"sha": newer}}).encode())
+        if url == updates.API + "/compare/" + SHA + "..." + newer:
+            return Reply(json.dumps({"status": "diverged", "behind_by": 1,
+                                     "ahead_by": 1}).encode())
+        return opener(request, timeout=timeout)
+
+    with pytest.raises(updates.UpdateBlocked, match="desktop_release_not_ancestor_of_stable"):
+        updates.find_asset("manager", opener=diverged)
