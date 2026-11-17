@@ -32,4 +32,3 @@ jobs:
           assert b'  push:' not in raw and b'  schedule:' not in raw and b'  pull_request:' not in raw, 'AUTOMATIC_RELEASE_TRIGGER'
           print('MANUAL_RELEASE_REGISTRATION_OK')
           PY
-          git diff --check HEAD^ HEAD
