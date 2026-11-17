@@ -118,8 +118,8 @@ PREFLIGHT = (
     "printf '\\nPREFLIGHT_READ_ONLY_DATA_COLLECTED_NOT_ACCEPTED\\n'"
 )
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-EXACT_SHA = re.compile(r"[0-9a-f]{40}\\Z")
-REQUEST_ID = re.compile(r"[0-9a-f]{32}\\Z")
+EXACT_SHA = re.compile(r"[0-9a-f]{40}\Z")
+REQUEST_ID = re.compile(r"[0-9a-f]{32}\Z")
 
 
 def manager_version() -> str:
