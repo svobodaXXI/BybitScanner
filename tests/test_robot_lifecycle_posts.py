@@ -211,7 +211,8 @@ class LifecycleDeliveryRaceTests(unittest.TestCase):
         view = PositionView(
             symbol="SAGAUSDT", direction="LONG", is_open=False,
             quantity=Decimal("1"), average_entry=Decimal("1"),
-            trade=SimpleNamespace(exit_time_ms=INIT_MS + 10),
+            stop_price=Decimal("0.9"), take_price=Decimal("1.1"),
+            pattern="Falling Wedge", trade=SimpleNamespace(exit_time_ms=INIT_MS + 10),
         )
         with patch.object(monitoring, "_owner_id", return_value="123"), \
              patch.object(monitoring, "_robot_store", return_value=nullcontext(store)), \
