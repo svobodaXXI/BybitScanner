@@ -7,6 +7,7 @@ protected maintenance coordinator call. This is not a LIVE executor.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from urllib import request as urlrequest
@@ -17,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 import stat
+import time
 
 REPO = "svobodaXXI/BybitScanner"
 OWNER = "svobodaXXI"
@@ -178,6 +180,41 @@ def _record_one_shot(sha: str) -> None:
         os.close(fd)
 
 
+def _robot_reason_public_summary(reason: object) -> dict:
+    """Publish only known reason classes, never raw stored exception text.
+
+    GitHub Actions logs can be visible outside the owner account. A stored
+    reconciliation reason may contain exception messages, paths or tokens.
+    """
+    raw = reason if isinstance(reason, str) else ""
+    if not raw:
+        kind = "NONE"
+    elif raw.startswith("ROBOT_PROTECTION_COVERAGE_LOST "):
+        kind = "PROTECTION_COVERAGE_LOST"
+    elif raw.startswith("FLAT_ROBOT_TRADE_LEDGER_UNRESOLVED "):
+        kind = "FLAT_ROBOT_TRADE_LEDGER_UNRESOLVED"
+    elif raw.startswith(("pause_robot ", "stop_robot ")):
+        kind = "PENDING_ENTRY_SYNCHRONIZATION"
+    elif raw.startswith("close_all_now "):
+        kind = "ROBOT_CLOSE_UNCONFIRMED"
+    elif raw.startswith("paper_close_all:"):
+        kind = "PAPER_CLOSE_UNCONFIRMED"
+    elif raw == "operator-requested maintenance reconciliation":
+        kind = "OPERATOR_MAINTENANCE"
+    elif raw == "restart reconciliation required":
+        kind = "RESTART_RECONCILIATION"
+    else:
+        kind = "OTHER_REQUIRES_PRIVATE_REVIEW"
+    result = {"kind": kind, "fingerprint": hashlib.sha256(
+        raw.encode("utf-8", errors="replace")).hexdigest()[:16] if raw else None}
+    if kind in {"PROTECTION_COVERAGE_LOST",
+                "FLAT_ROBOT_TRADE_LEDGER_UNRESOLVED"}:
+        match = re.search(r"(?:^| )symbol=([A-Z0-9]{2,25})(?: |$)", raw)
+        if match:
+            result["symbol"] = match.group(1)
+    return result
+
+
 # Restricted diagnostics: fixed GET/SELECT and systemctl is-active only.
 # No shell, arbitrary filesystem reads, user-supplied SQL, journal dumps, or
 # secrets. This mode never stages code or writes one-shot transaction markers.
@@ -194,7 +231,7 @@ def _read_only_diag(sha: str, *, root: Path = Path("/opt/BybitScanner"),
     db_path = Path(db_value)
     if not db_path.is_absolute():
         db_path = root / db_path
-    result = {"kind": "PAPER_STOP_READ_ONLY", "version": 1, "sha": sha,
+    result = {"kind": "PAPER_STOP_READ_ONLY", "version": 2, "sha": sha,
               "units": {}, "api": {}, "db": {},
               "transaction": {
                   "chatops_marker": (transactions / (".chatops-invoked-" + sha)).is_file(),
@@ -266,7 +303,8 @@ def _read_only_diag(sha: str, *, root: Path = Path("/opt/BybitScanner"),
                     row = conn.execute(sql, params).fetchone()
                     return row[0] if row else None
                 runtime = conn.execute(
-                    "SELECT mode,recovery_status FROM robot_runtime_state "
+                    "SELECT mode,recovery_status,reason,version,updated_at_ms "
+                    "FROM robot_runtime_state "
                     "WHERE trading_account_id='paper'").fetchone()
                 bnc_rows = conn.execute(
                     "SELECT state_revision,robot_state_json "
@@ -293,6 +331,10 @@ def _read_only_diag(sha: str, *, root: Path = Path("/opt/BybitScanner"),
                     "available": True, "quick_check": one("PRAGMA quick_check") == "ok",
                     "robot_mode": runtime[0] if runtime else "missing",
                     "robot_recovery": runtime[1] if runtime else "missing",
+                    "robot_reason": _robot_reason_public_summary(
+                        runtime[2] if runtime else None),
+                    "robot_state_version": runtime[3] if runtime else None,
+                    "robot_state_updated_at_ms": runtime[4] if runtime else None,
                     "scanner_mode": one("SELECT mode FROM scanner_runtime_state "
                                         "WHERE trading_account_id='paper'"),
                     "autopilot_mode": one("SELECT mode FROM robot_autopilot_state "
@@ -304,6 +346,25 @@ def _read_only_diag(sha: str, *, root: Path = Path("/opt/BybitScanner"),
                     "open_robot_trades": one(
                         "SELECT COUNT(*) FROM robot_trades "
                         "WHERE trading_account_id='paper' AND exit_time_ms IS NULL"),
+                    "nonflat_position_projections": one(
+                        "SELECT COUNT(*) FROM position_projections "
+                        "WHERE trading_account_id='paper' "
+                        "AND (side != 'FLAT' OR CAST(quantity AS REAL) != 0)"),
+                    "unresolved_protection_obligations": one(
+                        "SELECT COUNT(*) FROM paper_protection_obligations "
+                        "WHERE trading_account_id='paper' AND status != 'RESOLVED'"),
+                    "recent_exit_reasons_72h": {
+                        reason if reason in (
+                            "STOP", "TAKE", "MANUAL", "TAKEOVER",
+                            "EMERGENCY_CLOSE", "EMERGENCY_PROTECTION_FAILURE"
+                        ) else "OTHER": count
+                        for reason, count in conn.execute(
+                            "SELECT exit_reason, COUNT(*) FROM robot_trades "
+                            "WHERE trading_account_id='paper' "
+                            "AND exit_time_ms >= ? GROUP BY exit_reason",
+                            (int(time.time() * 1000) - 72 * 60 * 60 * 1000,),
+                        ).fetchall()
+                    },
                     "approvals": one(
                         "SELECT COUNT(*) FROM robot_candidates "
                         "WHERE trading_account_id='paper' AND status='APPROVED'"),
