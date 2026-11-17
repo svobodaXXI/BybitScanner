@@ -12,7 +12,7 @@ import subprocess
 import sys
 
 from research.local_replay_viewer.desktop_update import (
-    find_asset, fetch_verified, UpdateBlocked,
+    find_asset, fetch_verified, require_forward_update, UpdateBlocked,
 )
 
 NAME = "BybitScanner-VPS-Manager.exe"
@@ -85,8 +85,8 @@ def stage_manager() -> str:
     current = _installed_path()
     release = find_asset("manager")
     marker = Path(getattr(sys, "_MEIPASS", "")) / "desktop-build-sha.txt"
-    if marker.is_file() and marker.read_text(encoding="ascii").strip() == release.sha:
-        raise UpdateBlocked("manager_already_current")
+    if marker.is_file():
+        require_forward_update(marker.read_text(encoding="ascii").strip(), release.sha)
     stage_dir = current.parent / (".desktop-update-" + release.sha)
     if stage_dir.exists() or stage_dir.is_symlink():
         raise UpdateBlocked("prior_update_stage_present; do_not_retry_automatically")
