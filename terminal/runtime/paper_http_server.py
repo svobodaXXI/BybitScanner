@@ -3253,6 +3253,22 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             # existing response shape. Modern runtimes expose a real bool.
             if type(settled) is bool:
                 snapshot["worker_quiescent"] = settled
+            # Passive read-only view of EXISTING hub subscriptions only.
+            # Never subscribe, invoke PAPER owner for market data, or infer
+            # complete taker flow / Impulse order admission from this status.
+            hub = getattr(getattr(self.server, "market_data", None), "_hub", None)
+            read_impulse = getattr(hub, "impulse_source_diagnostics", None)
+            if callable(read_impulse):
+                try:
+                    snapshot["impulse_source"] = read_impulse()
+                except Exception:
+                    LOGGER.exception("Passive Scanner Impulse source status unavailable")
+                    snapshot["impulse_source"] = {
+                        "scope": "EXISTING_HUB_SUBSCRIPTIONS_ONLY",
+                        "state": "UNAVAILABLE",
+                        "source_complete": False,
+                        "trading_authorized": False,
+                    }
             self._json_response(200, snapshot)
             return
 
