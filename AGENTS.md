@@ -61,9 +61,9 @@ blocker is resolved, return directly to the original end result.
 
 ## VPS access priority — single canonical SSH authority (owner updated 2026-11-17)
 
-**THE ONLY OPERATIVE SSH ROUTE DOCUMENT:** `DOCUMENTS/WINDOWS_PC_VPS_ACCESS_RECOVERY_20261108.md`, section **1. ГЛАВНЫЙ, АКТУАЛЬНЫЙ, РАБОЧИЙ**. Read this file **before** suggesting any SSH, Codex, VPN or VPS Manager invocation; do not copy IPs, commands or divergent routing priorities into AGENTS or another runbook.
+**THE ONLY OPERATIVE SSH ROUTE DOCUMENT:** `DOCUMENTS/WINDOWS_PC_VPS_ACCESS_RECOVERY_20261108.md`, section **0** for Happ/VPN ON and section **1** for Happ/VPN OFF. Read the applicable route **before** suggesting any SSH, Codex, VPN or VPS Manager invocation; do not copy IPs, commands or divergent routing priorities into AGENTS or another runbook.
 
-**Owner's 17.11 verified main-PC route supersedes prior defaults**: the normal Windows PowerShell path and existing PC identity to the historical VPS primary address, with Happ/VPN OFF, returned `SSH_OK` and exit `0`. The previously preferred PC alias and distinct Codex Desktop additional-address route both returned banner timeout / exit `255` on 17.11; they are recorded as secondary / blocked in the canonical file. Never resurrect their earlier "primary" labels from Git history or previous chats. The laptop is an independently documented device.
+**Owner's 17.11 verified main-PC conditions are distinct**: both the existing PC identity with Happ/VPN OFF (§1) and the subsequent Happ «Основной 1» (VLESS/TCP/REALITY) ON (§0) have one authenticated SSH_OK/exit 0 receipt apiece. Earlier timeout trials through a different VPN node do not invalidate the later successful session. One success does not prove persistent stability. The laptop is separately documented.
 
 Minimize the owner's time: use GitHub for repo evidence, and an actually authorized host-execution path for VPS work; do not pretend GitHub access equals SSH. If agent execution cannot access the Windows host route, escalate the *exact* missing execution boundary rather than repeating manual diagnostics or selecting an older SSH default. One successful SSH login proves transport only. No GitHub merge, VPS deploy, STOP/START, PAPER/DB, admission or LIVE authority follows from it; all fail-closed safety gates remain unchanged.
 
