@@ -1,10 +1,14 @@
 """Owner-clicked local Machine Time release preparation. Never touches VPS/PAPER."""
 from __future__ import annotations
 
+import argparse
 import hashlib
 import os
+import re
 from pathlib import Path, PurePosixPath
 import shutil
+import socket
+import time
 import stat
 import subprocess
 import sys
@@ -145,3 +149,66 @@ def launch_new_simulator(launcher: Path) -> None:
     subprocess.Popen(["cmd.exe", "/c", str(launcher)], cwd=str(launcher.parent),
                      creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0),
                      close_fds=True)
+
+
+
+def schedule_relaunch(launcher: Path, port: int) -> None:
+    """Start independent *local* helper before shutting down old loopback.
+
+    If the helper cannot start, preserve the running old viewer. The helper
+    waits for the listening port to become free before opening the new viewer.
+    """
+    _verified_launch_path(launcher)
+    if port not in range(1, 65536):
+        raise UpdateBlocked("invalid_local_port")
+    try:
+        subprocess.Popen(
+            [sys.executable, "-B", "-m",
+             "research.local_replay_viewer.simulator_self_update",
+             "--launch", str(launcher), "--wait-port", str(port)],
+            cwd=str(launcher.parent), close_fds=True,
+            creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0),
+        )
+    except OSError as exc:
+        raise UpdateBlocked("local_relaunch_helper_unavailable") from exc
+
+
+def _verified_launch_path(launcher: Path) -> None:
+    local = os.environ.get("LOCALAPPDATA", "")
+    if not local or os.name != "nt":
+        raise UpdateBlocked("owner_windows_required_for_relaunch")
+    prefix = (Path(local) / "BybitScanner" / APP / "releases").resolve()
+    if (launcher.name != "START_LOCAL.cmd" or not launcher.is_file()
+            or launcher.is_symlink()
+            or not launcher.resolve().is_relative_to(prefix)
+            or launcher.parent.name != APP):
+        raise UpdateBlocked("simulator_launch_untrusted")
+    marker = launcher.parent / "desktop-build-sha.txt"
+    if not marker.is_file() or not re.fullmatch("[0-9a-f]{40}", marker.read_text().strip()):
+        raise UpdateBlocked("simulator_release_identity_unproven")
+
+
+def _relaunch_after_port_closes(launcher: Path, port: int) -> int:
+    _verified_launch_path(launcher)
+    if not 1 <= port <= 65535:
+        return 2
+    for _ in range(120):
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.25):
+                time.sleep(0.25)
+                continue
+        except OSError:
+            launch_new_simulator(launcher)
+            return 0
+    return 2
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--launch", type=Path, required=True)
+    parser.add_argument("--wait-port", type=int, required=True)
+    args = parser.parse_args()
+    try:
+        raise SystemExit(_relaunch_after_port_closes(args.launch, args.wait_port))
+    except (UpdateBlocked, OSError, ValueError):
+        raise SystemExit(2)
