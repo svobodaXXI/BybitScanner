@@ -1,10 +1,12 @@
 """Exact publicTrade observation gates; no trading candidates or order side effects."""
 import unittest
 from decimal import Decimal
+from unittest.mock import patch
 
 from terminal.market_data.impulse_observation import (
     PublicTradeObservation, audit_recent_trade_overlap,
     audit_closed_m1_trade_parity, audit_closed_m1_triple_parity,
+    audit_closed_m1_receipt_cutoff,
 )
 
 
@@ -132,8 +134,12 @@ class PublicTradeObservationTests(unittest.TestCase):
 
         hub = MarketDataHub(Registry(), create, connection_factory=lambda *args, **kwargs: None)
         context = hub.subscribe("BTCUSDT")
-        hub._dispatch(frame(trade()))
+        with patch("terminal.market_data.hub.time.time", return_value=3.25):
+            hub._dispatch(frame(trade()))
         self.assertEqual(context.impulse_observation.snapshot()["observed_prints"], 1)
+        self.assertEqual(
+            context.impulse_observation.snapshot()["prints"][0].received_at_ms, 3250,
+        )
         context.impulse_observation.mark_gap()
         self.assertEqual(context.impulse_observation.snapshot()["observed_prints"], 0)
         hub.close()
@@ -386,6 +392,94 @@ class ClosedMinuteTripleParityTests(unittest.TestCase):
         self.source.mark_gap()
         self.assertTrue(self.source.observe(frame(*self.trades[2:])))
         self.assertEqual(self.audit().status, "UNPROVEN")
+
+
+class CausalReceiptAuditTests(unittest.TestCase):
+    def setUp(self):
+        self.first = trade("first", 120001, "Buy", "100", "2", sequence=100)
+        self.second = trade("second", 130001, "Sell", "101", "3", sequence=101)
+        self.o = PublicTradeObservation("BTCUSDT")
+
+    def test_first_arrival_is_included_without_changing_exchange_identity(self):
+        self.assertTrue(self.o.observe(
+            frame(self.first, self.second), received_at_ms=179500,
+        ))
+        snap = self.o.snapshot()
+        self.assertEqual([p.received_at_ms for p in snap["prints"]], [179500, 179500])
+        # Duplicate observations preserve earliest causal reception.
+        self.assertTrue(self.o.observe(frame(self.first), received_at_ms=181000))
+        self.assertEqual(self.o.snapshot()["prints"][0].received_at_ms, 179500)
+        timely = audit_closed_m1_receipt_cutoff(
+            self.o.snapshot(), start_ms=120000, decision_ms=180000,
+        )
+        self.assertEqual(timely.status, "TIMELY_OBSERVED_ONLY")
+        self.assertEqual(timely.latest_received_at_ms, 179500)
+        self.assertEqual(timely.observed_prints, 2)
+        self.assertFalse(timely.source_complete)
+        self.assertFalse(timely.trading_authorized)
+        # Receipt metadata must not taint REST exact-execution comparison.
+        from terminal.market_data.impulse_observation import ObservedPrint
+        self.assertEqual(
+            snap["prints"][0],
+            ObservedPrint("first", 120001, 100, "Buy", Decimal("100"), Decimal("2")),
+        )
+
+    def test_late_print_is_never_mistaken_for_available_at_decision(self):
+        self.assertTrue(self.o.observe(frame(self.first), received_at_ms=179500))
+        self.assertTrue(self.o.observe(frame(self.second), received_at_ms=181001))
+        result = audit_closed_m1_receipt_cutoff(
+            self.o.snapshot(), start_ms=120000, decision_ms=180000,
+        )
+        self.assertEqual(result.status, "LATE_OBSERVED_PRINT")
+        self.assertEqual(result.latest_received_at_ms, 181001)
+        self.assertFalse(result.trading_authorized)
+        # A later decision can corroborate arrival, never retroactively
+        # authorize the earlier one or prove complete exchange history.
+        later = audit_closed_m1_receipt_cutoff(
+            self.o.snapshot(), start_ms=120000, decision_ms=182000,
+        )
+        self.assertEqual(later.status, "TIMELY_OBSERVED_ONLY")
+        self.assertFalse(later.source_complete)
+
+    def test_missing_arrival_stays_unproven_and_reconnect_discards_it(self):
+        self.assertTrue(self.o.observe(frame(self.first)))
+        result = audit_closed_m1_receipt_cutoff(
+            self.o.snapshot(), start_ms=120000, decision_ms=180000,
+        )
+        self.assertEqual(result.status, "UNPROVEN")
+        self.o.mark_gap()
+        self.assertEqual(
+            audit_closed_m1_receipt_cutoff(
+                self.o.snapshot(), start_ms=120000, decision_ms=180000,
+            ).status,
+            "UNPROVEN",
+        )
+
+    def test_invalid_receive_clock_fences_whole_frame(self):
+        for bad in (-1, True, "180000", 1.1):
+            self.assertFalse(self.o.observe(frame(self.first), received_at_ms=bad))
+        self.assertEqual(self.o.snapshot()["observed_prints"], 0)
+        self.assertEqual(self.o.snapshot()["invalid_frames"], 4)
+        self.assertEqual(
+            audit_closed_m1_receipt_cutoff(
+                self.o.snapshot(), start_ms=120000, decision_ms=180000,
+            ).status,
+            "UNPROVEN",
+        )
+
+    def test_bad_window_and_nonprint_snapshot_cannot_prove_availability(self):
+        for start, cutoff in ((120001, 180000), (-60000, 180000), (120000, 179999)):
+            with self.assertRaises(ValueError):
+                audit_closed_m1_receipt_cutoff(
+                    self.o.snapshot(), start_ms=start, decision_ms=cutoff,
+                )
+        self.assertEqual(
+            audit_closed_m1_receipt_cutoff(
+                {"symbol": "BTCUSDT", "prints": []},
+                start_ms=120000, decision_ms=180000,
+            ).status,
+            "UNPROVEN",
+        )
 
 if __name__ == "__main__":
     unittest.main()
