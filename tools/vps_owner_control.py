@@ -18,7 +18,7 @@ PYTHON = REPO + "/venv/bin/python"
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 REQUEST = re.compile(r"[0-9a-f]{32}\Z")
 ORIGIN = re.compile(r"[A-Za-z0-9_.-]{1,64}\Z")
-ACTIONS = ("update", "start", "stop", "update-and-start", "provision-owner-pc", "enable-wedge-be")
+ACTIONS = ("update", "start", "stop", "update-and-start", "provision-owner-pc")
 UNIT_PREFIX = "bybitscanner-owner-"
 
 
