@@ -15,7 +15,7 @@ import sys
 import tempfile
 from zipfile import ZipFile
 
-from research.local_replay_viewer.desktop_update import find_asset, fetch_verified, UpdateBlocked
+from research.local_replay_viewer.desktop_update import find_asset, fetch_verified, require_forward_update, UpdateBlocked
 
 USER_STATE = ("simulator-v2-data", "paper-episode-facts", "public-m5-cache", "python-wheels")
 APP = "MachineTime"
@@ -109,8 +109,8 @@ def prepare_simulator_update(here: Path) -> tuple[Path, str]:
         raise UpdateBlocked("untrusted_simulator_root")
     asset = find_asset("simulator")
     marker = here / "desktop-build-sha.txt"
-    if marker.is_file() and marker.read_text(encoding="ascii").strip() == asset.sha:
-        raise UpdateBlocked("simulator_already_current")
+    if marker.is_file():
+        require_forward_update(marker.read_text(encoding="ascii").strip(), asset.sha)
     root = Path(os.environ["LOCALAPPDATA"]) / "BybitScanner" / APP / "releases"
     root.mkdir(parents=True, exist_ok=True)
     if root.is_symlink():
