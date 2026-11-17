@@ -186,8 +186,9 @@ def test_migration_source_matches_old_installed_validator_contract(tmp_path):
     ):
         assert bridge.count(exact) == count
     assert gateway.BRIDGE_FACTS_ROUTE not in bridge
+    main = gateway._route_from_source(root)
     legacy = baseline.replace(gateway.BACKEND_BLOCK,
-                              bridge + gateway.BACKEND_BLOCK, 1)
+                              bridge + main + gateway.BACKEND_BLOCK, 1)
     site.write_text(legacy)
     _, before, after = gateway.inspect_authenticated_site(
         root=root, run=_runner(site, []), nginx_dir=ng, uid=os.geteuid(),
