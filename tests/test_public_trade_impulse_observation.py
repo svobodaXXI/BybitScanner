@@ -140,6 +140,20 @@ class PublicTradeObservationTests(unittest.TestCase):
         self.assertEqual(
             context.impulse_observation.snapshot()["prints"][0].received_at_ms, 3250,
         )
+        # The legacy public-trade aggregate buffer may IGNORE a raw frame;
+        # observation must still inspect it and latch malformed provenance.
+        context.public_trades.apply_message = lambda message: "IGNORED"
+        with patch("terminal.market_data.hub.time.time", return_value=3.5):
+            hub._dispatch(frame(trade("id2", 1001)))
+        self.assertEqual(context.impulse_observation.snapshot()["observed_prints"], 2)
+        malformed = trade("bad", 1002)
+        del malformed["seq"]
+        hub._dispatch(frame(malformed))
+        untrusted = context.impulse_observation.snapshot()
+        self.assertEqual(untrusted["observed_prints"], 2)
+        self.assertEqual(untrusted["invalid_frames"], 1)
+        self.assertEqual(untrusted["continuity"], "UNPROVEN")
+        self.assertFalse(untrusted["order_authority"])
         context.impulse_observation.mark_gap()
         self.assertEqual(context.impulse_observation.snapshot()["observed_prints"], 0)
         hub.close()
