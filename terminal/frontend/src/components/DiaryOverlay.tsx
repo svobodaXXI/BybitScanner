@@ -636,12 +636,26 @@ function SimulatorLaunchAction({ episodeId, allowLocalLaunch, owner = null, sour
   async function requestLaunch() {
     if (busy) return;
     setBusy(true);
-    if (allowLocalLaunch && owner && sourceRevision !== null) {
+    if (allowLocalLaunch && owner && sourceRevision !== null &&
+        /^te_[a-f0-9]{24}$/.test(episodeId)) {
+      // Preserve the old one-click copy fallback when the paired device is offline.
+      // Start clipboard access during the owner gesture, not after a network wait.
+      let copied: Promise<boolean>;
+      try {
+        copied = navigator.clipboard?.writeText
+          ? navigator.clipboard.writeText(episodeId).then(() => true, () => false)
+          : Promise.resolve(false);
+      } catch {
+        copied = Promise.resolve(false);
+      }
       try {
         await queueScopedEpisodeFacts(episodeId, owner, sourceRevision, setNotice);
+        const suffix = await copied ? " Идентификатор скопирован." : "";
+        if (suffix) setNotice(previous => previous + suffix);
       } catch (error) {
+        const suffix = await copied ? " Идентификатор скопирован." : "";
         setNotice((error instanceof Error ? error.message : "JSON сделки не передан") +
-          ". ID: " + episodeId);
+          ". ID: " + episodeId + suffix);
       } finally {
         setBusy(false);
       }
