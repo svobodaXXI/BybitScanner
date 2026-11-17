@@ -24,7 +24,7 @@ if errorlevel 1 (
 )
 if exist "protocol_launcher.py" ".wedge-python\Scripts\python.exe" -B protocol_launcher.py --register >nul 2>nul
 if exist "launch_bridge_agent.py" ".wedge-python\Scripts\python.exe" -B launch_bridge_agent.py --install-if-configured >nul 2>nul
-".wedge-python\Scripts\python.exe" -B server.py
+".wedge-python\Scripts\python.exe" -B server.py --port 48765
 if errorlevel 1 pause
 goto :end
 
@@ -33,7 +33,7 @@ where py >nul 2>nul
 if not errorlevel 1 (
   if exist "protocol_launcher.py" py -3 -B protocol_launcher.py --register >nul 2>nul
   if exist "launch_bridge_agent.py" py -3 -B launch_bridge_agent.py --install-if-configured >nul 2>nul
-  py -3 -B server.py
+  py -3 -B server.py --port 48765
   if errorlevel 1 pause
   goto :end
 )
@@ -41,7 +41,7 @@ where python >nul 2>nul
 if not errorlevel 1 (
   if exist "protocol_launcher.py" python -B protocol_launcher.py --register >nul 2>nul
   if exist "launch_bridge_agent.py" python -B launch_bridge_agent.py --install-if-configured >nul 2>nul
-  python -B server.py
+  python -B server.py --port 48765
   if errorlevel 1 pause
   goto :end
 )
