@@ -152,6 +152,7 @@ CONTROL_ACTIONS = {
     "Запустить PAPER-ядро": "start",
     "Остановить PAPER-ядро": "stop",
     "Обновить и запустить PAPER": "update-and-start",
+    "Сопрячь один ПК (EDITOR_ONLY)": "provision-owner-pc",
 }
 CONTROL_MODULE = "cd /opt/BybitScanner && /opt/BybitScanner/venv/bin/python -m tools.vps_owner_control"
 
