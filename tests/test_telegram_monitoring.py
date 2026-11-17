@@ -1074,7 +1074,7 @@ class RobotLifecyclePostDeliveryTests(unittest.TestCase):
             fixture.start()
             self.addCleanup(fixture.stop)
         fake_api = ModuleType("bybit_api")
-        fake_api.get_candles = lambda symbol, interval, limit: None
+        fake_api.get_candles = lambda symbol, interval, limit, **kwargs: None
         fixture = patch.dict(sys.modules, {"bybit_api": fake_api})
         fixture.start()
         self.addCleanup(fixture.stop)
