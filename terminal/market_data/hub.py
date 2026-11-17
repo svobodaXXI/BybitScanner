@@ -424,9 +424,15 @@ class MarketDataHub:
             applied = context.public_orderbook.apply_message(message)
             component = "book"
         elif topic.startswith("publicTrade."):
+            # Capture receipt at the real ingress boundary, before the existing
+            # trade buffer's own processing/callback cost. This is NOT the
+            # exchange event time and grants no trading authority.
+            received_at_ms = int(time.time() * 1000)
             applied = context.public_trades.apply_message(message)
             if applied == "APPLIED":
-                context.impulse_observation.observe(message)
+                context.impulse_observation.observe(
+                    message, received_at_ms=received_at_ms,
+                )
             component = "trades"
         else:
             return
