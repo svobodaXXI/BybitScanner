@@ -574,17 +574,25 @@ class VPSManager(tk.Tk):
         top = ttk.Frame(self, padding=12)
         top.pack(fill="x")
         ttk.Label(top, text="VPS адрес:").grid(row=0, column=0, sticky="w")
-        ttk.Entry(top, textvariable=self.host, width=30).grid(row=0, column=1, padx=6)
+        host_entry = ttk.Entry(top, textvariable=self.host, width=30)
+        host_entry.grid(row=0, column=1, padx=6)
         ttk.Label(top, text="SSH пользователь:").grid(row=0, column=2)
-        ttk.Entry(top, textvariable=self.user, width=18).grid(row=0, column=3, padx=6)
+        user_entry = ttk.Entry(top, textvariable=self.user, width=18)
+        user_entry.grid(row=0, column=3, padx=6)
         ttk.Label(top, text="SSH ключ:").grid(row=1, column=0, sticky="w", pady=(7, 0))
-        ttk.Entry(top, textvariable=self.key, width=60).grid(
+        key_entry = ttk.Entry(top, textvariable=self.key, width=60)
+        key_entry.grid(
             row=1, column=1, columnspan=3, padx=6, pady=(7, 0), sticky="we"
         )
         ttk.Label(top, textvariable=self.status).grid(row=2, column=0, columnspan=4, sticky="w", pady=9)
         ttk.Label(top, text="Целевой SHA (для обновления):").grid(row=3, column=0, sticky="w")
-        ttk.Entry(top, textvariable=self.sha, width=48).grid(
-            row=3, column=1, columnspan=3, sticky="we")
+        self.sha_entry = ttk.Entry(top, textvariable=self.sha, width=48)
+        self.sha_entry.grid(row=3, column=1, columnspan=2, sticky="we")
+        self.sha_entry.bind("<Control-KeyPress>", self.paste_sha_hotkey)
+        ttk.Button(top, text="Вставить SHA", command=self.paste_sha).grid(
+            row=3, column=3, padx=6, sticky="w")
+        for entry in (host_entry, user_entry, key_entry):
+            entry.bind("<Control-KeyPress>", self.paste_text_hotkey)
         ttk.Label(top, text="Устройство: " + self.origin).grid(
             row=4, column=0, columnspan=4, sticky="w")
         ttk.Label(top, text="ID операции (для статуса):").grid(
@@ -683,6 +691,44 @@ class VPSManager(tk.Tk):
             button.state(["disabled"])
         self.write(f"\n> {name}")
         threading.Thread(target=self.worker, args=(command,), daemon=True).start()
+
+    def paste_sha(self) -> None:
+        """Paste an exact release SHA locally; never send a remote operation."""
+        try:
+            value = self.clipboard_get().strip().lower()
+        except tk.TclError:
+            messagebox.showerror("VPS Manager", "Буфер обмена пуст или недоступен")
+            return
+        if EXACT_SHA.fullmatch(value) is None:
+            messagebox.showerror("VPS Manager", "В буфере нет SHA релиза (40 hex символов)")
+            return
+        self.sha.set(value)
+        self.sha_entry.icursor("end")
+        self.sha_entry.focus_set()
+
+    def paste_sha_hotkey(self, event: tk.Event) -> str | None:
+        if (event.keysym.casefold() in ("v", "cyrillic_em")
+                or event.keycode == 86):
+            self.paste_sha()
+            return "break"
+        return None
+
+    def paste_text_hotkey(self, event: tk.Event) -> str | None:
+        """Layout-independent Ctrl+V for ordinary connection fields."""
+        if (event.keysym.casefold() not in ("v", "cyrillic_em")
+                and event.keycode != 86):
+            return None
+        try:
+            value = self.clipboard_get()
+        except tk.TclError:
+            messagebox.showerror("VPS Manager", "Буфер обмена пуст или недоступен")
+            return "break"
+        try:
+            event.widget.delete("sel.first", "sel.last")
+        except tk.TclError:
+            pass
+        event.widget.insert("insert", value)
+        return "break"
 
     def paste_request_id(self) -> None:
         """Paste and show the exact operation ID without an SSH call."""
