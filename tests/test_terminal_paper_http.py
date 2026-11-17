@@ -1013,6 +1013,18 @@ def test_scanner_control_routes_follow_the_close_all_trust_model():
         runtime = _runtime_owner(Path(temp) / "paper.sqlite3")
         server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
         server.runtime = runtime
+        observed_reads = []
+        def passive_source():
+            observed_reads.append("read")
+            return {
+                "scope": "EXISTING_HUB_SUBSCRIPTIONS_ONLY",
+                "source_complete": False,
+                "trading_authorized": False,
+                "contexts": [],
+            }
+        server.market_data = SimpleNamespace(
+            _hub=SimpleNamespace(impulse_source_diagnostics=passive_source),
+        )
         server_thread = threading.Thread(target=server.serve_forever, daemon=True)
         server_thread.start()
 
@@ -1037,6 +1049,10 @@ def test_scanner_control_routes_follow_the_close_all_trust_model():
             status = get("/api/scanner/status")
             assert status["ok"] is True
             assert status["mode"] == "SCANNER_STOPPED"
+            assert status["impulse_source"]["scope"] == "EXISTING_HUB_SUBSCRIPTIONS_ONLY"
+            assert status["impulse_source"]["source_complete"] is False
+            assert status["impulse_source"]["trading_authorized"] is False
+            assert observed_reads == ["read"]
 
             code, started = post("/api/scanner/start")
             assert (code, started["ok"], started["mode"]) == (200, True, "SCANNER_RUNNING")
