@@ -122,6 +122,32 @@ EXACT_SHA = re.compile(r"[0-9a-f]{40}\Z")
 REQUEST_ID = re.compile(r"[0-9a-f]{32}\Z")
 
 
+def manager_version() -> str:
+    """Show the version of this EXE, not the potentially different VPS release."""
+    if not getattr(sys, "frozen", False):
+        return "DEV"
+    bundle_dir = getattr(sys, "_MEIPASS", None)
+    if not bundle_dir:
+        return "UNKNOWN"
+    try:
+        root = Path(bundle_dir)
+        sha = (root / "desktop-build-sha.txt").read_text(
+            encoding="ascii").strip()
+        run_number = (root / "desktop-build-number.txt").read_text(
+            encoding="ascii").strip()
+    except (OSError, UnicodeError):
+        return "UNKNOWN"
+    if (EXACT_SHA.fullmatch(sha) is None
+            or re.fullmatch(r"[1-9][0-9]{0,11}", run_number) is None):
+        return "UNKNOWN"
+    # GITHUB_RUN_NUMBER is monotonically increasing for this release workflow.
+    return "v" + run_number + " (" + sha[:12] + ")"
+
+
+def manager_title() -> str:
+    return "BybitScanner VPS Manager — " + manager_version() + " — PAPER"
+
+
 def request_id_store() -> Path:
     """Local, non-secret recovery pointer; never stores SSH credentials."""
     local_app_data = os.environ.get("LOCALAPPDATA")
@@ -607,7 +633,7 @@ def run_cli(options: argparse.Namespace) -> int:
 class VPSManager(tk.Tk):
     def __init__(self, host: str = "", user: str = "bybitscanner", key: str | None = None) -> None:
         super().__init__()
-        self.title("BybitScanner VPS Manager — PAPER")
+        self.title(manager_title())
         self.geometry("880x510")
         self.minsize(780, 380)
         automatic = preferred_route() if not host else (host, user)

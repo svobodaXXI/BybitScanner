@@ -53,7 +53,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'PYINSTALLER_FAILED' }
           New-Item -ItemType Directory -Force -Path release-out | Out-Null
           "$env:DESKTOP_SHA" | Set-Content -Encoding ascii desktop-build-sha.txt
-          python -m PyInstaller --noconfirm --clean --onefile --windowed --name BybitScanner-VPS-Manager --add-data "desktop-build-sha.txt;." tools/windows_vps_manager.py
+          "$env:GITHUB_RUN_NUMBER" | Set-Content -Encoding ascii desktop-build-number.txt
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --name BybitScanner-VPS-Manager --add-data "desktop-build-sha.txt;." --add-data "desktop-build-number.txt;." tools/windows_vps_manager.py
           if ($LASTEXITCODE -ne 0) { throw 'MANAGER_BUILD_FAILED' }
           Copy-Item dist/BybitScanner-VPS-Manager.exe release-out/BybitScanner-VPS-Manager.exe
           python tools/build_machine_time_package.py --sha $env:DESKTOP_SHA --output release-out/BybitScanner-MachineTime.zip
