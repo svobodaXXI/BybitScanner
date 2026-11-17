@@ -13,7 +13,7 @@ from zipfile import ZipFile
 
 from research.local_replay_viewer.desktop_update import find_asset, fetch_verified, UpdateBlocked
 
-USER_STATE = ("simulator-v2-data", "paper-episode-facts")
+USER_STATE = ("simulator-v2-data", "paper-episode-facts", "public-m5-cache", "python-wheels")
 APP = "MachineTime"
 MAX_MEMBERS = 5000
 MAX_EXTRACTED = 260_000_000
@@ -122,6 +122,16 @@ def prepare_simulator_update(here: Path) -> tuple[Path, str]:
         archive.unlink()
         for name in USER_STATE:
             _copy_state(here / name, unpacked / name)
+        # The optional bundled public replay must survive an app-only update.
+        optional_bundled = here / "real-h1-august.json"
+        if optional_bundled.is_file() and not optional_bundled.is_symlink():
+            shutil.copy2(optional_bundled, unpacked / optional_bundled.name)
+            if hashlib.sha256(optional_bundled.read_bytes()).digest() != hashlib.sha256(
+                (unpacked / optional_bundled.name).read_bytes()
+            ).digest():
+                raise UpdateBlocked("bundled_archive_changed_during_copy")
+        elif optional_bundled.is_symlink():
+            raise UpdateBlocked("bundled_archive_untrusted")
         stage.rename(version)
         return version / APP / "START_LOCAL.cmd", asset.sha
     except Exception:
