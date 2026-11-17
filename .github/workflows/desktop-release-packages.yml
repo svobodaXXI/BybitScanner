@@ -63,6 +63,20 @@ jobs:
           Copy-Item dist/BybitScanner-VPS-Manager.exe release-out/BybitScanner-VPS-Manager.exe
           python tools/build_machine_time_package.py --sha $env:DESKTOP_SHA --output release-out/BybitScanner-MachineTime.zip
           if ($LASTEXITCODE -ne 0) { throw 'SIMULATOR_PACKAGE_FAILED' }
+      - name: Smoke-test packaged Manager Python DLL before publication
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $exe=(Resolve-Path release-out/BybitScanner-VPS-Manager.exe).Path
+          # This existing CLI input is rejected locally; it never opens SSH.
+          $proc=Start-Process -FilePath $exe -ArgumentList @('--operation','status','--request-id','invalid','--host','127.0.0.1','--user','root') -PassThru
+          try { Wait-Process -Id $proc.Id -Timeout 30 -ErrorAction Stop }
+          catch {
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            throw 'MANAGER_BOOTSTRAP_TIMEOUT'
+          }
+          $proc.Refresh()
+          if ($proc.ExitCode -ne 2) { throw 'MANAGER_PYTHON_DLL_BOOTSTRAP_UNPROVEN' }
       - name: Publish explicit-click desktop release
         shell: pwsh
         env:
