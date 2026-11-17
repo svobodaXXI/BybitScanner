@@ -146,3 +146,18 @@ def fetch_verified(asset: ReleaseAsset, destination: Path, *, opener=urlopen) ->
         if created:
             destination.unlink(missing_ok=True)
         raise
+
+
+
+def require_forward_update(installed_sha: str, release_sha: str, *, opener=urlopen) -> None:
+    """Known installed releases may advance only to descendants, not downgrade."""
+    if not SHA.fullmatch(installed_sha) or not SHA.fullmatch(release_sha):
+        raise UpdateBlocked("installed_desktop_version_untrusted")
+    if installed_sha == release_sha:
+        raise UpdateBlocked("desktop_already_current")
+    comparison = _json(API + "/compare/" + installed_sha + "..." + release_sha,
+                       opener=opener)
+    if (not isinstance(comparison, dict)
+            or comparison.get("status") != "ahead"
+            or comparison.get("behind_by") != 0):
+        raise UpdateBlocked("desktop_downgrade_or_diverged")
