@@ -1381,6 +1381,24 @@ class PaperRuntime:
         """
         import robot_state_machine
 
+        if isinstance(signal_snapshot, Mapping) and signal_snapshot.get("pattern") == "IMPULSE_FLOW":
+            # No Wedge apex exists. Closed-M1 identity/independent REST/kline
+            # certification is frozen by the trusted Scanner producer.
+            # Only the current PAPER opt-in and *real* decision age may ALLOW;
+            # malformed/expired/foreign snapshots remain UNKNOWN, never fresh.
+            import robot_impulse
+            if not robot_impulse.paper_enabled():
+                return None
+            try:
+                terms = robot_impulse.frozen_terms(signal_snapshot)
+                if terms.symbol != symbol:
+                    return None
+                decision_ms = signal_snapshot["impulse"]["known_at_ms"]
+                age_ms = int(time.time() * 1000) - decision_ms
+                return 0 <= age_ms <= robot_impulse.MAX_SIGNAL_AGE_MS
+            except (robot_impulse.ImpulseRobotError, KeyError, TypeError, ValueError):
+                return None
+
         evidence = self.robot_catchup_evidence
         if evidence is None or not isinstance(signal_snapshot, Mapping):
             return None
