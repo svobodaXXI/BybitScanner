@@ -613,6 +613,27 @@ class TestWindowsVpsManager(unittest.TestCase):
         self.assertEqual(run.call_count, 2)
         self.assertEqual(fake.events.get_nowait()[0], "success")
 
+    def test_gui_submit_timeout_recovers_existing_uuid_without_resubmit(self):
+        request = "a" * 32
+        fake = SimpleNamespace(events=queue.Queue(), host=Mock(), user=Mock(), key=Mock())
+        fake.host.get.return_value = "bybitscanner-vps"
+        fake.user.get.return_value = ""
+        fake.key.get.return_value = ""
+        status = subprocess.CompletedProcess(
+            ["ssh"], 0, stdout="REQUEST_ID=" + request + "\nSTATUS=FINISHED_OK\n",
+            stderr="")
+        with patch("tools.windows_vps_manager.subprocess.run",
+                   side_effect=[subprocess.TimeoutExpired("ssh", 35), status]) as remote:
+            VPSManager.worker_control(fake, ["ssh", "submit"], "update", request)
+        event, details = fake.events.get_nowait()
+        self.assertEqual(event, "success")
+        self.assertIn("REQUEST_ID=" + request, details)
+        self.assertEqual(remote.call_count, 2)
+        self.assertEqual(remote.call_args_list[0].args[0], ["ssh", "submit"])
+        self.assertIn("tools.vps_owner_control status " + request,
+                      remote.call_args_list[1].args[0][-1])
+        self.assertNotIn(" submit ", remote.call_args_list[1].args[0][-1])
+
     def test_gui_status_never_claims_success_without_matching_request(self):
         request = "1" * 32
         for code, response, expected in (

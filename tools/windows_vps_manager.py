@@ -762,10 +762,16 @@ class VPSManager(tk.Tk):
                     timeout=35, stdin=subprocess.DEVNULL, creationflags=NO_WINDOW,
                     check=False)
             else:
-                result = subprocess.run(
-                    command, capture_output=True, text=True, errors="replace",
-                    timeout=35, stdin=subprocess.DEVNULL, creationflags=NO_WINDOW,
-                    check=False)
+                try:
+                    result = subprocess.run(
+                        command, capture_output=True, text=True, errors="replace",
+                        timeout=35, stdin=subprocess.DEVNULL, creationflags=NO_WINDOW,
+                        check=False)
+                except subprocess.TimeoutExpired:
+                    # Submit may have reached the VPS before SSH timed out.
+                    # Never resend it; inspect only the original durable UUID.
+                    result = subprocess.CompletedProcess(
+                        command, 255, stdout="", stderr="SSH_SUBMIT_TIMEOUT")
                 recovery = ""
             output = result.stdout.strip()
             if mode not in CONTROL_ACTIONS.values():
