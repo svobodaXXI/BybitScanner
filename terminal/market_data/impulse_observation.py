@@ -246,3 +246,163 @@ def audit_recent_trade_overlap(
     if not expected or selected != expected:
         return unknown
     return RecentTradeOverlapAudit("EXACT_OVERLAP_MATCH", matched_count=len(expected))
+
+
+@dataclass(frozen=True, slots=True)
+class ClosedMinuteTradeParity:
+    """Independent OHLC/volume/turnover agreement, not trade-source authority."""
+
+    status: str
+    matched_prints: int = 0
+    known_at_ms: int | None = None
+    source_complete: bool = False
+    trading_authorized: bool = False
+
+
+def audit_closed_m1_trade_parity(
+    snapshot: object, kline_response: object, *,
+    start_ms: int, observed_at_ms: int,
+) -> ClosedMinuteTradeParity:
+    """Check one just-closed linear M1 candle against observed taker prints.
+
+    A caller must establish that the REST response came from Bybit under
+    trusted TLS. Exact M1 OHLC/base-volume/quote-turnover parity is useful
+    corroboration, not a proof of every individual trade ID or guaranteed
+    live-feed availability. No caller may grant Scanner/Robot entry authority
+    based on this optional, after-close read-only research check.
+
+    Fail closed on partial buffers, invalid frames, mismatched facts or a
+    stale/unclosed REST candle. Decimal equality is intentional: if the
+    exchange rounds its fields differently, the result stays UNPROVEN.
+    """
+    unknown = ClosedMinuteTradeParity("UNPROVEN")
+    minute_ms = 60_000
+    if (type(start_ms) is not int or start_ms < 0
+            or start_ms % minute_ms != 0
+            or type(observed_at_ms) is not int
+            or observed_at_ms < start_ms + minute_ms):
+        raise ValueError("closed aligned M1 and causal observation time required")
+    if not isinstance(snapshot, dict) or not isinstance(kline_response, dict):
+        return unknown
+    symbol = snapshot.get("symbol")
+    prints = snapshot.get("prints")
+    if (not isinstance(symbol, str) or not symbol.isalnum()
+            or not symbol.endswith("USDT")
+            or not isinstance(prints, tuple)
+            or not 0 < len(prints) <= PublicTradeObservation.LIMIT
+            or type(snapshot.get("generation")) is not int
+            or snapshot["generation"] < 0
+            or type(snapshot.get("observed_frames")) is not int
+            or snapshot["observed_frames"] <= 0
+            or type(snapshot.get("invalid_frames")) is not int
+            or snapshot["invalid_frames"] != 0
+            or snapshot.get("continuity") != "UNPROVEN"
+            or snapshot.get("order_authority") is not False):
+        return unknown
+    if (type(kline_response.get("retCode")) is not int
+            or kline_response["retCode"] != 0):
+        return unknown
+    server_time_ms = kline_response.get("time")
+    end_ms = start_ms + minute_ms
+    if (type(server_time_ms) is not int
+            or not end_ms <= server_time_ms <= observed_at_ms
+            or observed_at_ms - server_time_ms > 30_000):
+        return unknown
+    result = kline_response.get("result")
+    if (not isinstance(result, dict)
+            or result.get("category") != "linear"
+            or result.get("symbol") != symbol):
+        return unknown
+    rows = result.get("list")
+    if not isinstance(rows, list) or len(rows) != 1:
+        return unknown
+    row = rows[0]
+    if (not isinstance(row, list) or len(row) != 7
+            or row[0] != str(start_ms)):
+        return unknown
+    try:
+        if not all(isinstance(value, str) for value in row[1:]):
+            return unknown
+        open_px, high_px, low_px, close_px, volume, turnover = (
+            Decimal(value) for value in row[1:]
+        )
+    except (InvalidOperation, TypeError, ValueError):
+        return unknown
+    if (not all(value.is_finite() for value in
+                (open_px, high_px, low_px, close_px, volume, turnover))
+            or min(open_px, high_px, low_px, close_px, volume, turnover) <= 0
+            or not low_px <= min(open_px, close_px) <= high_px
+            or not low_px <= max(open_px, close_px) <= high_px):
+        return unknown
+
+    selected: list[ObservedPrint] = []
+    ids: set[str] = set()
+    prior_time, prior_seq = -1, -1
+    for item in prints:
+        if not isinstance(item, ObservedPrint):
+            return unknown
+        if not start_ms <= item.timestamp_ms < end_ms:
+            continue
+        if (not item.trade_id or item.trade_id in ids
+                or item.timestamp_ms < prior_time
+                or item.sequence < prior_seq
+                or not item.price.is_finite() or item.price <= 0
+                or not item.quantity.is_finite() or item.quantity <= 0):
+            return unknown
+        ids.add(item.trade_id)
+        prior_time, prior_seq = item.timestamp_ms, item.sequence
+        selected.append(item)
+    if not selected:
+        return unknown
+    if (selected[0].price != open_px or selected[-1].price != close_px
+            or min(x.price for x in selected) != low_px
+            or max(x.price for x in selected) != high_px
+            or sum((x.quantity for x in selected), Decimal(0)) != volume
+            or sum((x.notional for x in selected), Decimal(0)) != turnover):
+        return unknown
+    return ClosedMinuteTradeParity(
+        status="EXACT_CLOSED_M1_AGGREGATE_PARITY",
+        matched_prints=len(selected), known_at_ms=observed_at_ms,
+    )
+
+
+def audit_closed_m1_triple_parity(
+    snapshot: object, recent_trade_response: object,
+    kline_response: object, *, start_ms: int, observed_at_ms: int,
+) -> ClosedMinuteTradeParity:
+    """Corroborate a past minute against BOTH REST executions and M1 totals.
+
+    Recent-trade must contain the full bracketed interval; closed M1 must
+    exactly match observed OHLC, base volume and quote turnover. The REST
+    page must be current after minute close. This verifies a *bounded
+    comparison of provided sources*, not continuous source delivery,
+    authenticity of untrusted payloads or permission to trade.
+
+    Both endpoints are caller-supplied: this function performs no network
+    access, side effects, background polling or Scanner/Robot actions.
+    """
+    unknown = ClosedMinuteTradeParity("UNPROVEN")
+    kline = audit_closed_m1_trade_parity(
+        snapshot, kline_response,
+        start_ms=start_ms, observed_at_ms=observed_at_ms,
+    )
+    if kline.status != "EXACT_CLOSED_M1_AGGREGATE_PARITY":
+        return unknown
+    rest = audit_recent_trade_overlap(
+        snapshot, recent_trade_response,
+        start_ms=start_ms, end_ms=start_ms + 60_000,
+    )
+    if (rest.status != "EXACT_OVERLAP_MATCH"
+            or rest.matched_count != kline.matched_prints
+            or not isinstance(recent_trade_response, dict)):
+        return unknown
+    rest_server_ms = recent_trade_response.get("time")
+    if (type(rest_server_ms) is not int
+            or not start_ms + 60_000 <= rest_server_ms <= observed_at_ms
+            or observed_at_ms - rest_server_ms > 30_000):
+        return unknown
+    return ClosedMinuteTradeParity(
+        "EXACT_CLOSED_M1_TRIPLE_PARITY",
+        matched_prints=kline.matched_prints,
+        known_at_ms=observed_at_ms,
+    )
