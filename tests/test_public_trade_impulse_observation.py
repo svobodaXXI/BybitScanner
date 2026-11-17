@@ -384,7 +384,7 @@ class ClosedMinuteTripleParityTests(unittest.TestCase):
 
     def test_reconnect_does_not_recover_pre_gap_execution_coverage(self):
         self.source.mark_gap()
-        self.assertTrue(self.source.observe(frame(*self.trades[1:])))
+        self.assertTrue(self.source.observe(frame(*self.trades[2:])))
         self.assertEqual(self.audit().status, "UNPROVEN")
 
 if __name__ == "__main__":
