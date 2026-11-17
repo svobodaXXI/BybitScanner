@@ -143,7 +143,7 @@ class OwnerBridgeTests(unittest.TestCase):
             root = Path(directory)
             database = root / "paper.sqlite3"
             env = root / "paper.env"
-            env.write_text(f"BYBITSCANNER_PAPER_DB={database}\\n", encoding="utf-8")
+            env.write_text(f"BYBITSCANNER_PAPER_DB={database}", encoding="utf-8")
             with sqlite3.connect(database) as conn:
                 conn.executescript("""
                     CREATE TABLE robot_runtime_state (
