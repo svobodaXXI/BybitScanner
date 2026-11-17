@@ -73,12 +73,14 @@ def _unpack_release(archive: Path, dest: Path, *, sha: str) -> None:
             parts = path.parts
             if (not parts or parts[0] != APP or len(parts) < 2
                     or any(p in ("", ".", "..") for p in parts)
-                    or "\\" in name or name in seen
+                    or "\\" in name or ":" in name or name.casefold() in seen
+                    or any(p.rstrip(" .") != p or p.upper().split(".")[0] in
+                           {"CON", "PRN", "AUX", "NUL", "COM1", "LPT1"} for p in parts)
                     or ((info.external_attr >> 16) & 0o170000) == stat.S_IFLNK
                     or (parts[1] in USER_STATE)
                     or name.startswith(APP + "/.wedge-python/")):
                 raise UpdateBlocked("untrusted_simulator_archive")
-            seen.add(name)
+            seen.add(name.casefold())
             total += info.file_size
             if total > MAX_EXTRACTED:
                 raise UpdateBlocked("simulator_archive_too_large")
@@ -111,6 +113,8 @@ def prepare_simulator_update(here: Path) -> tuple[Path, str]:
         raise UpdateBlocked("simulator_already_current")
     root = Path(os.environ["LOCALAPPDATA"]) / "BybitScanner" / APP / "releases"
     root.mkdir(parents=True, exist_ok=True)
+    if root.is_symlink():
+        raise UpdateBlocked("untrusted_simulator_releases_root")
     version = root / asset.sha
     if version.exists():
         raise UpdateBlocked("simulator_release_already_staged")
