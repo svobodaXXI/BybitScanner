@@ -9,8 +9,8 @@ def frame(*prints, symbol="BTCUSDT"):
     return {"topic": "publicTrade." + symbol, "data": list(prints)}
 
 
-def trade(identity="id1", timestamp=1000, side="Buy", price="100", qty="2", symbol="BTCUSDT"):
-    return {"i": identity, "T": timestamp, "S": side, "p": price, "v": qty, "s": symbol}
+def trade(identity="id1", timestamp=1000, side="Buy", price="100", qty="2", symbol="BTCUSDT", sequence=100):
+    return {"i": identity, "T": timestamp, "S": side, "p": price, "v": qty, "s": symbol, "seq": sequence}
 
 
 class PublicTradeObservationTests(unittest.TestCase):
@@ -21,6 +21,7 @@ class PublicTradeObservationTests(unittest.TestCase):
         self.assertEqual([x.side for x in s["prints"]], ["Buy", "Sell"])
         self.assertEqual([x.notional for x in s["prints"]], [Decimal("200"), Decimal("297")])
         self.assertEqual(s["continuity"], "UNPROVEN")
+        self.assertEqual(s["last_cross_sequence"], 100)
         self.assertFalse(s["order_authority"])
         self.assertTrue(s["gap_or_truncation"])
 
@@ -42,6 +43,7 @@ class PublicTradeObservationTests(unittest.TestCase):
         bad = [
             trade(symbol="ETHUSDT"), trade(side="UNKNOWN"), trade(identity=""),
             trade(price="NaN"), trade(qty="0"), trade(timestamp=-1),
+            trade(sequence=-1), trade(sequence=None),
         ]
         o = PublicTradeObservation("BTCUSDT")
         for item in bad:
@@ -49,6 +51,40 @@ class PublicTradeObservationTests(unittest.TestCase):
         self.assertFalse(o.observe(frame(trade(), symbol="ETHUSDT")))
         self.assertFalse(o.observe({"topic": "publicTrade.BTCUSDT", "data": "wrong"}))
         self.assertEqual(o.snapshot()["observed_prints"], 0)
+
+    def test_sequence_equal_across_frames_is_valid_not_a_gap_claim(self):
+        o = PublicTradeObservation("BTCUSDT")
+        self.assertTrue(o.observe(frame(trade("id1", 1000, sequence=400))))
+        self.assertTrue(o.observe(frame(trade("id2", 1001, sequence=400))))
+        self.assertTrue(o.observe(frame(trade("id3", 1002, sequence=405))))
+        self.assertEqual(o.snapshot()["observed_prints"], 3)
+        self.assertEqual(o.snapshot()["last_cross_sequence"], 405)
+        self.assertEqual(o.snapshot()["continuity"], "UNPROVEN")
+
+    def test_sequence_regression_rejects_entire_batch_and_latches_gap(self):
+        o = PublicTradeObservation("BTCUSDT")
+        self.assertTrue(o.observe(frame(trade("id1", 1000, sequence=20))))
+        self.assertFalse(o.observe(frame(
+            trade("id2", 1001, sequence=21),
+            trade("id3", 1002, sequence=19),
+        )))
+        s = o.snapshot()
+        self.assertEqual([p.trade_id for p in s["prints"]], ["id1"])
+        self.assertEqual(s["last_cross_sequence"], 20)
+        self.assertEqual(s["invalid_frames"], 1)
+        self.assertTrue(s["gap_or_truncation"])
+        # Fresh generation cannot inherit old sequence or accumulated evidence.
+        o.mark_gap()
+        self.assertTrue(o.observe(frame(trade("fresh", 2000, sequence=1))))
+        self.assertEqual(o.snapshot()["last_cross_sequence"], 1)
+
+    def test_missing_sequence_is_fail_closed_not_assumed_complete(self):
+        o = PublicTradeObservation("BTCUSDT")
+        item = trade()
+        del item["seq"]
+        self.assertFalse(o.observe(frame(item)))
+        self.assertEqual(o.snapshot()["observed_prints"], 0)
+        self.assertEqual(o.snapshot()["continuity"], "UNPROVEN")
 
     def test_disconnect_discards_pre_gap_prints_and_requires_new_generation(self):
         o = PublicTradeObservation("BTCUSDT")
