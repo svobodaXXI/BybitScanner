@@ -38,8 +38,8 @@ import telegram_runtime_intent
 from telegram_labels import SCANNER_EMOJI, ROBOT_EMOJI
 from tools import stop_robot_runtime
 from robot_lifecycle_posts import (
-    build_lifecycle_keyboard, collect_new_lifecycle_events, format_lifecycle_caption,
-    load_lifecycle_state, mark_notified, save_lifecycle_state,
+    EVENT_OPENED, build_lifecycle_keyboard, collect_new_lifecycle_events,
+    format_lifecycle_caption, load_lifecycle_state, mark_notified, save_lifecycle_state,
 )
 from robot_position_chart import render_position_chart
 from robot_position_view import (
@@ -420,6 +420,14 @@ def poll_lifecycle_once(now_ms: int | None = None) -> None:
         ]
     blocked = set()
     for event, view in pending:
+        # The trade may close between event selection and this read. Never
+        # render a durable CLOSED view under a stale OPENED notification.
+        # Mark only that obsolete OPENED notification; the CLOSED event remains
+        # eligible (including on the next poll after a concurrent close).
+        if event.kind == EVENT_OPENED and view is not None and not view.is_open:
+            mark_notified(state, event)
+            save_lifecycle_state(LIFECYCLE_STATE_FILE, state)
+            continue
         # "закрыта" never goes out before a failed "открыта" of the same trade.
         if event.trade_id in blocked:
             continue
