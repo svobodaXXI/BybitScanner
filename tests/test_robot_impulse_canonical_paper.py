@@ -96,7 +96,7 @@ class ImpulseCanonicalPolicyTests(unittest.TestCase):
         self.assertEqual(first.symbol, "BTCUSDT")
         self.assertIs(first.side, OrderSide.BUY)
         self.assertEqual(first.limit_price, Decimal("100"))
-        self.assertEqual(first.volume.value, Decimal("1"))
+        self.assertEqual(first.volume.amount, Decimal("1"))
 
     def test_long_and_short_protect_actual_fill_with_three_r(self):
         for direction, stop_side in (("LONG", -1), ("SHORT", 1)):
