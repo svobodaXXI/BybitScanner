@@ -130,11 +130,18 @@ def manager_version() -> str:
     if not bundle_dir:
         return "UNKNOWN"
     try:
-        sha = (Path(bundle_dir) / "desktop-build-sha.txt").read_text(
+        root = Path(bundle_dir)
+        sha = (root / "desktop-build-sha.txt").read_text(
+            encoding="ascii").strip()
+        run_number = (root / "desktop-build-number.txt").read_text(
             encoding="ascii").strip()
     except (OSError, UnicodeError):
         return "UNKNOWN"
-    return "v" + sha[:12] if EXACT_SHA.fullmatch(sha) else "UNKNOWN"
+    if (EXACT_SHA.fullmatch(sha) is None
+            or re.fullmatch(r"[1-9][0-9]{0,11}", run_number) is None):
+        return "UNKNOWN"
+    # GITHUB_RUN_NUMBER is monotonically increasing for this release workflow.
+    return "v" + run_number + " (" + sha[:12] + ")"
 
 
 def manager_title() -> str:
