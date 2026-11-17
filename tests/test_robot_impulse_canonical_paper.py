@@ -191,5 +191,128 @@ class ImpulseCanonicalPolicyTests(unittest.TestCase):
         monitor._action_executor.create_limit.assert_not_called()
 
 
+class ImpulseDurablePaperCycleTests(unittest.TestCase):
+    """Actual SQLite + owner-style fake LIMIT fills; no trading on VPS."""
+
+    def setUp(self):
+        from pathlib import Path
+        import tempfile
+        from terminal.persistence.sqlite_store import SQLiteStore
+        from terminal.domain.models import TradingAccountId, Symbol
+        from tests.test_robot_breakout_monitor import (
+            _Clock, _ScriptedCandleFeed, _FakeActionExecutor,
+        )
+
+        self.folder = tempfile.TemporaryDirectory()
+        self.path = Path(self.folder.name) / "paper.db"
+        self.account = TradingAccountId("paper")
+        self.symbol = Symbol("TESTUSDT")
+        self.store = SQLiteStore.open(self.path)
+        self.store.initialize_robot_runtime_state(self.account, updated_at_ms=1)
+        self.store.update_robot_runtime_state(
+            self.account, mode="ROBOT_RUNNING", recovery_status="READY",
+            reason=None, expected_version=1, updated_at_ms=1,
+        )
+        self.clock = _Clock(1_800_040)
+        self.feed = _ScriptedCandleFeed()
+        self.executor = _FakeActionExecutor(self.store, self.account, self.clock)
+        self.monitor = RobotBreakoutMonitor(
+            lambda: SQLiteStore.open(self.path), self.account,
+            get_closed_candle=self.feed,
+            action_executor=self.executor,
+            tick_size_provider=lambda symbol: Decimal("0.1"),
+            clock_ms=self.clock,
+            arm_entry_coverage=lambda symbol: True,
+            release_entry_coverage=lambda symbol: None,
+        )
+
+    def tearDown(self):
+        self.monitor.close()
+        self.store.close()
+        self.folder.cleanup()
+
+    def _candidate(self):
+        from terminal.domain.models import Symbol
+
+        item = snapshot()
+        item["symbol"] = self.symbol.value
+        record, created = self.store.create_robot_candidate(
+            candidate_id="impulse-e2e", trading_account_id=self.account,
+            symbol=self.symbol, status="APPROVED",
+            signal_snapshot=item, approved_at_ms=1_800_030,
+            updated_at_ms=1_800_030,
+        )
+        self.assertTrue(created)
+        state = robot_impulse.initialize_state({
+            "status": "APPROVED", "signal_snapshot": item,
+        })
+        return self.store.save_robot_candidate_state(
+            record.candidate_id, status="APPROVED", robot_state=state,
+            expected_revision=record.state_revision, updated_at_ms=1_800_032,
+        )
+
+    def test_exact_limit_fill_creates_protected_trade_no_second_entry(self):
+        from terminal.domain.models import OrderSide, Category, PositionKey
+
+        candidate = self._candidate()
+        self.feed.push(self.symbol.value, {
+            "time_ms": 1_740_000, "close": Decimal("100"),
+            "high": Decimal("100.1"), "low": Decimal("99.5"),
+        })
+        with patch.dict(os.environ, {robot_impulse.PAPER_OPT_IN: "1"}):
+            self.assertEqual(self.monitor.tick(), (candidate.candidate_id,))
+            pending = self.store.get_robot_candidate(candidate.candidate_id)
+            order_id = pending.robot_state["execution"]["limit_order_id"]
+            self.assertEqual(self.store.get_paper_limit(order_id, self.account).status, "open")
+            self.assertEqual(len(self.executor.limit_calls), 1)
+
+            self.executor.fill_resting_limit(
+                order_id, self.symbol.value, OrderSide.BUY,
+                Decimal("1"), Decimal("100"),
+            )
+            self.assertEqual(self.monitor.tick(), (candidate.candidate_id,))
+
+            opened = self.store.get_robot_trade("robot-trade-" + candidate.candidate_id)
+            self.assertIsNotNone(opened)
+            self.assertEqual(opened.pattern, robot_impulse.PATTERN)
+            self.assertEqual(opened.entry_path, "LIMIT")
+            self.assertEqual(opened.entry_quantity, Decimal("1"))
+            self.assertEqual(opened.average_entry, Decimal("100"))
+            self.assertEqual(opened.stop_price, Decimal("98.9"))
+            self.assertEqual(opened.take_price, Decimal("103.3"))
+            projection = self.store.get_protection_projection(
+                PositionKey(self.account, Category.LINEAR, self.symbol, 0),
+            )
+            self.assertEqual(projection.stop_loss, Decimal("98.9"))
+            self.assertEqual(projection.take_profit, Decimal("103.3"))
+            self.assertEqual(len(self.executor.limit_calls), 1)
+            self.assertEqual(
+                [label for label, _request in self.executor.protection_calls],
+                ["create_stop", "create_take"],
+            )
+            self.assertEqual(self.monitor.tick(), ())
+            self.assertEqual(len(self.executor.limit_calls), 1)
+
+    def test_unmatched_closed_candle_cannot_place_limit(self):
+        candidate = self._candidate()
+        self.feed.push(self.symbol.value, {
+            "time_ms": 1_740_000, "close": Decimal("100.1"),
+            "high": Decimal("100.1"), "low": Decimal("99.5"),
+        })
+        with patch.dict(os.environ, {robot_impulse.PAPER_OPT_IN: "1"}):
+            self.assertEqual(self.monitor.tick(), ())
+        self.assertEqual(self.executor.limit_calls, [])
+        self.assertIsNone(self.store.get_robot_trade("robot-trade-" + candidate.candidate_id))
+
+    def test_expired_impulse_never_submits_order(self):
+        candidate = self._candidate()
+        self.clock.value = 1_800_000 + robot_impulse.MAX_SIGNAL_AGE_MS + 1
+        with patch.dict(os.environ, {robot_impulse.PAPER_OPT_IN: "1"}):
+            self.assertEqual(self.monitor.tick(), (candidate.candidate_id,))
+        record = self.store.get_robot_candidate(candidate.candidate_id)
+        self.assertEqual(record.status, "INVALIDATED")
+        self.assertEqual(self.executor.limit_calls, [])
+
+
 if __name__ == "__main__":
     unittest.main()
