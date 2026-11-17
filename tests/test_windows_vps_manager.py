@@ -947,7 +947,9 @@ class TestWindowsVpsManager(unittest.TestCase):
                 self.assertEqual(preferred_route(), ("83.217.213.181", "root"))
                 self.assertEqual(preferred_key("83.217.213.181", "root"),
                                  str(key))
-                self.assertEqual(preferred_key("212.193.14.116", "root"), "")
+                # Both owner-confirmed PC addresses use the same existing PC key;
+                # the active TUN selects which becomes the default.
+                self.assertEqual(preferred_key("212.193.14.116", "root"), str(key))
                 cmd = control_ssh_command(
                     *preferred_route(), str(key), "list")
                 self.assertEqual(cmd[:3], ["ssh", "-F", "none"])
