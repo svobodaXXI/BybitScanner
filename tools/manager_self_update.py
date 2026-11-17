@@ -86,6 +86,28 @@ def _installed_path() -> Path:
     return path
 
 
+def probe_manager_bootstrap(path: Path, *, run=subprocess.run) -> None:
+    """Proof that the *downloaded* EXE can load Python before replacing old EXE.
+
+    Invalid UUID is rejected locally by the manager's existing CLI before any
+    SSH/network action. Normal Python execution exits 2 (Windows GUI process);
+    missing bundled Python DLL fails or hangs on the Windows loader dialog.
+    """
+    try:
+        result = run(
+            [str(path), "--operation", "status", "--request-id", "invalid",
+             "--host", "127.0.0.1", "--user", "root"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL, timeout=30,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise UpdateBlocked("manager_new_exe_bootstrap_unproven") from exc
+    if result.returncode != 2:
+        raise UpdateBlocked("manager_new_exe_bootstrap_unproven")
+
+
 def stage_manager() -> str:
     """Called only on owner click, never in a timer or startup hook."""
     current = _installed_path()
@@ -101,6 +123,7 @@ def stage_manager() -> str:
     if executable.exists():
         raise UpdateBlocked("prior_update_stage_present; do_not_retry_automatically")
     fetch_verified(release, executable)
+    probe_manager_bootstrap(executable)
     helper = stage_dir / "apply-manager-update.ps1"
     if helper.exists():
         raise UpdateBlocked("prior_update_helper_present")
