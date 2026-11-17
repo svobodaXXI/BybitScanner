@@ -125,6 +125,40 @@ def test_installed_exact_main_route_adopts_bridge_without_replacing_main(tmp_pat
     assert same == next_bytes
 
 
+def test_preflight_upgrades_only_exact_previous_bridge_to_scoped_facts(tmp_path):
+    root, ng, site, baseline = _site(tmp_path)
+    reviewed = gateway._simulator_bridge_from_source(root)
+    legacy = gateway._legacy_simulator_bridge_from_reviewed(reviewed)
+    self_installed = baseline.replace(
+        gateway.BACKEND_BLOCK, legacy + gateway.BACKEND_BLOCK, 1,
+    )
+    site.write_text(self_installed)
+    _, original, updated = gateway.inspect_authenticated_site(
+        root=root, run=_runner(site, []), nginx_dir=ng, uid=os.geteuid(),
+    )
+    assert original.decode() == self_installed
+    assert updated.decode().count("location = /api/diary/simulator-bridge/facts {") == 1
+    assert updated.decode().count(reviewed) == 1
+    assert site.read_text() == self_installed  # preflight cannot mutate
+    site.write_bytes(updated)
+    _, same, idempotent = gateway.inspect_authenticated_site(
+        root=root, run=_runner(site, []), nginx_dir=ng, uid=os.geteuid(),
+    )
+    assert same == idempotent
+
+    # The manager must not "repair" even a single changed proxy destination.
+    tampered = self_installed.replace(
+        "proxy_pass http://127.0.0.1:8765;",
+        "proxy_pass http://127.0.0.1:8777;", 1,
+    )
+    site.write_text(tampered)
+    with pytest.raises(gateway.MainGatewayBlocked, match="unknown_simulator_bridge_route"):
+        gateway.inspect_authenticated_site(
+            root=root, run=_runner(site, []), nginx_dir=ng, uid=os.geteuid(),
+        )
+    assert site.read_text() == tampered
+
+
 def test_preflight_rejects_unknown_simulator_bridge_route(tmp_path):
     root, ng, site, baseline = _site(tmp_path)
     unknown = baseline.replace(
