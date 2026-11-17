@@ -4,6 +4,9 @@ on:
     paths:
       - 'tools/paper_maintenance.py'
       - 'tools/vps_simulator_device_provision.py'
+      - 'tools/vps_check.py'
+      - 'deploy/systemd/bybitscanner-paper-backend.service'
+      - 'tests/test_vps_check.py'
       - 'tests/test_vps_simulator_device_provision.py'
       - 'tools/paper_interrupted_stop_recovery.py'
       - 'tools/paper_stopped_approved_recovery.py'
