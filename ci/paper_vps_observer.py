@@ -154,7 +154,11 @@ def render_comment(snapshot: dict) -> str:
         f"Установленный SHA: `{snapshot['installed_sha'] or 'UNKNOWN'}`\n\n"
         "Это ограниченное наблюдение, **не** доказательство FLAT, "
         "полноты STOP/TAKE или разрешение на торговлю. "
-        "Если последнему успешному опросу более 30 минут — статус STALE."
+        "Время выше — отметка записи журнала, не последнего опроса. "
+        "Для проверки свежести смотрите последний GitHub Actions run: "
+        "https://github.com/svobodaXXI/BybitScanner/actions/workflows/"
+        "paper-vps-observer.yml . "
+        "Если последний успешный опрос старше 30 минут, статус STALE."
     )
 
 
