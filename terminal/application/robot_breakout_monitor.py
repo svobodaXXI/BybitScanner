@@ -703,7 +703,10 @@ class RobotBreakoutMonitor:
             result = self._action_executor.create_limit(request)
             order_id = getattr(result, "order_id", None)
             if not order_id:
-                self._release_entry_coverage(record.symbol.value)
+                # An UNKNOWN submit may already have created an entry order.
+                # Never drop the armed market/protection coverage on ambiguity.
+                if getattr(result, "status", None) is CommandResultStatus.BLOCKED:
+                    self._release_entry_coverage(record.symbol.value)
                 return False
             execution["limit_order_id"] = order_id
             execution["impulse_signal_close_ms"] = terms.closed_at_ms
