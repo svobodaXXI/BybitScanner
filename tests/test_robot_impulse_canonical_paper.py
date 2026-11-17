@@ -175,6 +175,41 @@ class ImpulseCanonicalPolicyTests(unittest.TestCase):
             "paper-impulse-1",
         )
 
+    def test_existing_60s_monitor_accepts_next_closed_candle_after_source_certification(self):
+        item = snapshot()
+        monitor = object.__new__(RobotBreakoutMonitor)
+        record = SimpleNamespace(
+            candidate_id="impulse-later", symbol=SimpleNamespace(value="BTCUSDT"),
+            signal_snapshot=item,
+            robot_state=robot_impulse.initialize_state({
+                "status": "APPROVED", "signal_snapshot": item,
+            }),
+        )
+        monitor._now_ms = Mock(return_value=1_861_000)
+        # One M1 completed after the certified signal. Its close differs,
+        # but never invalidates the immutable previously certified source.
+        monitor._get_closed_candle = Mock(return_value={
+            "time_ms": 1_800_000, "close": Decimal("101"),
+        })
+        monitor._read_admission_gate = Mock(return_value=(True, False))
+        monitor._active_other_owner_candidate_ids = Mock(return_value=())
+        monitor._pre_entry_block_reason = Mock(return_value=None)
+        monitor._arm_entry_coverage = Mock(return_value=True)
+        monitor._tick_size_provider = Mock(return_value=Decimal("0.1"))
+        monitor._persist_execution = Mock()
+        monitor._store = Mock(return_value=SimpleNamespace(
+            get_robot_candidate=lambda _candidate_id: SimpleNamespace(
+                robot_state={"execution": {"limit_order_id": "impulse-limit-later"}},
+            ),
+        ))
+        monitor._action_executor = Mock()
+        monitor._action_executor.create_limit.return_value = SimpleNamespace(
+            order_id="impulse-limit-later", status=CommandResultStatus.COMPLETED,
+        )
+        with patch.dict(os.environ, {robot_impulse.PAPER_OPT_IN: "1"}):
+            self.assertTrue(monitor._advance_impulse(record))
+        monitor._action_executor.create_limit.assert_called_once()
+
     def test_monitor_requires_matching_closed_candle_and_default_off(self):
         item = snapshot()
         monitor = object.__new__(RobotBreakoutMonitor)
