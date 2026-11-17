@@ -27,7 +27,7 @@ def _derived_context_boundary(agents: str) -> bool:
 
 def _current_backlog_priority(backlog: str) -> dict[str, str]:
     """Expose only the first P0 heading as a pointer, never as task authority."""
-    match = re.search(r"^##[ \t]+(P0\\b[^\r\n]*)$", backlog, re.MULTILINE)
+    match = re.search(r"^##[ \t]+(P0\b[^\r\n]*)$", backlog, re.MULTILINE)
     return {
         "source": "DOCUMENTS/BACKLOG.md",
         "heading": match.group(1).strip() if match else "UNRESOLVED",
