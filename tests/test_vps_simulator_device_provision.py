@@ -47,7 +47,7 @@ def scenario(tmp_path, monkeypatch):
 
     def start(*a, **kw):
         state["resume"] += 1
-        state["live"] = parse_env_lines(owner.read_text().splitlines())
+        state["live"] = parse_env_lines(simulator.read_text().splitlines())
         return "READY: exact EDITOR_ONLY"
 
     monkeypatch.setattr(maintenance, "_stop_exact_installed_paper_once", stop)
