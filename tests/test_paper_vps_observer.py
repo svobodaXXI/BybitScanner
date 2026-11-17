@@ -121,6 +121,27 @@ class ObserverTests(unittest.TestCase):
             self.assertEqual(api.call_args.args[1], "POST")
             self.assertTrue(api.call_args.args[3]["body"].startswith(observer.MARKER))
 
+    def test_last_page_lookup_preserves_per_page_and_selects_bot_only(self):
+        import types
+        latest = {
+            "user": {"login": "github-actions[bot]"},
+            "body": observer.MARKER + "a" * 20 + " -->\\nsummary",
+            "created_at": "2026-11-18T01:00:00Z",
+        }
+        link = (
+            '<https://api.github.com/repos/svobodaXXI/BybitScanner/'
+            'issues/1136/comments?per_page=100&page=13>; rel="last"'
+        )
+        with mock.patch.object(observer, "_api", side_effect=[
+            ([], link), ([latest], ""),
+        ]) as fetch:
+            marker, stamp = observer._last_bot_record("fake-token")
+        self.assertEqual(marker, "a" * 20)
+        self.assertEqual(stamp, datetime(2026, 11, 18, 1, tzinfo=timezone.utc))
+        self.assertTrue(fetch.call_args_list[1].args[2].endswith(
+            "per_page=100&page=13",
+        ))
+
     def test_publish_rejects_unallowlisted_text_without_calling_github(self):
         snap = observer.sanitize_diagnostic(raw_diag(), ssh_exit=0, at=AT)
         snap["reason_class"] = "SECRET-TOKEN"
