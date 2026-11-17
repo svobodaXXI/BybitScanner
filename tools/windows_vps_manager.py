@@ -958,18 +958,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                                                  "status", "list", "preflight"), default=None)
     parser.add_argument("--sha", default="")
     parser.add_argument("--request-id", default="")
-    parser.add_argument("--replace-running-manager", default="")
-    parser.add_argument("--old-pid", type=int, default=0)
     args, _unknown = parser.parse_known_args(argv)
     return args
 
 
 if __name__ == "__main__":
     options = parse_args()
-    if options.replace_running_manager:
-        from tools.manager_self_update import commit_manager
-        sys.exit(commit_manager(original=options.replace_running_manager,
-                                old_pid=options.old_pid))
     if options.operation:
         sys.exit(run_cli(options))
     VPSManager(options.host, options.user, options.key).mainloop()
