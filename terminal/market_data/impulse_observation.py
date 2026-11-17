@@ -16,6 +16,7 @@ from threading import Lock
 class ObservedPrint:
     trade_id: str
     timestamp_ms: int
+    sequence: int
     side: str
     price: Decimal
     quantity: Decimal
@@ -38,6 +39,7 @@ class PublicTradeObservation:
         self._prints: deque[ObservedPrint] = deque(maxlen=self.LIMIT)
         self._ids: dict[str, ObservedPrint] = {}
         self._last_ms: int | None = None
+        self._last_sequence: int | None = None
         self._frames = 0
         self._invalid_frames = 0
         self._gap = True  # startup/subscription history is unproven
@@ -50,6 +52,7 @@ class PublicTradeObservation:
             self._prints.clear()
             self._ids.clear()
             self._last_ms = None
+            self._last_sequence = None
 
     @staticmethod
     def _positive(value: object) -> Decimal:
@@ -76,12 +79,14 @@ class PublicTradeObservation:
             identifier = item.get("i")
             timestamp = item.get("T")
             side = item.get("S")
+            sequence = item.get("seq")
             if (not isinstance(identifier, str) or not identifier or len(identifier) > 128
                     or type(timestamp) is not int or timestamp < 0
+                    or type(sequence) is not int or sequence < 0
                     or side not in ("Buy", "Sell")):
                 raise ValueError("invalid exact trade identity, time or side")
             parsed.append(ObservedPrint(
-                identifier, timestamp, side,
+                identifier, timestamp, sequence, side,
                 self._positive(item.get("p")), self._positive(item.get("v")),
             ))
         return parsed
@@ -100,6 +105,7 @@ class PublicTradeObservation:
             # timestamps, and conflicting IDs *inside* the frame are all rejected.
             pending: dict[str, ObservedPrint] = {}
             timestamp = self._last_ms
+            sequence = self._last_sequence
             for item in parsed:
                 old = pending.get(item.trade_id) or self._ids.get(item.trade_id)
                 if old is not None:
@@ -108,12 +114,13 @@ class PublicTradeObservation:
                         self._gap = True
                         return False
                     continue
-                if timestamp is not None and item.timestamp_ms < timestamp:
+                if (timestamp is not None and item.timestamp_ms < timestamp) or (sequence is not None and item.sequence < sequence):
                     self._invalid_frames += 1
                     self._gap = True
                     return False
                 pending[item.trade_id] = item
                 timestamp = item.timestamp_ms
+                sequence = item.sequence
             for item in pending.values():
                 if len(self._prints) == self.LIMIT:
                     evicted = self._prints.popleft()
@@ -122,6 +129,7 @@ class PublicTradeObservation:
                 self._prints.append(item)
                 self._ids[item.trade_id] = item
             self._last_ms = timestamp
+            self._last_sequence = sequence
             self._frames += 1
             return True
 
@@ -135,8 +143,9 @@ class PublicTradeObservation:
                 "observed_frames": self._frames,
                 "invalid_frames": self._invalid_frames,
                 "last_trade_ms": self._last_ms,
+                "last_cross_sequence": self._last_sequence,
                 "gap_or_truncation": self._gap,
-                "continuity": "UNPROVEN",
+                "continuity": "UNPROVEN",  # seq is not a gap-free counter
                 "order_authority": False,
                 "prints": tuple(self._prints),
             }
