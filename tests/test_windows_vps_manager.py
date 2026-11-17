@@ -21,24 +21,41 @@ from tools.windows_vps_manager import (ACTIONS, VPSManager, control_ssh_command,
 
 
 class TestWindowsVpsManager(unittest.TestCase):
-    def test_manager_title_displays_bundled_release_not_remote_vps_sha(self):
+    def test_manager_title_displays_newer_build_number_and_exact_short_sha(self):
         sha = "600d472d3221441b89fadc7e0ea5552d931beae5"
         with tempfile.TemporaryDirectory() as folder:
             (Path(folder) / "desktop-build-sha.txt").write_text(
                 sha + "\n", encoding="ascii")
+            (Path(folder) / "desktop-build-number.txt").write_text(
+                "126\n", encoding="ascii")
             with (patch.object(sys, "frozen", True, create=True),
                   patch.object(sys, "_MEIPASS", folder, create=True)):
-                self.assertEqual(manager_version(), "v" + sha[:12])
-                self.assertEqual(manager_title(),
-                                 "BybitScanner VPS Manager — v" + sha[:12] + " — PAPER")
+                self.assertEqual(manager_version(), "v126 (" + sha[:12] + ")")
+                self.assertEqual(
+                    manager_title(), "BybitScanner VPS Manager — v126 (" +
+                    sha[:12] + ") — PAPER")
+                (Path(folder) / "desktop-build-number.txt").write_text(
+                    "127\n", encoding="ascii")
+                self.assertEqual(manager_version(), "v127 (" + sha[:12] + ")")
 
-    def test_manager_title_fails_closed_when_bundled_version_unavailable(self):
+    def test_manager_version_unknown_for_missing_or_invalid_build_markers(self):
+        sha = "600d472d3221441b89fadc7e0ea5552d931beae5"
         with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
             with (patch.object(sys, "frozen", True, create=True),
                   patch.object(sys, "_MEIPASS", folder, create=True)):
                 self.assertEqual(manager_version(), "UNKNOWN")
+                (root / "desktop-build-sha.txt").write_text(
+                    sha, encoding="ascii")
+                self.assertEqual(manager_version(), "UNKNOWN")
+                for bad in ("", "0", "-5", "1.2", "01", "abc", "9" * 13):
+                    (root / "desktop-build-number.txt").write_text(
+                        bad, encoding="ascii")
+                    self.assertEqual(manager_version(), "UNKNOWN")
+                (root / "desktop-build-number.txt").write_text(
+                    "128", encoding="ascii")
                 for bad in ("", "f" * 39, "f" * 40 + " injected", "G" * 40):
-                    (Path(folder) / "desktop-build-sha.txt").write_text(
+                    (root / "desktop-build-sha.txt").write_text(
                         bad, encoding="ascii")
                     self.assertEqual(manager_version(), "UNKNOWN")
 
