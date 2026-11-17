@@ -851,7 +851,7 @@ class TestWindowsVpsManager(unittest.TestCase):
             key = root / ".ssh" / "bybitscanner_vdsina_gateway_20261030"
             key.write_text("test placeholder", encoding="ascii")
             with (patch.dict("tools.windows_vps_manager.os.environ",
-                             {"USERPROFILE": r"C:\\Users\\svobo"}),
+                             {"USERPROFILE": r"C:\Users\svobo"}),
                   patch("tools.windows_vps_manager.Path.home", return_value=root)):
                 self.assertEqual(preferred_route(), ("83.217.213.181", "root"))
                 self.assertEqual(preferred_key("83.217.213.181", "root"),
@@ -966,11 +966,11 @@ class TestWindowsVpsManager(unittest.TestCase):
                 "Host bybitscanner-vps\n  HostName 212.193.14.116\n",
                 encoding="ascii")
             with (patch.dict("tools.windows_vps_manager.os.environ",
-                             {"USERPROFILE": r"C:\\Users\\unknown"},
+                             {"USERPROFILE": r"C:\Users\unknown"},
                              clear=True),
                   patch("tools.windows_vps_manager.Path.home",
                         return_value=root)):
-                self.assertEqual(preferred_route(), ("", "bybitscanner"))
+                self.assertEqual(preferred_route(), ("bybitscanner-vps", ""))
                 self.assertEqual(preferred_key("83.217.213.181", "root"), "")
                 self.assertEqual(preferred_key("212.193.14.116", "root"), "")
 
