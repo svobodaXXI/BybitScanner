@@ -2684,7 +2684,7 @@ def _stop_exact_installed_paper_once(
 def main(argv=None) -> int:
     parser = _MaintenanceParser(description="Fail-closed one-action PAPER maintenance")
     parser.add_argument("sha")
-    parser.add_argument("--action", choices=("stop", "start", "update", "update-and-start"),
+    parser.add_argument("--action", choices=("stop", "start", "update", "update-and-start", "provision-owner-pc"),
                         help="single owner action: canonical STOP, PAPER START, or exact stable UPDATE")
     parser.add_argument("--env-file", type=Path, default=Path("/etc/bybitscanner/paper.env"))
     parser.add_argument("--wait-seconds", type=float, default=0)
@@ -2724,6 +2724,12 @@ def main(argv=None) -> int:
             parser.error("one action cannot combine with legacy lifecycle flags")
         if args.action == "stop":
             status = _stop_exact_installed_paper_once(args.sha, env_file=args.env_file)
+            print(status)
+            return 0 if status.startswith("READY:") else 2
+        if args.action == "provision-owner-pc":
+            # Exactly one owner-controlled monolith action; secrets never cross argv.
+            from tools.vps_simulator_device_provision import provision_owner_pc
+            status = provision_owner_pc(args.sha, env_file=args.env_file)
             print(status)
             return 0 if status.startswith("READY:") else 2
         owner_flags = (
