@@ -1,0 +1,30 @@
+name: Owner-approved one-time desktop release dispatch
+# Temporary branch-only dispatcher. Existing canonical release workflow remains the publisher.
+on:
+  push:
+    branches:
+      - ops/owner-approved-desktop-dispatch-20261117-f32992a
+    paths:
+      - .github/workflows/owner-approved-desktop-dispatch-20261117.yml
+permissions:
+  contents: read
+  actions: write
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TARGET_SHA: f32992abd579908e4bd6f36acdcd6627076eaea2
+    steps:
+      - name: Dispatch existing owner-authorized release for unchanged stable
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/stable/adfb50b-forward" --jq '.object.sha')"
+          if [ "$actual" != "$TARGET_SHA" ]; then
+            echo 'DESKTOP_DISPATCH_BLOCKED_STABLE_MOVED'
+            exit 1
+          fi
+          gh workflow run desktop-release-packages.yml --repo "$GITHUB_REPOSITORY" --ref stable/adfb50b-forward
+          echo "DESKTOP_CANONICAL_DISPATCH_SENT_SHA=$TARGET_SHA"
