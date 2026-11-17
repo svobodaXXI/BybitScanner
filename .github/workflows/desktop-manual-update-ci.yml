@@ -46,3 +46,5 @@ jobs:
           python tools/build_machine_time_package.py --sha 0123456789abcdef0123456789abcdef01234567 --output /tmp/BybitScanner-MachineTime.zip
           python -m zipfile -e /tmp/BybitScanner-MachineTime.zip /tmp/desktop-package
           python /tmp/desktop-package/MachineTime/server.py --check
+          cd /tmp/desktop-package/MachineTime
+          python -c "from research.simulator_v2 import wedge_cli, robot_sandbox; print('STANDALONE_SIM_MODULES_IMPORT_OK')"
