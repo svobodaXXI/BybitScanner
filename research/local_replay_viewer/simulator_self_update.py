@@ -102,6 +102,9 @@ def prepare_simulator_update(here: Path) -> tuple[Path, str]:
     if not here.is_dir() or here.is_symlink():
         raise UpdateBlocked("untrusted_simulator_root")
     asset = find_asset("simulator")
+    marker = here / "desktop-build-sha.txt"
+    if marker.is_file() and marker.read_text(encoding="ascii").strip() == asset.sha:
+        raise UpdateBlocked("simulator_already_current")
     root = Path(os.environ["LOCALAPPDATA"]) / "BybitScanner" / APP / "releases"
     root.mkdir(parents=True, exist_ok=True)
     version = root / asset.sha
