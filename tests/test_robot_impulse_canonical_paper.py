@@ -158,9 +158,14 @@ class ImpulseCanonicalPolicyTests(unittest.TestCase):
         monitor._arm_entry_coverage = Mock(return_value=True)
         monitor._tick_size_provider = Mock(return_value=Decimal("0.1"))
         monitor._persist_execution = Mock()
+        monitor._store = Mock(return_value=SimpleNamespace(
+            get_robot_candidate=lambda _candidate_id: SimpleNamespace(
+                robot_state={"execution": {"limit_order_id": "paper-impulse-1"}},
+            ),
+        ))
         monitor._action_executor = Mock()
         monitor._action_executor.create_limit.return_value = SimpleNamespace(
-            order_id="paper-impulse-1",
+            order_id="paper-impulse-1", status=CommandResultStatus.COMPLETED,
         )
         with patch.dict(os.environ, {robot_impulse.PAPER_OPT_IN: "1"}):
             self.assertTrue(monitor._advance_impulse(record))
