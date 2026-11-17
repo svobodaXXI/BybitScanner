@@ -22,20 +22,26 @@ if errorlevel 1 (
   ".wedge-python\Scripts\python.exe" -m pip install --disable-pip-version-check --no-index --find-links="%~dp0python-wheels" "pandas==2.2.3" "numpy==2.1.3"
   if errorlevel 1 goto :viewer
 )
-".wedge-python\Scripts\python.exe" -B server.py
+if exist "protocol_launcher.py" ".wedge-python\Scripts\python.exe" -B protocol_launcher.py --register >nul 2>nul
+if exist "launch_bridge_agent.py" ".wedge-python\Scripts\python.exe" -B launch_bridge_agent.py --install-if-configured >nul 2>nul
+".wedge-python\Scripts\python.exe" -B server.py --port 48765
 if errorlevel 1 pause
 goto :end
 
 :viewer
 where py >nul 2>nul
 if not errorlevel 1 (
-  py -3 -B server.py
+  if exist "protocol_launcher.py" py -3 -B protocol_launcher.py --register >nul 2>nul
+  if exist "launch_bridge_agent.py" py -3 -B launch_bridge_agent.py --install-if-configured >nul 2>nul
+  py -3 -B server.py --port 48765
   if errorlevel 1 pause
   goto :end
 )
 where python >nul 2>nul
 if not errorlevel 1 (
-  python -B server.py
+  if exist "protocol_launcher.py" python -B protocol_launcher.py --register >nul 2>nul
+  if exist "launch_bridge_agent.py" python -B launch_bridge_agent.py --install-if-configured >nul 2>nul
+  python -B server.py --port 48765
   if errorlevel 1 pause
   goto :end
 )

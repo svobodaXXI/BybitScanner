@@ -79,8 +79,10 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/machine-time/research"
           cp ../../research/local_replay_viewer/server.py "$RUNNER_TEMP/machine-time/server.py"
+          cp ../../research/local_replay_viewer/protocol_launcher.py ../../research/local_replay_viewer/launch_bridge_agent.py "$RUNNER_TEMP/machine-time/"
           mkdir -p "$RUNNER_TEMP/machine-time/research/local_replay_viewer"
           cp ../../research/local_replay_viewer/public_m5_cache.py "$RUNNER_TEMP/machine-time/research/local_replay_viewer/public_m5_cache.py"
+          cp ../../research/local_replay_viewer/paper_episode_local_store.py "$RUNNER_TEMP/machine-time/research/local_replay_viewer/paper_episode_local_store.py"
           cp ../../research/local_replay_viewer/START_LOCAL.cmd "$RUNNER_TEMP/machine-time/START_LOCAL.cmd"
           cp ../../research/local_replay_viewer/README.txt "$RUNNER_TEMP/machine-time/README.txt"
           cp ../../research/local_replay_viewer/smoke_package.py "$RUNNER_TEMP/machine-time/smoke_package.py"
@@ -158,6 +160,7 @@ jobs:
         working-directory: machine-time
         run: |
           python -B server.py --check
+          python -c "import protocol_launcher, launch_bridge_agent; from research.local_replay_viewer.paper_episode_local_store import store_episode; assert launch_bridge_agent.read_config() is None; print('SIMULATOR_PAIRED_ADAPTER_PACKAGE_OK_DEFAULT_OFF')"
           python -B smoke_package.py
           python -c "from research.simulator_v2.wedge_cli import run_from_time_machine_config; from research.simulator_v2.wedge_observer import WedgeScannerConfig; import pandas; print('LOCAL_WEDGE_ENGINE_PACKAGE_IMPORT_OK')"
           python -B box_lifecycle_smoke.py

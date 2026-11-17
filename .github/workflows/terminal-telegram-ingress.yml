@@ -24,6 +24,8 @@ jobs:
         run: python -m unittest -v tests.test_manual_main_accounts
       - name: Isolated manual MAIN HTTP ingress tests
         run: python -m unittest -v tests.test_manual_main_read_server
+      - name: Confirm exact device-facts ingress route and legacy HTTP denial
+        run: python -m unittest -v tests.test_historical_simulator_https_bridge_config
       - name: Validate Nginx auth boundary statically
         run: |
           python - <<'PY'

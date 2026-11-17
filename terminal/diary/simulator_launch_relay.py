@@ -57,6 +57,8 @@ class _Request:
     episode_id: str
     created: float
     state: str = "QUEUED"
+    owner: str | None = None
+    source_revision: int | None = None
 
 
 class SimulatorLaunchRelay:
@@ -125,7 +127,8 @@ class SimulatorLaunchRelay:
             if now - item.created >= STATUS_SECONDS:
                 del self._requests[key]
 
-    def enqueue(self, episode_id: str, *, request_origin: str, fetch_site: str) -> dict[str, str]:
+    def enqueue(self, episode_id: str, *, request_origin: str, fetch_site: str,
+                owner: str | None = None, source_revision: int | None = None) -> dict[str, str]:
         # Nginx must additionally enforce owner authentication on this POST.
         # Origin and fetch-metadata prevent cross-site form/CSRF requests.
         if (request_origin != self.origin
@@ -133,6 +136,13 @@ class SimulatorLaunchRelay:
             raise RelayForbidden("relay_origin_not_authorized")
         if not isinstance(episode_id, str) or not EPISODE_ID.fullmatch(episode_id):
             raise RelayInvalid("invalid_episode_locator")
+        # Legacy ID-only locator stays compatible but never authorizes facts.
+        if (owner is None) != (source_revision is None):
+            raise RelayInvalid("incomplete_episode_fact_scope")
+        if owner is not None and (owner not in {"ROBOT", "MANUAL"}
+                                  or type(source_revision) is not int
+                                  or not 1 <= source_revision <= 2**63 - 1):
+            raise RelayInvalid("invalid_episode_fact_scope")
         with self._lock:
             now = self._clock()
             self._trim(now)
@@ -141,19 +151,29 @@ class SimulatorLaunchRelay:
                       if now - when <= ONLINE_SECONDS]
             if not online:
                 raise RelayUnavailable("no_connected_simulator_adapter")
-            # Prefer a paired device already running the local viewer.
-            # If neither viewer is open, launch on the most recently seen
-            # device. No arbitrary host, URL or path can be selected.
-            device = max(online)[2]
+            # Exact PAPER facts may never be routed to a different device by
+            # last-heartbeat timing. Prefer the sole running viewer, or the sole
+            # paired online device. With multiple eligible devices, require
+            # an explicit future owner selection rather than guessing.
+            if owner is not None:
+                running = [item for item in online if item[0]]
+                eligible = running if running else online
+                if len(eligible) != 1:
+                    raise RelayUnavailable("simulator_target_ambiguous")
+                device = eligible[0][2]
+            else:
+                # Preserve existing ID-only locator routing.
+                device = max(online)[2]
             if any(r.device_id == device and r.state in {"QUEUED", "DELIVERED"}
                    for r in self._requests.values()):
                 raise RelayUnavailable("simulator_adapter_busy")
             rid = secrets.token_hex(16)
-            self._requests[rid] = _Request(rid, device, episode_id, now)
+            self._requests[rid] = _Request(rid, device, episode_id, now,
+                                           owner=owner, source_revision=source_revision)
             return {"request_id": rid, "state": "QUEUED"}
 
     def poll(self, *, device: str, token: str,
-             viewer_running: bool = False) -> dict[str, str]:
+             viewer_running: bool = False) -> dict[str, str | int]:
         if type(viewer_running) is not bool:
             raise RelayInvalid("invalid_local_viewer_heartbeat")
         if not self._authenticated(device, token):
@@ -168,8 +188,34 @@ class SimulatorLaunchRelay:
                 return {"state": "IDLE"}
             req = min(queued, key=lambda r: r.created)
             req.state = "DELIVERED"
-            return {"state": "OPEN_EPISODE", "request_id": req.id,
-                    "episode_id": req.episode_id}
+            locator: dict[str, str | int] = {
+                "state": "OPEN_EPISODE", "request_id": req.id,
+                "episode_id": req.episode_id,
+            }
+            if req.owner is not None:
+                locator["owner"] = req.owner
+                locator["source_revision"] = req.source_revision
+            return locator
+
+    def authorized_facts_scope(self, *, device: str, token: str,
+                               request_id: str) -> tuple[str, str, int]:
+        """Only one owner-queued, delivered request can expose one closed episode.
+
+        This token never grants arbitrary PAPER reads, and a locator-only
+        request cannot be upgraded to an export by the device.
+        """
+        if not self._authenticated(device, token):
+            raise RelayForbidden("simulator_device_unauthorized")
+        if not isinstance(request_id, str) or not REQUEST_ID.fullmatch(request_id):
+            raise RelayInvalid("invalid_simulator_fact_request")
+        with self._lock:
+            self._trim(self._clock())
+            req = self._requests.get(request_id)
+            if (req is None or req.device_id != device or req.state != "DELIVERED"
+                    or req.owner not in {"ROBOT", "MANUAL"}
+                    or type(req.source_revision) is not int):
+                raise RelayInvalid("unavailable_episode_fact_request")
+            return req.episode_id, req.owner, req.source_revision
 
     def acknowledge(self, *, device: str, token: str, request_id: str,
                     launched: bool) -> dict[str, str]:

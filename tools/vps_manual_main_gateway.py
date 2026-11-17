@@ -30,6 +30,8 @@ BACKEND_BLOCK = (
 )
 AUTH_BLOCK = "    location = /_auth {\n        internal;"
 BRIDGE_START = "    # Paired Windows Simulator agent only:"
+BRIDGE_FACTS_START = "    # Exact owner-queued PAPER facts for the paired device ONLY."
+BRIDGE_FACTS_ROUTE = "location = /api/diary/simulator-bridge/facts {"
 ROUTE_START = "    # MAIN reads are isolated from the PAPER backend."
 ROUTE_END = "    # The backend is never publicly exposed"
 MARKER = re.compile(r"(?m)^# configuration file ([^:\n]+):\s*$")
@@ -87,16 +89,32 @@ def _simulator_bridge_from_source(root: Path) -> str:
     _require(
         block.count("location = /api/diary/simulator-bridge/poll {") == 1
         and block.count("location = /api/diary/simulator-bridge/ack {") == 1
-        and block.count("limit_except GET { deny all; }") == 1
+        and block.count(BRIDGE_FACTS_ROUTE) == 1
+        and block.count(BRIDGE_FACTS_START) == 1
+        and block.count("limit_except GET { deny all; }") == 2
         and block.count("limit_except POST { deny all; }") == 1
-        and block.count("proxy_pass http://127.0.0.1:8765;") == 2
-        and block.count('proxy_set_header Cookie "";') == 2
-        and block.count('proxy_set_header Authorization "";') == 2
-        and block.count("client_max_body_size 1k;") == 2
+        and block.count("proxy_pass http://127.0.0.1:8765;") == 3
+        and block.count('proxy_set_header Cookie "";') == 3
+        and block.count('proxy_set_header Authorization "";') == 3
+        and block.count("client_max_body_size 1k;") == 3
+        and block.count("proxy_set_header X-BybitScanner-Simulator-Device-Token"
+                        " $http_x_bybitscanner_simulator_device_token;") == 1
         and "auth_request" not in block,
         "reviewed_simulator_bridge_invalid",
     )
     return block
+
+
+def _legacy_simulator_bridge_from_reviewed(bridge: str) -> str:
+    """Exact previous poll/ack bytes, not a substring chosen from VPS state."""
+    _require(bridge.count(BRIDGE_FACTS_START) == 1,
+             "reviewed_simulator_bridge_invalid")
+    legacy = bridge.split(BRIDGE_FACTS_START, 1)[0]
+    _require(legacy.count("location = /api/diary/simulator-bridge/poll {") == 1
+             and legacy.count("location = /api/diary/simulator-bridge/ack {") == 1
+             and BRIDGE_FACTS_ROUTE not in legacy,
+             "reviewed_simulator_bridge_invalid")
+    return legacy
 
 
 def _trusted_site(path: Path, *, nginx_dir: Path, uid: int) -> Path:
@@ -144,8 +162,19 @@ def inspect_authenticated_site(
     _require(count_route <= 1, "duplicate_main_gateway_routes")
     bridge_poll = "location = /api/diary/simulator-bridge/poll {"
     bridge_ack = "location = /api/diary/simulator-bridge/ack {"
-    _require(dump.count(bridge_poll) <= 1 and dump.count(bridge_ack) <= 1,
-             "duplicate_simulator_bridge_routes")
+    bridge_facts = BRIDGE_FACTS_ROUTE
+    bridge_routes = re.findall(
+        r"location\s*=\s*(/api/diary/simulator-bridge/[a-z-]+)\s*\{", dump,
+    )
+    _require(
+        all(path in {
+            "/api/diary/simulator-bridge/poll",
+            "/api/diary/simulator-bridge/ack",
+            "/api/diary/simulator-bridge/facts",
+        } for path in bridge_routes)
+        and all(dump.count(route) <= 1 for route in (bridge_poll, bridge_ack, bridge_facts)),
+        "duplicate_simulator_bridge_routes",
+    )
     for idx in range(1, len(blocks), 2):
         filename, body = blocks[idx], blocks[idx + 1]
         if AUTH_LISTENER in body and "location = /_auth {" in body:
@@ -171,15 +200,28 @@ def inspect_authenticated_site(
     # The existing MAIN route may already be installed from an earlier
     # release; adopt only the exact reviewed bridge without replacing it.
     if bridge not in contents:
-        _require(bridge_poll not in contents and bridge_ack not in contents
-                 and dump.count(bridge_poll) == 0 and dump.count(bridge_ack) == 0,
-                 "unknown_simulator_bridge_route")
-        contents = contents.replace(BACKEND_BLOCK, bridge + BACKEND_BLOCK, 1)
+        legacy = _legacy_simulator_bridge_from_reviewed(bridge)
+        if legacy in contents:
+            # Upgrade only the exact previously reviewed poll/ack block.
+            # Never overwrite an unknown installed device route or site.
+            _require(bridge_facts not in contents and dump.count(bridge_facts) == 0
+                     and contents.count(legacy) == 1,
+                     "unknown_simulator_bridge_route")
+            contents = contents.replace(legacy, bridge, 1)
+        else:
+            _require(bridge_poll not in contents and bridge_ack not in contents
+                     and bridge_facts not in contents
+                     and dump.count(bridge_poll) == 0
+                     and dump.count(bridge_ack) == 0
+                     and dump.count(bridge_facts) == 0,
+                     "unknown_simulator_bridge_route")
+            contents = contents.replace(BACKEND_BLOCK, bridge + BACKEND_BLOCK, 1)
         updated = contents.encode("utf-8")
     _require(updated.decode("utf-8").count("location ^~ /api/manual-main/ {") == 1,
              "main_gateway_route_not_unique")
     _require(updated.decode("utf-8").count(bridge_poll) == 1
-             and updated.decode("utf-8").count(bridge_ack) == 1,
+             and updated.decode("utf-8").count(bridge_ack) == 1
+             and updated.decode("utf-8").count(bridge_facts) == 1,
              "simulator_bridge_route_not_unique")
     return site, original, updated
 
