@@ -118,8 +118,27 @@ PREFLIGHT = (
     "printf '\\nPREFLIGHT_READ_ONLY_DATA_COLLECTED_NOT_ACCEPTED\\n'"
 )
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-EXACT_SHA = re.compile(r"[0-9a-f]{40}\Z")
-REQUEST_ID = re.compile(r"[0-9a-f]{32}\Z")
+EXACT_SHA = re.compile(r"[0-9a-f]{40}\\Z")
+REQUEST_ID = re.compile(r"[0-9a-f]{32}\\Z")
+
+
+def manager_version() -> str:
+    """Show the version of this EXE, not the potentially different VPS release."""
+    if not getattr(sys, "frozen", False):
+        return "DEV"
+    bundle_dir = getattr(sys, "_MEIPASS", None)
+    if not bundle_dir:
+        return "UNKNOWN"
+    try:
+        sha = (Path(bundle_dir) / "desktop-build-sha.txt").read_text(
+            encoding="ascii").strip()
+    except (OSError, UnicodeError):
+        return "UNKNOWN"
+    return "v" + sha[:12] if EXACT_SHA.fullmatch(sha) else "UNKNOWN"
+
+
+def manager_title() -> str:
+    return "BybitScanner VPS Manager — " + manager_version() + " — PAPER"
 
 
 def request_id_store() -> Path:
@@ -607,7 +626,7 @@ def run_cli(options: argparse.Namespace) -> int:
 class VPSManager(tk.Tk):
     def __init__(self, host: str = "", user: str = "bybitscanner", key: str | None = None) -> None:
         super().__init__()
-        self.title("BybitScanner VPS Manager — PAPER")
+        self.title(manager_title())
         self.geometry("880x510")
         self.minsize(780, 380)
         automatic = preferred_route() if not host else (host, user)
