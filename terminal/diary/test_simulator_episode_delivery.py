@@ -70,7 +70,7 @@ def test_episode_bridge_exact_device_and_revision(tmp_path: Path, monkeypatch):
     bridge = "/api/diary/simulator-bridge/"
     try:
         # Authentication and exact request fields are checked before PAPER reads.
-        assert _call(base, bridge + "poll?device_id=owner-laptop&viewer_running=0", token=token)[0] == 200
+        assert _call(base, bridge + "poll?device_id=owner-laptop&viewer_running=1", token=token)[0] == 200
         assert _call(base, bridge + "poll?device_id=owner-pc&viewer_running=0", token=other)[0] == 200
         code, queued = _call(base, bridge + "request", origin=origin, body={
             "episode_id": episode, "owner": "ROBOT", "source_revision": 9,
