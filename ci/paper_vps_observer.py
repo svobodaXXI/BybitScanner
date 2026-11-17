@@ -153,7 +153,8 @@ def render_comment(snapshot: dict) -> str:
         f"Класс причины: `{snapshot['reason_class']}` · "
         f"Установленный SHA: `{snapshot['installed_sha'] or 'UNKNOWN'}`\n\n"
         "Это ограниченное наблюдение, **не** доказательство FLAT, "
-        "полноты STOP/TAKE или разрешение на торговлю."
+        "полноты STOP/TAKE или разрешение на торговлю. "
+        "Если последнему успешному опросу более 30 минут — статус STALE."
     )
 
 
@@ -184,7 +185,10 @@ def _last_bot_record(token: str) -> tuple[str | None, datetime | None]:
     last = re.search(r"[?&]page=(\d+)>;\s*rel=\"last\"", links)
     comments = first
     if last and int(last.group(1)) > 1:
-        comments, _ = _api(token, "GET", endpoint.replace("page=1", "page=" + last.group(1)))
+        comments, _ = _api(
+            token, "GET",
+            f"/repos/{REPO}/issues/{ISSUE}/comments?per_page=100&page={last.group(1)}",
+        )
     for item in reversed(comments):
         if not isinstance(item, dict):
             continue
