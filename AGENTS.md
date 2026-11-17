@@ -15,6 +15,27 @@ specialist chats finish **only their active bounded task**, record a handoff and
 report READY_FOR_ARCHIVE or an exact blocker; do not start the proposed next
 workstreams. This is routing, not a new approval or trading authority.
 
+## Mandatory VPS SSH routing — verified device-specific connection (2026-11-17)
+
+Before **any** BybitScanner VPS connection or troubleshooting, read the relevant
+named section in [`DOCUMENTS/WINDOWS_PC_VPS_ACCESS_RECOVERY_20261108.md`](DOCUMENTS/WINDOWS_PC_VPS_ACCESS_RECOVERY_20261108.md):
+**`PRIMARY PC CODEX DESKTOP SSH ROUTE`** for Codex Desktop operating from
+`C:\\Users\\svobo`; **`WINDOWS POWERSHELL PC SSH ROUTE`** for native
+Windows PowerShell on that PC; **`VERIFIED LAPTOP CODEX DESKTOP SSH ROUTE`**
+for `C:\\Users\\SVOBODA21`. These are **different proven client contexts**;
+never treat the PC's PowerShell SSH alias as the Codex Desktop route, or
+substitute laptop keys/host addresses. The PC's canonical Codex route uses
+Windows OpenSSH with explicit PC key, `-F none`, and strict host verification;
+the PC native PowerShell route uses its existing `bybitscanner-vps` alias.
+
+**No repeat discovery:** do not ask the owner to locate keys, rotate SSH
+routes, change VPN/Happ, probe alternate IPs, rebuild SSH config, or use
+manual sshd/credential modifications because an earlier probe failed.
+Use the exact documented route once; if it fails, report the actual
+transport failure and diagnose that route only, without retry loops or
+unapproved VPS changes. An SSH connection proves transport only, never
+release, PAPER readiness or trading permission.
+
 ## Owner directive — human acceptance and Codex GUI boundary (2026-11-16)
 
 **Owner-only real-world acceptance.** The owner personally performs and confirms
@@ -95,6 +116,8 @@ PAPER DB/position, STOP/START, reconcile and trading authority remain unchanged.
 **Scope separation:** this is the Codex Desktop route for the desktop PC only. The native Windows PowerShell route `ssh bybitscanner-vps` remains separate. The laptop has its own route and identity. A successful SSH receipt proves transport only; it does not authorize VPS deployment, STOP/START, PAPER/DB or LIVE actions.
 
 Canonical details and the owner's full 2026-11-15 receipt: `DOCUMENTS/WINDOWS_PC_VPS_ACCESS_RECOVERY_20261108.md` → `PRIMARY PC CODEX DESKTOP SSH ROUTE`.
+
+**Repeated PC SSH banner timeout — stop-on-repeat (owner 17.11.2026):** The exact native alias and Codex direct-key route can both establish TCP but time out waiting for the server SSH banner, even though a separate raw TCP probe once received the remote banner. This does **not** establish a working SSH session, server failure, or VPN root cause. After one known-good-route failure, **do not** repeat alias/direct-IP/key/ssh -vv/TCP/banner/VPN troubleshooting or automatically send the owner into VDSina console. Mark authenticated SSH and pairing state UNPROVEN; check only an independently available authorized host channel, or stop with the precise blocker. No repeat of ambiguous `provision-owner-pc`. Evidence and required decision boundary: `DOCUMENTS/WINDOWS_PC_VPS_ACCESS_RECOVERY_20261108.md` → `REPEATED INCIDENT 17.11.2026`. This supersedes generic VNC-last-resort wording as an automatic next step.
 
 ## VPS SSH — native PowerShell PC route and blocked-release fast path (2026-11-14)
 

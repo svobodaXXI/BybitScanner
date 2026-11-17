@@ -93,6 +93,23 @@ Windows Manager выполняет **только read-only** `tools.vps_owner_c
 `submit` запрещена. Повторённая SSH-проверка удостоверяет лишь транспорт,
 а не право на релиз/торговлю. ПК и внешние клиентские маршруты не изменяются.
 
+## REPEATED INCIDENT 17.11.2026 — SSH BANNER TIMEOUT; STOP DIAGNOSTIC LOOP
+
+**Exact observed evidence on main PC** (`C:\Users\svobo`, Happ TUN active):
+- Correct native alias `bybitscanner-vps` and separate canonical direct-key OpenSSH attempt to `212.193.14.116:22` both terminated before authentication with `Connection timed out during banner exchange`, exit `255`; verbose client showed `Connection established` and `Local version string SSH-2.0-OpenSSH_for_Windows_9.5`, but no `Remote protocol version`.
+- `Test-NetConnection 212.193.14.116 -Port 22` reported `TcpTestSucceeded=True`, via `happ-default-tun` with source `10.6.7.1`.
+- A **separate** one-time TCP read received `SSH-2.0-OpenSSH_9.6p1 Ubuntu-3ubuntu13.18`. This proves a remote SSH banner **can** arrive on one connection; it does **not** prove the failed SSH sessions received it, authenticated, or executed commands.
+- Existing Owner Manager `provision-owner-pc` request ID `481e7aa30fcb4be0aa5554d2da0003e3` has `STATUS_UNPROVEN`; a read-only `list` output did not show that UUID, but systemd listing is not durable proof of never submitted. The authenticated UI `Связать ПК` returned «Подключение пока недоступно»; bridge config and `owner-pc` enrollment on VPS remain **UNKNOWN**.
+- There is no evidence of a host-side `sshd` failure, a VPN root cause, an outage of Backend/Robot, or a completed/failed provisioning operation. Power loss on PC could explain lost submit receipt but is unconfirmed.
+
+**Hard operational stop rule:** once the exact known-good route fails at `banner exchange`, **do not** start a repeated cycle of direct IP vs alias, `ssh -vv`, TCP probe, manual banner probe, changing keys, VPN-off/on, SSH-agent checks, or telling owner to open VDSina VNC as the **default next step**. These checks were already performed; repeated port/banner results do not resolve the authenticated transport. Do not misdiagnose `TcpTestSucceeded` as SSH success or `STATUS_UNPROVEN` as a failed pairing. Do not re-submit `provision-owner-pc`.
+
+**Escalation criterion:** mark `SSH_AUTHENTICATED_TRANSPORT_BLOCKED` and `PAIRING_STATE_UNKNOWN`. If an **independently available, already authorized** host-management channel can safely read the exact request receipt and effective Backend relay configuration, use it **read-only** without service/network changes, logs/secrets disclosure, or additional owner actions. If no such channel exists, report the one concrete blocked boundary and stop; ask the owner to choose a host-console diagnostic only if that access is actually necessary and the owner agrees. An observed `SSH_OK` exit 0 on a later authorized connection is required before proceeding to host verification; do not assert a fix on historical success alone. Never change VPS routing, Netplan, firewall, `sshd`, PAPER runtime, DB, trading state, or VPN to bypass the blocker.
+
+**Owner-time lesson:** the correct SSH method was already documented and used; repeating it without new causal evidence is the failure. Documentation of a working transport is **not** a guaranteed fix for intermittent remote banner delays. Any eventual verified root cause/remediation must be appended here with the actual output; until then, root cause **UNPROVEN**.
+
+---
+
 ## WINDOWS POWERSHELL PC SSH ROUTE — separate host-shell route (owner-verified 2026-11-14)
 
 **Main/default connection from the desktop PC (including with Happ/VPN enabled):**
