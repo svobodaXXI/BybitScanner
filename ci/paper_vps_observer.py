@@ -212,7 +212,7 @@ def publish(snapshot: dict, token: str, now: datetime | None = None) -> str:
     # Any corrupt or unexpected value is rejected rather than published.
     safe = sanitize_diagnostic("", ssh_exit=1, at=snapshot["observed_at"])
     for key in safe:
-        if key not in ("installed_sha", "observed_at") and not isinstance(snapshot[key], str):
+        if key not in ("schema", "installed_sha", "observed_at") and not isinstance(snapshot[key], str):
             raise ValueError("unexpected_snapshot_value")
     if snapshot["status"] not in {
         "UNKNOWN", "FENCED", "DEGRADED", "RUNNING_REPORTED", "NOT_TRADING_REPORTED",
