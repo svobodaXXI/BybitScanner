@@ -575,8 +575,9 @@ class TestWindowsVpsManager(unittest.TestCase):
             sleep=lambda *_: None)
         self.assertEqual(state, "submitted")  # known accepted, terminal result unknown
         self.assertIn("STATUS_UNPROVEN", details)
-        self.assertEqual(run.call_count, 3)
+        self.assertEqual(run.call_count, 12)  # bounded reconnect; no submit
         self.assertTrue(all(call.args[0] == command for call in run.call_args_list))
+        self.assertNotIn(" submit ", " ".join(map(str, run.call_args_list)))
 
     def test_gui_watcher_unknown_submission_not_upgraded_to_success(self):
         req = "b" * 32
@@ -591,6 +592,78 @@ class TestWindowsVpsManager(unittest.TestCase):
         self.assertEqual(state, "unproven")
         self.assertIn("STATUS_UNPROVEN", details)
         self.assertEqual(run.call_count, 3)
+
+    def test_owner_watcher_recovers_after_transient_banner_timeouts_same_uuid(self):
+        req = "d" * 32
+        command = ["ssh", "root@212.193.14.116",
+                   "cd /opt/BybitScanner && /opt/BybitScanner/venv/bin/python "
+                   "-m tools.vps_owner_control status " + req]
+        errors = [subprocess.CompletedProcess(command, 255, "",
+                  "Connection timed out during banner exchange") for _ in range(3)]
+        success = subprocess.CompletedProcess(
+            command, 0, "REQUEST_ID=" + req + "\nSTATUS=FINISHED_OK\n", "")
+        calls = Mock(side_effect=[*errors, success])
+        state, details = watch_owner_request(
+            command, req, initially_submitted=True, run=calls, sleep=lambda _: None)
+        self.assertEqual(state, "success")
+        self.assertEqual(details, success.stdout.strip())
+        self.assertEqual(calls.call_count, 4)
+        self.assertTrue(all(call.args[0] == command for call in calls.call_args_list))
+
+    def test_owner_watcher_stops_on_ssh_auth_error_without_retry(self):
+        req = "d" * 32
+        command = ["ssh", "status-only"]
+        call = Mock(return_value=subprocess.CompletedProcess(
+            command, 255, "", "Permission denied (publickey)."))
+        state, details = watch_owner_request(
+            command, req, initially_submitted=False, run=call, sleep=lambda _: None)
+        self.assertEqual(state, "unproven")
+        self.assertIn("SSH rejected", details)
+        call.assert_called_once()
+
+    def test_gui_status_reconnects_readonly_after_banner_timeout(self):
+        req = "a" * 32
+        command = ["ssh", "root@212.193.14.116",
+                   "cd /opt/BybitScanner && /opt/BybitScanner/venv/bin/python "
+                   "-m tools.vps_owner_control status " + req]
+        first = subprocess.CompletedProcess(
+            command, 255, "", "Connection timed out during banner exchange")
+        second = subprocess.CompletedProcess(
+            command, 0, "REQUEST_ID=" + req + "\nSTATUS=FINISHED_OK\n", "")
+        fake = SimpleNamespace(events=queue.Queue())
+        with (patch("tools.windows_vps_manager.subprocess.run",
+                    side_effect=[first, second]) as runner,
+              patch("tools.windows_vps_manager.time.sleep")):
+            VPSManager.worker_control(fake, command, "status", req)
+        kind, details = fake.events.get_nowait()
+        self.assertEqual(kind, "success")
+        self.assertIn("STATUS=FINISHED_OK", details)
+        self.assertEqual(runner.call_count, 2)
+        self.assertTrue(all(call.args[0] == command for call in runner.call_args_list))
+
+    def test_happ_tun_selects_confirmed_pc_target_with_pinned_identity(self):
+        with tempfile.TemporaryDirectory() as home:
+            root = Path(home)
+            key = root / ".ssh" / "bybitscanner_vdsina_gateway_20261030"
+            key.parent.mkdir()
+            key.write_text("test placeholder", encoding="ascii")
+            with (patch.dict("tools.windows_vps_manager.os.environ",
+                             {"USERPROFILE": r"C:\Users\svobo"}),
+                  patch("tools.windows_vps_manager.Path.home", return_value=root),
+                  patch("tools.windows_vps_manager.happ_tun_active", return_value=True)):
+                self.assertEqual(preferred_route(), ("212.193.14.116", "root"))
+                self.assertEqual(preferred_key("212.193.14.116", "root"), str(key))
+                cmd = control_ssh_command(*preferred_route(), str(key), "list")
+            self.assertEqual(cmd[:3], ["ssh", "-F", "none"])
+            self.assertIn("IdentitiesOnly=yes", cmd)
+            self.assertIn("StrictHostKeyChecking=yes", cmd)
+            self.assertEqual(cmd[-2], "root@212.193.14.116")
+            self.assertNotIn(" submit ", cmd[-1])
+
+    def test_happ_detection_failure_preserves_existing_pc_route(self):
+        with (patch("tools.windows_vps_manager.known_windows_device", return_value="pc"),
+              patch("tools.windows_vps_manager.happ_tun_active", return_value=False)):
+            self.assertEqual(preferred_route(), ("83.217.213.181", "root"))
 
     def test_readonly_recovery_refuses_submit_before_any_ssh(self):
         command = ["ssh", "tools.vps_owner_control submit stop installed"]
