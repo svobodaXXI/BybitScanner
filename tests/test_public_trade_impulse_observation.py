@@ -3,7 +3,8 @@ import unittest
 from decimal import Decimal
 
 from terminal.market_data.impulse_observation import (
-    PublicTradeObservation, audit_recent_trade_overlap, audit_closed_m1_trade_parity,    audit_closed_m1_triple_parity,
+    PublicTradeObservation, audit_recent_trade_overlap,
+    audit_closed_m1_trade_parity, audit_closed_m1_triple_parity,
 )
 
 
