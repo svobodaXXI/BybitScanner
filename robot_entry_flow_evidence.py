@@ -429,6 +429,7 @@ def recognize_impulse_signal(
     transition: FlowTransition | None, *, closed_at_ms: int,
     candle_open: Decimal, candle_close: Decimal,
     candle_low: Decimal, candle_high: Decimal,
+    decision_ms: int | None = None,
 ) -> ImpulseSignal | None:
     """Shared Scanner impulse recognition from consecutive actual taker windows.
 
@@ -444,12 +445,18 @@ def recognize_impulse_signal(
         raise ValueError("invalid completed Scanner OHLC geometry")
     if transition is None:
         return None
-    if not isinstance(transition, FlowTransition) or transition.known_at_ms != closed_at_ms:
-        raise ValueError("only same-close authenticated flow may identify an impulse")
+    # Historical same-close research remains the default. A live Scanner can
+    # explicitly report the LATER time when independent REST/kline evidence
+    # became available; it must not backdate the decision to the M1 close.
+    decided = closed_at_ms if decision_ms is None else decision_ms
+    if (type(decided) is not int or decided < closed_at_ms
+            or not isinstance(transition, FlowTransition)
+            or transition.known_at_ms != decided):
+        raise ValueError("only causally available completed flow may identify an impulse")
     if transition.buy_wave_accelerating and candle_close > candle_open:
-        return ImpulseSignal("LONG", closed_at_ms, candle_close, candle_low)
+        return ImpulseSignal("LONG", decided, candle_close, candle_low)
     if transition.sell_wave_accelerating and candle_close < candle_open:
-        return ImpulseSignal("SHORT", closed_at_ms, candle_close, candle_high)
+        return ImpulseSignal("SHORT", decided, candle_close, candle_high)
     return None
 
 
