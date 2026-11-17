@@ -201,9 +201,9 @@ def test_migration_release_rejects_premature_or_foreign_facts_route(tmp_path):
     root, ng, site, baseline = _site(tmp_path)
     site.write_text(baseline.replace(
         gateway.BACKEND_BLOCK,
-        "    location = /api/diary/simulator-bridge/facts {\\n"
-        "        proxy_pass http://127.0.0.1:8777;\\n"
-        "    }\\n" + gateway.BACKEND_BLOCK, 1,
+        "    location = /api/diary/simulator-bridge/facts {\n"
+        "        proxy_pass http://127.0.0.1:8777;\n"
+        "    }\n" + gateway.BACKEND_BLOCK, 1,
     ))
     with pytest.raises(gateway.MainGatewayBlocked,
                        match="unknown_simulator_bridge_route"):
