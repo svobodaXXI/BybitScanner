@@ -24,6 +24,9 @@ def scenario(tmp_path, monkeypatch):
     owner.write_text("BYBITSCANNER_AUTOPILOT_OWNER_TOKEN=existing_owner_token\n")
     owner.chmod(0o600)
     original = owner.read_bytes()
+    paper = private / "paper.env"
+    paper.write_text("BYBITSCANNER_PAPER_TEST=0\n")
+    paper.chmod(0o644)
     state = {"stop": 0, "resume": 0, "live": {}}
     monkeypatch.setattr(identity, "verify_release", lambda root: SHA)
     monkeypatch.setattr(gateway, "inspect_authenticated_site",
@@ -50,7 +53,7 @@ def scenario(tmp_path, monkeypatch):
     monkeypatch.setattr(maintenance, "resume_installed_release", start)
     def invoke():
         return pairing.provision_owner_pc(
-            SHA, root=tmp_path, owner_env=owner, env_file=private / "paper.env",
+            SHA, root=tmp_path, owner_env=owner, env_file=paper,
             uid=os.geteuid(),
         )
     return owner, original, state, invoke
@@ -135,3 +138,27 @@ def test_untrusted_runtime_origin_blocks_before_stop(scenario):
     assert "runtime_relay_already_configured" in invoke()
     assert owner.read_bytes() == original
     assert state["stop"] == state["resume"] == 0
+
+
+def test_conflicting_paper_env_pairing_is_refused_before_stop(scenario):
+    owner, original, state, invoke = scenario
+    paper = owner.parent / "paper.env"
+    paper.write_text("BYBITSCANNER_SIMULATOR_BRIDGE_ORIGIN=https://unknown.invalid\n")
+    assert "paper_env_relay_conflict" in invoke()
+    assert owner.read_bytes() == original
+    assert state["stop"] == state["resume"] == 0
+
+
+def test_paper_env_change_after_stop_blocks_before_secret_write(scenario, monkeypatch):
+    owner, original, state, invoke = scenario
+    paper = owner.parent / "paper.env"
+
+    def stop(*args, **kwargs):
+        state["stop"] += 1
+        paper.write_text("BYBITSCANNER_PAPER_TEST=1\n")
+        return "READY: canonical PAPER STOP confirmed; no update or restart"
+
+    monkeypatch.setattr(maintenance, "_stop_exact_installed_paper_once", stop)
+    assert "post_stop_editor_freeze_unproven" in invoke()
+    assert owner.read_bytes() == original
+    assert state["stop"] == 1 and state["resume"] == 0
