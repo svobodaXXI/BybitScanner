@@ -44,3 +44,5 @@ jobs:
           npm run build:replay
           cd ../..
           python tools/build_machine_time_package.py --sha 0123456789abcdef0123456789abcdef01234567 --output /tmp/BybitScanner-MachineTime.zip
+          python -m zipfile -e /tmp/BybitScanner-MachineTime.zip /tmp/desktop-package
+          python /tmp/desktop-package/MachineTime/server.py --check
