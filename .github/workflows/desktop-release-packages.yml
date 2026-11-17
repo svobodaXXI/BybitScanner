@@ -1,5 +1,16 @@
 name: Owner desktop release packages
 on:
+  push:
+    branches:
+      - stable/adfb50b-forward
+    paths:
+      - 'research/**'
+      - 'terminal/frontend/src/replay/**'
+      - 'tools/desktop_*'
+      - 'tools/manager_self_update.py'
+      - 'tools/windows_vps_manager.py'
+      - 'tools/build_machine_time_package.py'
+      - '.github/workflows/desktop-release-packages.yml'
   workflow_dispatch:
 permissions:
   contents: write
