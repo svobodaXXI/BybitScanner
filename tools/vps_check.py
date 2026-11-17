@@ -45,6 +45,7 @@ STATE_DIR = Path("/var/lib/bybitscanner")              # systemd StateDirectory:
 UNITS = ("bybitscanner-paper-backend.service", "bybitscanner-telegram.service",
          "bybitscanner-paper-start.service")
 OWNER_ENV_FILE = Path("/etc/bybitscanner/owner.env")      # optional, root-only: Autopilot owner token
+SIMULATOR_ENV_FILE = Path("/etc/bybitscanner/simulator.env")  # optional, root-only: one-PC relay token
 UNIT_DIR = Path("deploy/systemd")
 NGINX_LOOPBACK = Path("deploy/nginx/bybitscanner-loopback.conf")
 NGINX_SITE = Path("/etc/nginx/sites-enabled/bybitscanner")
@@ -212,7 +213,8 @@ def unit_problems(text: str, entry: str, *, check_interpreter: bool) -> list[str
             problems.append("unified PAPER startup sequence missing or out of order")
     env_files = [item.strip() for item in service.get("EnvironmentFile", "").split("\n") if item.strip()]
     if env_files[:1] != [ENV_FILE.as_posix()] or any(
-            item not in {ENV_FILE.as_posix(), "-" + OWNER_ENV_FILE.as_posix()} for item in env_files):
+            item not in {ENV_FILE.as_posix(), "-" + OWNER_ENV_FILE.as_posix(),
+                         "-" + SIMULATOR_ENV_FILE.as_posix()} for item in env_files):
         problems.append(f"EnvironmentFile={env_files}")
     interpreters = [(line.split() or [""])[0] for line in starts]
     if check_interpreter:
@@ -336,7 +338,8 @@ def check_installed_units(root: Path, *, run: Runner = subprocess.run,
                            show.get("EnvironmentFiles", ""))
         files = [item.lstrip("-") for item in files]
         if files[:1] != [ENV_FILE.as_posix()] or any(
-                item not in {ENV_FILE.as_posix(), OWNER_ENV_FILE.as_posix()} for item in files):
+                item not in {ENV_FILE.as_posix(), OWNER_ENV_FILE.as_posix(),
+                              SIMULATOR_ENV_FILE.as_posix()} for item in files):
             problems.append(f"EnvironmentFiles={files or 'none'}")
         checks.append(Check(name, not problems,
                             "; ".join(problems) or f"static, {show.get('ActiveState')}, no drop-ins"))
@@ -346,7 +349,7 @@ def check_installed_units(root: Path, *, run: Runner = subprocess.run,
             try:
                 effective.update(parse_env_lines(read(Path(path)).splitlines()))
             except OSError as error:
-                if path == OWNER_ENV_FILE.as_posix() and isinstance(error, FileNotFoundError):
+                if path in {OWNER_ENV_FILE.as_posix(), SIMULATOR_ENV_FILE.as_posix()} and isinstance(error, FileNotFoundError):
                     continue                             # optional (``-`` prefix): absent is fine
                 checks.append(Check(f"effective_env:{unit}", False, f"{path} unreadable"))
         effective.update(parse_env_lines(show.get("Environment", "").split()))
