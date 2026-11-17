@@ -682,13 +682,16 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Local-only read-only historical simulator viewer")
     parser.add_argument("--check", action="store_true", help="verify packaged assets/imports, no network")
     parser.add_argument("--no-browser", action="store_true", help="run loopback server without opening the browser")
+    parser.add_argument("--port", type=int, default=0, help="fixed loopback port for paired local protocol")
     args = parser.parse_args()
     if not (STATIC_DIR / "replay.html").is_file():
         raise SystemExit("Missing standalone replay build: dist/replay.html")
     if args.check:
         print("LOCAL_REPLAY_PACKAGE_OK (assets and imports); no HTTP/network exercised")
         return
-    server = ThreadingHTTPServer(("127.0.0.1", 0), handler_factory())
+    if args.port not in (0, 48765):
+        raise SystemExit("Only the fixed local adapter port is supported")
+    server = ThreadingHTTPServer(("127.0.0.1", args.port), handler_factory())
     port = server.server_address[1]
     uri = f"http://127.0.0.1:{port}/replay.html"
     print("Local research simulation viewer: " + uri, flush=True)
