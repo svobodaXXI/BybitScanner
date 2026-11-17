@@ -24,6 +24,7 @@ def scenario(tmp_path, monkeypatch):
     owner.write_text("BYBITSCANNER_AUTOPILOT_OWNER_TOKEN=existing_owner_token\n")
     owner.chmod(0o600)
     original = owner.read_bytes()
+    simulator = private / "simulator.env"
     paper = private / "paper.env"
     paper.write_text("BYBITSCANNER_PAPER_TEST=0\n")
     paper.chmod(0o644)
@@ -53,7 +54,7 @@ def scenario(tmp_path, monkeypatch):
     monkeypatch.setattr(maintenance, "resume_installed_release", start)
     def invoke():
         return pairing.provision_owner_pc(
-            SHA, root=tmp_path, owner_env=owner, env_file=paper,
+            SHA, root=tmp_path, owner_env=owner, simulator_env=simulator, env_file=paper,
             uid=os.geteuid(),
         )
     return owner, original, state, invoke
@@ -65,11 +66,12 @@ def test_provision_uses_exact_existing_stop_and_editor_only_resume(scenario):
     assert outcome.startswith("READY:")
     assert TOKEN not in outcome
     assert state["stop"] == 1 and state["resume"] == 1
-    assert owner.read_bytes().startswith(original)
-    cfg = parse_env_lines(owner.read_text().splitlines())
+    assert owner.read_bytes() == original
+    simulator = owner.parent / "simulator.env"
+    cfg = parse_env_lines(simulator.read_text().splitlines())
     assert cfg["BYBITSCANNER_SIMULATOR_BRIDGE_ORIGIN"] == pairing.ORIGIN
     assert json.loads(cfg["BYBITSCANNER_SIMULATOR_BRIDGE_DEVICES_JSON"]) == {"owner-pc": TOKEN}
-    assert owner.stat().st_mode & 0o077 == 0
+    assert simulator.stat().st_mode & 0o077 == 0
 
 
 def test_preflight_rejects_non_flat_or_non_editor_without_stop(scenario, monkeypatch):
@@ -129,7 +131,8 @@ def test_partial_resume_does_not_retry_stop_or_secret_write(scenario, monkeypatc
     assert "editor_only_resume_unproven" in outcome
     assert TOKEN not in outcome
     assert state["stop"] == state["resume"] == 1
-    assert owner.read_bytes().startswith(original)
+    assert owner.read_bytes() == original
+    assert (owner.parent / "simulator.env").is_file()
 
 
 def test_untrusted_runtime_origin_blocks_before_stop(scenario):
@@ -162,3 +165,59 @@ def test_paper_env_change_after_stop_blocks_before_secret_write(scenario, monkey
     assert "post_stop_editor_freeze_unproven" in invoke()
     assert owner.read_bytes() == original
     assert state["stop"] == 1 and state["resume"] == 0
+
+
+def test_existing_simulator_device_file_is_never_replaced(scenario):
+    owner, original, state, invoke = scenario
+    simulator = owner.parent / "simulator.env"
+    simulator.write_bytes(b"EXISTING_SECRET=preserve\n")
+    simulator.chmod(0o600)
+    assert "existing_simulator_device_file_preserved" in invoke()
+    assert simulator.read_bytes() == b"EXISTING_SECRET=preserve\n"
+    assert owner.read_bytes() == original
+    assert state["stop"] == state["resume"] == 0
+
+
+def test_create_only_link_failure_preserves_other_owner_file(scenario, monkeypatch):
+    owner, original, state, invoke = scenario
+    simulator = owner.parent / "simulator.env"
+    original_link = pairing.os.link
+
+    def competing_writer(src, dst, **kwargs):
+        # Simulates another root writer completing a new config at the commit boundary.
+        Path(dst).write_bytes(b"OTHER_USER_SECRET=preserve\n")
+        raise FileExistsError("racing device config")
+
+    monkeypatch.setattr(pairing.os, "link", competing_writer)
+    assert invoke().startswith("BLOCKED: ")
+    assert owner.read_bytes() == original
+    assert simulator.read_bytes() == b"OTHER_USER_SECRET=preserve\n"
+    assert state["stop"] == 1 and state["resume"] == 0
+
+
+def test_global_owner_lifecycle_lock_denies_competing_operation(tmp_path):
+    root = tmp_path / "transaction"
+    root.mkdir(mode=0o700)
+    with maintenance._owner_action_lifecycle_guard(
+        journal_root=root, trusted_uid=os.geteuid(),
+    ):
+        with pytest.raises(BlockingIOError):
+            with maintenance._owner_action_lifecycle_guard(
+                journal_root=root, trusted_uid=os.geteuid(),
+            ):
+                pytest.fail("Second owner request cannot enter lifecycle")
+    with maintenance._owner_action_lifecycle_guard(
+        journal_root=root, trusted_uid=os.geteuid(),
+    ):
+        pass
+
+
+def test_owner_global_lock_rejects_unsafe_transaction_directory(tmp_path):
+    root = tmp_path / "transaction"
+    root.mkdir(mode=0o700)
+    root.chmod(0o777)
+    with pytest.raises(ValueError, match="owner_action_journal_untrusted"):
+        with maintenance._owner_action_lifecycle_guard(
+            journal_root=root, trusted_uid=os.geteuid(),
+        ):
+            pytest.fail("Unsafe transaction directory cannot enter lifecycle")
