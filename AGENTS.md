@@ -22,14 +22,27 @@ local UI, Simulator, PAPER and VPS acceptance. CI, automated tests and technical
 receipts may establish engineering evidence, not substitute for owner acceptance.
 Do not claim `ACCEPTED` without the owner's explicit confirmation.
 
-**Never delegate interactive desktop control to Codex.** Do not give Codex the
-owner's mouse pointer, clicks, GUI buttons, keyboard entry into windows, or
-remote-control access to their PC/laptop desktop. This restriction does **not**
-ban Codex command-line/terminal work: exceptional owner-directed tasks and
-approved VPS synchronization may still use existing authorized terminal routes,
-subject to scope, secrets, Git protections, and host/trading approval gates.
-Do not equate terminal-based SSH or a checked-out repository with permission to
-control the graphical desktop. Actual UI acceptance remains the owner's task.
+**Owner-only desktop interaction and acceptance (reconfirmed 2026-11-17).**
+ChatGPT, Codex and delegated agents MUST NOT take control of the owner's PC/laptop
+desktop or perform interactive GUI actions. In particular, do not open or control
+Google Chrome/other browsers, application windows or graphical desktop sessions;
+do not request browser-control permissions; do not move/click the mouse, type into
+GUI fields, press UI buttons or operate the owner's screen through Playwright,
+Selenium, browser/desktop computer-use, remote desktop or equivalent mechanisms.
+No agent-driven GUI smoke test, walkthrough, installation acceptance, screenshot
+acceptance or automated UI/browser acceptance may be substituted for the owner.
+If a task or tool requests GUI access, decline that path and report the precise
+owner-only acceptance step instead.
+
+**Allowed boundary:** scoped source edits, terminal/CLI work, headless unit/
+integration/contract checks and technical packaging or noninteractive verification
+remain allowed under existing Git, host, secret and approval rules; they must not
+open or control GUI applications or desktop sessions. Exceptional owner-approved
+VPS/SSH operations retain their separate protected authorization gates. A CLI
+process that launches a desktop application for interactive testing is NOT an
+exception. The owner alone opens applications, clicks controls, uses the browser
+and evaluates the real local UI, Simulator, PAPER or VPS screens; only explicit
+owner-reported observations may establish real-world UI acceptance.
 
 This clarification supersedes the earlier overly broad statement that Codex
 had no computer access at all; it also supersedes any older instructions that
