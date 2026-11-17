@@ -210,3 +210,25 @@ def test_divergent_releases_fail_closed():
 
     with pytest.raises(updates.UpdateBlocked, match="desktop_release_not_ancestor_of_stable"):
         updates.find_asset("manager", opener=diverged)
+
+
+
+def test_known_installed_version_cannot_downgrade():
+    old = "b" * 40
+    def compare(request, timeout=0):
+        if request.full_url == updates.API + "/compare/" + old + "..." + SHA:
+            return Reply(json.dumps({"status": "behind", "behind_by": 1,
+                                     "ahead_by": 0}).encode())
+        return opener(request, timeout=timeout)
+    with pytest.raises(updates.UpdateBlocked, match="desktop_downgrade_or_diverged"):
+        updates.require_forward_update(old, SHA, opener=compare)
+
+
+def test_known_installed_version_can_advance():
+    old = "0" * 40
+    def compare(request, timeout=0):
+        if request.full_url == updates.API + "/compare/" + old + "..." + SHA:
+            return Reply(json.dumps({"status": "ahead", "behind_by": 0,
+                                     "ahead_by": 5}).encode())
+        return opener(request, timeout=timeout)
+    updates.require_forward_update(old, SHA, opener=compare)
