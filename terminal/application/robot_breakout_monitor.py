@@ -700,17 +700,47 @@ class RobotBreakoutMonitor:
             # existing PAPER runtime, not a new Impulse execution engine.
             if not self._arm_entry_coverage(record.symbol.value):
                 return False
-            result = self._action_executor.create_limit(request)
+            try:
+                result = self._action_executor.create_limit(request)
+            except Exception as error:
+                # A command can be accepted before its transport reports
+                # failure. Freeze new entries rather than orphan its LIMIT.
+                self._escalate_reconciliation(
+                    "IMPULSE_LIMIT_SUBMIT_UNPROVEN "
+                    f"candidate_id={record.candidate_id} "
+                    f"error_class={type(error).__name__}"
+                )
+                return False
             order_id = getattr(result, "order_id", None)
-            if not order_id:
-                # An UNKNOWN submit may already have created an entry order.
-                # Never drop the armed market/protection coverage on ambiguity.
-                if getattr(result, "status", None) is CommandResultStatus.BLOCKED:
+            status = getattr(result, "status", None)
+            if (not isinstance(order_id, str) or not order_id
+                    or status not in (
+                        CommandResultStatus.COMPLETED,
+                        CommandResultStatus.ACCEPTED_PENDING,
+                    )):
+                if status in (
+                    CommandResultStatus.BLOCKED,
+                    CommandResultStatus.REJECTED,
+                    CommandResultStatus.VALIDATION_ERROR,
+                ) and not order_id:
                     self._release_entry_coverage(record.symbol.value)
+                else:
+                    self._escalate_reconciliation(
+                        "IMPULSE_LIMIT_SUBMIT_IDENTITY_UNPROVEN "
+                        f"candidate_id={record.candidate_id}"
+                    )
                 return False
             execution["limit_order_id"] = order_id
             execution["impulse_signal_close_ms"] = terms.closed_at_ms
             self._persist_execution(record, execution)
+            durable = self._store().get_robot_candidate(record.candidate_id)
+            if (durable is None or not isinstance(durable.robot_state, Mapping)
+                    or (durable.robot_state.get("execution") or {}).get("limit_order_id") != order_id):
+                self._escalate_reconciliation(
+                    "IMPULSE_LIMIT_ID_NOT_DURABLE "
+                    f"candidate_id={record.candidate_id}"
+                )
+                return False
             return True
 
         order = self._store().get_paper_limit(
