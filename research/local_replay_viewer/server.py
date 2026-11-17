@@ -617,7 +617,9 @@ def handler_factory(static_dir: Path = STATIC_DIR,
                         UPDATE_STATE.update(status="restarting", detail="verified_release_staged")
                         server.shutdown()
                         server.server_close()
-                    except (UpdateBlocked, OSError, ValueError) as exc:
+                    except Exception as exc:
+                        # A malformed but hash-matched ZIP or failed local
+                        # relaunch must not strand the owner in "checking".
                         detail = str(exc) if isinstance(exc, UpdateBlocked) else type(exc).__name__
                         UPDATE_STATE.update(status="blocked", detail=detail)
                     finally:
