@@ -23,11 +23,13 @@ jobs:
           path = Path('.github/workflows/desktop-release-packages.yml')
           raw = path.read_bytes()
           actual = subprocess.check_output(['git', 'hash-object', str(path)], text=True).strip()
-          assert actual == 'c8062c92cb1a1076d5cff8b5865008701c2300c0', 'SOURCE_WORKFLOW_CHANGED'
+          assert actual == 'ef62949977db6bf7f42742e97ee1444d4ca515f9', 'SOURCE_WORKFLOW_CHANGED'
           assert b'  workflow_dispatch:' in raw, 'MISSING_MANUAL_DISPATCH'
           assert b'ref: stable/adfb50b-forward' in raw, 'SOURCE_NOT_PINNED_TO_STABLE'
           assert b'STABLE_MOVED_OR_UNKNOWN' in raw, 'MISSING_STABLE_GUARD'
           assert b'DESKTOP_TAG_ALREADY_EXISTS' in raw, 'MISSING_NO_OVERWRITE_GUARD'
+          assert b'-SkipHttpErrorCheck' in raw and b'StatusCode -ne 404' in raw, 'MISSING_404_ONLY_GUARD'
+          assert b'DESKTOP_TAG_LOOKUP_UNPROVEN_' in raw, 'MISSING_API_FAIL_CLOSED'
           assert b'STABLE_MOVED_BEFORE_PUBLISH' in raw, 'MISSING_PUBLISH_GUARD'
           assert b'  push:' not in raw and b'  schedule:' not in raw and b'  pull_request:' not in raw, 'AUTOMATIC_RELEASE_TRIGGER'
           print('MANUAL_RELEASE_REGISTRATION_OK')
