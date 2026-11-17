@@ -32,6 +32,7 @@ on:
       - "tests/test_robot_entry_flow_evidence.py"
       - "tests/test_robot_impulse_canonical_paper.py"
       - "terminal/market_data/impulse_observation.py"
+      - "terminal/market_data/impulse_producer.py"
       - "tests/test_public_trade_impulse_observation.py"
       - "robot_flat_closure.py"
       - "tests/test_robot_flat_closure.py"
@@ -196,6 +197,8 @@ jobs:
           notification.py
           pattern_robot_integration.py
           robot_impulse.py
+          terminal/market_data/impulse_producer.py
+          robot_entry_flow_evidence.py
           tests/test_robot_impulse_canonical_paper.py
           robot_l_shape.py
           l_shape_scanner.py
