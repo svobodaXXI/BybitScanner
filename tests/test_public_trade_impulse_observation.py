@@ -3,7 +3,7 @@ import unittest
 from decimal import Decimal
 
 from terminal.market_data.impulse_observation import (
-    PublicTradeObservation, audit_recent_trade_overlap, audit_closed_m1_trade_parity,
+    PublicTradeObservation, audit_recent_trade_overlap, audit_closed_m1_trade_parity,    audit_closed_m1_triple_parity,
 )
 
 
@@ -323,6 +323,68 @@ class ClosedM1TradeParityTests(unittest.TestCase):
         self.assertEqual(parity.status, "EXACT_CLOSED_M1_AGGREGATE_PARITY")
         self.assertFalse(parity.source_complete)
         self.assertFalse(parity.trading_authorized)
+
+
+class ClosedMinuteTripleParityTests(unittest.TestCase):
+    def setUp(self):
+        self.source = PublicTradeObservation("BTCUSDT")
+        self.trades = (
+            trade("older", 119999, sequence=10),
+            trade("buy", 120001, "Buy", "100", "2", sequence=20),
+            trade("sell", 130005, "Sell", "101", "3", sequence=21),
+            trade("newer", 180000, sequence=30),
+        )
+        self.assertTrue(self.source.observe(frame(*self.trades)))
+        self.kline = closed_m1_response()
+        self.recent = {
+            "retCode": 0, "time": 181500, "result": {
+                "category": "linear",
+                "list": [recent_record(p) for p in reversed(self.trades)],
+            },
+        }
+
+    def audit(self, *, observer=None, recent=None, kline=None, at=182000):
+        return audit_closed_m1_triple_parity(
+            (observer or self.source).snapshot(),
+            self.recent if recent is None else recent,
+            self.kline if kline is None else kline,
+            start_ms=120000, observed_at_ms=at,
+        )
+
+    def test_three_source_agreement_is_still_not_order_authority(self):
+        proof = self.audit()
+        self.assertEqual(proof.status, "EXACT_CLOSED_M1_TRIPLE_PARITY")
+        self.assertEqual(proof.matched_prints, 2)
+        self.assertEqual(proof.known_at_ms, 182000)
+        self.assertFalse(proof.source_complete)
+        self.assertFalse(proof.trading_authorized)
+
+    def test_side_conflict_passes_aggregates_but_fails_exact_rest_ids(self):
+        wrong = [dict(record) for record in self.recent["result"]["list"]]
+        wrong[1]["side"] = "Buy" if wrong[1]["side"] == "Sell" else "Sell"
+        different = dict(self.recent, result={"category": "linear", "list": wrong})
+        self.assertEqual(self.audit(recent=different).status, "UNPROVEN")
+
+    def test_rest_unbracketed_invalid_or_not_yet_available_is_unproven(self):
+        records = self.recent["result"]["list"]
+        for recent in (
+            dict(self.recent, result={"category": "linear", "list": records[:-1]}),
+            dict(self.recent, result={"category": "linear", "list": records[1:]}),
+            dict(self.recent, time=120000),
+            dict(self.recent, time=185000),
+            dict(self.recent, time="181500"),
+        ):
+            self.assertEqual(self.audit(recent=recent).status, "UNPROVEN")
+        self.assertEqual(self.audit(at=212000).status, "UNPROVEN")
+        self.assertEqual(
+            self.audit(kline=closed_m1_response(turnover="504")).status,
+            "UNPROVEN",
+        )
+
+    def test_reconnect_does_not_recover_pre_gap_execution_coverage(self):
+        self.source.mark_gap()
+        self.assertTrue(self.source.observe(frame(*self.trades[1:])))
+        self.assertEqual(self.audit().status, "UNPROVEN")
 
 if __name__ == "__main__":
     unittest.main()
