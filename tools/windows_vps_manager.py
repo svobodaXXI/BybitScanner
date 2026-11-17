@@ -47,6 +47,8 @@ KNOWN_ROUTES = {
     "pc": ("83.217.213.181", "root", "bybitscanner_vdsina_gateway_20261030"),
     "laptop": ("83.217.213.181", "root", "bybitscanner_laptop"),
 }
+# Owner-confirmed with Happ "Основной 1" ON; never use the laptop identity.
+PC_HAPP_ROUTE = ("212.193.14.116", "root", "bybitscanner_vdsina_gateway_20261030")
 
 # Fixed, audited commands: no free-form shell and no trading mutations.
 ACTIONS = {
@@ -176,6 +178,17 @@ def gui_owner_status(stdout: str, returncode: int, request: str) -> str:
 OWNER_POLL_LIMIT = 180  # up to 15 minutes of ordinary five-second polling
 OWNER_POLL_SECONDS = 5
 OWNER_POLL_UNKNOWN_LIMIT = 3
+OWNER_POLL_TRANSPORT_LIMIT = 12  # bounded read-only reconnects; never resend submit
+
+
+def transient_ssh_failure(result: subprocess.CompletedProcess) -> bool:
+    """Retry only a transport failure, not authentication or server refusal."""
+    return (result.returncode == 255 and
+            preflight_failure_class(result.stderr or "", result.returncode) in {
+                "SSH_CONNECT_TIMEOUT", "SSH_BANNER_FAILURE",
+                "SSH_CONNECTION_RESET", "SSH_NETWORK_UNREACHABLE",
+                "SSH_CONNECTION_REFUSED",
+            })
 
 
 def watch_owner_request(
@@ -190,6 +203,7 @@ def watch_owner_request(
     state = "submitted" if initially_submitted else "unproven"
     latest = ""
     unknown = 0
+    transport_unknown = 0
     for attempt in range(attempts):
         if attempt:
             sleep(OWNER_POLL_SECONDS)
@@ -199,18 +213,30 @@ def watch_owner_request(
                 timeout=20, stdin=subprocess.DEVNULL, creationflags=NO_WINDOW,
                 check=False,
             )
-        except (OSError, subprocess.TimeoutExpired):
-            unknown += 1
+        except subprocess.TimeoutExpired:
+            transient = True
+        except OSError:
+            return state, latest + "\nSTATUS_UNPROVEN; SSH client unavailable; operation not resubmitted"
         else:
             observed = gui_owner_status(reply.stdout, reply.returncode, request)
             if observed in ("success", "failed"):
                 return observed, reply.stdout.strip()
+            transient = transient_ssh_failure(reply)
             if observed == "submitted":
                 state = "submitted"
                 latest = reply.stdout.strip()
                 unknown = 0
-            else:
+            elif not transient:
+                if reply.returncode == 255:
+                    # Auth/host-key/identity failure cannot be fixed by reconnect.
+                    return state, latest + "\nSTATUS_UNPROVEN; SSH rejected; operation not resubmitted"
                 unknown += 1
+        if transient:
+            transport_unknown += 1
+            if transport_unknown >= OWNER_POLL_TRANSPORT_LIMIT:
+                return state, latest + "\nSTATUS_UNPROVEN; SSH reconnect limit; operation not resubmitted"
+            continue
+        transport_unknown = 0
         if unknown >= OWNER_POLL_UNKNOWN_LIMIT:
             return state, latest + "\nSTATUS_UNPROVEN; operation not resubmitted"
     return state, latest + "\nSTATUS_POLL_LIMIT; use the same request ID"
@@ -256,21 +282,44 @@ def known_windows_device(profile: str | None = None) -> str:
 
 def preferred_key(host: str, user: str) -> str:
     """Only offer a pinned identity for a known device's exact VPS target."""
-    route = KNOWN_ROUTES.get(known_windows_device())
-    if route and (host, user) == route[:2]:
-        return str(Path.home() / ".ssh" / route[2])
+    device = known_windows_device()
+    routes = [KNOWN_ROUTES[device]] if device in KNOWN_ROUTES else []
+    if device == "pc":
+        routes.append(PC_HAPP_ROUTE)
+    for route in routes:
+        if (host, user) == route[:2]:
+            return str(Path.home() / ".ssh" / route[2])
     return ""
+
+
+def happ_tun_active() -> bool:
+    """Read-only Windows check; failure retains the previously pinned route."""
+    if os.name != "nt":
+        return False
+    try:
+        result = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+             "$a=Get-NetAdapter -Name 'happ-default-tun' -ErrorAction SilentlyContinue; "
+             "if ($a -and $a.Status -eq 'Up') { 'HAPP_TUN_UP' }"],
+            capture_output=True, text=True, errors="replace", timeout=4,
+            stdin=subprocess.DEVNULL, creationflags=NO_WINDOW, check=False,
+        )
+        return result.returncode == 0 and result.stdout.strip() == "HAPP_TUN_UP"
+    except (OSError, subprocess.TimeoutExpired):
+        return False
 
 
 def preferred_route() -> tuple[str, str]:
     """Use the latest owner-verified direct route for each known Windows device.
 
-    PC: 2026-11-17 owner confirmed 83.217.213.181 with existing PC key
-    and Happ/VPN off. Ignore a stale user SSH alias without rewriting config.
+    PC: owner-confirmed 212.193.14.116 via Happ "Основной 1" when TUN is up;
+    otherwise 83.217.213.181 (VPN off). Never rewrite SSH configuration.
     Laptop: independently confirmed route with its own laptop key.
     Unknown profiles retain their explicit, preconfigured target.
     """
     device = known_windows_device()
+    if device == "pc" and happ_tun_active():
+        return PC_HAPP_ROUTE[:2]
     if device in KNOWN_ROUTES:
         return KNOWN_ROUTES[device][:2]
     # Preserve unknown-profile explicit alias behavior; never pin a PC key.
@@ -836,10 +885,20 @@ class VPSManager(tk.Tk):
                                       + "\n" + precheck_receipt)))
                     return
             if mode not in CONTROL_ACTIONS.values():
-                result, recovery = run_readonly_ssh_with_laptop_agent_recovery(
-                    command, capture_output=True, text=True, errors="replace",
-                    timeout=35, stdin=subprocess.DEVNULL, creationflags=NO_WINDOW,
-                    check=False)
+                try:
+                    result, recovery = run_readonly_ssh_with_laptop_agent_recovery(
+                        command, capture_output=True, text=True, errors="replace",
+                        timeout=35, stdin=subprocess.DEVNULL, creationflags=NO_WINDOW,
+                        check=False)
+                except subprocess.TimeoutExpired:
+                    if mode != "status":
+                        raise
+                    # A timed-out status query has no side effect. Continue
+                    # with the original UUID on the same SSH route only.
+                    state, details = watch_owner_request(
+                        command, request, initially_submitted=False)
+                    self.events.put((state, details + "\nREQUEST_ID=" + request))
+                    return
             else:
                 try:
                     result = subprocess.run(
@@ -856,6 +915,10 @@ class VPSManager(tk.Tk):
             if mode not in CONTROL_ACTIONS.values():
                 if mode == "status":
                     state = gui_owner_status(output, result.returncode, request)
+                    if transient_ssh_failure(result):
+                        # Only retry the same read-only UUID status query.
+                        state, output = watch_owner_request(
+                            command, request, initially_submitted=False)
                 elif mode == "preflight":
                     state = ("observed" if result.returncode == 0 and
                              "PREFLIGHT_READ_ONLY_DATA_COLLECTED_NOT_ACCEPTED" in output
@@ -887,9 +950,9 @@ class VPSManager(tk.Tk):
                 self.events.put((state, output or "Статус не доказан"))
                 return
             # Lost submit reply => only query the same request; never replay it.
-            status_command = control_ssh_command(
-                self.host.get(), self.user.get(), self.key.get(), "status",
-                request_id=request)
+            # Pin status to the exact authorized submit route and UUID even
+            # if GUI fields are edited while the detached action is running.
+            status_command = [*command[:-1], CONTROL_MODULE + " status " + request]
             state = ("submitted" if result.returncode == 0
                      and "REQUEST_ID=" + request in output.splitlines()
                      and any(line.startswith("SUBMISSION=ACCEPTED")
