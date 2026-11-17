@@ -5469,11 +5469,10 @@ def main() -> None:
             ),
             live_limit_build_sha=os.environ.get("BYBITSCANNER_BUILD_SHA", ""),
             deployment_identity=os.environ.get("BYBITSCANNER_DEPLOYMENT_IDENTITY", "local"),
-            # Independent owner-approved activation is required. Off for
-            # every normal install; no VPS service/env change in this PR.
-            wedge_be_auto_paper_enabled=(
-                os.environ.get("BYBITSCANNER_ROBOT_WEDGE_BE_PAPER_AUTO", "") == "1"
-            ),
+            # Wedge fee-aware BE is part of normal PAPER Robot position management.
+            # No separate owner env flag or VPS Manager activation action.
+            # Actual trading still requires canonical protected PAPER admission/start.
+            wedge_be_auto_paper_enabled=True,
         ))
         initial_market.add_update_listener(
             WorkspaceMarketDataManager._WORKSPACE_LISTENER, runtime.enqueue_book_update,
