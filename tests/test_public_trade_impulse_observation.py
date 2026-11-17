@@ -136,8 +136,6 @@ class PublicTradeObservationTests(unittest.TestCase):
         hub.close()
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 def recent_record(item):
@@ -228,3 +226,6 @@ class RecentTradeOverlapAuditTests(unittest.TestCase):
         result = self.audit()
         self.assertEqual(result.status, "UNPROVEN")
         self.assertFalse(result.trading_authorized)
+
+if __name__ == "__main__":
+    unittest.main()
