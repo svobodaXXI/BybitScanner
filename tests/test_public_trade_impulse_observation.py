@@ -2,7 +2,7 @@
 import unittest
 from decimal import Decimal
 
-from terminal.market_data.impulse_observation import PublicTradeObservation
+from terminal.market_data.impulse_observation import (PublicTradeObservation, audit_recent_trade_overlap)
 
 
 def frame(*prints, symbol="BTCUSDT"):
@@ -138,3 +138,93 @@ class PublicTradeObservationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def recent_record(item):
+    return {
+        "execId": item["i"], "symbol": item["s"],
+        "time": str(item["T"]), "seq": str(item["seq"]),
+        "side": item["S"], "price": item["p"], "size": item["v"],
+    }
+
+
+def recent_response(*records):
+    return {"retCode": 0, "result": {"category": "linear", "list": list(records)}}
+
+
+class RecentTradeOverlapAuditTests(unittest.TestCase):
+    def setUp(self):
+        self.observation = PublicTradeObservation("BTCUSDT")
+        self.before = trade("before", 999, sequence=90)
+        self.first = trade("first", 1000, sequence=100)
+        self.second = trade("second", 1100, "Sell", "99", "3", sequence=110)
+        self.after = trade("after", 1200, sequence=120)
+        self.assertTrue(self.observation.observe(frame(
+            self.before, self.first, self.second, self.after,
+        )))
+        self.rest = recent_response(*(
+            recent_record(item)
+            for item in (self.after, self.second, self.first, self.before)
+        ))
+
+    def audit(self, response=None, snapshot=None, start=1000, end=1200):
+        return audit_recent_trade_overlap(
+            self.observation.snapshot() if snapshot is None else snapshot,
+            self.rest if response is None else response,
+            start_ms=start, end_ms=end,
+        )
+
+    def test_exact_closed_overlap_is_diagnostic_only(self):
+        result = self.audit()
+        self.assertEqual(result.status, "EXACT_OVERLAP_MATCH")
+        self.assertEqual(result.matched_count, 2)
+        self.assertFalse(result.source_complete)
+        self.assertFalse(result.trading_authorized)
+        self.assertEqual(self.observation.snapshot()["continuity"], "UNPROVEN")
+
+    def test_missing_bracket_prevents_completeness_claim(self):
+        records = self.rest["result"]["list"]
+        for subset in (records[:-1], records[1:]):
+            self.assertEqual(self.audit(recent_response(*subset)).status, "UNPROVEN")
+
+    def test_missing_trade_from_either_source_is_unproven(self):
+        records = self.rest["result"]["list"]
+        missing_rest = [x for x in records if x["execId"] != "first"]
+        self.assertEqual(self.audit(recent_response(*missing_rest)).status, "UNPROVEN")
+        o = PublicTradeObservation("BTCUSDT")
+        self.assertTrue(o.observe(frame(self.before, self.second, self.after)))
+        self.assertEqual(self.audit(snapshot=o.snapshot()).status, "UNPROVEN")
+
+    def test_same_id_conflicting_execution_facts_refused(self):
+        records = [dict(x) for x in self.rest["result"]["list"]]
+        for x in records:
+            if x["execId"] == "second":
+                x["price"] = "98"
+        self.assertEqual(self.audit(recent_response(*records)).status, "UNPROVEN")
+
+    def test_duplicate_foreign_and_malformed_rest_are_unproven(self):
+        records = self.rest["result"]["list"]
+        self.assertEqual(
+            self.audit(recent_response(*(records + [records[0]]))).status, "UNPROVEN")
+        foreign = [dict(x) for x in records]
+        foreign[0]["symbol"] = "ETHUSDT"
+        self.assertEqual(self.audit(recent_response(*foreign)).status, "UNPROVEN")
+        bad_seq = [dict(x) for x in records]
+        bad_seq[1]["seq"] = "-1"
+        self.assertEqual(self.audit(recent_response(*bad_seq)).status, "UNPROVEN")
+        bad_response = {"retCode": 10001, "result": {"category": "linear", "list": records}}
+        self.assertEqual(self.audit(bad_response).status, "UNPROVEN")
+
+    def test_no_trades_and_unsupported_snapshot_never_grant_authority(self):
+        self.assertEqual(self.audit(start=1001, end=1099).status, "UNPROVEN")
+        self.assertEqual(
+            self.audit(snapshot={"symbol": "BTCUSDT", "prints": ()}).status,
+            "UNPROVEN")
+        with self.assertRaises(ValueError):
+            self.audit(start=1200, end=1000)
+
+    def test_reconnect_invalidates_observed_window(self):
+        self.observation.mark_gap()
+        result = self.audit()
+        self.assertEqual(result.status, "UNPROVEN")
+        self.assertFalse(result.trading_authorized)
