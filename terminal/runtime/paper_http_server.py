@@ -3091,6 +3091,58 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
 
+        if parsed.path == "/api/diary/simulator-bridge/facts":
+            # Bound read-only export, not a general device-accessible PAPER API.
+            # An owner-authenticated request must first have been DELIVERED
+            # to this exact paired device; no bearer token can select a ticker,
+            # account, revision, episode, arbitrary file or private Bybit data.
+            from terminal.diary.simulator_launch_relay import (
+                RelayForbidden, RelayInvalid,
+            )
+            relay = getattr(self.server, "simulator_launch_relay", None)
+            if relay is None:
+                self._json_response(503, {"ok": False, "error": "simulator_bridge_disabled"})
+                return
+            params = parse_qs(parsed.query, keep_blank_values=True)
+            if (set(params) != {"device_id", "request_id"}
+                    or any(len(v) != 1 for v in params.values())):
+                self._json_response(400, {"ok": False, "error": "invalid_simulator_fact_request"})
+                return
+            try:
+                episode_id, owner, revision = relay.authorized_facts_scope(
+                    device=params["device_id"][0],
+                    token=self.headers.get("X-BybitScanner-Simulator-Device-Token", ""),
+                    request_id=params["request_id"][0],
+                )
+            except RelayForbidden:
+                self._json_response(403, {"ok": False, "error": "simulator_device_unauthorized"})
+                return
+            except RelayInvalid:
+                self._json_response(404, {"ok": False, "error": "episode_fact_request_unavailable"})
+                return
+            try:
+                snapshot = load_paper_source_snapshot(self.server.diary_source_db_path)
+                projection = project_paper_closed_episode_facts(
+                    snapshot, account_id="paper", owner=owner,
+                    trade_episode_id=episode_id, source_revision=revision,
+                    now_ms=int(time.time() * 1000),
+                )
+            except EpisodeFactsSourceChanged:
+                self._json_response(409, {"ok": False, "error": "episode_facts_source_changed"})
+                return
+            except EpisodeFactsNotFound:
+                self._json_response(404, {"ok": False, "error": "episode_not_in_scope"})
+                return
+            except (StatisticsScopeError, ValueError):
+                self._json_response(503, {"ok": False, "error": "episode_facts_evidence_unavailable"})
+                return
+            except Exception:
+                LOGGER.exception("Paired episode facts unavailable")
+                self._json_response(503, {"ok": False, "error": "episode_facts_evidence_unavailable"})
+                return
+            self._json_response(200, {"ok": True, **projection})
+            return
+
         if parsed.path == "/api/diary/simulator-bridge/poll":
             # A paired local device initiates an outbound GET. No Nginx owner
             # credentials or trading secrets are shared with the device.
@@ -4186,9 +4238,13 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 if not 1 <= size <= 320:
                     raise RelayInvalid("invalid_simulator_bridge_payload_size")
                 if path.endswith("/request"):
-                    payload = self._payload({"episode_id"})
+                    payload = self._payload(
+                        {"episode_id"}, frozenset({"owner", "source_revision"}),
+                    )
                     result = relay.enqueue(
                         payload["episode_id"],
+                        owner=payload.get("owner"),
+                        source_revision=payload.get("source_revision"),
                         request_origin=self.headers.get("Origin", ""),
                         fetch_site=self.headers.get("Sec-Fetch-Site", ""),
                     )
