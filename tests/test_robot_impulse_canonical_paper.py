@@ -406,5 +406,116 @@ class CertifiedImpulseProducerTests(unittest.TestCase):
                 configured_symbols()
 
 
+class ImpulseLiveProducerHandoffTests(unittest.TestCase):
+    """One in-process live source gate, durable exact ID and owner callback."""
+
+    def test_verified_rest_kline_candidate_is_persisted_only_once(self):
+        import tempfile
+        from pathlib import Path
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        import robot_candidate_store
+        from terminal.market_data.impulse_producer import ImpulsePaperScannerWorker
+
+        observation, recent, prev, current = CertifiedImpulseProducerTests.source()
+        close = CertifiedImpulseProducerTests.CLOSE
+
+        class FakeResponse:
+            status_code = 200
+            def __init__(self, data):
+                self.data = data
+            def raise_for_status(self):
+                return None
+            def json(self):
+                return self.data
+
+        class FakeREST:
+            verify = True
+            def __init__(self):
+                self.requests = []
+            def get(self, url, *, params, timeout, allow_redirects):
+                self.requests.append((url, dict(params)))
+                if url.endswith("/recent-trade"):
+                    return FakeResponse(recent)
+                if params["start"] == close - 120_000:
+                    return FakeResponse(prev)
+                return FakeResponse(current)
+            def close(self):
+                pass
+
+        class FakeObserver:
+            def snapshot(self):
+                return dict(observation)
+
+        context = SimpleNamespace(
+            symbol="BTCUSDT",
+            trades_subscription_state="SUBSCRIBED",
+            trade_bootstrap_complete=True,
+            impulse_observation=FakeObserver(),
+        )
+        events = []
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(robot_candidate_store, "DEFAULT_STORE_DIR", Path(directory)):
+                with patch.dict(os.environ, {robot_impulse.PAPER_OPT_IN: "1"}):
+                    rest = FakeREST()
+                    worker = ImpulsePaperScannerWorker(
+                        None, rest, events.append,
+                        symbols=("BTCUSDT",), clock_ms=lambda: close + 5000,
+                    )
+                    worker._contexts = [context]
+                    result = worker.once()
+                    self.assertEqual(len(result), 1)
+                    self.assertEqual(result, tuple(events))
+                    self.assertEqual(len(rest.requests), 3)
+                    record = robot_candidate_store.load_candidate(result[0])
+                    self.assertEqual(record["signal_snapshot"]["pattern"], "IMPULSE_FLOW")
+                    self.assertEqual(record["signal_snapshot"]["impulse"]["known_at_ms"],
+                                     close + 5000)
+                    self.assertEqual(worker.once(), ())
+                    self.assertEqual(len(events), 1)
+                    # Reconstructed worker after restart: existing immutable ID
+                    # prevents a second candidate and second owner callback.
+                    again = ImpulsePaperScannerWorker(
+                        None, FakeREST(), events.append,
+                        symbols=("BTCUSDT",), clock_ms=lambda: close + 5000,
+                    )
+                    again._contexts = [context]
+                    self.assertEqual(again.once(), ())
+                    self.assertEqual(len(events), 1)
+                    self.assertTrue(is_robot_executable_signal(
+                        record["signal_snapshot"], timeframe="1",
+                    ))
+
+    def test_impulse_uses_freshness_without_geometric_apex_or_late_data(self):
+        from terminal.runtime.paper_runtime import PaperRuntime
+        from types import SimpleNamespace
+
+        item = CertifiedImpulseProducerTests.source()
+        from terminal.market_data.impulse_producer import certified_snapshot
+        close = CertifiedImpulseProducerTests.CLOSE
+        signal = certified_snapshot(
+            *item, closed_at_ms=close, decision_ms=close + 5000,
+        )
+        self.assertIsNotNone(signal)
+        with patch.dict(os.environ, {robot_impulse.PAPER_OPT_IN: "1"}):
+            with patch("terminal.runtime.paper_runtime.time.time",
+                       return_value=(close + 6000) / 1000):
+                self.assertTrue(PaperRuntime._autopilot_candidate_fresh(
+                    SimpleNamespace(), "BTCUSDT", signal,
+                ))
+                self.assertIsNone(PaperRuntime._autopilot_candidate_fresh(
+                    SimpleNamespace(), "ETHUSDT", signal,
+                ))
+            with patch("terminal.runtime.paper_runtime.time.time",
+                       return_value=(close + 200_000) / 1000):
+                self.assertFalse(PaperRuntime._autopilot_candidate_fresh(
+                    SimpleNamespace(), "BTCUSDT", signal,
+                ))
+        with patch.dict(os.environ, {robot_impulse.PAPER_OPT_IN: "0"}):
+            self.assertIsNone(PaperRuntime._autopilot_candidate_fresh(
+                SimpleNamespace(), "BTCUSDT", signal,
+            ))
+
+
 if __name__ == "__main__":
     unittest.main()
