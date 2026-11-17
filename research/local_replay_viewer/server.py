@@ -642,22 +642,30 @@ def handler_factory(static_dir: Path = STATIC_DIR,
                     or urlsplit(self.path).query):
                     self._error(403, "Explicit same-origin PAPER import only")
                     return
+                # The same local state fence is held during a desktop
+                # update. An imported episode cannot race the verified copy.
+                if not SIM_LOCK.acquire(blocking=False):
+                    self._error(409, "Local state busy; import not started")
+                    return
                 try:
-                    size = int(self.headers.get("Content-Length", "0"))
-                    if not 2 <= size <= MAX_BYTES:
-                        self._error(413, "PAPER facts exceed local import limit")
+                    try:
+                        size = int(self.headers.get("Content-Length", "0"))
+                        if not 2 <= size <= MAX_BYTES:
+                            self._error(413, "PAPER facts exceed local import limit")
+                            return
+                        episode_id = store_episode(PAPER_EPISODES, self.rfile.read(size))
+                    except LocalEpisodeConflict:
+                        self._error(409, "Existing local episode conflicts with import")
                         return
-                    episode_id = store_episode(PAPER_EPISODES, self.rfile.read(size))
-                except LocalEpisodeConflict:
-                    self._error(409, "Existing local episode conflicts with import")
+                    except (OSError, ValueError):
+                        self._error(422, "Invalid PAPER episode import")
+                        return
+                    self._send(200, json.dumps({
+                        "ok": True, "trade_episode_id": episode_id, "stored_locally": True,
+                    }).encode("utf-8"), "application/json")
                     return
-                except (OSError, ValueError):
-                    self._error(422, "Invalid PAPER episode import")
-                    return
-                self._send(200, json.dumps({
-                    "ok": True, "trade_episode_id": episode_id, "stored_locally": True,
-                }).encode("utf-8"), "application/json")
-                return
+                finally:
+                    SIM_LOCK.release()
             if path not in (
                 "/local-replay/simulation/wedge",
                 "/local-replay/simulation/wedge-stream",
