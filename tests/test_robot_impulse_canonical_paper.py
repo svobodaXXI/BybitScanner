@@ -34,7 +34,9 @@ def snapshot(direction="LONG", *, proven=True):
             "structural_extreme": "99" if long else "101",
         },
         "impulse_source": {
-            "kind": "GAP_FREE_AUTHENTICATED_TRADE_TAPE",
+            "kind": "BYBIT_TRIPLE_CLOSED_M1_CERTIFIED",
+            "scope": "TWO_CLOSED_M1",
+            "closed_at_ms": 1_800_000,
             "source_complete": proven,
             "receipt_cutoff_proven": True,
             "transport_generation_proven": True,
@@ -70,7 +72,7 @@ class ImpulseCanonicalPolicyTests(unittest.TestCase):
             unproven["impulse_source"]["source_complete"] = True
             unproven["impulse_source"]["kind"] = "BYBIT_PUBLICTRADE_OBSERVATION"
             self.assertFalse(is_robot_executable_signal(unproven, timeframe="1"))
-            unproven["impulse_source"]["kind"] = "GAP_FREE_AUTHENTICATED_TRADE_TAPE"
+            unproven["impulse_source"]["kind"] = "BYBIT_TRIPLE_CLOSED_M1_CERTIFIED"
             unproven["impulse_source"]["receipt_cutoff_proven"] = False
             self.assertFalse(is_robot_executable_signal(unproven, timeframe="1"))
 
