@@ -621,6 +621,24 @@ class TestWindowsVpsManager(unittest.TestCase):
         self.assertIn("SSH rejected", details)
         call.assert_called_once()
 
+    def test_gui_status_reconnects_after_subprocess_timeout_without_resubmit(self):
+        req = "b" * 32
+        command = ["ssh", "root@212.193.14.116",
+                   "cd /opt/BybitScanner && /opt/BybitScanner/venv/bin/python "
+                   "-m tools.vps_owner_control status " + req]
+        done = subprocess.CompletedProcess(
+            command, 0, "REQUEST_ID=" + req + "\nSTATUS=FINISHED_OK\n", "")
+        fake = SimpleNamespace(events=queue.Queue())
+        with (patch("tools.windows_vps_manager.subprocess.run",
+                    side_effect=[subprocess.TimeoutExpired(command, 35), done]) as runner,
+              patch("tools.windows_vps_manager.time.sleep")):
+            VPSManager.worker_control(fake, command, "status", req)
+        kind, result = fake.events.get_nowait()
+        self.assertEqual(kind, "success")
+        self.assertIn("STATUS=FINISHED_OK", result)
+        self.assertEqual(runner.call_count, 2)
+        self.assertTrue(all(call.args[0] == command for call in runner.call_args_list))
+
     def test_gui_status_reconnects_readonly_after_banner_timeout(self):
         req = "a" * 32
         command = ["ssh", "root@212.193.14.116",
