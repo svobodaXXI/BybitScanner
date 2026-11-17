@@ -54,7 +54,7 @@ def package(output: Path, sha: str) -> int:
             if not relative.endswith(".py"):
                 continue
             try:
-                source = ast.parse(payload.decode("utf-8"), filename=relative)
+                source = ast.parse(payload.decode("utf-8-sig"), filename=relative)
             except (SyntaxError, UnicodeError) as exc:
                 raise ValueError("tracked_python_source_invalid") from exc
             for node in ast.walk(source):
