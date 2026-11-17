@@ -2753,31 +2753,31 @@ def main(argv=None) -> int:
     if args.action is not None:
         try:
             with _owner_action_lifecycle_guard():
-            if (args.wait_seconds or args.resume_installed_editor_only
-                    or args.update_editor_only_from_stable or args.staged_gitless_editor_only
-                    or args.continue_confirmed_stop_only or args.start_paper_after_editor
-                    or args.publish_frontend_only or args.frontend_bundle
-                    or args.frontend_current_index_sha256 or args.dual_orphan_handoff_20261103
-                    or args.proven_one_flat_orphan_handoff or args.resume_one_flat_from_prior_stop
-                    or args.expected_old_backend):
-                parser.error("one action cannot combine with legacy lifecycle flags")
-            if args.action == "stop":
-                status = _stop_exact_installed_paper_once(args.sha, env_file=args.env_file)
-                print(status)
-                return 0 if status.startswith("READY:") else 2
-            if args.action == "provision-owner-pc":
-                # Exactly one owner-controlled monolith action; secrets never cross argv.
-                from tools.vps_simulator_device_provision import provision_owner_pc
-                status = provision_owner_pc(args.sha, env_file=args.env_file)
-                print(status)
-                return 0 if status.startswith("READY:") else 2
-            owner_flags = (
-                ["--update-editor-only-from-stable"] if args.action.startswith("update")
-                else ["--resume-installed-editor-only"]
-            )
-            if args.action in ("start", "update-and-start"):
-                owner_flags.append("--start-paper-after-editor")
-            return main([args.sha, "--env-file", str(args.env_file), *owner_flags])
+                if (args.wait_seconds or args.resume_installed_editor_only
+                        or args.update_editor_only_from_stable or args.staged_gitless_editor_only
+                        or args.continue_confirmed_stop_only or args.start_paper_after_editor
+                        or args.publish_frontend_only or args.frontend_bundle
+                        or args.frontend_current_index_sha256 or args.dual_orphan_handoff_20261103
+                        or args.proven_one_flat_orphan_handoff or args.resume_one_flat_from_prior_stop
+                        or args.expected_old_backend):
+                    parser.error("one action cannot combine with legacy lifecycle flags")
+                if args.action == "stop":
+                    status = _stop_exact_installed_paper_once(args.sha, env_file=args.env_file)
+                    print(status)
+                    return 0 if status.startswith("READY:") else 2
+                if args.action == "provision-owner-pc":
+                    # Exactly one owner-controlled monolith action; secrets never cross argv.
+                    from tools.vps_simulator_device_provision import provision_owner_pc
+                    status = provision_owner_pc(args.sha, env_file=args.env_file)
+                    print(status)
+                    return 0 if status.startswith("READY:") else 2
+                owner_flags = (
+                    ["--update-editor-only-from-stable"] if args.action.startswith("update")
+                    else ["--resume-installed-editor-only"]
+                )
+                if args.action in ("start", "update-and-start"):
+                    owner_flags.append("--start-paper-after-editor")
+                return main([args.sha, "--env-file", str(args.env_file), *owner_flags])
         except (OSError, ValueError, BlockingIOError) as exc:
             print("BLOCKED: owner_action_global_lock_unproven; no mutation")
             return 2
