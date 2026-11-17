@@ -72,7 +72,7 @@ def certified_snapshot(
     if (type(closed_at_ms) is not int or closed_at_ms <= 120_000
             or closed_at_ms % 60_000 or type(decision_ms) is not int
             or not closed_at_ms <= decision_ms <=
-            closed_at_ms + robot_impulse.MAX_SIGNAL_AGE_MS):
+            closed_at_ms + robot_impulse.MAX_CERTIFICATION_DELAY_MS):
         return None
     if (not isinstance(observation, dict)
             or type(observation.get("generation")) is not int
