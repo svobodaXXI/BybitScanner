@@ -153,6 +153,7 @@ CONTROL_ACTIONS = {
     "Остановить PAPER-ядро": "stop",
     "Обновить и запустить PAPER": "update-and-start",
     "Сопрячь один ПК (EDITOR_ONLY)": "provision-owner-pc",
+    "Включить Wedge BE (EDITOR_ONLY)": "enable-wedge-be",
 }
 CONTROL_MODULE = "cd /opt/BybitScanner && /opt/BybitScanner/venv/bin/python -m tools.vps_owner_control"
 
