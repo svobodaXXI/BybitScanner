@@ -15,6 +15,27 @@ specialist chats finish **only their active bounded task**, record a handoff and
 report READY_FOR_ARCHIVE or an exact blocker; do not start the proposed next
 workstreams. This is routing, not a new approval or trading authority.
 
+## Mandatory VPS SSH routing — verified device-specific connection (2026-11-17)
+
+Before **any** BybitScanner VPS connection or troubleshooting, read the relevant
+named section in [`DOCUMENTS/WINDOWS_PC_VPS_ACCESS_RECOVERY_20261108.md`](DOCUMENTS/WINDOWS_PC_VPS_ACCESS_RECOVERY_20261108.md):
+**`PRIMARY PC CODEX DESKTOP SSH ROUTE`** for Codex Desktop operating from
+`C:\\Users\\svobo`; **`WINDOWS POWERSHELL PC SSH ROUTE`** for native
+Windows PowerShell on that PC; **`VERIFIED LAPTOP CODEX DESKTOP SSH ROUTE`**
+for `C:\\Users\\SVOBODA21`. These are **different proven client contexts**;
+never treat the PC's PowerShell SSH alias as the Codex Desktop route, or
+substitute laptop keys/host addresses. The PC's canonical Codex route uses
+Windows OpenSSH with explicit PC key, `-F none`, and strict host verification;
+the PC native PowerShell route uses its existing `bybitscanner-vps` alias.
+
+**No repeat discovery:** do not ask the owner to locate keys, rotate SSH
+routes, change VPN/Happ, probe alternate IPs, rebuild SSH config, or use
+manual sshd/credential modifications because an earlier probe failed.
+Use the exact documented route once; if it fails, report the actual
+transport failure and diagnose that route only, without retry loops or
+unapproved VPS changes. An SSH connection proves transport only, never
+release, PAPER readiness or trading permission.
+
 ## Owner directive — human acceptance and Codex GUI boundary (2026-11-16)
 
 **Owner-only real-world acceptance.** The owner personally performs and confirms
