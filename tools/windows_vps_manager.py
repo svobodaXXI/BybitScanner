@@ -627,6 +627,11 @@ class VPSManager(tk.Tk):
                                 command=lambda selected=mode: self.run_control(selected))
             button.grid(row=index // 3, column=index % 3, padx=(0, 7), pady=3, sticky="ew")
             self.buttons.append(button)
+        update_button = ttk.Button(buttons, text="Обновление",
+                                   command=self.update_desktop)
+        update_button.grid(row=(len(ACTIONS) + len(CONTROL_ACTIONS) + 3) // 3,
+                           column=0, padx=(0, 7), pady=3, sticky="ew")
+        self.buttons.append(update_button)
         for column in range(3):
             buttons.columnconfigure(column, weight=1)
         ttk.Label(self, text="Журнал (только чтение)", padding=(12, 3)).pack(anchor="w")
@@ -638,6 +643,29 @@ class VPSManager(tk.Tk):
         self.log.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
         self.after(100, self.drain)
+
+    def update_desktop(self) -> None:
+        """Update ONLY this local manager, never call owner VPS monolith."""
+        if self.busy:
+            return
+        if not messagebox.askyesno("Обновление VPS Manager",
+                                  "Проверить и установить опубликленный релиз VPS Manager?"):
+            return
+        self.busy = True
+        self.status.set("Обновление локального VPS Manager")
+        for button in self.buttons:
+            button.state(["disabled"])
+        threading.Thread(target=self._update_worker, daemon=True).start()
+
+    def _update_worker(self) -> None:
+        from tools.manager_self_update import stage_manager
+        from research.local_replay_viewer.desktop_update import UpdateBlocked
+        try:
+            self.events.put(("desktop-update-handoff", stage_manager()))
+        except (UpdateBlocked, OSError, ValueError) as exc:
+            # Never reveal arbitrary remote URLs or exception details.
+            reason = str(exc) if isinstance(exc, UpdateBlocked) else type(exc).__name__
+            self.events.put(("failure", "LOCAL_UPDATE_BLOCKED=" + reason))
 
     def write(self, text: str) -> None:
         self.log.configure(state="normal")
@@ -897,6 +925,10 @@ class VPSManager(tk.Tk):
         try:
             while True:
                 kind, result = self.events.get_nowait()
+                if kind == "desktop-update-handoff":
+                    self.write("Обновление проверено; передаю запуск новой версии.")
+                    self.destroy()
+                    return
                 self.write_result(result)
                 self.busy = False
                 labels = {
@@ -925,12 +957,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                                                  "status", "list", "preflight"), default=None)
     parser.add_argument("--sha", default="")
     parser.add_argument("--request-id", default="")
+    parser.add_argument("--replace-running-manager", default="")
+    parser.add_argument("--old-pid", type=int, default=0)
     args, _unknown = parser.parse_known_args(argv)
     return args
 
 
 if __name__ == "__main__":
     options = parse_args()
+    if options.replace_running_manager:
+        from tools.manager_self_update import commit_manager
+        sys.exit(commit_manager(original=options.replace_running_manager,
+                                old_pid=options.old_pid))
     if options.operation:
         sys.exit(run_cli(options))
     VPSManager(options.host, options.user, options.key).mainloop()
