@@ -54,7 +54,7 @@ def _json(url: str, *, opener=urlopen) -> dict:
         result = json.loads(payload)
     except (TypeError, ValueError) as exc:
         raise UpdateBlocked("invalid_release_metadata") from exc
-    if not isinstance(result, dict):
+    if not isinstance(result, (dict, list)):
         raise UpdateBlocked("invalid_release_metadata")
     return result
 
@@ -63,18 +63,38 @@ def find_asset(kind: str, *, opener=urlopen) -> ReleaseAsset:
     if kind not in ASSETS:
         raise UpdateBlocked("invalid_application")
     branch = _json(API + "/branches/" + BRANCH, opener=opener)
-    sha = branch.get("commit", {}).get("sha") if isinstance(branch.get("commit"), dict) else None
-    if not isinstance(sha, str) or not SHA.fullmatch(sha):
+    if not isinstance(branch, dict):
         raise UpdateBlocked("stable_head_unproven")
-    tag = "desktop-" + sha
+    head = branch.get("commit", {}).get("sha") if isinstance(branch.get("commit"), dict) else None
+    if not isinstance(head, str) or not SHA.fullmatch(head):
+        raise UpdateBlocked("stable_head_unproven")
+    # Robot/docs merges move stable frequently. The latest *desktop* release
+    # remains eligible if its exact commit is still an ancestor of stable.
+    published = _json(API + "/releases?per_page=30", opener=opener)
+    if not isinstance(published, list) or len(published) > 30:
+        raise UpdateBlocked("desktop_release_list_untrusted")
+    candidates = [r for r in published if isinstance(r, dict) and
+                  isinstance(r.get("tag_name"), str) and
+                  re.fullmatch(r"desktop-[0-9a-f]{40}", r["tag_name"])]
+    if not candidates:
+        raise UpdateBlocked("desktop_release_not_published")
+    release = candidates[0]
+    tag = release["tag_name"]
+    sha = tag.removeprefix("desktop-")
+    if release.get("draft") is not False or release.get("prerelease") is not False:
+        raise UpdateBlocked("release_tag_untrusted")
     tag_ref = _json(API + "/git/ref/tags/" + tag, opener=opener)
+    if not isinstance(tag_ref, dict):
+        raise UpdateBlocked("release_tag_commit_mismatch")
     ref_object = tag_ref.get("object")
     if (not isinstance(ref_object, dict) or ref_object.get("type") != "commit"
             or ref_object.get("sha") != sha):
         raise UpdateBlocked("release_tag_commit_mismatch")
-    release = _json(API + "/releases/tags/" + tag, opener=opener)
-    if release.get("tag_name") != tag or release.get("draft") is not False or release.get("prerelease") is not False:
-        raise UpdateBlocked("release_tag_untrusted")
+    comparison = _json(API + "/compare/" + sha + "..." + head, opener=opener)
+    if (not isinstance(comparison, dict)
+            or comparison.get("status") not in ("ahead", "identical")
+            or comparison.get("behind_by") != 0):
+        raise UpdateBlocked("desktop_release_not_ancestor_of_stable")
     assets = release.get("assets")
     if not isinstance(assets, list) or len(assets) > 30:
         raise UpdateBlocked("release_assets_invalid")
