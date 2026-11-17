@@ -117,6 +117,8 @@ PAPER DB/position, STOP/START, reconcile and trading authority remain unchanged.
 
 Canonical details and the owner's full 2026-11-15 receipt: `DOCUMENTS/WINDOWS_PC_VPS_ACCESS_RECOVERY_20261108.md` → `PRIMARY PC CODEX DESKTOP SSH ROUTE`.
 
+**Repeated PC SSH banner timeout — stop-on-repeat (owner 17.11.2026):** The exact native alias and Codex direct-key route can both establish TCP but time out waiting for the server SSH banner, even though a separate raw TCP probe once received the remote banner. This does **not** establish a working SSH session, server failure, or VPN root cause. After one known-good-route failure, **do not** repeat alias/direct-IP/key/ssh -vv/TCP/banner/VPN troubleshooting or automatically send the owner into VDSina console. Mark authenticated SSH and pairing state UNPROVEN; check only an independently available authorized host channel, or stop with the precise blocker. No repeat of ambiguous `provision-owner-pc`. Evidence and required decision boundary: `DOCUMENTS/WINDOWS_PC_VPS_ACCESS_RECOVERY_20261108.md` → `REPEATED INCIDENT 17.11.2026`. This supersedes generic VNC-last-resort wording as an automatic next step.
+
 ## VPS SSH — native PowerShell PC route and blocked-release fast path (2026-11-14)
 
 **Current canonical PC transport:** Windows PowerShell `ssh bybitscanner-vps`,
