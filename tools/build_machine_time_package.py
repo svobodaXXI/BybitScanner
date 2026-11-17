@@ -33,9 +33,9 @@ def package(output: Path, sha: str) -> int:
     for rel in tracked:
         if rel.is_absolute() or ".." in rel.parts:
             raise ValueError("unsafe_tracked_path")
-        if (rel.parts[0] in ROOT_DIRS and rel.suffix == ".py"
-                and not (rel.parts[:2] == ("terminal", "frontend")))
-                or rel.as_posix() in ROOT_FILES:
+        if ((rel.parts[0] in ROOT_DIRS and rel.suffix == ".py"
+                and rel.parts[:2] != ("terminal", "frontend"))
+                or rel.as_posix() in ROOT_FILES):
             entries[rel.as_posix()] = (ROOT / rel).read_bytes()
     for rel in tracked:
         if rel.parts[:2] == ("research", "local_replay_viewer") and rel.name in (
