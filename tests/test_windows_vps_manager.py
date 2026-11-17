@@ -25,7 +25,7 @@ class TestWindowsVpsManager(unittest.TestCase):
         sha = "600d472d3221441b89fadc7e0ea5552d931beae5"
         with tempfile.TemporaryDirectory() as folder:
             (Path(folder) / "desktop-build-sha.txt").write_text(
-                sha + "\\n", encoding="ascii")
+                sha + "\n", encoding="ascii")
             with (patch.object(sys, "frozen", True, create=True),
                   patch.object(sys, "_MEIPASS", folder, create=True)):
                 self.assertEqual(manager_version(), "v" + sha[:12])
