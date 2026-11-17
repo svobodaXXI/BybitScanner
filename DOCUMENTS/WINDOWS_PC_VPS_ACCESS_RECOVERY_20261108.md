@@ -21,16 +21,16 @@ ssh -F none -i "$env:USERPROFILE\.ssh\bybitscanner_vdsina_gateway_20261030" -o I
 
 ## 0.1. ПРОВЕРЕННАЯ СХЕМА АДМИНИСТРИРОВАНИЯ: PowerShell → монолит → UUID → факт (17.11.2026)
 
-**Назначение:** использовать уже существующий \`tools.vps_owner_control\` → \`tools.paper_maintenance\` с основного ПК без Codex, лишней проверки \`echo SSH_OK\` перед операцией, второго контроллера или ручного \`systemctl\`. Это **проверенный сценарий одного релиза**, а не обещание стабильности сети или универсальное разрешение на будущие изменения.
+**Назначение:** использовать уже существующий `tools.vps_owner_control` → `tools.paper_maintenance` с основного ПК без Codex, лишней проверки `echo SSH_OK` перед операцией, второго контроллера или ручного `systemctl`. Это **проверенный сценарий одного релиза**, а не обещание стабильности сети или универсальное разрешение на будущие изменения.
 
 **Фактически подтверждённый цикл владельца:**
 
-1. На основном ПК в обычном PowerShell при Happ «Основной 1» ON маршрут §0 вернул \`SSH_OK\`, \`v3286418.hosted-by-vdsina.ru\`, \`SSH_EXIT_CODE=0\`. Между успешными соединениями были также \`SSH banner exchange timeout\`; одно успешное подключение не сохраняет следующее.
-2. После отдельных разрешений владельца **один** \`submit update-and-start\` на exact SHA \`c6f6990abd68e8ed631fbd2579f4833866871741\` вернул \`SUBMISSION=ACCEPTED\`, \`SSH_EXIT_CODE=0\`, \`REQUEST_ID=dc78925257364d8592127838f517d7d2\`. Это подтверждало только приём операции systemd, не завершение.
-3. Более поздний **read-only** запрос по **тому же UUID** вернул \`STATUS=FINISHED_OK\`, \`RESULT=success\`, \`EXIT_CODE=0\`, \`DESCRIPTION=BybitScanner update-and-start c6f6990abd68 origin=owner-pc\`; \`tools.vps_release_identity verify\` вернул \`VERIFIED: tracked release contents and approved manifest match c6f6990abd68e8ed631fbd2579f4833866871741\`; SSH exit 0.
-4. Telegram отдельно показал Scanner \`hunter\` с сигналом и Robot \`Запущен / Готов\`, 3 кандидата, 0 открытых позиций на момент скриншота. Это owner-observed запуск, **не** доказательство исполнения fee-aware BE на конкретной сделке и не замена защиты на уровне VPS.
+1. На основном ПК в обычном PowerShell при Happ «Основной 1» ON маршрут §0 вернул `SSH_OK`, `v3286418.hosted-by-vdsina.ru`, `SSH_EXIT_CODE=0`. Между успешными соединениями были также `SSH banner exchange timeout`; одно успешное подключение не сохраняет следующее.
+2. После отдельных разрешений владельца **один** `submit update-and-start` на exact SHA `c6f6990abd68e8ed631fbd2579f4833866871741` вернул `SUBMISSION=ACCEPTED`, `SSH_EXIT_CODE=0`, `REQUEST_ID=dc78925257364d8592127838f517d7d2`. Это подтверждало только приём операции systemd, не завершение.
+3. Более поздний **read-only** запрос по **тому же UUID** вернул `STATUS=FINISHED_OK`, `RESULT=success`, `EXIT_CODE=0`, `DESCRIPTION=BybitScanner update-and-start c6f6990abd68 origin=owner-pc`; `tools.vps_release_identity verify` вернул `VERIFIED: tracked release contents and approved manifest match c6f6990abd68e8ed631fbd2579f4833866871741`; SSH exit 0.
+4. Telegram отдельно показал Scanner `hunter` с сигналом и Robot `Запущен / Готов`, 3 кандидата, 0 открытых позиций на момент скриншота. Это owner-observed запуск, **не** доказательство исполнения fee-aware BE на конкретной сделке и не замена защиты на уровне VPS.
 
-**Повторно используемая операция (только после самостоятельного разрешения владельца и для нового exact SHA):** в §0 Happ остаётся «Основной 1», IP/ключ/alias не перебирать. Один SSH-вызов сразу передаёт задачу защищённому монолиту; он проверяет обязательные preflight/gates и при недоказанной безопасности блокируется. \`$rid\` создаётся **один раз для одной новой операции** и должен быть сохранён с её результатом. Исторический UUID выше **не переотправлять**.
+**Повторно используемая операция (только после самостоятельного разрешения владельца и для нового exact SHA):** в §0 Happ остаётся «Основной 1», IP/ключ/alias не перебирать. Один SSH-вызов сразу передаёт задачу защищённому монолиту; он проверяет обязательные preflight/gates и при недоказанной безопасности блокируется. `$rid` создаётся **один раз для одной новой операции** и должен быть сохранён с её результатом. Исторический UUID выше **не переотправлять**.
 
 ```powershell
 $sha = '<OWNER_APPROVED_EXACT_40_HEX_SHA>'
@@ -41,17 +41,18 @@ ssh -F none -i "$env:USERPROFILE\.ssh\bybitscanner_vdsina_gateway_20261030" -o I
 "SSH_EXIT_CODE=$LASTEXITCODE"
 ```
 
-**Проверка по сохранённому UUID — только чтение; это именно команда, давшая успешную приёмку 17.11.2026:** отдельный SSH-вызов может завершиться timeout, пока уже принятая задача продолжает работать на VPS. Если \`SUBMISSION=ACCEPTED\` или результат отправки \`UNPROVEN\`, **не повторять \`submit\` ни с тем же, ни с новым UUID**. Запрашивать только \`status\` существующего UUID, без циклов переподключения. Результат \`FINISHED_OK\` + exact \`VERIFIED\` SHA + независимые PAPER/Robot/Scanner/protection postconditions — основа итоговой приёмки; \`SUBMISSION=ACCEPTED\` или один \`SSH_EXIT_CODE=0\` недостаточны.
+**Проверка по сохранённому UUID — только чтение; параметризованная запись команды, давшей успешную приёмку 17.11.2026:** отдельный SSH-вызов может завершиться timeout, пока уже принятая задача продолжает работать на VPS. Если `SUBMISSION=ACCEPTED` или результат отправки `UNPROVEN`, **не повторять `submit` ни с тем же, ни с новым UUID**. Запрашивать только `status` существующего UUID, без циклов переподключения. Результат `FINISHED_OK` + exact `VERIFIED` SHA + независимые PAPER/Robot/Scanner/protection postconditions — основа итоговой приёмки; `SUBMISSION=ACCEPTED` или один `SSH_EXIT_CODE=0` недостаточны.
 
 ```powershell
 $rid = 'dc78925257364d8592127838f517d7d2' # исторический успешный UUID; для новой операции — её сохранённый UUID
-ssh -F none -i "$env:USERPROFILE\.ssh\bybitscanner_vdsina_gateway_20261030" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 root@212.193.14.116 'cd /opt/BybitScanner && /opt/BybitScanner/venv/bin/python -m tools.vps_owner_control status dc78925257364d8592127838f517d7d2; /opt/BybitScanner/venv/bin/python -m tools.vps_release_identity verify'
+$remote = "cd /opt/BybitScanner && /opt/BybitScanner/venv/bin/python -m tools.vps_owner_control status $rid; /opt/BybitScanner/venv/bin/python -m tools.vps_release_identity verify"
+ssh -F none -i "$env:USERPROFILE\.ssh\bybitscanner_vdsina_gateway_20261030" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 root@212.193.14.116 $remote
 "SSH_EXIT_CODE=$LASTEXITCODE"
 ```
 
-**Чтение результатов:** для исторической команды проверить **оба** отдельных текста \`STATUS=FINISHED_OK\` и \`VERIFIED: ... <ожидаемый SHA>\`; итоговый \`SSH_EXIT_CODE=0\` относится к последнему удалённому процессу и сам по себе не доказывает оба этапа. Для будущего UUID заменить его **во всех местах** read-only команды. \`STATUS=FAILED/UNPROVEN/RUNNING\` не равен успешному запуску. Если сеть снова недоступна, сохранить UUID и остановиться без нового \`submit\`, смены IP/VPN/ключей, ручных SQL/сервисов или bypass Admission/STOP/TAKE.
+**Чтение результатов:** для исторической команды проверить **оба** отдельных текста `STATUS=FINISHED_OK` и `VERIFIED: ... <ожидаемый SHA>`; итоговый `SSH_EXIT_CODE=0` относится к последнему удалённому процессу и сам по себе не доказывает оба этапа. Для будущей операции заменить **только `$rid`** сохранённым UUID. `STATUS=FAILED/UNPROVEN/RUNNING` не равен успешному запуску. Если сеть снова недоступна, сохранить UUID и остановиться без нового `submit`, смены IP/VPN/ключей, ручных SQL/сервисов или bypass Admission/STOP/TAKE.
 
-**Позже встроить в существующий VPS Manager/монолит (не реализовано этой записью):** одна операция с зафиксированным SHA и durable UUID, выбор **уже документированного** маршрута §0 или §1 по фактическому состоянию Happ, одноразовый submit, ограниченные read-only status-запросы по UUID, проверка установленного release и защищённых postconditions. Использовать существующий server-side \`tools.vps_owner_control\`, **не** создавать второй сервис/контроллер/кнопку для BE; не обещать автоматическое исправление неизвестной SSH-причины. Любые код/доставка/трейдинг — отдельная задача с обычными разрешениями и safety gates.
+**Позже встроить в существующий VPS Manager/монолит (не реализовано этой записью):** одна операция с зафиксированным SHA и durable UUID, выбор **уже документированного** маршрута §0 или §1 по фактическому состоянию Happ, одноразовый submit, ограниченные read-only status-запросы по UUID, проверка установленного release и защищённых postconditions. Использовать существующий server-side `tools.vps_owner_control`, **не** создавать второй сервис/контроллер/кнопку для BE; не обещать автоматическое исправление неизвестной SSH-причины. Любые код/доставка/трейдинг — отдельная задача с обычными разрешениями и safety gates.
 
 ## 1. ГЛАВНЫЙ, АКТУАЛЬНЫЙ, РАБОЧИЙ — основной ПК Windows (17.11.2026)
 
@@ -109,7 +110,7 @@ ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -o Connec
 - \`ssh -vv\` на \`212.193.14.116\`: \`Connection established\`; отправлено \`Local version string SSH-2.0-OpenSSH_for_Windows_9.5\`; удалённое SSH-приветствие в той сессии не получено до timeout.
 - Дополнительный HTTPS probe другого исполнителя закончился TLS handshake timeout, без HTTP-ответа. **Первопричина этих отдельных сбоев не доказана** (нельзя называть VPS сломанным или VPN первопричиной).
 - \`provision-owner-pc\` UUID \`481e7aa30fcb4be0aa5554d2da0003e3\`: \`STATUS_UNPROVEN\`. Отсутствие UUID в текущем списке transient systemd units не доказывает, что операция не запускалась. Повторное provision вслепую запрещено.
-- **STOP RULE:** уже выполненные проверки TCP, banner, \`-vv\`, alias, прямого адреса и ключа **не повторять**. Зафиксировать последнее реальное свидетельство, работать через §1. Без новых доказательств не переходить к VNC и не менять sshd/Netplan/VPN/ключи.
+- **STOP RULE:** уже выполненные проверки TCP, banner, \`-vv\`, alias, прямого адреса и ключа **не повторять**. Зафиксировать последнее реальное свидетельство, работать через применимый §0/§1. Без новых доказательств не переходить к VNC и не менять sshd/Netplan/VPN/ключи.
 
 ## 3. ДРУГОЕ УСТРОЙСТВО: ноутбук Windows (\`C:\Users\SVOBODA21\`)
 
