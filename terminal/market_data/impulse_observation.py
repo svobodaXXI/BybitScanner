@@ -7,7 +7,7 @@ No candidates, Robot commands, PnL or admission are produced here.
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from decimal import Decimal, InvalidOperation
 from threading import Lock
 
@@ -20,6 +20,9 @@ class ObservedPrint:
     side: str
     price: Decimal
     quantity: Decimal
+    # Ingress receipt time is local causal metadata, not part of exchange
+    # trade identity. REST ID/fact comparison must ignore it.
+    received_at_ms: int | None = field(default=None, compare=False)
 
     @property
     def notional(self) -> Decimal:
@@ -91,9 +94,12 @@ class PublicTradeObservation:
             ))
         return parsed
 
-    def observe(self, message: object) -> bool:
-        """Return false on invalid/stale frames, without accepting any partial batch."""
+    def observe(self, message: object, *, received_at_ms: int | None = None) -> bool:
+        """Atomically record a frame and its local arrival time, if supplied."""
         try:
+            if (received_at_ms is not None and
+                    (type(received_at_ms) is not int or received_at_ms < 0)):
+                raise ValueError("invalid local ingress receipt time")
             parsed = self._parse(message)
         except (TypeError, ValueError):
             with self._lock:
@@ -118,7 +124,7 @@ class PublicTradeObservation:
                     self._invalid_frames += 1
                     self._gap = True
                     return False
-                pending[item.trade_id] = item
+                pending[item.trade_id] = replace(item, received_at_ms=received_at_ms)
                 timestamp = item.timestamp_ms
                 sequence = item.sequence
             for item in pending.values():
@@ -405,4 +411,66 @@ def audit_closed_m1_triple_parity(
         "EXACT_CLOSED_M1_TRIPLE_PARITY",
         matched_prints=kline.matched_prints,
         known_at_ms=observed_at_ms,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class CausalReceiptAudit:
+    """Local receipt-time visibility only; NEVER source or order authority."""
+
+    status: str
+    observed_prints: int = 0
+    latest_received_at_ms: int | None = None
+    source_complete: bool = False
+    trading_authorized: bool = False
+
+
+def audit_closed_m1_receipt_cutoff(
+    snapshot: object, *, start_ms: int, decision_ms: int,
+) -> CausalReceiptAudit:
+    """Was each *observed* M1 print locally received by the decision cutoff?
+
+    A print's exchange event time is NOT evidence that the Scanner had it.
+    Only a timestamp recorded at the actual WebSocket ingress is usable here.
+    This audit cannot identify unobserved missing executions, prove external
+    clock synchronization, or retroactively make REST/kline data available.
+    A timely result is not FlowWindow eligibility or an entry signal.
+    """
+    result = CausalReceiptAudit("UNPROVEN")
+    if (type(start_ms) is not int or start_ms < 0 or start_ms % 60_000
+            or type(decision_ms) is not int or decision_ms < start_ms + 60_000):
+        raise ValueError("aligned closed M1 and non-future decision cutoff required")
+    if not isinstance(snapshot, dict):
+        return result
+    prints = snapshot.get("prints")
+    if (not isinstance(prints, tuple)
+            or not isinstance(snapshot.get("symbol"), str)
+            or type(snapshot.get("generation")) is not int
+            or snapshot["generation"] < 0
+            or type(snapshot.get("invalid_frames")) is not int
+            or snapshot["invalid_frames"] != 0
+            or snapshot.get("continuity") != "UNPROVEN"
+            or snapshot.get("order_authority") is not False):
+        return result
+    selected: list[ObservedPrint] = []
+    seen: set[str] = set()
+    end_ms = start_ms + 60_000
+    for item in prints:
+        if not isinstance(item, ObservedPrint):
+            return result
+        if start_ms <= item.timestamp_ms < end_ms:
+            if (item.trade_id in seen or not isinstance(item.received_at_ms, int)
+                    or type(item.received_at_ms) is not int or item.received_at_ms < 0):
+                return result
+            seen.add(item.trade_id)
+            selected.append(item)
+    if not selected:
+        return result
+    latest = max(item.received_at_ms for item in selected)
+    # Late trades are evidence AGAINST causality, not automatically repaired
+    # by a future archive/REST parity. No synthetic on-time timestamp.
+    return CausalReceiptAudit(
+        status=("LATE_OBSERVED_PRINT" if latest > decision_ms
+                else "TIMELY_OBSERVED_ONLY"),
+        observed_prints=len(selected), latest_received_at_ms=latest,
     )
