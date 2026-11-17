@@ -88,7 +88,9 @@ def stage_manager() -> str:
     if marker.is_file() and marker.read_text(encoding="ascii").strip() == release.sha:
         raise UpdateBlocked("manager_already_current")
     stage_dir = current.parent / (".desktop-update-" + release.sha)
-    stage_dir.mkdir(exist_ok=True)
+    if stage_dir.exists() or stage_dir.is_symlink():
+        raise UpdateBlocked("prior_update_stage_present; do_not_retry_automatically")
+    stage_dir.mkdir(mode=0o700)
     executable = stage_dir / NAME
     if executable.exists():
         raise UpdateBlocked("prior_update_stage_present; do_not_retry_automatically")
