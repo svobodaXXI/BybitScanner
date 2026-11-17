@@ -598,6 +598,7 @@ export function ReplayPage() {
   // The synthetic fixture is available only via the explicit Example button.
   const [simulationGraphPending, setSimulationGraphPending] = useState(true);
   const [runLoading, setRunLoading] = useState(false);
+  const [desktopUpdate, setDesktopUpdate] = useState("idle");
   const [runWaitingSeconds, setRunWaitingSeconds] = useState(0);
 
   useEffect(() => {
@@ -1135,11 +1136,57 @@ export function ReplayPage() {
     }
   }
 
+  async function requestDesktopUpdate(): Promise<void> {
+    if (desktopUpdate !== "idle" && desktopUpdate !== "blocked") return;
+    if (!window.confirm("Проверить и установить обновление локальной Машины времени? Данные прогона на диске сохраняются.")) return;
+    setDesktopUpdate("checking");
+    try {
+      const response = await fetch("/local-replay/desktop-update", {
+        method: "POST", headers: {
+          "Content-Type": "application/json",
+          "X-Local-Desktop-Update": "explicit-click",
+        }, body: "{}",
+      });
+      if (response.status !== 202) {
+        setDesktopUpdate("blocked");
+        return;
+      }
+      let attempts = 0;
+      const observe = async (): Promise<void> => {
+        if (attempts++ > 120) {
+          setDesktopUpdate("blocked");
+          return;
+        }
+        try {
+          const status = await fetch("/local-replay/desktop-update/status", { cache: "no-store" });
+          if (status.ok) {
+            const data: { status?: string } = await status.json();
+            if (data.status === "blocked") { setDesktopUpdate("blocked"); return; }
+            if (data.status === "restarting") {
+              setDesktopUpdate("restarting");
+            }
+          }
+        } catch { /* Existing server may be restarting after verified staging. */ }
+        window.setTimeout(() => void observe(), 2000);
+      };
+      await observe();
+    } catch {
+      setDesktopUpdate("blocked");
+    }
+  }
+
   return (
     <main className="replay-shell">
       <header className="replay-header">
         <div>
           <h1>Машина времени</h1>
+        </div>
+        <div className="replay-desktop-update">
+          <button type="button" disabled={desktopUpdate === "checking" || desktopUpdate === "restarting"}
+            onClick={() => void requestDesktopUpdate()}>Обновление</button>
+          {desktopUpdate === "checking" && <span role="status">Проверка релиза…</span>}
+          {desktopUpdate === "blocked" && <span role="status">Обновление заблокировано; данные сохранены</span>}
+          {desktopUpdate === "restarting" && <span role="status">Обновление установлено; перезапустите страницу после открытия новой версии</span>}
         </div>
       </header>
 

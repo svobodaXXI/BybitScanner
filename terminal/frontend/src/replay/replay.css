@@ -118,3 +118,9 @@
 .replay-chart-pending { display: flex; align-items: center; justify-content: center;
   min-height: 660px; padding: 24px; text-align: center; color: #94a9c3;
   background: #121923; }
+
+.replay-desktop-update { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.replay-desktop-update button { cursor: pointer; background: #243247; border: 1px solid #4f99c8; color: #f3f6fc; padding: 9px 14px; border-radius: 7px; font-weight: 600; }
+.replay-desktop-update button:hover { background: #34445d; }
+.replay-desktop-update button:disabled { opacity: .55; cursor: wait; }
+.replay-desktop-update span { font-size: 12px; color: #b2bfd2; }
