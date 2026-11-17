@@ -34,8 +34,16 @@ jobs:
           $remote=((git ls-remote origin refs/heads/stable/adfb50b-forward) -split '\s+')[0].Trim()
           if ($sha -ne $remote -or $sha -notmatch '^[a-f0-9]{40}$') { throw 'STABLE_MOVED_OR_UNKNOWN' }
           $tag="desktop-$sha"
-          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
-          if ($LASTEXITCODE -eq 0) { throw 'DESKTOP_TAG_ALREADY_EXISTS' }
+          # A missing release is the one expected result. Non-404 API errors fail closed.
+          # Avoid native gh exit-code escalation under pwsh ErrorActionPreference=Stop.
+          $uri="https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases/tags/$tag"
+          $reply=Invoke-WebRequest -Uri $uri -Headers @{
+            Authorization="Bearer $env:GH_TOKEN"
+            Accept="application/vnd.github+json"
+            'X-GitHub-Api-Version'="2022-11-28"
+          } -SkipHttpErrorCheck -TimeoutSec 20
+          if ([int]$reply.StatusCode -eq 200) { throw 'DESKTOP_TAG_ALREADY_EXISTS' }
+          if ([int]$reply.StatusCode -ne 404) { throw "DESKTOP_TAG_LOOKUP_UNPROVEN_$($reply.StatusCode)" }
           "DESKTOP_SHA=$sha" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "DESKTOP_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Build local replay static UI
