@@ -145,13 +145,13 @@ def render_comment(snapshot: dict) -> str:
     sign = fingerprint(snapshot)
     return (
         f"{MARKER}{sign} -->\n"
-        f"**PAPER наблюдение:** \`{snapshot['status']}\` · {stamp} UTC\n\n"
-        f"Robot: \`{snapshot['robot']}\` · Защита: \`{snapshot['protection']}\` · "
-        f"Backend: \`{snapshot['backend']}\` · БД: \`{snapshot['database']}\`\n\n"
-        f"Scanner: \`{snapshot['scanner']}\` · Autopilot: \`{snapshot['autopilot']}\` · "
-        f"Telegram: \`{snapshot['telegram']}\`\n\n"
-        f"Класс причины: \`{snapshot['reason_class']}\` · "
-        f"Установленный SHA: \`{snapshot['installed_sha'] or 'UNKNOWN'}\`\n\n"
+        f"**PAPER наблюдение:** `{snapshot['status']}` · {stamp} UTC\n\n"
+        f"Robot: `{snapshot['robot']}` · Защита: `{snapshot['protection']}` · "
+        f"Backend: `{snapshot['backend']}` · БД: `{snapshot['database']}`\n\n"
+        f"Scanner: `{snapshot['scanner']}` · Autopilot: `{snapshot['autopilot']}` · "
+        f"Telegram: `{snapshot['telegram']}`\n\n"
+        f"Класс причины: `{snapshot['reason_class']}` · "
+        f"Установленный SHA: `{snapshot['installed_sha'] or 'UNKNOWN'}`\n\n"
         "Это ограниченное наблюдение, **не** доказательство FLAT, "
         "полноты STOP/TAKE или разрешение на торговлю."
     )
