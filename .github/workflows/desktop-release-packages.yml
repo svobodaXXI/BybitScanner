@@ -1,0 +1,69 @@
+name: Owner desktop release packages
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: owner-desktop-release
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: stable/adfb50b-forward
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: terminal/frontend/package-lock.json
+      - name: Check exact stable release and reject preexisting tag
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $sha=(git rev-parse HEAD).Trim()
+          $remote=((git ls-remote origin refs/heads/stable/adfb50b-forward) -split '\s+')[0].Trim()
+          if ($sha -ne $remote -or $sha -notmatch '^[a-f0-9]{40}$') { throw 'STABLE_MOVED_OR_UNKNOWN' }
+          $tag="desktop-$sha"
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) { throw 'DESKTOP_TAG_ALREADY_EXISTS' }
+          "DESKTOP_SHA=$sha" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "DESKTOP_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Build local replay static UI
+        working-directory: terminal/frontend
+        shell: pwsh
+        run: |
+          npm ci
+          if ($LASTEXITCODE -ne 0) { throw 'NPM_CI_FAILED' }
+          npm run build:replay
+          if ($LASTEXITCODE -ne 0) { throw 'REPLAY_BUILD_FAILED' }
+      - name: Build Windows Manager EXE and isolated Simulator ZIP
+        shell: pwsh
+        run: |
+          python -m pip install pyinstaller==6.16.0
+          if ($LASTEXITCODE -ne 0) { throw 'PYINSTALLER_FAILED' }
+          New-Item -ItemType Directory -Force -Path release-out | Out-Null
+          "$env:DESKTOP_SHA" | Set-Content -Encoding ascii desktop-build-sha.txt
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --name BybitScanner-VPS-Manager --add-data "desktop-build-sha.txt;." tools/windows_vps_manager.py
+          if ($LASTEXITCODE -ne 0) { throw 'MANAGER_BUILD_FAILED' }
+          Copy-Item dist/BybitScanner-VPS-Manager.exe release-out/BybitScanner-VPS-Manager.exe
+          python tools/build_machine_time_package.py --sha $env:DESKTOP_SHA --output release-out/BybitScanner-MachineTime.zip
+          if ($LASTEXITCODE -ne 0) { throw 'SIMULATOR_PACKAGE_FAILED' }
+      - name: Publish explicit-click desktop release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $stable=((git ls-remote origin refs/heads/stable/adfb50b-forward) -split '\s+')[0].Trim()
+          if ($stable -ne $env:DESKTOP_SHA) { throw 'STABLE_MOVED_BEFORE_PUBLISH' }
+          gh release create $env:DESKTOP_TAG release-out/BybitScanner-VPS-Manager.exe release-out/BybitScanner-MachineTime.zip --repo $env:GITHUB_REPOSITORY --target $env:DESKTOP_SHA --title "BybitScanner desktop $($env:DESKTOP_SHA.Substring(0,12))" --notes "Owner-clicked Windows local applications only. No VPS/PAPER activation." --latest=false
+          if ($LASTEXITCODE -ne 0) { throw 'DESKTOP_RELEASE_PUBLISH_FAILED' }
