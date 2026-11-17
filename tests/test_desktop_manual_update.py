@@ -3,6 +3,9 @@ import hashlib
 import io
 import json
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock
+import subprocess
 from zipfile import ZipFile
 
 import pytest
@@ -147,6 +150,39 @@ def test_manager_update_is_not_a_vps_operation():
     assert "ssh " not in manager.HELPER.lower()
     assert "Get-FileHash" in manager.HELPER
     assert "Wait-Process" in manager.HELPER
+
+
+def test_manager_bootstrap_probe_is_local_before_replacement(tmp_path):
+    """Existing invalid UUID contract returns 2 before any SSH or GUI window."""
+    exe = tmp_path / "BybitScanner-VPS-Manager.exe"
+    exe.write_bytes(ASSET)
+    run = Mock(return_value=SimpleNamespace(returncode=2))
+    manager.probe_manager_bootstrap(exe, run=run)
+    command = run.call_args.args[0]
+    assert command == [str(exe), "--operation", "status", "--request-id",
+                       "invalid", "--host", "127.0.0.1", "--user", "root"]
+    assert run.call_args.kwargs["timeout"] == 30
+    assert run.call_args.kwargs["stdin"] is subprocess.DEVNULL
+    assert run.call_args.kwargs["check"] is False
+    assert not any("submit" in part for part in command)
+
+
+@pytest.mark.parametrize("outcome", [
+    SimpleNamespace(returncode=1), SimpleNamespace(returncode=255),
+    SimpleNamespace(returncode=0),
+    OSError("missing DLL"), subprocess.TimeoutExpired("manager", 30),
+])
+def test_manager_bootstrap_unknown_never_advances_to_replacement(tmp_path, outcome):
+    exe = tmp_path / "BybitScanner-VPS-Manager.exe"
+    exe.write_bytes(ASSET)
+    if isinstance(outcome, Exception):
+        run = Mock(side_effect=outcome)
+    else:
+        run = Mock(return_value=outcome)
+    with pytest.raises(updates.UpdateBlocked, match="manager_new_exe_bootstrap_unproven"):
+        manager.probe_manager_bootstrap(exe, run=run)
+    assert exe.read_bytes() == ASSET
+    run.assert_called_once()
 
 
 def test_local_update_requires_explicit_same_origin_browser_click(tmp_path):
