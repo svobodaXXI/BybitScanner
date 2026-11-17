@@ -100,12 +100,16 @@ def fetch_verified(asset: ReleaseAsset, destination: Path, *, opener=urlopen) ->
             or not re.fullmatch("[0-9a-f]{64}", asset.digest)
             or not 1 <= asset.size <= MAX_DOWNLOAD):
         raise UpdateBlocked("invalid_download_attestation")
+    created = False
     try:
         destination.parent.mkdir(parents=True, exist_ok=True)
-        with opener(Request(asset.url, headers={"User-Agent": "BybitScanner-Desktop-Updater"}),
-                    timeout=30) as stream, destination.open("xb") as out:
-            digest = hashlib.sha256()
-            size = 0
+        with destination.open("xb") as out:
+            created = True
+            stream = opener(Request(asset.url, headers={"User-Agent": "BybitScanner-Desktop-Updater"}),
+                            timeout=30)
+            with stream:
+                digest = hashlib.sha256()
+                size = 0
             while True:
                 piece = stream.read(1024 * 1024)
                 if not piece:
@@ -119,5 +123,6 @@ def fetch_verified(asset: ReleaseAsset, destination: Path, *, opener=urlopen) ->
         if size != asset.size or digest.hexdigest() != asset.digest:
             raise UpdateBlocked("download_hash_mismatch")
     except Exception:
-        destination.unlink(missing_ok=True)
+        if created:
+            destination.unlink(missing_ok=True)
         raise
