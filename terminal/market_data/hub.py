@@ -245,6 +245,41 @@ class MarketDataHub:
         with self._lock:
             return tuple(self._contexts[symbol] for symbol in sorted(self._contexts))
 
+    def impulse_source_diagnostics(self, *, limit: int = 32) -> dict[str, object]:
+        """Read only existing hub subscriptions; NEVER discover/subscribe symbols.
+
+        Exposes bounded source observation on the Scanner status endpoint.
+        Neither healthy WebSocket state nor REST overlap proves full trade flow.
+        Raw prints and any candidate/entry decision are deliberately excluded.
+        """
+        if type(limit) is not int or not 1 <= limit <= 32:
+            raise ValueError("diagnostic context limit must be 1..32")
+        contexts = self.list_contexts()
+        rows: list[dict[str, object]] = []
+        for context in contexts[:limit]:
+            observed = context.impulse_observation.snapshot()
+            rows.append({
+                "symbol": context.symbol,
+                "subscription_state": context.trades_subscription_state,
+                "source_generation": observed["generation"],
+                "observed_prints": observed["observed_prints"],
+                "invalid_frames": observed["invalid_frames"],
+                "last_trade_ms": observed["last_trade_ms"],
+                "last_cross_sequence": observed["last_cross_sequence"],
+                "gap_or_truncation": observed["gap_or_truncation"],
+                "continuity": "UNPROVEN",
+                "trading_authorized": False,
+            })
+        return {
+            "scope": "EXISTING_HUB_SUBSCRIPTIONS_ONLY",
+            "subscribed_contexts": len(contexts),
+            "reported_contexts": len(rows),
+            "truncated": len(contexts) > limit,
+            "source_complete": False,
+            "trading_authorized": False,
+            "contexts": rows,
+        }
+
     def discard(self, context: SymbolContext) -> None:
         """Drop ``context`` only when no independent consumer still needs it.
 
