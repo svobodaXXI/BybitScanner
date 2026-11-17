@@ -273,6 +273,15 @@ def preferred_route() -> tuple[str, str]:
     device = known_windows_device()
     if device in KNOWN_ROUTES:
         return KNOWN_ROUTES[device][:2]
+    # Preserve unknown-profile explicit alias behavior; never pin a PC key.
+    config = Path.home() / ".ssh" / "config"
+    try:
+        if any("bybitscanner-vps" in line.split()[1:]
+               for line in config.read_text(encoding="utf-8").splitlines()
+               if line.strip().lower().startswith("host ")):
+            return "bybitscanner-vps", ""
+    except (OSError, UnicodeError):
+        pass
     remote = os.environ.get("BYBITSCANNER_VPS_SSH_TARGET", "")
     if re.fullmatch(r"[A-Za-z_][A-Za-z_0-9-]*@[A-Za-z0-9._-]+", remote):
         user, host = remote.split("@", 1)
