@@ -2,7 +2,9 @@
 import unittest
 from decimal import Decimal
 
-from terminal.market_data.impulse_observation import (PublicTradeObservation, audit_recent_trade_overlap)
+from terminal.market_data.impulse_observation import (
+    PublicTradeObservation, audit_recent_trade_overlap, audit_closed_m1_trade_parity,
+)
 
 
 def frame(*prints, symbol="BTCUSDT"):
@@ -226,6 +228,101 @@ class RecentTradeOverlapAuditTests(unittest.TestCase):
         result = self.audit()
         self.assertEqual(result.status, "UNPROVEN")
         self.assertFalse(result.trading_authorized)
+
+
+def closed_m1_response(*, start=120000, open_px="100", high="101",
+                       low="100", close="101", volume="5", turnover="503",
+                       server_time=181000, symbol="BTCUSDT"):
+    return {
+        "retCode": 0, "time": server_time,
+        "result": {"symbol": symbol, "category": "linear", "list": [
+            [str(start), open_px, high, low, close, volume, turnover]
+        ]},
+    }
+
+
+class ClosedM1TradeParityTests(unittest.TestCase):
+    def setUp(self):
+        self.observer = PublicTradeObservation("BTCUSDT")
+        self.before = trade("before", 119999, "Buy", "99", "1", sequence=10)
+        self.first = trade("first", 120001, "Buy", "100", "2", sequence=20)
+        self.second = trade("second", 130005, "Sell", "101", "3", sequence=21)
+        self.after = trade("after", 180000, "Buy", "102", "1", sequence=30)
+        self.assertTrue(self.observer.observe(frame(
+            self.before, self.first, self.second, self.after,
+        )))
+        self.closed = closed_m1_response()
+
+    def audit(self, *, snapshot=None, response=None, start=120000, at=182000):
+        return audit_closed_m1_trade_parity(
+            self.observer.snapshot() if snapshot is None else snapshot,
+            self.closed if response is None else response,
+            start_ms=start, observed_at_ms=at,
+        )
+
+    def test_exact_ohlc_base_volume_quote_turnover_but_no_order_authority(self):
+        result = self.audit()
+        self.assertEqual(result.status, "EXACT_CLOSED_M1_AGGREGATE_PARITY")
+        self.assertEqual(result.matched_prints, 2)
+        self.assertEqual(result.known_at_ms, 182000)
+        self.assertFalse(result.source_complete)
+        self.assertFalse(result.trading_authorized)
+        self.assertEqual(self.observer.snapshot()["continuity"], "UNPROVEN")
+
+    def test_missing_trade_and_mismatched_turnover_fail_closed(self):
+        partial = PublicTradeObservation("BTCUSDT")
+        self.assertTrue(partial.observe(frame(self.before, self.first, self.after)))
+        self.assertEqual(self.audit(snapshot=partial.snapshot()).status, "UNPROVEN")
+        wrong = closed_m1_response(turnover="502")
+        self.assertEqual(self.audit(response=wrong).status, "UNPROVEN")
+
+    def test_wrong_ohlc_volume_symbol_or_candle_boundary_fail_closed(self):
+        for change in (
+            {"volume": "5.00000001"},
+            {"open_px": "101"}, {"high": "100"},
+            {"low": "99"}, {"close": "100"},
+            {"symbol": "ETHUSDT"}, {"start": 60000},
+        ):
+            self.assertEqual(
+                self.audit(response=closed_m1_response(**change)).status,
+                "UNPROVEN",
+            )
+
+    def test_no_future_candle_and_no_stale_source_can_qualify(self):
+        for response in (
+            closed_m1_response(server_time=179999),
+            closed_m1_response(server_time=182001),
+            closed_m1_response(server_time=100000),
+        ):
+            self.assertEqual(self.audit(response=response).status, "UNPROVEN")
+        self.assertEqual(self.audit(at=215000).status, "UNPROVEN")
+        for start, at in ((120001, 182000), (120000, 179999), (-60000, 182000)):
+            with self.assertRaises(ValueError):
+                self.audit(start=start, at=at)
+
+    def test_invalid_frame_and_missing_source_identity_fail_closed(self):
+        snap = self.observer.snapshot()
+        for changed in (
+            {"invalid_frames": 1},
+            {"observed_frames": 0},
+            {"order_authority": True},
+            {"continuity": "READY"},
+            {"generation": "1"},
+        ):
+            bad = dict(snap, **changed)
+            self.assertEqual(self.audit(snapshot=bad).status, "UNPROVEN")
+
+    def test_kline_parity_cannot_verify_taker_side_and_is_never_a_signal(self):
+        # Public klines contain traded totals, NOT side of the taker.
+        different_sides = PublicTradeObservation("BTCUSDT")
+        wrong_side = dict(self.first, S="Sell")
+        self.assertTrue(different_sides.observe(frame(
+            self.before, wrong_side, self.second, self.after,
+        )))
+        parity = self.audit(snapshot=different_sides.snapshot())
+        self.assertEqual(parity.status, "EXACT_CLOSED_M1_AGGREGATE_PARITY")
+        self.assertFalse(parity.source_complete)
+        self.assertFalse(parity.trading_authorized)
 
 if __name__ == "__main__":
     unittest.main()
