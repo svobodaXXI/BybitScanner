@@ -16,11 +16,11 @@ class SimulatorFactsIngressTests(unittest.TestCase):
         self.assertNotIn("location = /api/diary/simulator-bridge/facts {", cfg)
         self.assertNotIn("X-BybitScanner-Simulator-Device-Token", cfg)
         poll = re.search(
-            r"location = /api/diary/simulator-bridge/poll \\{(.*?)\\n    \\}",
+            r"location = /api/diary/simulator-bridge/poll \{(.*?)\n    \}",
             cfg, re.DOTALL,
         )
         ack = re.search(
-            r"location = /api/diary/simulator-bridge/ack \\{(.*?)\\n    \\}",
+            r"location = /api/diary/simulator-bridge/ack \{(.*?)\n    \}",
             cfg, re.DOTALL,
         )
         self.assertIsNotNone(poll)
@@ -33,7 +33,7 @@ class SimulatorFactsIngressTests(unittest.TestCase):
             self.assertIn('proxy_set_header Authorization "";', route)
             self.assertNotIn("auth_request", route)
             self.assertNotIn("allow all", route)
-        self.assertIn("location /api/ {\\n        auth_request /_auth;", cfg)
+        self.assertIn("location /api/ {\n        auth_request /_auth;", cfg)
         self.assertNotIn("location = /api/diary/simulator-bridge/request {", cfg)
         self.assertNotIn("location = /api/diary/simulator-bridge/pair {", cfg)
 
