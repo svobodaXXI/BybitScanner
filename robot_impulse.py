@@ -24,7 +24,8 @@ PATTERN = "IMPULSE_FLOW"
 PAPER_OPT_IN = "BYBITSCANNER_ROBOT_IMPULSE_PAPER_AUTO"
 ENTRY_PHASE = "IMPULSE_ENTRY_READY"
 STATE_VERSION = 1
-MAX_SIGNAL_AGE_MS = 90_000
+MAX_SIGNAL_AGE_MS = 120_000  # one existing 60s monitor tick after causal proof
+MAX_CERTIFICATION_DELAY_MS = 60_000  # REST proof only in the next minute
 MAX_RESTING_MS = 120_000
 
 
@@ -93,7 +94,7 @@ def frozen_terms(snapshot: Mapping[str, Any]) -> FrozenImpulseTerms:
             or direction not in ("LONG", "SHORT")
             or type(close_ms) is not int or close_ms <= 0 or close_ms % 60_000
             or type(decided_ms) is not int or not
-            close_ms <= decided_ms <= close_ms + MAX_SIGNAL_AGE_MS):
+            close_ms <= decided_ms <= close_ms + MAX_CERTIFICATION_DELAY_MS):
         raise ImpulseRobotError("impulse identity, direction or M1 close is invalid")
     price = _decimal(data.get("closed_price"), "closed_price")
     extreme = _decimal(data.get("structural_extreme"), "structural_extreme")
