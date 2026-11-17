@@ -606,16 +606,17 @@ def handler_factory(static_dir: Path = STATIC_DIR,
                 server = self.server
                 def owner_update_worker() -> None:
                     from research.local_replay_viewer.simulator_self_update import (
-                        prepare_simulator_update, launch_new_simulator,
+                        prepare_simulator_update, schedule_relaunch,
                     )
                     from research.local_replay_viewer.desktop_update import UpdateBlocked
                     try:
                         launcher, _sha = prepare_simulator_update(HERE)
+                        # The new helper must start successfully BEFORE the old
+                        # loopback is shut down. It waits for this port to close.
+                        schedule_relaunch(launcher, server.server_address[1])
                         UPDATE_STATE.update(status="restarting", detail="verified_release_staged")
-                        # Shutdown from another thread only, never from request handler.
                         server.shutdown()
                         server.server_close()
-                        launch_new_simulator(launcher)
                     except (UpdateBlocked, OSError, ValueError) as exc:
                         detail = str(exc) if isinstance(exc, UpdateBlocked) else type(exc).__name__
                         UPDATE_STATE.update(status="blocked", detail=detail)
