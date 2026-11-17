@@ -885,10 +885,20 @@ class VPSManager(tk.Tk):
                                       + "\n" + precheck_receipt)))
                     return
             if mode not in CONTROL_ACTIONS.values():
-                result, recovery = run_readonly_ssh_with_laptop_agent_recovery(
-                    command, capture_output=True, text=True, errors="replace",
-                    timeout=35, stdin=subprocess.DEVNULL, creationflags=NO_WINDOW,
-                    check=False)
+                try:
+                    result, recovery = run_readonly_ssh_with_laptop_agent_recovery(
+                        command, capture_output=True, text=True, errors="replace",
+                        timeout=35, stdin=subprocess.DEVNULL, creationflags=NO_WINDOW,
+                        check=False)
+                except subprocess.TimeoutExpired:
+                    if mode != "status":
+                        raise
+                    # A timed-out status query has no side effect. Continue
+                    # with the original UUID on the same SSH route only.
+                    state, details = watch_owner_request(
+                        command, request, initially_submitted=False)
+                    self.events.put((state, details + "\nREQUEST_ID=" + request))
+                    return
             else:
                 try:
                     result = subprocess.run(
