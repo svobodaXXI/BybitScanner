@@ -135,7 +135,7 @@ class LifecycleCaptionTests(unittest.TestCase):
         )
         caption = format_lifecycle_caption(LifecycleEvent(EVENT_OPENED, "t1", "SAGAUSDT", 1), view)
         self.assertTrue(caption.startswith("🤖 Сделка открыта\n\nSAGAUSDT · LONG"))
-        for text in ("Размер: 100", "Средний вход: 0.0254", "STOP: 0.0249", "TAKE: 0.0284",
+        for text in ("Объём: 100", "Средний вход: 0.0254", "STOP: 0.0249", "TAKE: 0.0284",
                      "Паттерн: Falling Wedge"):
             self.assertIn(text, caption)
 
