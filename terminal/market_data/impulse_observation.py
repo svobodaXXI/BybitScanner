@@ -149,3 +149,100 @@ class PublicTradeObservation:
                 "order_authority": False,
                 "prints": tuple(self._prints),
             }
+
+
+@dataclass(frozen=True, slots=True)
+class RecentTradeOverlapAudit:
+    """Cross-source diagnostic, NEVER source completeness or entry authority."""
+
+    status: str
+    matched_count: int = 0
+    source_complete: bool = False
+    trading_authorized: bool = False
+
+
+def audit_recent_trade_overlap(
+    snapshot: object, rest_response: object, *, start_ms: int, end_ms: int,
+) -> RecentTradeOverlapAudit:
+    """Compare exact prints in a *past*, REST-bracketed window, without IO.
+
+    REST recent-trade is at most the latest 1000 prints, without a time-range
+    cursor. A verified response containing executions strictly before start
+    AND at/after end can independently corroborate the observed IDs and their
+    facts inside [start, end); neither source is a gap-free live feed.
+
+    The caller must separately establish REST provenance. Even EXACT_MATCH
+    never clears observer gap flags or authorizes a FlowWindow/Robot entry.
+    """
+    unknown = RecentTradeOverlapAudit("UNPROVEN")
+    if (type(start_ms) is not int or type(end_ms) is not int
+            or start_ms < 0 or end_ms <= start_ms):
+        raise ValueError("invalid past overlap window")
+    if not isinstance(snapshot, dict) or not isinstance(rest_response, dict):
+        return unknown
+    symbol = snapshot.get("symbol")
+    observed = snapshot.get("prints")
+    result = rest_response.get("result")
+    if (not isinstance(symbol, str) or not symbol.endswith("USDT")
+            or not isinstance(observed, tuple)
+            or len(observed) > PublicTradeObservation.LIMIT
+            or type(snapshot.get("generation")) is not int
+            or snapshot["generation"] < 0
+            or rest_response.get("retCode") != 0
+            or type(rest_response.get("retCode")) is not int
+            or not isinstance(result, dict)
+            or result.get("category") != "linear"):
+        return unknown
+    records = result.get("list")
+    if not isinstance(records, list) or not 2 <= len(records) <= 1000:
+        return unknown
+
+    rest: dict[str, ObservedPrint] = {}
+    oldest, newest = None, None
+    for record in records:
+        if not isinstance(record, dict) or record.get("symbol") != symbol:
+            return unknown
+        identifier = record.get("execId")
+        stamp, sequence = record.get("time"), record.get("seq")
+        side = record.get("side")
+        if (not isinstance(identifier, str) or not identifier
+                or len(identifier) > 128 or identifier in rest
+                or not isinstance(stamp, str) or not stamp.isascii()
+                or not stamp.isdecimal() or not isinstance(sequence, str)
+                or not sequence.isascii() or not sequence.isdecimal()
+                or side not in ("Buy", "Sell")):
+            return unknown
+        timestamp_ms, seq = int(stamp), int(sequence)
+        if timestamp_ms < 0 or seq < 0 or timestamp_ms >= 2**63:
+            return unknown
+        try:
+            item = ObservedPrint(
+                identifier, timestamp_ms, seq, side,
+                PublicTradeObservation._positive(record.get("price")),
+                PublicTradeObservation._positive(record.get("size")),
+            )
+        except ValueError:
+            return unknown
+        rest[identifier] = item
+        oldest = timestamp_ms if oldest is None else min(oldest, timestamp_ms)
+        newest = timestamp_ms if newest is None else max(newest, timestamp_ms)
+
+    # Boundary trades must be present beyond both ends; a latest-1000 page
+    # lacking either boundary cannot prove this interval is wholly represented.
+    if oldest is None or oldest >= start_ms or newest is None or newest < end_ms:
+        return unknown
+    expected = {
+        key: item for key, item in rest.items()
+        if start_ms <= item.timestamp_ms < end_ms
+    }
+    selected: dict[str, ObservedPrint] = {}
+    for item in observed:
+        if not isinstance(item, ObservedPrint):
+            return unknown
+        if start_ms <= item.timestamp_ms < end_ms:
+            if item.trade_id in selected:
+                return unknown
+            selected[item.trade_id] = item
+    if not expected or selected != expected:
+        return unknown
+    return RecentTradeOverlapAudit("EXACT_OVERLAP_MATCH", matched_count=len(expected))
