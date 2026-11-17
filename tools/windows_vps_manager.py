@@ -629,8 +629,9 @@ class VPSManager(tk.Tk):
             self.buttons.append(button)
         update_button = ttk.Button(buttons, text="Обновление",
                                    command=self.update_desktop)
-        update_button.grid(row=(len(ACTIONS) + len(CONTROL_ACTIONS) + 3) // 3,
-                           column=0, padx=(0, 7), pady=3, sticky="ew")
+        update_index = len(ACTIONS) + len(CONTROL_ACTIONS) + 3
+        update_button.grid(row=update_index // 3, column=update_index % 3,
+                           padx=(0, 7), pady=3, sticky="ew")
         self.buttons.append(update_button)
         for column in range(3):
             buttons.columnconfigure(column, weight=1)
@@ -649,7 +650,7 @@ class VPSManager(tk.Tk):
         if self.busy:
             return
         if not messagebox.askyesno("Обновление VPS Manager",
-                                  "Проверить и установить опубликленный релиз VPS Manager?"):
+                                  "Проверить и установить опубликованный релиз VPS Manager?"):
             return
         self.busy = True
         self.status.set("Обновление локального VPS Manager")
