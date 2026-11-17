@@ -34,8 +34,12 @@ jobs:
           $remote=((git ls-remote origin refs/heads/stable/adfb50b-forward) -split '\s+')[0].Trim()
           if ($sha -ne $remote -or $sha -notmatch '^[a-f0-9]{40}$') { throw 'STABLE_MOVED_OR_UNKNOWN' }
           $tag="desktop-$sha"
-          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
-          if ($LASTEXITCODE -eq 0) { throw 'DESKTOP_TAG_ALREADY_EXISTS' }
+          # Missing tag is the expected first-publication state. Avoid an
+          # intentional gh release-view 404 that PowerShell 7 treats as fatal
+          # under ErrorActionPreference=Stop before checking LASTEXITCODE.
+          $tagRef = (git ls-remote --refs origin "refs/tags/$tag")
+          if ($LASTEXITCODE -ne 0) { throw 'DESKTOP_TAG_LOOKUP_FAILED' }
+          if ($tagRef) { throw 'DESKTOP_TAG_ALREADY_EXISTS' }
           "DESKTOP_SHA=$sha" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "DESKTOP_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Build local replay static UI
