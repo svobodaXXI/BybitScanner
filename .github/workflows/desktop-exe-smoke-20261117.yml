@@ -1,0 +1,40 @@
+name: Diagnose released VPS Manager bootstrap on clean Windows
+on:
+  push:
+    branches:
+      - ops/owner-approved-desktop-dispatch-20261117-f32992a
+    paths:
+      - .github/workflows/desktop-exe-smoke-20261117.yml
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download exact released binary and prove hash
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $sha='f32992abd579908e4bd6f36acdcd6627076eaea2'
+          $tag='desktop-'+$sha
+          New-Item -ItemType Directory -Path smoke-out | Out-Null
+          gh release download $tag --repo $env:GITHUB_REPOSITORY --pattern 'BybitScanner-VPS-Manager.exe' --dir smoke-out
+          if ($LASTEXITCODE -ne 0) { throw 'RELEASE_ASSET_DOWNLOAD_FAILED' }
+          $p=(Resolve-Path smoke-out/BybitScanner-VPS-Manager.exe).Path
+          $digest=(Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($digest -ne '69da0ebee0e4e9f01f2408779d48ddad39a998ad89aa2039ea3940ff1a6c7fec') { throw 'RELEASE_ASSET_DIGEST_MISMATCH' }
+          'RELEASE_EXE_HASH_VERIFIED' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+      - name: Launch bundled Python without SSH and prove safe invalid-input exit
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $exe=(Resolve-Path smoke-out/BybitScanner-VPS-Manager.exe).Path
+          $p=Start-Process -FilePath $exe -ArgumentList @('--operation','status','--request-id','invalid','--host','127.0.0.1','--user','root') -PassThru
+          try { Wait-Process -Id $p.Id -Timeout 30 -ErrorAction Stop }
+          catch { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue; throw 'BOOTSTRAP_TIMEOUT' }
+          $p.Refresh()
+          if ($p.ExitCode -ne 2) { throw ('BOOTSTRAP_UNEXPECTED_EXIT_'+$p.ExitCode) }
+          'PYTHON_DLL_BOOTSTRAP_OK_ON_WINDOWS_RUNNER' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
