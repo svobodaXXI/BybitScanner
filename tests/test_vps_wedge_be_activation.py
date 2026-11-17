@@ -6,9 +6,12 @@ from pathlib import Path
 import stat
 import tempfile
 import unittest
+from contextlib import ExitStack
+from unittest.mock import patch
 
 from tools.vps_wedge_be_activation import (
     FLAG, WedgeBEBlocked, _no_be_key, _read_env, _unchanged, _write_once,
+    enable_wedge_be,
 )
 
 
@@ -58,6 +61,84 @@ class WedgeBEConfigTests(unittest.TestCase):
         self.assertFalse(_no_be_key(b"# " + FLAG + b"=1\n"))
         self.assertFalse(_no_be_key(FLAG + b"=0\n"))
         self.assertTrue(_no_be_key(b"BYBITSCANNER_PAPER_MODE=paper\n"))
+
+    def test_conflicting_effective_configuration_never_attempts_stop(self):
+        self.path.write_bytes(self.original + FLAG + b"=0\\n")
+        with ExitStack() as stack:
+            stack.enter_context(patch("tools.vps_release_identity.verify_release",
+                                      return_value="a" * 40))
+            stop = stack.enter_context(patch(
+                "tools.paper_maintenance._stop_exact_installed_paper_once"))
+            status = enable_wedge_be(
+                "a" * 40, root=self.path.parent, env_file=self.path,
+                owner_env=self.path.parent / "owner.env",
+                simulator_env=self.path.parent / "simulator.env", uid=self.uid)
+        self.assertIn("BLOCKED:", status)
+        stop.assert_not_called()
+        self.assertIn(FLAG + b"=0", self.path.read_bytes())
+
+    def test_success_requires_actual_backend_env_attestation(self):
+        target = "a" * 40
+        with ExitStack() as stack:
+            stack.enter_context(patch("tools.vps_release_identity.verify_release",
+                                      return_value=target))
+            stack.enter_context(patch(
+                "tools.paper_maintenance._durable_editor_freeze", return_value="b" * 64))
+            stack.enter_context(patch(
+                "tools.paper_maintenance._editor_runtime_ready", return_value=True))
+            stack.enter_context(patch(
+                "tools.paper_maintenance._paper_start_quiescent", return_value=True))
+            stack.enter_context(patch(
+                "tools.vps_simulator_device_provision._robot_stopped", return_value=True))
+            stop = stack.enter_context(patch(
+                "tools.paper_maintenance._stop_exact_installed_paper_once",
+                return_value="READY: canonical STOP"))
+            stack.enter_context(patch("tools.vps_release_resume.check_resume",
+                                      return_value="RESUME_READY: stopped"))
+            resume = stack.enter_context(patch(
+                "tools.paper_maintenance.resume_installed_release",
+                return_value="READY: editor resumed"))
+            stack.enter_context(patch(
+                "tools.vps_simulator_device_provision._runtime_env",
+                side_effect=[{}, {FLAG.decode("ascii"): "1"}]))
+            status = enable_wedge_be(
+                target, root=self.path.parent, env_file=self.path,
+                owner_env=self.path.parent / "owner.env",
+                simulator_env=self.path.parent / "simulator.env", uid=self.uid)
+        self.assertTrue(status.startswith("READY:"), status)
+        stop.assert_called_once()
+        resume.assert_called_once()
+        self.assertEqual(self.path.read_bytes(), self.original + FLAG + b"=1\\n")
+
+    def test_missing_backend_attestation_blocks_even_after_resuming(self):
+        target = "a" * 40
+        with ExitStack() as stack:
+            stack.enter_context(patch("tools.vps_release_identity.verify_release",
+                                      return_value=target))
+            stack.enter_context(patch(
+                "tools.paper_maintenance._durable_editor_freeze", return_value="b" * 64))
+            stack.enter_context(patch(
+                "tools.paper_maintenance._editor_runtime_ready", return_value=True))
+            stack.enter_context(patch(
+                "tools.paper_maintenance._paper_start_quiescent", return_value=True))
+            stack.enter_context(patch(
+                "tools.vps_simulator_device_provision._robot_stopped", return_value=True))
+            stack.enter_context(patch(
+                "tools.paper_maintenance._stop_exact_installed_paper_once",
+                return_value="READY: canonical STOP"))
+            stack.enter_context(patch("tools.vps_release_resume.check_resume",
+                                      return_value="RESUME_READY: stopped"))
+            stack.enter_context(patch(
+                "tools.paper_maintenance.resume_installed_release",
+                return_value="READY: editor resumed"))
+            stack.enter_context(patch(
+                "tools.vps_simulator_device_provision._runtime_env",
+                side_effect=[{}, {}]))
+            status = enable_wedge_be(
+                target, root=self.path.parent, env_file=self.path,
+                owner_env=self.path.parent / "owner.env",
+                simulator_env=self.path.parent / "simulator.env", uid=self.uid)
+        self.assertIn("wedge_be_effective_runtime_unproven", status)
 
 
 if __name__ == "__main__":
