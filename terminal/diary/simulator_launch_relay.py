@@ -57,6 +57,8 @@ class _Request:
     episode_id: str
     created: float
     state: str = "QUEUED"
+    owner: str | None = None
+    source_revision: int | None = None
 
 
 class SimulatorLaunchRelay:
@@ -125,7 +127,8 @@ class SimulatorLaunchRelay:
             if now - item.created >= STATUS_SECONDS:
                 del self._requests[key]
 
-    def enqueue(self, episode_id: str, *, request_origin: str, fetch_site: str) -> dict[str, str]:
+    def enqueue(self, episode_id: str, *, request_origin: str, fetch_site: str,
+                owner: str | None = None, source_revision: int | None = None) -> dict[str, str]:
         # Nginx must additionally enforce owner authentication on this POST.
         # Origin and fetch-metadata prevent cross-site form/CSRF requests.
         if (request_origin != self.origin
@@ -133,6 +136,13 @@ class SimulatorLaunchRelay:
             raise RelayForbidden("relay_origin_not_authorized")
         if not isinstance(episode_id, str) or not EPISODE_ID.fullmatch(episode_id):
             raise RelayInvalid("invalid_episode_locator")
+        # Legacy ID-only locator stays compatible but never authorizes facts.
+        if (owner is None) != (source_revision is None):
+            raise RelayInvalid("incomplete_episode_fact_scope")
+        if owner is not None and (owner not in {"ROBOT", "MANUAL"}
+                                  or type(source_revision) is not int
+                                  or not 1 <= source_revision <= 2**63 - 1):
+            raise RelayInvalid("invalid_episode_fact_scope")
         with self._lock:
             now = self._clock()
             self._trim(now)
@@ -149,7 +159,8 @@ class SimulatorLaunchRelay:
                    for r in self._requests.values()):
                 raise RelayUnavailable("simulator_adapter_busy")
             rid = secrets.token_hex(16)
-            self._requests[rid] = _Request(rid, device, episode_id, now)
+            self._requests[rid] = _Request(rid, device, episode_id, now,
+                                           owner=owner, source_revision=source_revision)
             return {"request_id": rid, "state": "QUEUED"}
 
     def poll(self, *, device: str, token: str,
@@ -168,8 +179,34 @@ class SimulatorLaunchRelay:
                 return {"state": "IDLE"}
             req = min(queued, key=lambda r: r.created)
             req.state = "DELIVERED"
-            return {"state": "OPEN_EPISODE", "request_id": req.id,
-                    "episode_id": req.episode_id}
+            locator: dict[str, str | int] = {
+                "state": "OPEN_EPISODE", "request_id": req.id,
+                "episode_id": req.episode_id,
+            }
+            if req.owner is not None:
+                locator["owner"] = req.owner
+                locator["source_revision"] = req.source_revision
+            return locator
+
+    def authorized_facts_scope(self, *, device: str, token: str,
+                               request_id: str) -> tuple[str, str, int]:
+        """Only one owner-queued, delivered request can expose one closed episode.
+
+        This token never grants arbitrary PAPER reads, and a locator-only
+        request cannot be upgraded to an export by the device.
+        """
+        if not self._authenticated(device, token):
+            raise RelayForbidden("simulator_device_unauthorized")
+        if not isinstance(request_id, str) or not REQUEST_ID.fullmatch(request_id):
+            raise RelayInvalid("invalid_simulator_fact_request")
+        with self._lock:
+            self._trim(self._clock())
+            req = self._requests.get(request_id)
+            if (req is None or req.device_id != device or req.state != "DELIVERED"
+                    or req.owner not in {"ROBOT", "MANUAL"}
+                    or type(req.source_revision) is not int):
+                raise RelayInvalid("unavailable_episode_fact_request")
+            return req.episode_id, req.owner, req.source_revision
 
     def acknowledge(self, *, device: str, token: str, request_id: str,
                     launched: bool) -> dict[str, str]:
