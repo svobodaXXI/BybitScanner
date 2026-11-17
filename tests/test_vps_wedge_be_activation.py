@@ -63,7 +63,7 @@ class WedgeBEConfigTests(unittest.TestCase):
         self.assertTrue(_no_be_key(b"BYBITSCANNER_PAPER_MODE=paper\n"))
 
     def test_conflicting_effective_configuration_never_attempts_stop(self):
-        self.path.write_bytes(self.original + FLAG + b"=0\\n")
+        self.path.write_bytes(self.original + FLAG + b"=0\n")
         with ExitStack() as stack:
             stack.enter_context(patch("tools.vps_release_identity.verify_release",
                                       return_value="a" * 40))
@@ -108,7 +108,7 @@ class WedgeBEConfigTests(unittest.TestCase):
         self.assertTrue(status.startswith("READY:"), status)
         stop.assert_called_once()
         resume.assert_called_once()
-        self.assertEqual(self.path.read_bytes(), self.original + FLAG + b"=1\\n")
+        self.assertEqual(self.path.read_bytes(), self.original + FLAG + b"=1\n")
 
     def test_missing_backend_attestation_blocks_even_after_resuming(self):
         target = "a" * 40
