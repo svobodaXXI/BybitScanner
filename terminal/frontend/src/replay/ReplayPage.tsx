@@ -1010,17 +1010,29 @@ export function ReplayPage() {
         throw new Error("ID локальной записи не совпадает с запросом");
       setPaperFacts(parsed);
       setLocalEpisodeMessage("Найдены локальные факты сделки: " + episodeId);
-      if (matchPaperFactsToMarket(parsed, document).status === "MATCHED") {
-        setCursor(document.events.length);
-      } else {
-        setError("Факты сделки найдены, но полная история исходного сигнала с STOP " +
-          "и повторными входами пока не подтверждена. Нужна синхронизация цепочки " +
-          "эпизодов и свечей, не только одной записи.");
+      // PUBLIC market history is fetched locally, never embedded in the PAPER
+      // payload or loaded from a VPS candle archive. No Scanner/Robot runs.
+      const m5 = 300_000;
+      const startMs = Math.max(m5, Math.floor((parsed.opened_at_ms - 3_600_000) / m5) * m5);
+      const endExclusive = Math.ceil((parsed.closed_at_ms + 3_600_000) / m5) * m5;
+      if (endExclusive - startMs > 7 * 86_400_000 || endExclusive <= startMs) {
+        setError("Исполнения загружены, но публичный интервал превышает 7 суток. " +
+          "Выберите проверенную историю вручную; исходная цепочка Robot не реконструирована.");
+        return;
       }
+      const utc = (ms: number) => new Date(ms).toISOString().slice(0, 16);
+      await loadLocalHistory(parsed.symbol, utc(startMs), utc(endExclusive - 60_000), []);
     } catch (error) {
       setError(error instanceof Error ? error.message : "Не удалось найти локальную сделку");
     }
   }
+
+  // Only the fixed local Windows protocol supplies this typed locator.
+  // Never parse financial facts, filesystem paths or arbitrary URLs from it.
+  useEffect(() => {
+    const match = /^#locator=(te_[a-f0-9]{24})$/.exec(window.location.hash);
+    if (match) void lookupLocalEpisode(match[1]);
+  }, []);
 
   async function loadLocalHistory(selectedSymbol: string, selectedStart: string, selectedEnd: string,
     choices: readonly string[]) {
