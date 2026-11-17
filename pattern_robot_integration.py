@@ -106,6 +106,17 @@ def is_robot_executable_signal(
             and signal_snapshot.get("robot_handoff_ready") is True
         )
 
+    if pattern == "IMPULSE_FLOW":
+        import robot_impulse
+
+        if not robot_impulse.paper_enabled() or normalized_timeframe != "1":
+            return False
+        try:
+            robot_impulse.frozen_terms(signal_snapshot)
+        except robot_impulse.ImpulseRobotError:
+            return False
+        return True
+
     if not is_supported_pattern(pattern):
         return False
 
