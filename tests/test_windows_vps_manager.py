@@ -427,6 +427,60 @@ class TestWindowsVpsManager(unittest.TestCase):
         self.assertIn("LIST_FAILURE_CLASS=SSH_CLIENT_TIMEOUT", output)
         self.assertNotIn("повторять операцию нельзя", output)
 
+    def test_sha_paste_accepts_exact_40_hex_and_focuses_field(self):
+        entry = Mock()
+        target = "940ab0aea54307e7b1da9cfda6475bb9476d8140"
+        fake = SimpleNamespace(clipboard_get=Mock(return_value=target.upper() + "\n"),
+                               sha=Mock(), sha_entry=entry)
+        VPSManager.paste_sha(fake)
+        fake.sha.set.assert_called_once_with(target)
+        entry.icursor.assert_called_once_with("end")
+        entry.focus_set.assert_called_once_with()
+
+    def test_sha_paste_rejects_bad_clipboard_without_overwriting_field(self):
+        from tkinter import TclError
+        for value in ("", "f" * 39, "g" * 40, None):
+            with self.subTest(value=value):
+                clipboard = (Mock(side_effect=TclError("clipboard unavailable"))
+                             if value is None else Mock(return_value=value))
+                fake = SimpleNamespace(clipboard_get=clipboard, sha=Mock(),
+                                       sha_entry=Mock())
+                with patch("tools.windows_vps_manager.messagebox.showerror") as err:
+                    VPSManager.paste_sha(fake)
+                err.assert_called_once()
+                fake.sha.set.assert_not_called()
+
+    def test_sha_hotkey_works_in_english_and_russian_layout(self):
+        for keysym, keycode in (("v", 86), ("V", 86), ("Cyrillic_em", 0),
+                                ("unknown", 86)):
+            fake = SimpleNamespace(paste_sha=Mock())
+            event = SimpleNamespace(keysym=keysym, keycode=keycode)
+            self.assertEqual(VPSManager.paste_sha_hotkey(fake, event), "break")
+            fake.paste_sha.assert_called_once_with()
+        fake = SimpleNamespace(paste_sha=Mock())
+        self.assertIsNone(VPSManager.paste_sha_hotkey(
+            fake, SimpleNamespace(keysym="x", keycode=88)))
+        fake.paste_sha.assert_not_called()
+
+    def test_generic_entry_paste_handles_russian_layout_and_selection(self):
+        from tkinter import TclError
+        entry = Mock()
+        entry.delete.side_effect = TclError("no selection")
+        fake = SimpleNamespace(clipboard_get=Mock(return_value="83.217.213.181"))
+        event = SimpleNamespace(keysym="Cyrillic_em", keycode=0, widget=entry)
+        self.assertEqual(VPSManager.paste_text_hotkey(fake, event), "break")
+        entry.insert.assert_called_once_with("insert", "83.217.213.181")
+        entry = Mock()
+        fake.clipboard_get = Mock(return_value="root")
+        event = SimpleNamespace(keysym="v", keycode=86, widget=entry)
+        self.assertEqual(VPSManager.paste_text_hotkey(fake, event), "break")
+        entry.delete.assert_called_once_with("sel.first", "sel.last")
+        entry.insert.assert_called_once_with("insert", "root")
+        entry.reset_mock()
+        self.assertIsNone(VPSManager.paste_text_hotkey(
+            fake, SimpleNamespace(keysym="x", keycode=88, widget=entry)))
+        entry.insert.assert_not_called()
+
     def test_visible_id_paste_copies_32_hex_characters_to_entry_without_ssh(self):
         request = "ABCDEF0123456789ABCDEF0123456789"
         entry = Mock()
