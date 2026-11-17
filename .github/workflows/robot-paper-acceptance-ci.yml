@@ -40,6 +40,7 @@ on:
       - "terminal/runtime/paper_http_server.py"
       - "terminal/runtime/incident_telemetry.py"
       - "terminal/market_data/hub.py"
+      - "tests/test_terminal_market_data_hub.py"
       - "tests/test_incident_telemetry.py"
       - "terminal/persistence/**"
       - "terminal/api/**"
@@ -144,6 +145,8 @@ jobs:
         run: python -m unittest tests.test_robot_entry_flow_evidence -v
       - name: Verify publicTrade observation without order runtime
         run: python -m unittest tests.test_public_trade_impulse_observation -v
+      - name: Verify subscribed-only Scanner source diagnostics
+        run: python -m unittest tests.test_terminal_market_data_hub -v
       - name: Compile acceptance surface
         run: >-
           python -m py_compile
