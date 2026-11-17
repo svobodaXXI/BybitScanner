@@ -11,6 +11,9 @@ on:
       - 'tools/bootstrap_paper_vps_bridge.ps1'
       - 'tools/upgrade_paper_vps_diagnostics.ps1'
       - '.github/workflows/paper-vps-owner-bridge.yml'
+      - 'ci/paper_vps_observer.py'
+      - 'tests/test_paper_vps_observer.py'
+      - '.github/workflows/paper-vps-observer.yml'
   issue_comment:
     types: [created]
 
@@ -30,6 +33,8 @@ jobs:
       - uses: actions/checkout@v4
       - run: python3 -m unittest -v tests.test_paper_vps_ops
       - run: python3 -m py_compile ci/paper_vps_ops.py
+      - run: python3 -m unittest -v tests.test_paper_vps_observer
+      - run: python3 -m py_compile ci/paper_vps_observer.py
 
   bootstrap-windows-syntax:
     if: ${{ github.event_name == 'pull_request' }}

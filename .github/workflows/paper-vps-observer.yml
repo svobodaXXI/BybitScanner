@@ -1,0 +1,112 @@
+name: PAPER VPS read-only observer
+
+# Schedule runs only from the trusted default main branch; never from PR code.
+# Use the existing owner-restricted SSH forced command. No new VPS endpoint.
+on:
+  schedule:
+    - cron: '7,17,27,37,47,57 * * * *'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'ci/paper_vps_observer.py'
+      - 'tests/test_paper_vps_observer.py'
+      - '.github/workflows/paper-vps-observer.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: paper-vps-observer-${{ github.event_name }}
+  cancel-in-progress: false
+
+jobs:
+  offline-tests:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Offline observer contract tests
+        run: |
+          python3 -m unittest -v tests.test_paper_vps_observer
+          python3 -m py_compile ci/paper_vps_observer.py
+
+  collect:
+    if: github.event_name == 'schedule' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: paper-vps-ops
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read existing pinned diagnose only
+        shell: bash
+        env:
+          PAPER_VPS_SSH_PRIVATE_KEY: ${{ secrets.PAPER_VPS_SSH_PRIVATE_KEY }}
+          PAPER_VPS_SSH_KNOWN_HOSTS: ${{ secrets.PAPER_VPS_SSH_KNOWN_HOSTS }}
+          PAPER_VPS_SSH_TARGET: ${{ secrets.PAPER_VPS_SSH_TARGET }}
+        run: |
+          set -euo pipefail
+          umask 077
+          raw="$RUNNER_TEMP/paper-observer-raw.txt"
+          safe="$RUNNER_TEMP/paper-observer-safe.json"
+          : > "$raw"
+          rc=255
+          if [[ -n "${PAPER_VPS_SSH_PRIVATE_KEY:-}" &&
+                -n "${PAPER_VPS_SSH_KNOWN_HOSTS:-}" &&
+                -n "${PAPER_VPS_SSH_TARGET:-}" &&
+                "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]] &&
+             python3 ci/paper_vps_ops.py check-target "$PAPER_VPS_SSH_TARGET"; then
+            key_file="$(mktemp "$RUNNER_TEMP/paper-observer-key.XXXXXX")"
+            known_file="$(mktemp "$RUNNER_TEMP/paper-observer-hosts.XXXXXX")"
+            trap 'rm -f "$key_file" "$known_file" "$raw"' EXIT
+            chmod 600 "$key_file" "$known_file"
+            printf '%s\n' "$PAPER_VPS_SSH_PRIVATE_KEY" > "$key_file"
+            printf '%s\n' "$PAPER_VPS_SSH_KNOWN_HOSTS" > "$known_file"
+            if timeout 30s ssh -T -n \
+              -i "$key_file" \
+              -o BatchMode=yes \
+              -o IdentitiesOnly=yes \
+              -o PasswordAuthentication=no \
+              -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="$known_file" \
+              -o ConnectTimeout=10 \
+              -o ConnectionAttempts=1 \
+              -o ForwardAgent=no \
+              -o ClearAllForwardings=yes \
+              "$PAPER_VPS_SSH_TARGET" \
+              "diagnose $GITHUB_SHA" < /dev/null > "$raw" 2>/dev/null; then
+              rc=0
+            fi
+          fi
+          # Never print the VPS response, even if the diagnostic payload is invalid.
+          python3 ci/paper_vps_observer.py sanitize \
+            --input "$raw" --ssh-exit "$rc" --output "$safe"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: paper-observer-sanitized
+          path: ${{ runner.temp }}/paper-observer-safe.json
+          retention-days: 3
+          if-no-files-found: error
+
+  publish:
+    if: github.event_name == 'schedule'
+    needs: collect
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: paper-observer-sanitized
+          path: ${{ runner.temp }}/paper-observer
+      - name: Publish only changed or daily sanitized status
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 ci/paper_vps_observer.py publish \
+            --input "$RUNNER_TEMP/paper-observer/paper-observer-safe.json"
