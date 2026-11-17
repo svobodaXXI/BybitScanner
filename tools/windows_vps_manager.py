@@ -44,7 +44,7 @@ USER_PATTERN = re.compile(r"^[a-z_][a-z0-9_-]*[$]?$")
 # Known operator Windows profiles only; never silently reuse a laptop key on PC.
 # This is a routing hint, not cryptographic device attestation.
 KNOWN_ROUTES = {
-    "pc": ("212.193.14.116", "root", "bybitscanner_vdsina_gateway_20261030"),
+    "pc": ("83.217.213.181", "root", "bybitscanner_vdsina_gateway_20261030"),
     "laptop": ("83.217.213.181", "root", "bybitscanner_laptop"),
 }
 
@@ -263,22 +263,16 @@ def preferred_key(host: str, user: str) -> str:
 
 
 def preferred_route() -> tuple[str, str]:
-    # The laptop has no confirmed PC alias: use its separate proven profile.
-    if known_windows_device() == "laptop":
-        return KNOWN_ROUTES["laptop"][:2]
-    # Existing OpenSSH alias owns the key, verified host and network route.
-    config = Path.home() / ".ssh" / "config"
-    try:
-        if any("bybitscanner-vps" in line.split()[1:]
-               for line in config.read_text(encoding="utf-8").splitlines()
-               if line.strip().lower().startswith("host ")):
-            return "bybitscanner-vps", ""
-    except (OSError, UnicodeError):
-        pass
-    # On the known PC, the direct-key target is an observed safe fallback if
-    # its native alias is absent. Unknown devices retain explicit configuration.
-    if known_windows_device() == "pc":
-        return KNOWN_ROUTES["pc"][:2]
+    """Use the latest owner-verified direct route for each known Windows device.
+
+    PC: 2026-11-17 owner confirmed 83.217.213.181 with existing PC key
+    and Happ/VPN off. Ignore a stale user SSH alias without rewriting config.
+    Laptop: independently confirmed route with its own laptop key.
+    Unknown profiles retain their explicit, preconfigured target.
+    """
+    device = known_windows_device()
+    if device in KNOWN_ROUTES:
+        return KNOWN_ROUTES[device][:2]
     remote = os.environ.get("BYBITSCANNER_VPS_SSH_TARGET", "")
     if re.fullmatch(r"[A-Za-z_][A-Za-z_0-9-]*@[A-Za-z0-9._-]+", remote):
         user, host = remote.split("@", 1)
