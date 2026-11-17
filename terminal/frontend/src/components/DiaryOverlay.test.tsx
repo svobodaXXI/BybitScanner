@@ -573,8 +573,9 @@ describe("Closed deals / exact episode index", () => {
       String(url).includes("/simulator-bridge/"))).toHaveLength(0);
   });
 
-  it("uses only typed Windows URI locator, with no PAPER data in launch URL", async () => {
+  it("Windows requests scoped JSON via owner bridge, never leaks facts into a URI", async () => {
     const episodeId = "te_" + "a".repeat(24);
+    const requestId = "1".repeat(32);
     const copy = vi.fn().mockResolvedValue(undefined);
     const launches: string[] = [];
     vi.stubGlobal("navigator", {
@@ -586,21 +587,34 @@ describe("Closed deals / exact episode index", () => {
         launches.push(this.getAttribute("href") || "");
       });
     try {
-      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
-        ...finrezResponse,
-        closed_episodes: [{ ...robotDeal, trade_episode_id: episodeId }],
-      }), { status: 200 })));
+      const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+        if (url.endsWith("/simulator-bridge/request")) return new Response(JSON.stringify({
+          ok: true, state: "QUEUED", request_id: requestId,
+        }), { status: 200 });
+        if (url.endsWith("/simulator-bridge/status")) return new Response(JSON.stringify({
+          ok: true, state: "LAUNCHED", request_id: requestId,
+        }), { status: 200 });
+        return new Response(JSON.stringify({
+          ...finrezResponse,
+          closed_episodes: [{ ...robotDeal, trade_episode_id: episodeId }],
+        }), { status: 200 });
+      });
+      vi.stubGlobal("fetch", fetchMock);
       render(<DiaryOverlay accountKey="paper:deals" initialSection="DEALS"
         statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
       fireEvent.click(await screen.findByRole("button", { name: /BTCUSDT/ }));
       fireEvent.click(screen.getByRole("button", { name: "Открыть в Симуляторе" }));
-      await waitFor(() => expect(launches).toEqual([
-        "bybitscanner-simulator://open?episode=" + episodeId,
-      ]));
+      expect(await screen.findByText(/Локальный адаптер сохранил JSON исполнений/))
+        .toHaveTextContent("Идентификатор скопирован.");
       expect(copy).toHaveBeenCalledWith(episodeId);
-      expect(await screen.findByText(/Запрос открытия утилиты отправлен Windows/)).toHaveTextContent(
-        "Результат пока не подтверждён.",
-      );
+      expect(launches).toEqual([]); // The device agent opens the viewer AFTER syncing JSON.
+      expect(fetchMock).toHaveBeenCalledWith("/api/diary/simulator-bridge/request", {
+        method: "POST", credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          episode_id: episodeId, owner: "ROBOT", source_revision: 3,
+        }),
+      });
     } finally {
       anchorClick.mockRestore();
     }
@@ -674,13 +688,13 @@ describe("Closed deals / exact episode index", () => {
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
     fireEvent.click(await screen.findByRole("button", { name: /BTCUSDT/ }));
     fireEvent.click(screen.getByRole("button", { name: "Открыть в Симуляторе" }));
-    expect(await screen.findByText(/Локальная утилита подтвердила запрос открытия/))
+    expect(await screen.findByText(/Локальный адаптер сохранил JSON исполнений/))
       .toHaveTextContent("Идентификатор скопирован.");
     expect(copy).toHaveBeenCalledWith(episodeId);
     expect(fetchMock).toHaveBeenCalledWith("/api/diary/simulator-bridge/request", {
       method: "POST", credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ episode_id: episodeId }),
+      body: JSON.stringify({ episode_id: episodeId, owner: "ROBOT", source_revision: 3 }),
     });
     expect(fetchMock).toHaveBeenCalledWith("/api/diary/simulator-bridge/status", {
       method: "POST", credentials: "same-origin",
@@ -706,7 +720,7 @@ describe("Closed deals / exact episode index", () => {
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
     fireEvent.click(await screen.findByRole("button", { name: /BTCUSDT/ }));
     fireEvent.click(screen.getByRole("button", { name: "Открыть в Симуляторе" }));
-    expect(await screen.findByText(/Нет доступа к локальному Симулятору или адаптеру VPS/))
+    expect(await screen.findByText(/Нет сопряжённого Симулятора для передачи JSON/))
       .toHaveTextContent("Идентификатор скопирован.");
     expect(copy).toHaveBeenCalledWith(episodeId);
     expect(fetchMock.mock.calls.filter(([url]) =>
@@ -1590,37 +1604,53 @@ describe("shared statistics trade action standard", () => {
     expect(screen.getByText(/Это не воспроизведение/)).toBeInTheDocument();
   });
 
-  it("filmstrip opens local Simulator with exact PAPER ID, without requiring candle history", async () => {
+  it("filmstrip requests one exact verified JSON without launching a guessed local URI", async () => {
     const episodeId = "te_" + "c".repeat(24);
+    const requestId = "d".repeat(32);
     const clicked: string[] = [];
-    const copy = vi.fn().mockResolvedValue(undefined);
-    vi.stubGlobal("navigator", {
-      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-      clipboard: { writeText: copy },
-    });
-    const a = vi.spyOn(HTMLAnchorElement.prototype, "click")
+    vi.stubGlobal("navigator", { userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" });
+    const anchor = vi.spyOn(HTMLAnchorElement.prototype, "click")
       .mockImplementation(function (this: HTMLAnchorElement) {
         clicked.push(this.getAttribute("href") || "");
       });
     try {
-      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
-        ...finrezResponse,
-        closed_episodes: [{
-          trade_episode_id: episodeId, symbol: "BTCUSDT", side: "LONG",
-          opened_at_ms: 1_793_001_000_000, closed_at_ms: 1_793_002_000_000,
-          pnl_usdt: "-2.501234567", execution_count: 2,
-          cohort: "ROBOT", replay_evidence: "EPISODE_INDEX_ONLY",
-        }],
-      }), { status: 200 })));
+      const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+        if (url.endsWith("/simulator-bridge/request")) return new Response(JSON.stringify({
+          ok: true, state: "QUEUED", request_id: requestId,
+        }), { status: 200 });
+        if (url.endsWith("/simulator-bridge/status")) return new Response(JSON.stringify({
+          ok: true, state: "LAUNCHED", request_id: requestId,
+        }), { status: 200 });
+        return new Response(JSON.stringify({
+          ...finrezResponse,
+          closed_episodes: [{
+            trade_episode_id: episodeId, symbol: "BTCUSDT", side: "LONG",
+            opened_at_ms: 1_793_001_000_000, closed_at_ms: 1_793_002_000_000,
+            pnl_usdt: "-2.501234567", execution_count: 2,
+            cohort: "ROBOT", replay_evidence: "EPISODE_INDEX_ONLY",
+          }],
+        }), { status: 200 });
+      });
+      vi.stubGlobal("fetch", fetchMock);
       render(<DiaryOverlay accountKey="paper:film" initialSection="DEALS"
         statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
       const film = await screen.findByRole("button", { name: "Открыть сделку в Симуляторе" });
       expect(film).toBeEnabled();
       fireEvent.click(film);
-      expect(clicked).toEqual(["bybitscanner-simulator://open?episode=" + episodeId]);
-      expect(screen.getByRole("status")).toHaveTextContent("Свечи и решения не переданы");
+      expect(await screen.findByText(/Локальный адаптер сохранил JSON исполнений/))
+        .toHaveTextContent("Полный журнал решений Робота не подтверждён");
+      expect(clicked).toEqual([]);
+      expect(fetchMock).toHaveBeenCalledWith("/api/diary/simulator-bridge/request", {
+        method: "POST", credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          episode_id: episodeId, owner: "ROBOT", source_revision: 3,
+        }),
+      });
+      expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/local-replay/history")))
+        .toHaveLength(0); // Public M5 is fetched ONLY by the local viewer.
     } finally {
-      a.mockRestore();
+      anchor.mockRestore();
     }
   });
 
