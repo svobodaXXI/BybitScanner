@@ -110,6 +110,104 @@ class OwnerBridgeTests(unittest.TestCase):
             marker.assert_not_called()
             run.assert_not_called()
 
+    def test_reason_summary_does_not_expose_private_exception_text(self):
+        reason = (
+            "ROBOT_PROTECTION_COVERAGE_LOST symbol=ALICEUSDT "
+            "reason=websocket_disconnect token=SECRET-NOT-FOR-ACTIONS"
+        )
+        summary = bridge._robot_reason_public_summary(reason)
+        self.assertEqual(summary["kind"], "PROTECTION_COVERAGE_LOST")
+        self.assertEqual(summary["symbol"], "ALICEUSDT")
+        self.assertEqual(len(summary["fingerprint"]), 16)
+        self.assertNotIn("SECRET", str(summary))
+        self.assertEqual(
+            bridge._robot_reason_public_summary("pause_robot could not reach backend")["kind"],
+            "PENDING_ENTRY_SYNCHRONIZATION",
+        )
+        self.assertEqual(
+            bridge._robot_reason_public_summary("https://private/path?token=SECRET")["kind"],
+            "OTHER_REQUIRES_PRIVATE_REVIEW",
+        )
+        self.assertNotIn("SECRET", str(bridge._robot_reason_public_summary(
+            "https://private/path?token=SECRET",
+        )))
+
+    def test_read_only_snapshot_keeps_reason_private_and_counts_obligations(self):
+        import json
+        import sqlite3
+        import tempfile
+        from types import SimpleNamespace
+
+        now_ms = 1_794_988_800_000
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = root / "paper.sqlite3"
+            env = root / "paper.env"
+            env.write_text(f"BYBITSCANNER_PAPER_DB={database}\\n", encoding="utf-8")
+            with sqlite3.connect(database) as conn:
+                conn.executescript("""
+                    CREATE TABLE robot_runtime_state (
+                        trading_account_id TEXT, mode TEXT, recovery_status TEXT,
+                        reason TEXT, version INTEGER, updated_at_ms INTEGER);
+                    CREATE TABLE robot_candidates (
+                        trading_account_id TEXT, symbol TEXT, status TEXT,
+                        state_revision INTEGER, robot_state_json TEXT);
+                    CREATE TABLE scanner_runtime_state (
+                        trading_account_id TEXT, mode TEXT);
+                    CREATE TABLE robot_autopilot_state (
+                        trading_account_id TEXT, mode TEXT);
+                    CREATE TABLE paper_limit_orders (
+                        trading_account_id TEXT, status TEXT);
+                    CREATE TABLE robot_trades (
+                        trading_account_id TEXT, exit_time_ms INTEGER, exit_reason TEXT);
+                    CREATE TABLE position_projections (
+                        trading_account_id TEXT, side TEXT, quantity TEXT);
+                    CREATE TABLE paper_protection_obligations (
+                        trading_account_id TEXT, status TEXT);
+                """)
+                conn.execute(
+                    "INSERT INTO robot_runtime_state VALUES (?,?,?,?,?,?)",
+                    ("paper", "ROBOT_RUNNING", "RECONCILIATION_REQUIRED",
+                     "ROBOT_PROTECTION_COVERAGE_LOST symbol=ALICEUSDT "
+                     "reason=SECRET-SHOULD-NOT-LEAK", 19, now_ms - 5000),
+                )
+                conn.executemany("INSERT INTO robot_trades VALUES (?,?,?)", [
+                    ("paper", now_ms - 1000, "EMERGENCY_CLOSE"),
+                    ("paper", now_ms - 2000, "STOP"),
+                    ("paper", now_ms - 80 * 60 * 60 * 1000, "TAKE"),
+                ])
+                conn.executemany("INSERT INTO position_projections VALUES (?,?,?)", [
+                    ("paper", "LONG", "3.5"), ("paper", "FLAT", "0"),
+                ])
+                conn.execute(
+                    "INSERT INTO paper_protection_obligations VALUES (?,?)",
+                    ("paper", "DISPATCHING"),
+                )
+            with (
+                mock.patch.object(bridge.time, "time", return_value=now_ms / 1000),
+                mock.patch.object(bridge.urlrequest, "urlopen",
+                                  side_effect=OSError("offline")) as http,
+                mock.patch.object(bridge.subprocess, "run",
+                                  return_value=SimpleNamespace(stdout="inactive")) as commands,
+            ):
+                snapshot = bridge._read_only_diag(
+                    SHA, root=root, env_file=env, transactions=root,
+                )
+            self.assertEqual(snapshot["version"], 2)
+            db = snapshot["db"]
+            self.assertTrue(db["quick_check"])
+            self.assertEqual(db["robot_reason"]["kind"], "PROTECTION_COVERAGE_LOST")
+            self.assertEqual(db["robot_reason"]["symbol"], "ALICEUSDT")
+            self.assertEqual(db["robot_state_version"], 19)
+            self.assertEqual(db["robot_state_updated_at_ms"], now_ms - 5000)
+            self.assertEqual(db["nonflat_position_projections"], 1)
+            self.assertEqual(db["unresolved_protection_obligations"], 1)
+            self.assertEqual(db["recent_exit_reasons_72h"],
+                             {"EMERGENCY_CLOSE": 1, "STOP": 1})
+            self.assertNotIn("SECRET", json.dumps(snapshot))
+            self.assertEqual(http.call_count, 4)
+            self.assertEqual(commands.call_count, 3)
+
     def test_diagnostic_upgrade_preserves_original_ssh_credentials(self):
         script = Path("tools/upgrade_paper_vps_diagnostics.ps1").read_text()
         self.assertIn("fe3290e74323fdf368fd01a788fb0fdadb4f3171", script)
