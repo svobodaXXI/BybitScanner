@@ -35,6 +35,23 @@ class OwnerControlTests(unittest.TestCase):
                                          "--action", "update"])
         self.assertNotIn("systemctl stop", " ".join(started))
 
+    def test_pairing_uses_existing_detached_owner_operation_without_secret_in_argv(self):
+        calls = []
+
+        def run(cmd, **_kw):
+            calls.append(cmd)
+            if cmd[0] == "systemctl":
+                return completed(cmd, out="LoadState=not-found\n")
+            return completed(cmd, out="Running as unit")
+
+        self.assertEqual(control.submit("provision-owner-pc", SHA, R,
+                                        "win-DESKTOP", run=run, uid=0), 0)
+        started = calls[-1]
+        self.assertEqual(started[-5:], ["-m", "tools.paper_maintenance", SHA,
+                                         "--action", "provision-owner-pc"])
+        self.assertEqual(len(calls), 2)
+        self.assertNotIn("BYBITSCANNER_SIMULATOR_BRIDGE", " ".join(started))
+
     def test_duplicate_request_never_restarts_release(self):
         calls = []
 

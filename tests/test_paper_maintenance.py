@@ -7,6 +7,15 @@ from types import SimpleNamespace
 
 from tools.paper_maintenance import run_maintenance
 
+# Existing maintenance fakes target the legacy dispatch; lifecycle lock
+# behavior is exercised separately against a protected temp directory.
+@pytest.fixture(autouse=True)
+def fake_owner_action_lock_for_legacy_tests(monkeypatch):
+    from contextlib import nullcontext
+    from tools import paper_maintenance as maintenance
+    monkeypatch.setattr(maintenance, "_owner_action_lifecycle_guard", nullcontext)
+
+
 
 @pytest.fixture(autouse=True)
 def fake_git_checkout(monkeypatch):
