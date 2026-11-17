@@ -144,3 +144,36 @@ def test_manager_update_is_not_a_vps_operation():
     assert "ssh " not in manager.HELPER.lower()
     assert "Get-FileHash" in manager.HELPER
     assert "Wait-Process" in manager.HELPER
+
+
+def test_local_update_requires_explicit_same_origin_browser_click(tmp_path):
+    from http.server import ThreadingHTTPServer
+    from threading import Thread
+    from urllib.error import HTTPError
+    from urllib.request import Request, urlopen
+    from research.local_replay_viewer.server import handler_factory, UPDATE_STATE
+
+    host = ThreadingHTTPServer(("127.0.0.1", 0), handler_factory(tmp_path))
+    worker = Thread(target=host.serve_forever, daemon=True)
+    worker.start()
+    base = f"http://127.0.0.1:{host.server_address[1]}"
+    try:
+        status = Request(base + "/local-replay/desktop-update/status")
+        with urlopen(status, timeout=5) as reply:
+            assert json.loads(reply.read())["status"] in ("idle", "blocked", "checking")
+        request = Request(
+            base + "/local-replay/desktop-update",
+            data=b"{}", method="POST", headers={
+                "Content-Type": "application/json",
+                "X-Local-Desktop-Update": "explicit-click",
+                "Origin": "https://attacker.example",
+            },
+        )
+        with pytest.raises(HTTPError) as error:
+            urlopen(request, timeout=5)
+        assert error.value.code == 403
+        assert UPDATE_STATE["status"] != "restarting"
+    finally:
+        host.shutdown()
+        host.server_close()
+        worker.join(timeout=5)
