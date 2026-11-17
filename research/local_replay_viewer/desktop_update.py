@@ -110,15 +110,15 @@ def fetch_verified(asset: ReleaseAsset, destination: Path, *, opener=urlopen) ->
             with stream:
                 digest = hashlib.sha256()
                 size = 0
-            while True:
-                piece = stream.read(1024 * 1024)
-                if not piece:
-                    break
-                size += len(piece)
-                if size > asset.size or size > MAX_DOWNLOAD:
-                    raise UpdateBlocked("download_exceeds_manifest")
-                digest.update(piece)
-                out.write(piece)
+                while True:
+                    piece = stream.read(1024 * 1024)
+                    if not piece:
+                        break
+                    size += len(piece)
+                    if size > asset.size or size > MAX_DOWNLOAD:
+                        raise UpdateBlocked("download_exceeds_manifest")
+                    digest.update(piece)
+                    out.write(piece)
             out.flush()
         if size != asset.size or digest.hexdigest() != asset.digest:
             raise UpdateBlocked("download_hash_mismatch")
