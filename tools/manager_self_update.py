@@ -7,6 +7,7 @@ A running EXE never attempts to replace itself on Windows.
 from __future__ import annotations
 
 import os
+import hashlib
 from pathlib import Path
 import subprocess
 import sys
@@ -25,6 +26,7 @@ param(
   [Parameter(Mandatory=$true)][string]$Source,
   [Parameter(Mandatory=$true)][string]$Target,
   [Parameter(Mandatory=$true)][string]$Digest,
+  [Parameter(Mandatory=$true)][string]$OldDigest,
   [Parameter(Mandatory=$true)][int]$OldPid
 )
 $ErrorActionPreference = 'Stop'
@@ -50,6 +52,79 @@ try {
 } catch { throw 'MANAGER_DID_NOT_EXIT' }
 if (Get-Process -Id $OldPid -ErrorAction SilentlyContinue) {
   throw 'MANAGER_PROCESS_STILL_ACTIVE'
+}
+if ($OldDigest -notmatch '^[0-9a-f]{64} ('BybitScanner-VPS-Manager.previous-' + [guid]::NewGuid().ToString('N') + '.exe')
+Move-Item -LiteralPath $targetFile -Destination $backup -ErrorAction Stop
+try {
+  Move-Item -LiteralPath $sourceFile -Destination $targetFile -ErrorAction Stop
+  Start-Process -FilePath $targetFile -ErrorAction Stop
+} catch {
+  if (Test-Path -LiteralPath $targetFile) {
+    Move-Item -LiteralPath $targetFile -Destination ($targetFile + '.failed') -ErrorAction SilentlyContinue
+  }
+  if (-not (Test-Path -LiteralPath $targetFile)) {
+    Move-Item -LiteralPath $backup -Destination $targetFile -ErrorAction Stop
+  }
+  throw
+}
+"""
+
+
+def _installed_path() -> Path:
+    if not getattr(sys, "frozen", False) or os.name != "nt":
+        raise UpdateBlocked("manager_update_requires_installed_windows_exe")
+    path = Path(sys.executable).resolve()
+    appdata = Path(os.environ.get("LOCALAPPDATA", "")).resolve()
+    expected = appdata / "BybitScanner" / "VPSManager"
+    if (not expected.is_dir() or not path.is_relative_to(expected)
+            or path.name.lower() != NAME.lower()):
+        raise UpdateBlocked("manager_update_requires_trusted_install")
+    return path
+
+
+def stage_manager() -> str:
+    """Called only on owner click, never in a timer or startup hook."""
+    current = _installed_path()
+    release = find_asset("manager")
+    marker = Path(getattr(sys, "_MEIPASS", "")) / "desktop-build-sha.txt"
+    if marker.is_file():
+        require_forward_update(marker.read_text(encoding="ascii").strip(), release.sha)
+    stage_dir = current.parent / (".desktop-update-" + release.sha)
+    if stage_dir.exists() or stage_dir.is_symlink():
+        raise UpdateBlocked("prior_update_stage_present; do_not_retry_automatically")
+    stage_dir.mkdir(mode=0o700)
+    executable = stage_dir / NAME
+    if executable.exists():
+        raise UpdateBlocked("prior_update_stage_present; do_not_retry_automatically")
+    fetch_verified(release, executable)
+    helper = stage_dir / "apply-manager-update.ps1"
+    if helper.exists():
+        raise UpdateBlocked("prior_update_helper_present")
+    helper.write_text(HELPER, encoding="ascii")
+    with current.open("rb") as stream:
+        old_digest = hashlib.file_digest(stream, "sha256").hexdigest()
+    powershell = (Path(os.environ.get("SystemRoot", "C:\\Windows"))
+                  / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe")
+    if not powershell.is_file():
+        raise UpdateBlocked("trusted_powershell_unavailable")
+    environment = os.environ.copy()
+    environment["DESKTOP_UPDATE_SHA"] = release.sha
+    try:
+        subprocess.Popen(
+            [str(powershell), "-NoProfile", "-NonInteractive",
+             "-ExecutionPolicy", "Bypass", "-File", str(helper),
+             "-Source", str(executable), "-Target", str(current),
+             "-Digest", release.digest, "-OldDigest", old_digest,
+             "-OldPid", str(os.getpid())],
+            close_fds=True, env=environment,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except OSError as exc:
+        raise UpdateBlocked("verified_updater_launch_failed") from exc
+    return "VERIFIED_MANAGER_UPDATE_HANDOFF"
+ -or
+    (Get-FileHash -LiteralPath $targetFile -Algorithm SHA256).Hash.ToLowerInvariant() -ne $OldDigest) {
+  throw 'EXISTING_MANAGER_CHANGED_DURING_UPDATE'
 }
 $backup = Join-Path ([IO.Path]::GetDirectoryName($targetFile)) ('BybitScanner-VPS-Manager.previous-' + [guid]::NewGuid().ToString('N') + '.exe')
 Move-Item -LiteralPath $targetFile -Destination $backup -ErrorAction Stop
