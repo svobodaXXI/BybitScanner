@@ -32,6 +32,7 @@ from typing import Callable, Mapping, Protocol
 import mirror_retest_robot as mirror
 import robot_entry_limit
 import robot_l_shape
+import robot_impulse
 import robot_protection
 import robot_state_machine
 from robot_failure_diagnostics import record_robot_incident
@@ -562,6 +563,9 @@ class RobotBreakoutMonitor:
         ):
             return self._advance_box_entry_ready(record)
 
+        if record.signal_snapshot.get("pattern") == robot_impulse.PATTERN:
+            return self._advance_impulse(record)
+
         if robot_l_shape.is_l_shape_snapshot(record.signal_snapshot):
             return self._advance_l_shape(record)
 
@@ -628,6 +632,156 @@ class RobotBreakoutMonitor:
             return False
 
         self._persist_state(record, new_state)
+        return True
+
+    def _advance_impulse(self, record: RobotCandidateRecord) -> bool:
+        """One closed-M1, opt-in impulse through the existing PAPER owner.
+
+        Uses the same per-symbol/epoch gates, working-volume LIMIT, single
+        canonical fill attestation, STOP/TAKE and Diary as other Robot entries.
+        Never promotes a raw publicTrade observation into source authority.
+        """
+        if record.robot_state is None:
+            # Admission normally freezes this state in the same transaction.
+            # A legacy/malformed candidate cannot silently gain execution.
+            self._invalidate_unsupported_pattern(
+                record, robot_impulse.ImpulseRobotError("impulse state is missing"),
+            )
+            return True
+
+        state = record.robot_state
+        terms = robot_impulse.frozen_terms(record.signal_snapshot)
+        if (state.get("state_version") != robot_impulse.STATE_VERSION
+                or state.get("phase") != robot_impulse.ENTRY_PHASE
+                or state.get("pattern") != robot_impulse.PATTERN
+                or state.get("direction") != terms.direction
+                or state.get("signal_close_ms") != terms.closed_at_ms):
+            raise RobotBreakoutMonitorError("frozen Impulse state/identity conflict")
+        execution = dict(state.get("execution") or {})
+        if "limit_order_id" not in execution:
+            if not robot_impulse.paper_enabled():
+                return False
+            now = self._now_ms()
+            age = now - terms.closed_at_ms
+            if age > robot_impulse.MAX_SIGNAL_AGE_MS:
+                self._invalidate_pre_entry_candidate(
+                    record, reason="IMPULSE_SIGNAL_STALE_BEFORE_ENTRY",
+                )
+                return True
+            if age < 0:
+                return False
+            candle = self._get_closed_candle(record.symbol.value)
+            if not isinstance(candle, Mapping):
+                return False
+            # A causal closed-M1 print observation cannot be substituted by
+            # a different or still-forming Scanner candle.
+            if (candle.get("time_ms") != terms.closed_at_ms - 60_000
+                    or Decimal(str(candle.get("close"))) != terms.closed_price):
+                return False
+            new_entry_admitted, terminal_stop = self._read_admission_gate()
+            if not new_entry_admitted:
+                if terminal_stop:
+                    self._invalidate_pre_entry_candidate(
+                        record, reason="ROBOT_STOPPED before Impulse LIMIT",
+                    )
+                    return True
+                return False
+            if self._active_other_owner_candidate_ids(record):
+                return False
+            block_reason = self._pre_entry_block_reason(record)
+            if block_reason is not None:
+                self._invalidate_pre_entry_candidate(record, reason=block_reason)
+                return True
+            request = robot_impulse.frozen_entry_request(
+                record.candidate_id, record.signal_snapshot,
+                tick_size=self._tick_size_provider(record.symbol.value),
+            )
+            # The canonical LimitCommandRequest is checked and sized by the
+            # existing PAPER runtime, not a new Impulse execution engine.
+            if not self._arm_entry_coverage(record.symbol.value):
+                return False
+            result = self._action_executor.create_limit(request)
+            order_id = getattr(result, "order_id", None)
+            if not order_id:
+                self._release_entry_coverage(record.symbol.value)
+                return False
+            execution["limit_order_id"] = order_id
+            execution["impulse_signal_close_ms"] = terms.closed_at_ms
+            self._persist_execution(record, execution)
+            return True
+
+        order = self._store().get_paper_limit(
+            execution["limit_order_id"], self._account_id,
+        )
+        if order is None or order.quantity <= 0:
+            return False
+        filled_fraction = min(order.filled_quantity / order.quantity, Decimal("1"))
+        inactive = order.status in INACTIVE_LIMIT_STATUSES
+
+        if filled_fraction <= 0:
+            block_reason = self._pre_entry_block_reason(
+                record, allowed_limit_order_id=execution["limit_order_id"],
+            )
+            new_entry_admitted, terminal_stop = self._read_admission_gate()
+            expired = self._now_ms() - terms.closed_at_ms > robot_impulse.MAX_RESTING_MS
+            disabled = not robot_impulse.paper_enabled()
+            if block_reason is not None or not new_entry_admitted or expired or disabled:
+                if not inactive:
+                    result = self._action_executor.cancel_limit(
+                        PaperLimitCancelRequest(
+                            _cancel_blocked_entry_action_id(record.candidate_id),
+                            record.symbol.value, execution["limit_order_id"],
+                        ),
+                    )
+                    if getattr(result, "status", None) is not CommandResultStatus.COMPLETED:
+                        return False
+                self._invalidate_pre_entry_candidate(
+                    record, reason=(
+                        block_reason or
+                        ("ROBOT_STOPPED before Impulse fill" if terminal_stop
+                         else "IMPULSE_ENTRY_NO_LONGER_ADMITTED")
+                    ),
+                )
+                return True
+            if inactive:
+                self._invalidate_pre_entry_candidate(
+                    record, reason="IMPULSE_LIMIT_INACTIVE_BEFORE_FILL",
+                )
+                return True
+            record = self._confirm_entry_admission(record, execution)
+            if match := self._match_resting_orders:
+                match(record.symbol.value)
+                order = self._store().get_paper_limit(
+                    execution["limit_order_id"], self._account_id,
+                )
+                if order is None or order.quantity <= 0:
+                    return False
+                filled_fraction = min(order.filled_quantity / order.quantity, Decimal("1"))
+                inactive = order.status in INACTIVE_LIMIT_STATUSES
+            if filled_fraction <= 0:
+                return False
+
+        if not inactive:
+            result = self._action_executor.cancel_limit(
+                PaperLimitCancelRequest(
+                    _cancel_partial_remainder_action_id(record.candidate_id),
+                    record.symbol.value, execution["limit_order_id"],
+                ),
+            )
+            if getattr(result, "status", None) is not CommandResultStatus.COMPLETED:
+                return False
+            refreshed = self._store().get_paper_limit(
+                execution["limit_order_id"], self._account_id,
+            )
+            if refreshed is not None:
+                order = refreshed
+                filled_fraction = min(order.filled_quantity / order.quantity, Decimal("1"))
+        if filled_fraction <= 0:
+            return True
+        fresh = self._store().get_robot_candidate(record.candidate_id) or record
+        self._finalize_trade(
+            fresh, execution, entry_path="LIMIT", actual_wv=filled_fraction,
+        )
         return True
 
     def _advance_l_shape(self, record: RobotCandidateRecord) -> bool:
@@ -1926,7 +2080,13 @@ class RobotBreakoutMonitor:
         average_entry = entry_evidence.average_entry
         try:
             payload = self._candidate_payload(record)
-            if robot_l_shape.is_l_shape_snapshot(record.signal_snapshot):
+            if record.signal_snapshot.get("pattern") == robot_impulse.PATTERN:
+                plan = robot_impulse.protection_after_fill(
+                    record.candidate_id, record.signal_snapshot,
+                    average_entry=average_entry,
+                    tick_size=self._tick_size_provider(record.symbol.value),
+                )
+            elif robot_l_shape.is_l_shape_snapshot(record.signal_snapshot):
                 plan = robot_protection.build_l_shape_protection_plan(
                     payload,
                     record.robot_state,
