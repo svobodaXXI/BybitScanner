@@ -1,8 +1,8 @@
 """PAPER-only IMPULSE_FLOW terms for the existing Scanner -> Robot owner path.
 
-This module neither subscribes to market data nor executes orders. A future
-Scanner producer must prove a full, causally available trade tape; the existing
-bounded publicTrade observer explicitly CANNOT make that assertion.
+This module neither subscribes to market data nor executes orders. Source
+completeness is limited to two independently certified closed M1 minutes:
+live publicTrade continuity remains UNPROVEN outside that bounded window.
 """
 from __future__ import annotations
 
@@ -60,11 +60,12 @@ class FrozenImpulseTerms:
 
 
 def frozen_terms(snapshot: Mapping[str, Any]) -> FrozenImpulseTerms:
-    """Validate an immutable, *independently attested* closed-M1 impulse.
+    """Validate the frozen output of the trusted two-minute Scanner producer.
 
-    These fields are not themselves an attestation. Only an approved Scanner
-    producer with independently proven trade completeness may create one.
-    A raw publicTrade observation or a REST/M1 parity audit is not eligible.
+    Source claims alone grant no authority: the in-process producer must
+    certify BOTH closed minutes against recent-trade and official kline
+    identities, then record the true post-fetch decision time. Bybit seq
+    does not prove continuous feed delivery.
     """
     if not isinstance(snapshot, Mapping) or snapshot.get("pattern") != PATTERN:
         raise ImpulseRobotError("frozen IMPULSE_FLOW snapshot required")
@@ -74,7 +75,8 @@ def frozen_terms(snapshot: Mapping[str, Any]) -> FrozenImpulseTerms:
         raise ImpulseRobotError("closed M1 Robot handoff is unavailable")
     source = snapshot.get("impulse_source")
     if (not isinstance(source, Mapping)
-            or source.get("kind") != "GAP_FREE_AUTHENTICATED_TRADE_TAPE"
+            or source.get("kind") != "BYBIT_TRIPLE_CLOSED_M1_CERTIFIED"
+            or source.get("scope") != "TWO_CLOSED_M1"
             or source.get("source_complete") is not True
             or source.get("receipt_cutoff_proven") is not True
             or source.get("transport_generation_proven") is not True):
@@ -84,19 +86,22 @@ def frozen_terms(snapshot: Mapping[str, Any]) -> FrozenImpulseTerms:
         raise ImpulseRobotError("frozen impulse signal is missing")
     symbol = snapshot.get("symbol")
     direction = data.get("direction")
-    close_ms = data.get("known_at_ms")
+    close_ms = source.get("closed_at_ms")
+    decided_ms = data.get("known_at_ms")
     if (not isinstance(symbol, str) or not symbol.endswith("USDT")
             or symbol != symbol.upper()
             or direction not in ("LONG", "SHORT")
-            or type(close_ms) is not int or close_ms <= 0 or close_ms % 60_000):
+            or type(close_ms) is not int or close_ms <= 0 or close_ms % 60_000
+            or type(decided_ms) is not int or not
+            close_ms <= decided_ms <= close_ms + MAX_SIGNAL_AGE_MS):
         raise ImpulseRobotError("impulse identity, direction or M1 close is invalid")
     price = _decimal(data.get("closed_price"), "closed_price")
     extreme = _decimal(data.get("structural_extreme"), "structural_extreme")
     if ((direction == "LONG" and extreme >= price)
             or (direction == "SHORT" and extreme <= price)):
         raise ImpulseRobotError("frozen structural STOP is not adverse to entry")
-    if source.get("decision_ms") != close_ms:
-        raise ImpulseRobotError("source close/decision time differs")
+    if source.get("decision_ms") != decided_ms:
+        raise ImpulseRobotError("source proof/decision time differs")
     return FrozenImpulseTerms(symbol, direction, close_ms, price, extreme)
 
 
