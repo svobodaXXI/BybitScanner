@@ -364,3 +364,45 @@ def audit_closed_m1_trade_parity(
         status="EXACT_CLOSED_M1_AGGREGATE_PARITY",
         matched_prints=len(selected), known_at_ms=observed_at_ms,
     )
+
+
+def audit_closed_m1_triple_parity(
+    snapshot: object, recent_trade_response: object,
+    kline_response: object, *, start_ms: int, observed_at_ms: int,
+) -> ClosedMinuteTradeParity:
+    """Corroborate a past minute against BOTH REST executions and M1 totals.
+
+    Recent-trade must contain the full bracketed interval; closed M1 must
+    exactly match observed OHLC, base volume and quote turnover. The REST
+    page must be current after minute close. This verifies a *bounded
+    comparison of provided sources*, not continuous source delivery,
+    authenticity of untrusted payloads or permission to trade.
+
+    Both endpoints are caller-supplied: this function performs no network
+    access, side effects, background polling or Scanner/Robot actions.
+    """
+    unknown = ClosedMinuteTradeParity("UNPROVEN")
+    kline = audit_closed_m1_trade_parity(
+        snapshot, kline_response,
+        start_ms=start_ms, observed_at_ms=observed_at_ms,
+    )
+    if kline.status != "EXACT_CLOSED_M1_AGGREGATE_PARITY":
+        return unknown
+    rest = audit_recent_trade_overlap(
+        snapshot, recent_trade_response,
+        start_ms=start_ms, end_ms=start_ms + 60_000,
+    )
+    if (rest.status != "EXACT_OVERLAP_MATCH"
+            or rest.matched_count != kline.matched_prints
+            or not isinstance(recent_trade_response, dict)):
+        return unknown
+    rest_server_ms = recent_trade_response.get("time")
+    if (type(rest_server_ms) is not int
+            or not start_ms + 60_000 <= rest_server_ms <= observed_at_ms
+            or observed_at_ms - rest_server_ms > 30_000):
+        return unknown
+    return ClosedMinuteTradeParity(
+        "EXACT_CLOSED_M1_TRIPLE_PARITY",
+        matched_prints=kline.matched_prints,
+        known_at_ms=observed_at_ms,
+    )
