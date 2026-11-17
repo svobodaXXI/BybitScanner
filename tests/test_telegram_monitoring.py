@@ -732,7 +732,8 @@ class TelegramMonitoringTests(unittest.TestCase):
         fake_api = ModuleType("bybit_api")
         self.candle_requests = []
         fake_api.get_candles = (
-            lambda symbol, interval, limit: self.candle_requests.append((symbol, interval, limit))
+            lambda symbol, interval, limit, **kwargs:
+            self.candle_requests.append((symbol, interval, limit, kwargs))
             or candles
         )
         for fixture in (
@@ -816,10 +817,35 @@ class TelegramMonitoringTests(unittest.TestCase):
                 )
                 self._card_patches(view, candles=candles)
                 view, _ = monitoring._with_candles(view, now_ms=now_ms)
-                self.assertEqual(self.candle_requests, [("SAGAUSDT", str(timeframe), limit)])
+                self.assertEqual(self.candle_requests, [("SAGAUSDT", str(timeframe), limit, {})])
                 self.assertEqual(
                     "Вход раньше окна графика" in monitoring.format_position_card(view), note,
                 )
+
+    def test_closed_trade_uses_historical_exit_candles_only(self):
+        import pandas as pd
+        from dataclasses import replace
+        from decimal import Decimal
+
+        exit_ms = 1_789_760_700_000
+        now_ms = exit_ms + 60 * 60_000
+        candles = pd.DataFrame({
+            "time": [exit_ms - 5 * 60_000, exit_ms, exit_ms + 5 * 60_000],
+            "close": [0.0827, 0.0829, 0.0795],
+        })
+        view = replace(
+            self._robot_view(), is_open=False,
+            trade=SimpleNamespace(
+                entry_time_ms=exit_ms - 5 * 60_000, exit_time_ms=exit_ms,
+            ),
+        )
+        self._card_patches(view, candles=candles)
+        historical, actual = monitoring._with_candles(view, now_ms=now_ms)
+        self.assertEqual(self.candle_requests, [
+            ("SAGAUSDT", "5", 120, {"end_ms": exit_ms}),
+        ])
+        self.assertEqual(actual["time"].tolist(), [exit_ms - 5 * 60_000, exit_ms])
+        self.assertEqual(historical.last_price, Decimal("0.0829"))
 
     @patch("telegram_monitoring.render_position_chart", side_effect=RuntimeError("no candles"))
     @patch("telegram_monitoring.telegram_bot.send_photo")
@@ -951,7 +977,13 @@ class RobotLifecyclePollTests(unittest.TestCase):
         for fixture in (
             patch.object(monitoring, "LIFECYCLE_STATE_FILE", self.state_file),
             patch("telegram_monitoring.load_position_view",
-                  side_effect=lambda store, symbol, trade_id: SimpleNamespace(trade_id=trade_id)),
+                  side_effect=lambda store, symbol, trade_id: SimpleNamespace(
+                      trade_id=trade_id,
+                      is_open=next(
+                          (trade.exit_time_ms is None for trade in self.trades
+                           if trade.trade_id == trade_id), False,
+                      ),
+                  )),
         ):
             fixture.start()
             self.addCleanup(fixture.stop)
@@ -983,27 +1015,36 @@ class RobotLifecyclePollTests(unittest.TestCase):
 
     def test_open_then_close_are_sent_once_across_restart(self):
         self._poll()  # initializes the dedup file
-        self.trades = [self._trade("t1", self.INIT_MS + 1, self.INIT_MS + 2)]
-
-        self.assertEqual(self._poll(), [("OPENED", "t1"), ("CLOSED", "t1")])
+        trade = self._trade("t1", self.INIT_MS + 1)
+        self.trades = [trade]
+        self.assertEqual(self._poll(), [("OPENED", "t1")])
+        trade.exit_time_ms = self.INIT_MS + 2
+        trade.exit_reason = "STOP"
+        self.assertEqual(self._poll(), [("CLOSED", "t1")])
         self.assertEqual(self._state()["opened"], ["t1"])
         self.assertEqual(self._state()["closed"], ["t1"])
         # Restart: state is re-read from the file on every poll; nothing is re-sent.
         self.assertEqual(self._poll(now_ms=self.INIT_MS + 10**9), [])
 
-    def test_failed_open_is_retried_and_close_waits_for_it(self):
+    def test_failed_open_followed_by_close_sends_only_close(self):
         self._poll()
-        self.trades = [self._trade("t1", self.INIT_MS + 1, self.INIT_MS + 2)]
-
+        trade = self._trade("t1", self.INIT_MS + 1)
+        self.trades = [trade]
         self.assertEqual(self._poll(results=[False]), [("OPENED", "t1")])
         self.assertEqual((self._state()["opened"], self._state()["closed"]), ([], []))
-        self.assertEqual(self._poll(results=[True, True]), [("OPENED", "t1"), ("CLOSED", "t1")])
+        trade.exit_time_ms = self.INIT_MS + 2
+        trade.exit_reason = "STOP"
+        self.assertEqual(self._poll(results=[True]), [("CLOSED", "t1")])
+        self.assertEqual((self._state()["opened"], self._state()["closed"]), ([], ["t1"]))
 
     def test_failed_close_is_retried_without_resending_open(self):
         self._poll()
-        self.trades = [self._trade("t1", self.INIT_MS + 1, self.INIT_MS + 2)]
-
-        self._poll(results=[True, False])
+        trade = self._trade("t1", self.INIT_MS + 1)
+        self.trades = [trade]
+        self.assertEqual(self._poll(), [("OPENED", "t1")])
+        trade.exit_time_ms = self.INIT_MS + 2
+        trade.exit_reason = "STOP"
+        self.assertEqual(self._poll(results=[False]), [("CLOSED", "t1")])
         self.assertEqual((self._state()["opened"], self._state()["closed"]), (["t1"], []))
         self.assertEqual(self._poll(), [("CLOSED", "t1")])
 
@@ -1033,7 +1074,7 @@ class RobotLifecyclePostDeliveryTests(unittest.TestCase):
             fixture.start()
             self.addCleanup(fixture.stop)
         fake_api = ModuleType("bybit_api")
-        fake_api.get_candles = lambda symbol, interval, limit: None
+        fake_api.get_candles = lambda symbol, interval, limit, **kwargs: None
         fixture = patch.dict(sys.modules, {"bybit_api": fake_api})
         fixture.start()
         self.addCleanup(fixture.stop)

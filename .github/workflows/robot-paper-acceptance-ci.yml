@@ -96,6 +96,8 @@ on:
       - "tests/test_stop_robot_runtime.py"
       - "tests/test_runtime_launcher.py"
       - "tests/test_telegram_monitoring.py"
+      - "robot_lifecycle_posts.py"
+      - "tests/test_robot_lifecycle_posts.py"
       - "analyzer/core.py"
       - "notification.py"
       - "tests/test_robot_breakout_monitor_admission_catchup.py"
@@ -315,6 +317,7 @@ jobs:
           tests.test_stop_robot_runtime
           tests.test_runtime_launcher
           tests.test_telegram_monitoring
+          tests.test_robot_lifecycle_posts
 
       - name: Run account-and-controller scoped Diary HTTP acceptance
         run: python -m pytest -q terminal/diary/test_scoped_statistics_http_route.py tests/test_terminal_mode_account_preference.py

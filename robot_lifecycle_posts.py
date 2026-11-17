@@ -88,7 +88,12 @@ def collect_new_lifecycle_events(store, state: LifecycleState) -> list[Lifecycle
     events = []
     for trade in store.load_robot_trades_with_events_since(PAPER_ACCOUNT_ID, since):
         symbol = trade.symbol.value
-        if trade.entry_time_ms >= since and trade.trade_id not in state.opened:
+        # An OPENED event is only meaningful while the trade is still open.
+        # A trade that entered and exited between polls needs only its CLOSED
+        # notification; otherwise a closed snapshot appears under "Сделка открыта".
+        if (trade.exit_time_ms is None
+                and trade.entry_time_ms >= since
+                and trade.trade_id not in state.opened):
             events.append(LifecycleEvent(EVENT_OPENED, trade.trade_id, symbol, trade.entry_time_ms))
         if (
             trade.exit_time_ms is not None

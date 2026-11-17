@@ -38,8 +38,8 @@ import telegram_runtime_intent
 from telegram_labels import SCANNER_EMOJI, ROBOT_EMOJI
 from tools import stop_robot_runtime
 from robot_lifecycle_posts import (
-    build_lifecycle_keyboard, collect_new_lifecycle_events, format_lifecycle_caption,
-    load_lifecycle_state, mark_notified, save_lifecycle_state,
+    EVENT_OPENED, build_lifecycle_keyboard, collect_new_lifecycle_events,
+    format_lifecycle_caption, load_lifecycle_state, mark_notified, save_lifecycle_state,
 )
 from robot_position_chart import render_position_chart
 from robot_position_view import (
@@ -338,6 +338,10 @@ def _with_candles(view, now_ms: int | None = None):
     """One candle request per chart, shared by the position card and lifecycle posts."""
 
     now_ms = int(time.time() * 1000) if now_ms is None else now_ms
+    # Closed lifecycle cards are historical: do not show the market movement
+    # after execution as if it belonged to this trade.
+    exit_ms = view.exit_time_ms if not view.is_open else None
+    as_of_ms = min(now_ms, exit_ms) if exit_ms is not None else now_ms
     minutes = view.chart_candle_minutes
     # Include older same-campaign filled executions when the exchange candle
     # window can reach them; never fetch future or unrelated-symbol history.
@@ -347,12 +351,21 @@ def _with_candles(view, now_ms: int | None = None):
                       if m.filled and (earliest is None or m.time_ms < earliest)]
         if historical:
             earliest = min(historical)
-    limit, entry_before_chart = chart_candle_limit(earliest, now_ms, minutes)
+    limit, entry_before_chart = chart_candle_limit(earliest, as_of_ms, minutes)
     candles = None
     try:
         import bybit_api
 
-        candles = bybit_api.get_candles(view.symbol, str(minutes), limit)
+        if exit_ms is None:
+            candles = bybit_api.get_candles(view.symbol, str(minutes), limit)
+        else:
+            candles = bybit_api.get_candles(
+                view.symbol, str(minutes), limit, end_ms=as_of_ms,
+            )
+            # Do not trust a provider returning post-exit candles despite the
+            # historical end bound; never silently redraw later price action.
+            if candles is not None and "time" in candles.columns:
+                candles = candles.loc[candles["time"] <= as_of_ms].copy()
         if candles is not None and len(candles):
             view = replace(
                 with_last_price(view, candles["close"].iloc[-1]),
@@ -420,6 +433,14 @@ def poll_lifecycle_once(now_ms: int | None = None) -> None:
         ]
     blocked = set()
     for event, view in pending:
+        # The trade may close between event selection and this read. Never
+        # render a durable CLOSED view under a stale OPENED notification.
+        # Mark only that obsolete OPENED notification; the CLOSED event remains
+        # eligible (including on the next poll after a concurrent close).
+        if event.kind == EVENT_OPENED and view is not None and not view.is_open:
+            mark_notified(state, event)
+            save_lifecycle_state(LIFECYCLE_STATE_FILE, state)
+            continue
         # "закрыта" never goes out before a failed "открыта" of the same trade.
         if event.trade_id in blocked:
             continue
