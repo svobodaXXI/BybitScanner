@@ -67,6 +67,11 @@ def find_asset(kind: str, *, opener=urlopen) -> ReleaseAsset:
     if not isinstance(sha, str) or not SHA.fullmatch(sha):
         raise UpdateBlocked("stable_head_unproven")
     tag = "desktop-" + sha
+    tag_ref = _json(API + "/git/ref/tags/" + tag, opener=opener)
+    ref_object = tag_ref.get("object")
+    if (not isinstance(ref_object, dict) or ref_object.get("type") != "commit"
+            or ref_object.get("sha") != sha):
+        raise UpdateBlocked("release_tag_commit_mismatch")
     release = _json(API + "/releases/tags/" + tag, opener=opener)
     if release.get("tag_name") != tag or release.get("draft") is not False or release.get("prerelease") is not False:
         raise UpdateBlocked("release_tag_untrusted")
