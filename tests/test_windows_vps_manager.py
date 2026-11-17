@@ -841,27 +841,33 @@ class TestWindowsVpsManager(unittest.TestCase):
             self.assertEqual(cmd[-2], "root@83.217.213.181")
             self.assertNotIn(" submit ", cmd[-1])
 
-    def test_pc_autoroutes_alias_without_laptop_identity(self):
+    def test_pc_uses_verified_direct_route_even_with_stale_alias(self):
         with tempfile.TemporaryDirectory() as home:
             root = Path(home)
             (root / ".ssh").mkdir()
             (root / ".ssh" / "config").write_text(
-                "Host bybitscanner-vps\n  HostName 212.193.14.116\n", encoding="ascii")
+                "Host bybitscanner-vps\n  HostName 212.193.14.116\n",
+                encoding="ascii")
+            key = root / ".ssh" / "bybitscanner_vdsina_gateway_20261030"
+            key.write_text("test placeholder", encoding="ascii")
             with (patch.dict("tools.windows_vps_manager.os.environ",
                              {"USERPROFILE": r"C:\Users\svobo"}),
                   patch("tools.windows_vps_manager.Path.home", return_value=root)):
-                self.assertEqual(preferred_route(), ("bybitscanner-vps", ""))
-                self.assertEqual(preferred_key("bybitscanner-vps", ""), "")
-            # Direct fallback is used only when the alias is genuinely absent.
-            (root / ".ssh" / "config").unlink()
-            with (patch.dict("tools.windows_vps_manager.os.environ",
-                             {"USERPROFILE": r"C:\Users\svobo"}),
-                  patch("tools.windows_vps_manager.Path.home", return_value=root)):
-                self.assertEqual(preferred_route(), ("212.193.14.116", "root"))
-                self.assertEqual(
-                    preferred_key("212.193.14.116", "root"),
-                    str(root / ".ssh" / "bybitscanner_vdsina_gateway_20261030"),
-                )
+                self.assertEqual(preferred_route(), ("83.217.213.181", "root"))
+                self.assertEqual(preferred_key("83.217.213.181", "root"),
+                                 str(key))
+                self.assertEqual(preferred_key("212.193.14.116", "root"), "")
+                cmd = control_ssh_command(
+                    *preferred_route(), str(key), "list")
+                self.assertEqual(cmd[:3], ["ssh", "-F", "none"])
+                self.assertEqual(cmd[-2], "root@83.217.213.181")
+                self.assertEqual(cmd[cmd.index("-i") + 1], str(key))
+                self.assertIn("StrictHostKeyChecking=yes", cmd)
+                self.assertIn("BatchMode=yes", cmd)
+                self.assertNotIn("bybitscanner-vps", cmd)
+            # No edit/delete of existing user SSH config.
+            self.assertIn("HostName 212.193.14.116",
+                          (root / ".ssh" / "config").read_text())
 
     def test_preflight_is_single_read_only_command_not_runtime_acceptance(self):
         cmd = control_ssh_command("bybitscanner-vps", "", "", "preflight")
@@ -952,15 +958,23 @@ class TestWindowsVpsManager(unittest.TestCase):
         self.assertIn("PREFLIGHT_FAILURE_CLASS=SSH_AUTH_REJECTED", output)
         self.assertNotIn("secret", output)
 
-    def test_existing_alias_detected_without_rewriting_ssh_config(self):
-        with tempfile.TemporaryDirectory() as temp:
-            config = Path(temp) / ".ssh"
-            config.mkdir()
-            (config / "config").write_text(
-                "Host bybitscanner-vps\n    HostName 212.193.14.116\n"
-                "    User root\n", encoding="utf-8")
-            with patch("tools.windows_vps_manager.Path.home", return_value=Path(temp)):
+    def test_unknown_profile_does_not_inherit_pc_or_laptop_key(self):
+        with tempfile.TemporaryDirectory() as home:
+            root = Path(home)
+            (root / ".ssh").mkdir()
+            (root / ".ssh" / "config").write_text(
+                "Host bybitscanner-vps\n  HostName 212.193.14.116\n",
+                encoding="ascii")
+            with (patch.dict("tools.windows_vps_manager.os.environ",
+                             {"USERPROFILE": r"C:\Users\unknown"},
+                             clear=True),
+                  patch("tools.windows_vps_manager.Path.home",
+                        return_value=root)):
                 self.assertEqual(preferred_route(), ("bybitscanner-vps", ""))
+                self.assertEqual(preferred_key("83.217.213.181", "root"), "")
+                self.assertEqual(preferred_key("212.193.14.116", "root"), "")
+
+
 
 
 if __name__ == "__main__":
