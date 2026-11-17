@@ -173,7 +173,7 @@ class SimulatorLaunchRelay:
             return {"request_id": rid, "state": "QUEUED"}
 
     def poll(self, *, device: str, token: str,
-             viewer_running: bool = False) -> dict[str, str]:
+             viewer_running: bool = False) -> dict[str, str | int]:
         if type(viewer_running) is not bool:
             raise RelayInvalid("invalid_local_viewer_heartbeat")
         if not self._authenticated(device, token):
