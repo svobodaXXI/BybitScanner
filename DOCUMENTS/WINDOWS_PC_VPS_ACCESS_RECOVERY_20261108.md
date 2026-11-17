@@ -18,6 +18,41 @@ ssh -F none -i "$env:USERPROFILE\.ssh\bybitscanner_vdsina_gateway_20261030" -o I
 
 **Границы:** не менять Happ/маршрутизацию/SSH config/host keys/ключи/sshd автоматически; секреты не публиковать. Рабочий SSH не разрешает VPS update, STOP/START, PAPER, Robot/Scanner, admission или LIVE. Сопряжение `owner-pc` остаётся `UNPROVEN`; одноразовый `provision-owner-pc` не повторять без отдельного доказанного protected preflight. При отключённом Happ использовать отдельно подтверждённый маршрут §1, без смешения условий приёмки.
 
+
+## 0.1. ПРОВЕРЕННАЯ СХЕМА АДМИНИСТРИРОВАНИЯ: PowerShell → монолит → UUID → факт (17.11.2026)
+
+**Назначение:** использовать уже существующий \`tools.vps_owner_control\` → \`tools.paper_maintenance\` с основного ПК без Codex, лишней проверки \`echo SSH_OK\` перед операцией, второго контроллера или ручного \`systemctl\`. Это **проверенный сценарий одного релиза**, а не обещание стабильности сети или универсальное разрешение на будущие изменения.
+
+**Фактически подтверждённый цикл владельца:**
+
+1. На основном ПК в обычном PowerShell при Happ «Основной 1» ON маршрут §0 вернул \`SSH_OK\`, \`v3286418.hosted-by-vdsina.ru\`, \`SSH_EXIT_CODE=0\`. Между успешными соединениями были также \`SSH banner exchange timeout\`; одно успешное подключение не сохраняет следующее.
+2. После отдельных разрешений владельца **один** \`submit update-and-start\` на exact SHA \`c6f6990abd68e8ed631fbd2579f4833866871741\` вернул \`SUBMISSION=ACCEPTED\`, \`SSH_EXIT_CODE=0\`, \`REQUEST_ID=dc78925257364d8592127838f517d7d2\`. Это подтверждало только приём операции systemd, не завершение.
+3. Более поздний **read-only** запрос по **тому же UUID** вернул \`STATUS=FINISHED_OK\`, \`RESULT=success\`, \`EXIT_CODE=0\`, \`DESCRIPTION=BybitScanner update-and-start c6f6990abd68 origin=owner-pc\`; \`tools.vps_release_identity verify\` вернул \`VERIFIED: tracked release contents and approved manifest match c6f6990abd68e8ed631fbd2579f4833866871741\`; SSH exit 0.
+4. Telegram отдельно показал Scanner \`hunter\` с сигналом и Robot \`Запущен / Готов\`, 3 кандидата, 0 открытых позиций на момент скриншота. Это owner-observed запуск, **не** доказательство исполнения fee-aware BE на конкретной сделке и не замена защиты на уровне VPS.
+
+**Повторно используемая операция (только после самостоятельного разрешения владельца и для нового exact SHA):** в §0 Happ остаётся «Основной 1», IP/ключ/alias не перебирать. Один SSH-вызов сразу передаёт задачу защищённому монолиту; он проверяет обязательные preflight/gates и при недоказанной безопасности блокируется. \`$rid\` создаётся **один раз для одной новой операции** и должен быть сохранён с её результатом. Исторический UUID выше **не переотправлять**.
+
+```powershell
+$sha = '<OWNER_APPROVED_EXACT_40_HEX_SHA>'
+$rid = [guid]::NewGuid().ToString('N')
+$remote = "cd /opt/BybitScanner && /opt/BybitScanner/venv/bin/python -m tools.vps_owner_control submit update-and-start $sha --request-id $rid --origin owner-pc"
+ssh -F none -i "$env:USERPROFILE\.ssh\bybitscanner_vdsina_gateway_20261030" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 root@212.193.14.116 $remote
+"REQUEST_ID=$rid"
+"SSH_EXIT_CODE=$LASTEXITCODE"
+```
+
+**Проверка по сохранённому UUID — только чтение; это именно команда, давшая успешную приёмку 17.11.2026:** отдельный SSH-вызов может завершиться timeout, пока уже принятая задача продолжает работать на VPS. Если \`SUBMISSION=ACCEPTED\` или результат отправки \`UNPROVEN\`, **не повторять \`submit\` ни с тем же, ни с новым UUID**. Запрашивать только \`status\` существующего UUID, без циклов переподключения. Результат \`FINISHED_OK\` + exact \`VERIFIED\` SHA + независимые PAPER/Robot/Scanner/protection postconditions — основа итоговой приёмки; \`SUBMISSION=ACCEPTED\` или один \`SSH_EXIT_CODE=0\` недостаточны.
+
+```powershell
+$rid = 'dc78925257364d8592127838f517d7d2' # исторический успешный UUID; для новой операции — её сохранённый UUID
+ssh -F none -i "$env:USERPROFILE\.ssh\bybitscanner_vdsina_gateway_20261030" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 root@212.193.14.116 'cd /opt/BybitScanner && /opt/BybitScanner/venv/bin/python -m tools.vps_owner_control status dc78925257364d8592127838f517d7d2; /opt/BybitScanner/venv/bin/python -m tools.vps_release_identity verify'
+"SSH_EXIT_CODE=$LASTEXITCODE"
+```
+
+**Чтение результатов:** для исторической команды проверить **оба** отдельных текста \`STATUS=FINISHED_OK\` и \`VERIFIED: ... <ожидаемый SHA>\`; итоговый \`SSH_EXIT_CODE=0\` относится к последнему удалённому процессу и сам по себе не доказывает оба этапа. Для будущего UUID заменить его **во всех местах** read-only команды. \`STATUS=FAILED/UNPROVEN/RUNNING\` не равен успешному запуску. Если сеть снова недоступна, сохранить UUID и остановиться без нового \`submit\`, смены IP/VPN/ключей, ручных SQL/сервисов или bypass Admission/STOP/TAKE.
+
+**Позже встроить в существующий VPS Manager/монолит (не реализовано этой записью):** одна операция с зафиксированным SHA и durable UUID, выбор **уже документированного** маршрута §0 или §1 по фактическому состоянию Happ, одноразовый submit, ограниченные read-only status-запросы по UUID, проверка установленного release и защищённых postconditions. Использовать существующий server-side \`tools.vps_owner_control\`, **не** создавать второй сервис/контроллер/кнопку для BE; не обещать автоматическое исправление неизвестной SSH-причины. Любые код/доставка/трейдинг — отдельная задача с обычными разрешениями и safety gates.
+
 ## 1. ГЛАВНЫЙ, АКТУАЛЬНЫЙ, РАБОЧИЙ — основной ПК Windows (17.11.2026)
 
 **Состояние: VERIFIED SSH_OK (17.11.2026) при Happ/VPN OFF; при Happ/VPN ON см. более новую приёмку §0.** Устройство: основной ПК, пользователь Windows \`C:\Users\svobo\`, обычный PowerShell. **Happ/VPN выключен для этой подтверждённой сессии** (условие подтверждённой приёмки, не утверждение о невозможности других режимов). Цель: \`root@83.217.213.181\`. Существующий ключ **именно основного ПК**, а не ноутбука: \`$env:USERPROFILE\.ssh\bybitscanner_vdsina_gateway_20261030\`.
@@ -110,4 +145,4 @@ Termius на телефоне использовался владельцем д
 - Если позднее при SSH выполнении удалённой команды появится \`PAPER_unit_not_stopped\`, необходима отдельная защищённая проверка четырёх units, release identity и receipts; это другая проблема, которую нельзя исправлять переключением SSH/IP или повтором STOP. Ранее наблюдавшиеся \`STOP\` receipts и SHA в старых инцидентах не являются текущей приёмкой.
 - Корректный код возврата SSH должен быть \`0\` и ожидаемый \`SSH_OK\`. Нет прав на PAPER/DB/LIVE от одного успешного соединения. Запрещены SQL, обход Admission/STOP/TAKE, правки env вручную, слепой \`provision-owner-pc\`, изменение SSH fingerprints и публикация private key.
 
-**При любых противоречиях с другими документами об SSH:** текущая команда/статус **§1** имеют приоритет. Исторические разделы в иных файлах — архив причин/ошибок, **не альтернативные способы входа**.
+**При любых противоречиях с другими документами об SSH:** действующий раздел **§0 при Happ ON / §1 при Happ OFF** имеет приоритет. Исторические разделы в иных файлах — архив причин/ошибок, **не альтернативные способы входа**.
