@@ -328,6 +328,49 @@ def test_hub_discard_is_deferred_while_an_independent_listener_remains():
     assert context.public_orderbook.closed is True
 
 
+def test_scanner_impulse_source_status_reports_existing_contexts_only_without_orders():
+    hub = MarketDataHub(_Registry(), _context, connection_factory=lambda *args, **kwargs: None)
+    btc = hub.subscribe("BTCUSDT")
+    hub.subscribe("ONGUSDT")
+    assert btc.impulse_observation.observe({
+        "topic": "publicTrade.BTCUSDT",
+        "data": [{"i": "print1", "T": 1000, "seq": 123, "S": "Buy",
+                  "p": "100", "v": "2", "s": "BTCUSDT"}],
+    })
+    before = hub.list_contexts()
+    snapshot = hub.impulse_source_diagnostics()
+    assert snapshot["scope"] == "EXISTING_HUB_SUBSCRIPTIONS_ONLY"
+    assert snapshot["subscribed_contexts"] == 2
+    assert snapshot["reported_contexts"] == 2
+    assert snapshot["truncated"] is False
+    assert snapshot["source_complete"] is False
+    assert snapshot["trading_authorized"] is False
+    assert hub.list_contexts() == before  # no new subscriptions
+    rows = {row["symbol"]: row for row in snapshot["contexts"]}
+    assert rows["BTCUSDT"]["observed_prints"] == 1
+    assert rows["BTCUSDT"]["last_cross_sequence"] == 123
+    assert rows["BTCUSDT"]["continuity"] == "UNPROVEN"
+    assert rows["BTCUSDT"]["trading_authorized"] is False
+    assert rows["ONGUSDT"]["observed_prints"] == 0
+    assert "prints" not in rows["BTCUSDT"]  # no raw execution exposure
+    bounded = hub.impulse_source_diagnostics(limit=1)
+    assert bounded["truncated"] is True
+    assert bounded["reported_contexts"] == 1
+    for invalid in (0, 33, True):
+        try:
+            hub.impulse_source_diagnostics(limit=invalid)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("invalid context limit accepted")
+    btc.impulse_observation.mark_gap()
+    after = hub.impulse_source_diagnostics()
+    assert after["contexts"][0]["observed_prints"] == 0
+    assert after["contexts"][0]["source_generation"] == 1
+    assert after["contexts"][0]["continuity"] == "UNPROVEN"
+    hub.close()
+
+
 TESTS = (
     test_hub_uses_one_connection_for_multiple_reusable_symbol_contexts,
     test_hub_rejects_unsupported_symbol_without_creating_context,
@@ -338,6 +381,7 @@ TESTS = (
     test_symbol_context_fans_out_disconnect_boundaries,
     test_symbol_context_listener_failure_does_not_block_sibling_listener,
     test_hub_discard_is_deferred_while_an_independent_listener_remains,
+    test_scanner_impulse_source_status_reports_existing_contexts_only_without_orders,
 )
 
 
