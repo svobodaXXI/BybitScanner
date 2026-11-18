@@ -127,15 +127,51 @@ class FormatPositionCardTests(unittest.TestCase):
             realized_pnl_pct=Decimal("-2.02"), fees_costs_usdt=Decimal("0.0013"),
         )
         card = format_position_card(_view(is_open=False, trade=trade, fees_usdt=Decimal("0.0026")))
-        self.assertIn("Статус: закрыта", card)
-        self.assertIn("Выход: 0.0249 (по стопу)", card)
-        # Before fees, then entry + exit fees and (-0.05 - 0.0026) / (100 * 0.0254) * 100.
-        self.assertIn(
-            "Итог: -0.05 USDT (до комиссий), комиссии 0.0026 USDT (вход + выход), "
-            "-2.07% (после комиссий)",
-            card,
-        )
+        self.assertEqual(card.splitlines()[:3], [
+            "SAGAUSDT · LONG",
+            "Нисходящий клин",
+            "Итог: -0.0526 USDT (-2.07%) (комиссия: 0.0026 USDT)",
+        ])
+        self.assertNotIn("Статус: закрыта", card)
+        self.assertNotIn("Паттерн:", card)
+        self.assertNotIn("Выход:", card)
+        # (-0.05 - 0.0026) / (100 * 0.0254) * 100 = -2.07%.
+        self.assertIn("Итог: -0.0526 USDT (-2.07%) (комиссия: 0.0026 USDT)", card)
+        self.assertNotIn("до комиссий", card)
+        self.assertNotIn("после комиссий", card)
         self.assertNotIn("PnL:", card)
+
+    def test_closed_pattern_names_are_russian_for_every_traded_family(self):
+        translations = {
+            "Falling Wedge": "Нисходящий клин",
+            "Rising Wedge": "Восходящий клин",
+            "Triangle Compression": "Треугольник",
+            "IKIGAI_BOX": "Коробка Икигаи",
+            "L-shape": "Г-образная",
+            "Double Top": "Двойная вершина",
+            "Double Bottom": "Двойное дно",
+            "MIRROR": "Зеркало",
+        }
+        for source, label in translations.items():
+            with self.subTest(source=source):
+                view = _view(is_open=False, pattern=source,
+                             fees_usdt=Decimal("0.0026"),
+                             trade=_trade(realized_pnl_usdt=Decimal("-0.05")))
+                card = format_position_card(view).splitlines()
+                self.assertEqual(card[0], "SAGAUSDT · LONG")
+                self.assertEqual(card[1], label)
+                self.assertTrue(card[2].startswith("Итог: -0.0526 USDT"))
+                self.assertNotIn("Статус: закрыта", "\n".join(card))
+                self.assertNotIn("Паттерн:", "\n".join(card))
+
+    def test_closed_missing_fees_are_not_presented_as_net(self):
+        view = _view(is_open=False, fees_usdt=None,
+                     trade=_trade(realized_pnl_usdt=Decimal("1.25")))
+        lines = format_position_card(view).splitlines()
+        self.assertEqual(lines[:3], [
+            "SAGAUSDT · LONG", "Нисходящий клин", "Итог: — (комиссия: —)",
+        ])
+        self.assertNotIn("+1.25 USDT", "\n".join(lines))
 
     def test_caption_fits_telegram_limit(self):
         card = format_position_card(_view(pattern="X" * 2000))
@@ -305,7 +341,7 @@ class LoadPositionViewTests(unittest.TestCase):
                 self.assertEqual([(m.side, m.filled) for m in view.markers],
                                  [("Buy", True), ("Buy", True), ("Sell", True)])
                 self.assertIn(
-                    "комиссии 0.0026 USDT (вход + выход), -2.07% (после комиссий)",
+                    "Итог: -0.0526 USDT (-2.07%) (комиссия: 0.0026 USDT)",
                     format_position_card(view),
                 )
 

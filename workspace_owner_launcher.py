@@ -11,7 +11,7 @@ def request_owner_workspace_open(mode: str, symbol: str, timeframe: str,
                                  signal_id: str | None = None) -> None:
     # Do not trust callback text as a command, path or URL.
     import re
-    if mode not in ("EDITOR", "TERMINAL") or timeframe not in ALLOWED_TF:
+    if mode not in ("EDITOR", "TERMINAL", "AUTOPILOT") or timeframe not in ALLOWED_TF:
         raise ValueError("Invalid workspace target")
     if not re.fullmatch(r"[A-Z0-9]{2,32}USDT", symbol):
         raise ValueError("Invalid workspace symbol")

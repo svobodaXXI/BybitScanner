@@ -259,7 +259,7 @@ class TelegramSignalDeliveryTests(unittest.TestCase):
             .kwargs["reply_markup"]["inline_keyboard"]
         )
 
-        self.assertEqual(len(owner_keyboard), 2)
+        self.assertEqual(len(owner_keyboard), 3)
         self.assertFalse(any(
             button.get("callback_data", "").startswith("signal:source:")
             for row in owner_keyboard for button in row
@@ -269,6 +269,7 @@ class TelegramSignalDeliveryTests(unittest.TestCase):
             [
                 "📈 TradingView",
                 "📊 MetaScalp",
+                "🤖 Робот",
                 "✏️ Редактор",
                 "🖥 Терминал",
             ],
@@ -287,6 +288,10 @@ class TelegramSignalDeliveryTests(unittest.TestCase):
             keyboard = notification.build_tradingview_keyboard(
                 "HEIUSDT", "5m", include_review_actions=True,
             )["inline_keyboard"]
+            self.assertEqual(keyboard[-2][0], {
+                "text": "🤖 Робот",
+                "web_app": {"url": "https://83.217.213.181/login?mode=AUTOPILOT&symbol=HEIUSDT&timeframe=5m"},
+            })
             self.assertEqual(keyboard[-1][0], {
                 "text": "✏️ Редактор",
                 "web_app": {"url": "https://83.217.213.181/login?mode=EDITOR&symbol=HEIUSDT&timeframe=5m"},
@@ -396,10 +401,11 @@ class TelegramSignalDeliveryTests(unittest.TestCase):
         buttons = [button for row in keyboard for button in row]
         self.assertIn("🤖 Робот", [button["text"] for button in buttons])
         robot_button = next(button for button in buttons if button["text"] == "🤖 Робот")
-        self.assertEqual(
-            robot_button["callback_data"],
-            "robot:approve:candidate-ready",
-        )
+        self.assertEqual(robot_button["callback_data"], "workspace:AUTOPILOT:BTCUSDT:5m")
+        self.assertFalse(any(
+            button.get("callback_data", "").startswith("robot:approve:")
+            for button in buttons
+        ))
 
     def test_unsupported_pattern_gets_no_robot_candidate_or_button(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -432,8 +438,9 @@ class TelegramSignalDeliveryTests(unittest.TestCase):
         create_mock.assert_called_once()
         self.assertTrue(create_mock.call_args.kwargs["enabled"])
         keyboard = photo_mock.call_args.kwargs["reply_markup"]["inline_keyboard"]
-        self.assertNotIn(
-            "🤖 Робот", [button["text"] for row in keyboard for button in row],
+        self.assertIn(
+            {"text": "🤖 Робот", "callback_data": "workspace:AUTOPILOT:BTCUSDT:1m"},
+            [button for row in keyboard for button in row],
         )
 
     def test_explicit_1m_wedge_is_observational_without_robot_candidate(self):
@@ -466,7 +473,7 @@ class TelegramSignalDeliveryTests(unittest.TestCase):
                 for row in photo.call_args.kwargs["reply_markup"]["inline_keyboard"]
                 for button in row
             ]
-            self.assertNotIn("🤖 Робот", buttons)
+            self.assertIn("🤖 Робот", buttons)
 
     def test_two_non_owner_recipients_receive_only_tradingview(self):
         with tempfile.TemporaryDirectory() as directory:

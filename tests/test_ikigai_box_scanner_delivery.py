@@ -112,7 +112,7 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
             for row in photo.call_args.kwargs["reply_markup"]["inline_keyboard"]
             for button in row
         ]
-        self.assertNotIn("🤖 Робот", buttons)
+        self.assertIn("🤖 Робот", buttons)  # Navigation only; no Robot candidate action
         callbacks = [
             button.get("callback_data")
             for row in photo.call_args.kwargs["reply_markup"]["inline_keyboard"]
@@ -250,7 +250,8 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
                     callbacks = [b["callback_data"] for b in buttons if "callback_data" in b]
                     # Owner-only controls: MetaScalp plus the PC workspace launcher that
                     # replaced the review:* buttons (#589, shared build_tradingview_keyboard).
-                    self.assertEqual(callbacks, ["ms:open:TESTUSDT", "workspace:EDITOR:TESTUSDT:5m",
+                    self.assertEqual(callbacks, ["ms:open:TESTUSDT", "workspace:AUTOPILOT:TESTUSDT:5m",
+                                                 "workspace:EDITOR:TESTUSDT:5m",
                                                  "workspace:TERMINAL:TESTUSDT:5m"] if index == 0 else [])
                     self.assertTrue(any("url" in b for b in buttons))
                 saved.assert_not_called()
@@ -388,8 +389,8 @@ class IkigaiBoxOwnerRobotAdmissionTests(unittest.TestCase):
         self.assertEqual(formation["direction"], expected.direction)
         owner, guest = photo.call_args_list
         handle = "bp-" + SOURCE_ID.removeprefix("box-plan-")[:40]
-        self.assertIn(("🤖 Робот", f"robot:approve:{handle}"), _markup_callbacks(owner))
-        self.assertLessEqual(len(f"robot:approve:{handle}".encode("utf-8")), 64)
+        self.assertIn(("🤖 Робот", "workspace:AUTOPILOT:TESTUSDT:5m"), _markup_callbacks(owner))
+        self.assertLessEqual(len("workspace:AUTOPILOT:TESTUSDT:5m".encode("utf-8")), 64)
         self.assertFalse(any(
             (data or "").startswith("robot:") for _text, data in _markup_callbacks(guest)
         ))
@@ -503,7 +504,7 @@ class IkigaiBoxOwnerRobotAdmissionTests(unittest.TestCase):
         self.assertEqual(photo.call_count, 2)
         owner = photo.call_args_list[0]
         handle = "bp-" + SOURCE_ID.removeprefix("box-plan-")[:40]
-        self.assertIn(("🤖 Робот", f"robot:approve:{handle}"), _markup_callbacks(owner))
+        self.assertIn(("🤖 Робот", "workspace:AUTOPILOT:TESTUSDT:5m"), _markup_callbacks(owner))
         record, = history.values()
         self.assertNotIn("robot_plan", record)
         warn.assert_not_called()
@@ -570,7 +571,7 @@ class IkigaiBoxOwnerRobotAdmissionTests(unittest.TestCase):
         handoff.assert_not_called()
         photo.assert_called_once()
         self.assertIn(
-            ("🤖 Робот", "robot:approve:bp-" + SOURCE_ID.removeprefix("box-plan-")[:40]),
+            ("🤖 Робот", "workspace:AUTOPILOT:TESTUSDT:5m"),
             _markup_callbacks(photo.call_args),
         )
 

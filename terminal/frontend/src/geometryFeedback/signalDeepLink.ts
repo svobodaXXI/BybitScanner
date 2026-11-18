@@ -1,7 +1,7 @@
 import { CHART_TIMEFRAMES, type ChartTimeframe } from "../marketData/timeframes";
 
 export type SignalWorkspaceLink = {
-  mode: "EDITOR" | "TERMINAL";
+  mode: "EDITOR" | "TERMINAL" | "AUTOPILOT";
   symbol: string;
   timeframe: ChartTimeframe;
   signalId: string | null;
@@ -11,7 +11,7 @@ export type SignalWorkspaceLink = {
 export function parseSignalWorkspaceLink(search: string): SignalWorkspaceLink | null {
   const params = new URLSearchParams(search);
   const mode = params.get("mode");
-  if (mode !== "EDITOR" && mode !== "TERMINAL") return null;
+  if (mode !== "EDITOR" && mode !== "TERMINAL" && mode !== "AUTOPILOT") return null;
   const symbol = params.get("symbol");
   const timeframe = params.get("timeframe");
   if (!symbol || !/^[A-Z0-9]{2,32}USDT$/.test(symbol)) return null;

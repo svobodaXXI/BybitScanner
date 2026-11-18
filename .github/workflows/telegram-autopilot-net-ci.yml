@@ -1,0 +1,74 @@
+name: Telegram Autopilot navigation and closed-net cards
+
+# Offline owner-only navigation and formatting. No trading runtime, PAPER DB or Telegram credentials.
+on:
+  pull_request:
+    paths:
+      - "notification.py"
+      - "telegram_review.py"
+      - "robot_position_view.py"
+      - "workspace_ready_link.py"
+      - "workspace_owner_launcher.py"
+      - "workspace_ready_telegram.py"
+      - "tools/open_signal_workspace.ps1"
+      - "tools/workspace_ready_delivery.py"
+      - "deploy/terminal_ingress/auth_server.py"
+      - "terminal/frontend/src/geometryFeedback/signalDeepLink.*"
+      - "tests/test_telegram_delivery.py"
+      - "tests/test_telegram_robot_handoff.py"
+      - "tests/test_workspace_telegram_handoff.py"
+      - "tests/test_workspace_ready_link.py"
+      - "tests/test_robot_position_card.py"
+      - "tests/test_robot_lifecycle_posts.py"
+      - "tests/test_ikigai_box_scanner_delivery.py"
+      - ".github/workflows/telegram-autopilot-net-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  telegram-views-and-net:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install existing offline Telegram imports
+        run: >-
+          python -m pip install
+          requests==2.34.2
+          PySocks==1.7.1
+          websocket-client==1.9.0
+          pandas==3.0.5
+          numpy==2.5.1
+          matplotlib==3.11.1
+          mplfinance==0.12.10b0
+          six==1.17.0
+          pytest==9.1.1
+      - name: Navigation and closed card regressions
+        run: >-
+          python -m unittest -v
+          tests.test_telegram_delivery
+          tests.test_telegram_robot_handoff
+          tests.test_workspace_telegram_handoff
+          tests.test_workspace_ready_link
+          tests.test_robot_position_card
+          tests.test_robot_lifecycle_posts
+          tests.test_ikigai_box_scanner_delivery
+
+  frontend-deep-link:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: terminal/frontend/package-lock.json
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+        working-directory: terminal/frontend
+      - run: npx vitest run src/geometryFeedback/signalDeepLink.test.ts
+        working-directory: terminal/frontend

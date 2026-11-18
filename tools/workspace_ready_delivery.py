@@ -68,7 +68,7 @@ def deliver_if_verified(mode: str, symbol: str, timeframe: str,
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=("EDITOR", "TERMINAL"), required=True)
+    parser.add_argument("--mode", choices=("EDITOR", "TERMINAL", "AUTOPILOT"), required=True)
     parser.add_argument("--symbol", required=True)
     parser.add_argument("--timeframe", required=True)
     parser.add_argument("--signal-id", default=None)

@@ -21,7 +21,7 @@ def send_ready_workspace(token: str, owner_chat_id: str, *,
         raise ValueError("Owner Telegram identity and bot token are required")
     url = workspace_link(base_url, mode, symbol, timeframe, signal_id)
     qr_path = write_workspace_qr(url, Path(qr_directory) / f"workspace-{uuid.uuid4().hex}.png")
-    label = "Редактор" if mode == "EDITOR" else "Терминал"
+    label = {"EDITOR": "Редактор", "TERMINAL": "Терминал", "AUTOPILOT": "Автопилот"}[mode]
     markup = {"inline_keyboard": [[{"text": f"📱 Открыть {label.lower()}", "url": url}]]}
     result = send_photo(token, owner_chat_id, qr_path,
                         caption=f"✅ {label} готов — {symbol} · {timeframe}\nQR-код и ссылка открывают тот же сигнал.",

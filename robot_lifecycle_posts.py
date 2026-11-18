@@ -129,6 +129,10 @@ def format_lifecycle_caption(event: LifecycleEvent, view: PositionView) -> str:
             view.mirror_level_source, view.mirror_pattern, "first_retest",
             retest_confirmed=view.mirror_retest_confirmed,
         )
-        timeframe = view.mirror_timeframe or str(view.chart_candle_minutes)
-        return f"🪞 MIRROR · {view.symbol} · {timeframe}m\n{subtype}\n{phase}"[:CAPTION_LIMIT]
+        if event.kind == EVENT_OPENED:
+            timeframe = view.mirror_timeframe or str(view.chart_candle_minutes)
+            return f"🪞 MIRROR · {view.symbol} · {timeframe}m\n{subtype}\n{phase}"[:CAPTION_LIMIT]
+        # A closed MIRROR trade has the same exact host pattern / net economics
+        # layout as other closed trades; preserve subtype as ancillary context.
+        return f"🪞 {phase}\n\n{format_position_card(view)}\n{subtype}"[:CAPTION_LIMIT]
     return f"{ROBOT_EMOJI} {phase}\n\n{format_position_card(view)}"[:CAPTION_LIMIT]

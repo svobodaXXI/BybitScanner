@@ -167,7 +167,23 @@ class LifecycleCaptionTests(unittest.TestCase):
         self.assertEqual(format_lifecycle_caption(opened, view),
             "🪞 MIRROR · SAGAUSDT · 5m\nГоризонтальный уровень · смена роли не подтверждена\nПовторный перезаход №1")
         closed = LifecycleEvent(EVENT_CLOSED, "t1", "SAGAUSDT", 2, "STOP")
-        self.assertIn("Сделка закрыта · по стопу", format_lifecycle_caption(closed, view))
+        closed_view = replace(
+            view, is_open=False, fees_usdt=Decimal("0.0277"),
+            trade=SimpleNamespace(
+                realized_pnl_usdt=Decimal("-0.5"),
+                entry_quantity=Decimal("100"),
+                average_entry=Decimal("0.0254"),
+            ),
+        )
+        closed_caption = format_lifecycle_caption(closed, closed_view)
+        self.assertIn("Сделка закрыта · по стопу", closed_caption)
+        self.assertIn(
+            "SAGAUSDT · SHORT\nЗеркало\n"
+            "Итог: -0.5277 USDT (-20.78%) (комиссия: 0.0277 USDT)",
+            closed_caption,
+        )
+        self.assertNotIn("Статус: закрыта", closed_caption)
+        self.assertIn("Горизонтальный уровень", closed_caption)
         self.assertIn("Зеркальный уровень", format_lifecycle_caption(opened,
             replace(view, mirror_retest_confirmed=True)))
         pattern = replace(view, mirror_level_source="pattern_boundary",
@@ -183,11 +199,10 @@ class LifecycleCaptionTests(unittest.TestCase):
                 event = LifecycleEvent(EVENT_CLOSED, "t1", "SAGAUSDT", 1, reason)
                 caption = format_lifecycle_caption(event, self._view(exit_reason=reason))
                 self.assertTrue(caption.startswith(f"🤖 Сделка закрыта · {label}\n\n"))
-                self.assertIn(f"Выход: 0.0249 ({label})", caption)
+                self.assertNotIn("Выход:", caption)
                 # (-0.5 - 0.0277) / (1000 * 0.0254) * 100 = -2.08
                 self.assertIn(
-                    "Итог: -0.5 USDT (до комиссий), комиссии 0.0277 USDT (вход + выход), "
-                    "-2.08% (после комиссий)",
+                    "Итог: -0.5277 USDT (-2.08%) (комиссия: 0.0277 USDT)",
                     caption,
                 )
                 self.assertNotIn("PnL:", caption)
@@ -196,7 +211,8 @@ class LifecycleCaptionTests(unittest.TestCase):
     def test_closed_caption_without_fees(self):
         event = LifecycleEvent(EVENT_CLOSED, "t1", "SAGAUSDT", 1, "TAKE")
         caption = format_lifecycle_caption(event, self._view(fees_usdt=None))
-        self.assertIn("комиссии — (вход + выход), — (после комиссий)", caption)
+        self.assertIn("Итог: — (комиссия: —)", caption)
+        self.assertNotIn("до комиссий", caption)
 
 
 class LifecycleDeliveryRaceTests(unittest.TestCase):

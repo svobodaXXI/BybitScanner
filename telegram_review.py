@@ -200,7 +200,7 @@ def _parse_workspace_callback(data):
     if len(parts) != 4 or parts[0] != "workspace":
         return None
     _, mode, symbol, timeframe = parts
-    if mode not in ("EDITOR", "TERMINAL"):
+    if mode not in ("EDITOR", "TERMINAL", "AUTOPILOT"):
         return None
     if not re.fullmatch(r"[A-Z0-9]{2,32}USDT", symbol):
         return None
@@ -899,61 +899,11 @@ def _process_callback(
         return
 
     if parsed["kind"] == "robot":
-        try:
-            record, changed = _approve_robot_candidate(
-                callback_query,
-                parsed,
-            )
-
-            prefix = (
-                f"🤖 Сигнал принят: {record.symbol.value} ✅"
-                if changed
-                else f"🤖 Этот сигнал уже был принят ранее: {record.symbol.value} ❗"
-            )
-            _answer_callback(
-                callback_query.get("id"),
-                prefix,
-            )
-
-            print(
-                "[ROBOT CANDIDATE APPROVED]",
-                record.candidate_id,
-                record.symbol.value,
-            )
-        except RobotAdmissionRejected as exc:
-            prefix = f"{ROBOT_EMOJI} Робот: отклонено — {_robot_admission_reason_text(exc)}"
-            print(
-                "[ROBOT CANDIDATE REJECTED]",
-                exc,
-            )
-            _answer_callback(
-                callback_query.get("id"),
-                prefix,
-            )
-        except RobotCandidateNotFound as exc:
-            prefix = f"{ROBOT_EMOJI} Робот: сигнал устарел или больше не найден"
-            print(
-                "[ROBOT CANDIDATE NOT FOUND]",
-                exc,
-            )
-            _answer_callback(
-                callback_query.get("id"),
-                prefix,
-            )
-        except Exception as exc:
-            prefix = f"{ROBOT_EMOJI} Робот: ошибка сохранения"
-            print(
-                "[ROBOT CANDIDATE ERROR]",
-                exc
-            )
-            _answer_callback(
-                callback_query.get("id"),
-                prefix,
-            )
-
-        _send_robot_status_panel(
-            callback_query,
-            prefix,
+        # Old Telegram messages retain their callback payload after a release.
+        # Never admit a candidate from them: the Robot owns admission itself.
+        _answer_callback(
+            callback_query.get("id"),
+            "Эта кнопка устарела. Откройте новый сигнал → 🤖 Робот",
         )
         return
 
