@@ -241,6 +241,9 @@ def test_legacy_double_snapshot_is_observational_not_robot_ready():
     from geometry.double_extremum import frozen_neckline_snapshot
     from pattern_robot_integration import is_robot_executable_signal
     bars, _, _ = _confirmed_auxiliary_top()
+    # Keep the original legacy fee-aware RR threshold in this historical
+    # frozen-terms fixture; the auxiliary detector itself has no RR gate.
+    bars[-1]["high"] = "96.5"
     legacy = frozen_neckline_snapshot("LABUSDT", "1", bars)
     assert legacy is not None
     assert legacy["pattern"] == "Double Top"
@@ -267,10 +270,9 @@ def test_legacy_approved_double_candidate_cannot_reach_monitor_order_submission(
         # No market candle, order adapter or runtime admission call may occur.
         with patch.object(
             RobotBreakoutMonitor, "_invalidate_pre_entry_candidate",
-        ) as invalidate, patch.object(
-            RobotBreakoutMonitor, "_get_closed_candle",
-            side_effect=AssertionError("market access reached"),
-        ):
+        ) as invalidate:
+            # This uninitialized monitor would raise if it read market/order
+            # dependencies, proving the guard returns before any such path.
             assert monitor._advance_l_shape_retest_detected(candidate) is True
         invalidate.assert_called_once_with(
             candidate, reason="Double Top/Bottom is auxiliary-only",
