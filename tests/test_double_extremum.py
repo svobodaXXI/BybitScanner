@@ -312,6 +312,7 @@ def test_legacy_double_standing_limit_cancel_before_match():
     def order(status, qty):
         return SimpleNamespace(
             status=status, quantity=Decimal("1"), filled_quantity=Decimal(qty),
+            symbol=Symbol("LABUSDT"),
         )
 
     for pattern in ("Double Top", "Double Bottom"):
@@ -376,9 +377,9 @@ def test_cancelled_double_without_proven_flat_does_not_invalidate_or_match():
         store = Mock()
         store.get_paper_limit.side_effect = [
             SimpleNamespace(status="open", quantity=Decimal("1"),
-                            filled_quantity=Decimal("0")),
+                            filled_quantity=Decimal("0"), symbol=Symbol("LABUSDT")),
             SimpleNamespace(status="cancelled", quantity=Decimal("1"),
-                            filled_quantity=Decimal("0")),
+                            filled_quantity=Decimal("0"), symbol=Symbol("LABUSDT")),
         ]
         with patch.object(
             RobotBreakoutMonitor, "_store", return_value=store,
@@ -450,6 +451,38 @@ def test_cancelled_double_proof_requires_no_order_fills_trade_or_residual_exposu
         assert monitor._cancelled_legacy_double_is_inert(candidate, "legacy-limit") is False
 
 
+def test_legacy_double_cross_symbol_order_is_never_cancelled():
+    from types import SimpleNamespace
+    from unittest.mock import Mock, patch
+    from terminal.application.robot_breakout_monitor import RobotBreakoutMonitor
+    from terminal.domain.models import TradingAccountId, Symbol
+
+    monitor = object.__new__(RobotBreakoutMonitor)
+    monitor._account_id = TradingAccountId("paper")
+    monitor._match_resting_orders = Mock()
+    cancel = Mock(side_effect=AssertionError("must not cancel unrelated order"))
+    monitor._action_executor = SimpleNamespace(cancel_limit=cancel)
+    candidate = SimpleNamespace(
+        candidate_id="legacy", symbol=Symbol("LABUSDT"), status="APPROVED",
+        signal_snapshot={"pattern": "Double Top"},
+        robot_state={"phase": "RETEST_DETECTED", "execution": {"limit_order_id": "other-limit"}},
+    )
+    store = Mock()
+    store.get_paper_limit.return_value = SimpleNamespace(
+        status="open", quantity=Decimal("1"), filled_quantity=Decimal("0"),
+        symbol=Symbol("OTHERUSDT"),
+    )
+    with patch.object(
+        RobotBreakoutMonitor, "_store", return_value=store,
+    ), patch.object(
+        RobotBreakoutMonitor, "_invalidate_pre_entry_candidate",
+    ) as invalidated:
+        assert monitor._advance_l_shape_retest_detected(candidate) is False
+    cancel.assert_not_called()
+    invalidated.assert_not_called()
+    monitor._match_resting_orders.assert_not_called()
+
+
 def test_legacy_double_cancel_unknown_never_advances_or_invalidates():
     from types import SimpleNamespace
     from unittest.mock import Mock, patch
@@ -501,8 +534,8 @@ def test_legacy_double_cancel_race_preserves_actual_partial_fill():
     )
     store = Mock()
     store.get_paper_limit.side_effect = [
-        SimpleNamespace(status="open", quantity=Decimal("1"), filled_quantity=Decimal("0")),
-        SimpleNamespace(status="cancelled", quantity=Decimal("1"), filled_quantity=Decimal("0.25")),
+        SimpleNamespace(status="open", quantity=Decimal("1"), filled_quantity=Decimal("0"), symbol=Symbol("LABUSDT")),
+        SimpleNamespace(status="cancelled", quantity=Decimal("1"), filled_quantity=Decimal("0.25"), symbol=Symbol("LABUSDT")),
     ]
     store.get_robot_candidate.return_value = None
     with patch.object(
