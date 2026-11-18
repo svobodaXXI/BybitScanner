@@ -147,8 +147,10 @@ class PatternFlowObserver:
                     or context.trade_bootstrap_complete is not True):
                 continue
             before = context.impulse_observation.snapshot()
-            if (before.get("invalid_frames") != 0
-                    or before.get("generation") != context.generation):
+            # Hub SymbolContext.generation is not the publicTrade cursor.
+            # Only PublicTradeObservation's own before/after generation
+            # comparison proves absence of a reconnect during REST reads.
+            if before.get("invalid_frames") != 0:
                 continue
             try:
                 recent = self._json("/v5/market/recent-trade", params={
