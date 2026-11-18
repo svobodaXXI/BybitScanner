@@ -85,6 +85,16 @@ def load_paper_source_snapshot(
                     name: tuple(dict(row) for row in conn.execute(sql, ("paper",)).fetchall())
                     for name, sql in wedge_queries.items()
                 }
+                # Optional durable entry ownership for Box MARKET/LIMIT paths.
+                # Missing legacy tables cannot erase the independent Wedge proof.
+                try:
+                    wedge_evidence["box_entries"] = tuple(dict(row) for row in conn.execute(
+                        """SELECT trading_account_id,candidate_id,order_id,role
+                           FROM box_order_ownership WHERE trading_account_id=? AND role='ENTRY'""",
+                        ("paper",),
+                    ).fetchall())
+                except sqlite3.Error:
+                    pass
             except sqlite3.Error:
                 # Wedge is strictly optional. Missing tables/columns or
                 # unavailable supplementary rows cannot invalidate the

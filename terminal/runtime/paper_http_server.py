@@ -71,6 +71,7 @@ from terminal.diary.campaign_lineage import CampaignLineageUnproven, project_sel
 from terminal.diary.wedge_lineage import (
     WedgeLineageUnproven, attach_verified_wedge_signals, project_selected_paper_wedge,
 )
+from terminal.diary.robot_pattern_lineage import attach_verified_robot_pattern_signals
 from terminal.diary.ticker_finrez import (
     EpisodeFactsNotFound, EpisodeFactsSourceChanged,
     attach_verified_entry_notional_returns, attach_verified_episode_patterns,
@@ -3441,6 +3442,7 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                     d2_path=getattr(self.server, "diary_setup_store_path", None),
                 )
                 projection = attach_verified_wedge_signals(snapshot, projection)
+                projection = attach_verified_robot_pattern_signals(snapshot, projection)
             except (StatisticsScopeError, ValueError):
                 self._json_response(503, {"ok": False, "error": "finrez_evidence_unavailable"})
                 return

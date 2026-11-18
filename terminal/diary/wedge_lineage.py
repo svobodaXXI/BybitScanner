@@ -111,9 +111,9 @@ def project_selected_paper_wedge(
             or source_revision != snapshot.source_revision):
         _deny("wedge_paper_robot_revision_required")
     evidence = snapshot.wedge_evidence
-    if evidence is None or set(evidence) != {
+    if evidence is None or not {
         "candidates", "trades", "robot_entries", "obligations",
-    }:
+    }.issubset(evidence):
         _deny("wedge_evidence_unavailable")
     episode = _one([
         e for e in snapshot.episodes
