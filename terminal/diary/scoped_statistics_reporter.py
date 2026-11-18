@@ -71,7 +71,8 @@ def load_paper_source_snapshot(
                                  WHERE trading_account_id=?""",
                 "trades": """SELECT trading_account_id,candidate_id,trade_id,symbol,direction,
                                    pattern,source_timeframe,signal_time_ms,
-                                   entry_time_ms,exit_time_ms,exit_reason
+                                   entry_time_ms,exit_time_ms,exit_reason,
+                                   average_entry,entry_quantity,stop_price,take_price
                               FROM robot_trades WHERE trading_account_id=?""",
                 "robot_entries": """SELECT trading_account_id,order_id,origin
                                    FROM robot_entry_orders WHERE trading_account_id=?""",
