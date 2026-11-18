@@ -54,6 +54,9 @@ from typing import Any, Mapping, Sequence
 from geometry.double_extremum import (
     attach_auxiliary_reversal, build_auxiliary_reversal_evidence,
 )
+from geometry.double_extremum import (
+    attach_auxiliary_reversal, build_auxiliary_reversal_evidence,
+)
 from geometry.naked_retest import NakedRetestError, PHASE_CAMPAIGN_ACTIVE
 from mirror_levels.imbalance import detect_fvgs, replay as replay_fvg
 from mirror_levels.levels import (
@@ -467,10 +470,34 @@ def _standalone_confirmations(level: MirrorLevel, record: dict[str, Any], frames
     return found
 
 
-def _standalone_snapshot(symbol: str, terms: Mapping[str, Any]) -> dict[str, Any]:
+def _standalone_snapshot(
+    symbol: str, terms: Mapping[str, Any], *,
+    auxiliary=None, now_ms: int | None = None,
+) -> dict[str, Any]:
     timeframe = terms["source_timeframe"]
-    return {"pattern": PATTERN, "symbol": symbol, "timeframe": timeframe, "scanner_source_timeframe": timeframe,
+    host = {"pattern": PATTERN, "symbol": symbol, "timeframe": timeframe,
+            "scanner_source_timeframe": timeframe,
             "robot_handoff_ready": True, "mirror_entry": dict(terms)}
+    return attach_auxiliary_reversal(
+        host, auxiliary, now_ms=now_ms,
+    ) if now_ms is not None else host
+
+
+def _confirmed_mirror_auxiliary(
+    symbol: str, timeframe: str, rows, confirmation_close_ms: int, now_ms: int,
+):
+    """Evidence from this exact closed MIRROR confirmation, never later bars."""
+    if timeframe not in ("1", "5") or not isinstance(rows, list):
+        return None
+    prefix = [row for row in rows if row["close_time_ms"] <= confirmation_close_ms]
+    if not prefix or prefix[-1]["close_time_ms"] != confirmation_close_ms:
+        return None
+    return build_auxiliary_reversal_evidence(
+        symbol, timeframe,
+        [{"time": row["open_time_ms"], "high": row["high"],
+          "low": row["low"], "close": row["close"]} for row in prefix],
+        now_ms=now_ms,
+    )
 
 
 def _imbalance_quality(record: Mapping[str, Any], gaps, rows) -> list[dict[str, Any]]:
@@ -724,8 +751,12 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
                             "kind": item["kind"], "rejection": item["rejection"],
                             "terms": item["terms"]})
             if item["terms"] is not None and all(e["entry_id"] != entry_id for e in entries):
+                auxiliary = _confirmed_mirror_auxiliary(
+                    symbol, item["timeframe"], frames.get(item["timeframe"]),
+                    item["confirmation_close_ms"], now_ms,
+                )
                 entries.append({"entry_id": entry_id, "terms": item["terms"], "handoff": "PENDING",
-                                "candidate_id": None})
+                                "candidate_id": None, "auxiliary_reversal": auxiliary})
         if (record["lifecycle"] == LIFECYCLE_TRACKING and record["status"] == STATUS_WAITING
                 and level.anchors[-1][0] < latest_close - WAITING_EXPIRY_CANDLES * step):
             record.update(lifecycle=LIFECYCLE_REJECTED, rejection="expired_before_breakout",
@@ -786,7 +817,10 @@ def _hand_off_standalone_entries(
     for entry in state.get("standalone_entries") or ():
         if entry.get("handoff") != "PENDING":
             continue
-        snapshot = _standalone_snapshot(symbol, entry["terms"])
+        snapshot = _standalone_snapshot(
+            symbol, entry["terms"], auxiliary=entry.get("auxiliary_reversal"),
+            now_ms=int(time.time() * 1000),
+        )
         timeframe = entry["terms"]["source_timeframe"]
         auxiliary = (reversal_by_tf or {}).get(timeframe)
         confirmation = entry["terms"].get("confirmation")
