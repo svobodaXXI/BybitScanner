@@ -35,7 +35,7 @@ class _REST:
 
 class _Context:
     symbol = "BTCUSDT"
-    generation = 3
+    generation = 0  # Hub context field is NOT the publicTrade observation generation
     trades_subscription_state = "SUBSCRIBED"
     trade_bootstrap_complete = True
 
