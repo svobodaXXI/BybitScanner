@@ -117,5 +117,51 @@ class SignalArchiveTests(unittest.TestCase):
             self.assertIsNotNone(signal_archive.load_original_signal(["cand-env"]))
 
 
+    def test_systemd_state_directory_stores_new_signals_outside_release_checkout(self):
+        state = self.dir / "systemd-state"
+        with patch.dict("os.environ", {
+            signal_archive.ARCHIVE_ENV: "", signal_archive.SYSTEMD_STATE_ENV: str(state),
+        }):
+            self.assertEqual(signal_archive.archive_dir(), state / "signal_archive")
+            self.assertTrue(self._record("cand-state", directory=None))
+            original = signal_archive.load_original_signal(["cand-state"])
+            self.assertEqual(Path(original["image_path"]).parent, state / "signal_archive")
+            self.assertEqual(original["text"], "Сканер: ENAUSDT")
+
+    def test_legacy_original_and_geometry_survive_systemd_storage_switch(self):
+        from signal_geometry_producer import build_wedge_geometry_snapshot
+        from tests.test_signal_geometry_producer import Candles, GEOMETRY
+
+        legacy = self.dir / "old-release-archive"
+        state = self.dir / "systemd-state"
+        frozen = build_wedge_geometry_snapshot(
+            "cand-legacy", "BTCUSDT", "5", GEOMETRY, Candles(), now_ms=602000,
+        )
+        self.assertIsNotNone(frozen)
+        with patch.object(signal_archive, "_DEFAULT_DIR", legacy):
+            self.assertTrue(self._record(
+                "cand-legacy", directory=legacy, symbol="BTCUSDT",
+                text="original", geometry_snapshot=frozen,
+            ))
+            with patch.dict("os.environ", {
+                signal_archive.ARCHIVE_ENV: "", signal_archive.SYSTEMD_STATE_ENV: str(state),
+            }):
+                original = signal_archive.load_original_signal(["cand-legacy"])
+                self.assertEqual(original["text"], "original")
+                self.assertEqual(
+                    signal_archive.load_frozen_signal_geometry("cand-legacy"), frozen,
+                )
+                # Recording the same ID after migration must not replace the old original.
+                self.assertTrue(self._record(
+                    "cand-legacy", directory=None, symbol="BTCUSDT",
+                    text="replacement", image=PNG_B,
+                ))
+                self.assertFalse((state / "signal_archive").exists())
+                self.assertTrue(self._record("cand-new", directory=None))
+                self.assertIsNotNone(signal_archive.load_original_signal(["cand-new"]))
+                self.assertEqual(
+                    signal_archive.load_original_signal(["cand-legacy"])["text"], "original",
+                )
+
 if __name__ == "__main__":
     unittest.main()
