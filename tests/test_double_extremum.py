@@ -247,3 +247,31 @@ def test_legacy_double_snapshot_is_observational_not_robot_ready():
     assert legacy["scanner_observational_only"] is True
     assert legacy["robot_handoff_ready"] is False
     assert is_robot_executable_signal(legacy, timeframe="1") is False
+
+
+def test_legacy_approved_double_candidate_cannot_reach_monitor_order_submission():
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    from terminal.application.robot_breakout_monitor import RobotBreakoutMonitor
+    from terminal.domain.models import Symbol
+
+    monitor = object.__new__(RobotBreakoutMonitor)
+    for pattern in ("Double Top", "Double Bottom"):
+        candidate = SimpleNamespace(
+            candidate_id="historical-approved",
+            symbol=Symbol("LABUSDT"),
+            status="APPROVED",
+            signal_snapshot={"pattern": pattern, "robot_handoff_ready": True},
+            robot_state={"phase": "RETEST_DETECTED", "execution": {}},
+        )
+        # No market candle, order adapter or runtime admission call may occur.
+        with patch.object(
+            RobotBreakoutMonitor, "_invalidate_pre_entry_candidate",
+        ) as invalidate, patch.object(
+            RobotBreakoutMonitor, "_get_closed_candle",
+            side_effect=AssertionError("market access reached"),
+        ):
+            assert monitor._advance_l_shape_retest_detected(candidate) is True
+        invalidate.assert_called_once_with(
+            candidate, reason="Double Top/Bottom is auxiliary-only",
+        )
