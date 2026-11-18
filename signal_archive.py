@@ -37,7 +37,7 @@ def archive_dir(directory=None) -> Path:
     # The release checkout need not be writable.
     state = os.environ.get(SYSTEMD_STATE_ENV, "").strip()
     if state:
-        state_root = Path(state.split(":", 1)[0])
+        state_root = Path(state.split(os.pathsep, 1)[0])
         if state_root.is_absolute():
             return state_root / "signal_archive"
     return _DEFAULT_DIR
