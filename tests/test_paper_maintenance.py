@@ -4719,7 +4719,10 @@ def test_active_stopped_paper_monolith_runs_one_guarded_intent_sequence(
     assert steps == ["ROBOT", "SCANNER", "PAPER_AUTO"]
     assert len(list(journal.glob(".robot-stopped-start-*"))) == 1
 
-    # Replaying the same durable STOPPED version must not send another POST.
+    # Simulate an unknown owner response with durable STOPPED data intact:
+    # the journal, not merely running-state guards, must prevent replay.
+    auto[0] = "OFF"
+    scanner[0] = "SCANNER_STOPPED"
     assert maintenance._start_active_stopped_paper(
         target, root=tmp_path, env_file=None, trusted_uid=os.geteuid(),
     ).startswith("BLOCKED:")
