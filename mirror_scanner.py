@@ -54,9 +54,6 @@ from typing import Any, Mapping, Sequence
 from geometry.double_extremum import (
     attach_auxiliary_reversal, build_auxiliary_reversal_evidence,
 )
-from geometry.double_extremum import (
-    attach_auxiliary_reversal, build_auxiliary_reversal_evidence,
-)
 from geometry.naked_retest import NakedRetestError, PHASE_CAMPAIGN_ACTIVE
 from mirror_levels.imbalance import detect_fvgs, replay as replay_fvg
 from mirror_levels.levels import (
@@ -588,29 +585,6 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
     now_ms = int(time.time() * 1000) if now_ms is None else int(now_ms)
     rows = closed_rows(candles.iloc[:-1], timeframe)
     latest_close = rows[-1]["close_time_ms"]
-    # Optional causal evidence for the existing MIRROR host candidate only.
-    # Use the same completed Scanner prefixes; never infer a formation
-    # from the latest still-open candle or create another Robot candidate.
-    reversal_by_tf: dict[str, dict[str, object]] = {}
-    try:
-        source = build_auxiliary_reversal_evidence(
-            symbol, timeframe, candles.iloc[:-1].to_dict("records"), now_ms=now_ms,
-        )
-        if source is not None:
-            reversal_by_tf[timeframe] = source
-        if timeframe != "1" and fine_candles:
-            fine_source = build_auxiliary_reversal_evidence(
-                symbol, "1", [
-                    {"time": row["open_time_ms"], "high": row["high"],
-                     "low": row["low"], "close": row["close"]}
-                    for row in fine_candles if row.get("closed") is True
-                ], now_ms=now_ms,
-            )
-            if fine_source is not None:
-                reversal_by_tf["1"] = fine_source
-    except (KeyError, TypeError, ValueError, AttributeError):
-        # An optional reversal observation cannot block MIRROR continuity.
-        reversal_by_tf.clear()
     atr_series = causal_atr_series(rows, ATR_PERIOD)
     atr_by_close = {row["close_time_ms"]: value for row, value in zip(rows, atr_series)}
     tolerance = MERGE_TOLERANCE_ATR * (atr_series[-1] or 0.0)
@@ -783,9 +757,7 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
     save_state(state, root)                      # durable before anything leaves the process
     for item in journal:
         append_event(item, root)
-    handed = _hand_off_standalone_entries(
-        symbol, state, root, reversal_by_tf=reversal_by_tf, now_ms=now_ms,
-    )
+    handed = _hand_off_standalone_entries(symbol, state, root, now_ms=now_ms)
     for item in journal:
         if item["event"] in ("mirror_breakout", "mirror_first_retest") and item.get("candidate"):
             print(f"{symbol:<15} {timeframe}m MIRROR {item['event']} level={item['level_id']} "
@@ -802,7 +774,6 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
 
 def _hand_off_standalone_entries(
     symbol: str, state: dict[str, Any], root=None, *,
-    reversal_by_tf: Mapping[str, Mapping[str, object]] | None = None,
     now_ms: int | None = None,
 ) -> list[str]:
     """Hand each new standalone entry to the common Robot handoff at most once.
@@ -817,23 +788,20 @@ def _hand_off_standalone_entries(
     for entry in state.get("standalone_entries") or ():
         if entry.get("handoff") != "PENDING":
             continue
+        # The auxiliary must have been frozen from THIS MIRROR confirmation,
+        # not acquired from a newer candle during a retry or restart.
+        auxiliary = entry.get("auxiliary_reversal")
+        confirmation = entry["terms"].get("confirmation")
+        if (not isinstance(auxiliary, Mapping)
+                or not isinstance(confirmation, Mapping)
+                or type(confirmation.get("close_time_ms")) is not int
+                or auxiliary.get("confirmed_at_ms") != confirmation["close_time_ms"]):
+            auxiliary = None
         snapshot = _standalone_snapshot(
-            symbol, entry["terms"], auxiliary=entry.get("auxiliary_reversal"),
-            now_ms=int(time.time() * 1000),
+            symbol, entry["terms"], auxiliary=auxiliary,
+            now_ms=int(time.time() * 1000) if now_ms is None else now_ms,
         )
         timeframe = entry["terms"]["source_timeframe"]
-        auxiliary = (reversal_by_tf or {}).get(timeframe)
-        confirmation = entry["terms"].get("confirmation")
-        confirmed = (
-            confirmation.get("close_time_ms")
-            if isinstance(confirmation, Mapping) else None
-        )
-        if (isinstance(auxiliary, Mapping)
-                and type(confirmed) is int
-                and type(auxiliary.get("confirmed_at_ms")) is int
-                and type(auxiliary.get("expires_at_ms")) is int
-                and auxiliary["confirmed_at_ms"] <= confirmed < auxiliary["expires_at_ms"]):
-            snapshot = attach_auxiliary_reversal(snapshot, auxiliary, now_ms=now_ms)
         if not is_robot_executable_signal(snapshot, timeframe=timeframe):
             entry["handoff"] = "OFF"
             save_state(state, root)
