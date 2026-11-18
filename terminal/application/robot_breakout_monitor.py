@@ -1532,6 +1532,10 @@ class RobotBreakoutMonitor:
         # insufficient: it could still match on the next owner tick.
         if (record.status == "APPROVED"
                 and record.signal_snapshot.get("pattern") in robot_l_shape.DOUBLE_PATTERNS):
+            # The durable execution ID must still name this candidate's symbol.
+            # Never cancel a different symbol's PAPER order through stale state.
+            if order.symbol != record.symbol:
+                return False
             if order.status not in INACTIVE_LIMIT_STATUSES:
                 cancellation = self._action_executor.cancel_limit(
                     PaperLimitCancelRequest(
@@ -1544,7 +1548,7 @@ class RobotBreakoutMonitor:
                 order = self._store().get_paper_limit(
                     execution["limit_order_id"], self._account_id,
                 )
-                if order is None or order.quantity <= 0:
+                if order is None or order.quantity <= 0 or order.symbol != record.symbol:
                     return False
             if order.status not in INACTIVE_LIMIT_STATUSES:
                 return False
