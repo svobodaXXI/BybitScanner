@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Callable, Mapping
 
 from robot_entry_flow_evidence import (
-    CandidateBoundFlowEvidence, ExistingPatternEntryScope, FlowTransition,
+    CandidateBoundFlowEvidence, FlowTransition, existing_pattern_entry_scope,
 )
 from terminal.domain.models import TradingAccountId
 from terminal.market_data.impulse_producer import certified_snapshot
@@ -122,7 +122,7 @@ class PatternFlowObserver:
         return value
 
     def once(self) -> int:
-        """At most one existing APPROVED Wedge per M1; zero owner/DB writes."""
+        """At most one existing approved Robot pattern per M1; zero owner/DB writes."""
         now = self._clock()
         if type(now) is not int or now < 180_000:
             return 0
@@ -133,12 +133,9 @@ class PatternFlowObserver:
         contexts = {context.symbol: context for context in self._hub.list_contexts()}
         eligible = []
         for record in self._get_candidates():
-            state = record.robot_state or {}
-            if (record.status == "APPROVED"
-                    and record.signal_snapshot.get("pattern") in
-                    ("Falling Wedge", "Rising Wedge")
-                    and state.get("phase") == "RETEST_DETECTED"
-                    and state.get("direction") in ("LONG", "SHORT")
+            # Exact approved-entry scope, including frozen direction. Sources
+            # without an executable linked Robot ID (Box plan) are excluded.
+            if (existing_pattern_entry_scope(record) is not None
                     and record.symbol.value in contexts):
                 eligible.append(record)
 

@@ -1176,6 +1176,50 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         record = self.store.get_robot_candidate(record.candidate_id)
         self.assertEqual(record.robot_state["execution"]["limit_order_id"], "test-limit-1")
 
+    def test_l_shape_retest_flow_defers_only_before_first_canonical_limit(self):
+        snap = _l_shape_snapshot()
+        record, _ = self.store.create_robot_candidate(
+            candidate_id="lshape-flow-1", trading_account_id=ACCOUNT_ID,
+            symbol=Symbol(SYMBOL), status="APPROVED",
+            signal_snapshot=snap, approved_at_ms=1, updated_at_ms=1,
+        )
+        state, _ = robot_l_shape.initialize_state({
+            "candidate_id": record.candidate_id, "status": "APPROVED",
+            "timeframe": "5", "signal_snapshot": snap,
+        })
+        self.store.save_robot_candidate_state(
+            record.candidate_id, status="APPROVED", robot_state=state,
+            expected_revision=record.state_revision, updated_at_ms=2,
+        )
+        self.feed.push(
+            SYMBOL, {"time_ms": T0_MS + 60_000, "high": Decimal("101"),
+                     "low": Decimal("99.5"), "close": Decimal("100.4")},
+        )
+        self.monitor.tick()
+        record = self.store.get_robot_candidate(record.candidate_id)
+        self.assertEqual(record.robot_state["phase"], "RETEST_DETECTED")
+        # Exact-ID mismatch cannot create the L-shape entry order.
+        from robot_entry_flow_evidence import CandidateBoundFlowEvidence
+        from tests.test_robot_pattern_flow_overlay import transition
+        bad = CandidateBoundFlowEvidence(
+            candidate_id="wrong-owner", symbol=record.symbol.value,
+            direction="LONG", state_revision=record.state_revision,
+            source_kind="BYBIT_TRIPLE_CLOSED_M1_CERTIFIED",
+            closed_at_ms=1_800_000, decision_ms=1_800_010,
+            print_facts_sha256="a" * 64, source_complete=True,
+            receipt_cutoff_proven=True, transport_generation_proven=True,
+            transition=transition(known_at_ms=1_800_010),
+        )
+        self.clock.value = 1_800_500
+        self.monitor.bind_pattern_flow_observer(lambda _: bad)
+        self.assertEqual(self.monitor.tick(), ())
+        self.assertEqual(self.executor.limit_calls, [])
+        self.assertEqual(self.store.get_robot_candidate(record.candidate_id).status,
+                         "APPROVED")
+        self.monitor._get_pattern_flow_evidence = lambda _: None
+        self.assertEqual(self.monitor.tick(), (record.candidate_id,))
+        self.assertEqual(len(self.executor.limit_calls), 1)
+
     def test_resting_entry_limit_is_never_created_without_armed_coverage(self):
         # RVL-R4: a refused arm, or no bound arm at all, leaves the candidate pre-LIMIT.
         self._create_candidate()

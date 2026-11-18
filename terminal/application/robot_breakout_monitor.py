@@ -32,7 +32,7 @@ from typing import Callable, Mapping, Protocol
 import mirror_retest_robot as mirror
 import robot_entry_limit
 from robot_entry_flow_evidence import (
-    CandidateBoundFlowEvidence, ExistingPatternEntryScope,
+    CandidateBoundFlowEvidence, existing_pattern_entry_scope,
     match_existing_pattern_flow,
 )
 import robot_l_shape
@@ -318,6 +318,28 @@ class RobotBreakoutMonitor:
         if not callable(observer):
             raise TypeError("pattern flow observer must be callable")
         self._get_pattern_flow_evidence = observer
+
+    def _pattern_flow_allows_entry(self, record: RobotCandidateRecord) -> bool:
+        """Optional same-candidate causal timing at an already approved entry gate.
+
+        No evidence => original behavior. Certified contradictory/mismatched
+        evidence => defer the *same* pre-order candidate. Never interfere with
+        previously persisted order ownership, fills or protection recovery.
+        """
+        observer = self._get_pattern_flow_evidence
+        if observer is None:
+            return True
+        scope = existing_pattern_entry_scope(record)
+        if scope is None:
+            return False
+        try:
+            receipt = observer(record)
+        except Exception:
+            receipt = None  # optional source failure cannot grant new authority
+        return (receipt is None
+                or match_existing_pattern_flow(
+                    scope, receipt, now_ms=self._now_ms(),
+                ))
 
     def start(self) -> None:
         if self._started:
@@ -876,6 +898,10 @@ class RobotBreakoutMonitor:
                     return True
                 self._save_execution_keep_status(record, execution)
                 return True
+            # Timing can only defer a NEW unowned Box grid, never rewrite
+            # already-owned slots, partial fills or protected STOP/TAKE.
+            if not self._pattern_flow_allows_entry(record):
+                return False
             # Prove the immutable FLAT/journal baseline before deriving any
             # executable catch-up plan. This is not order ownership and does
             # not require a temporary coverage arm: no order can fill yet.
@@ -943,6 +969,8 @@ class RobotBreakoutMonitor:
 
         ownership = self._store().load_box_order_ownership(source.candidate_id)
         if not ownership:
+            if not self._pattern_flow_allows_entry(record):
+                return False
             if self._get_market_book is None:
                 return False
             current_book = self._get_market_book(record.symbol.value)
@@ -1432,6 +1460,8 @@ class RobotBreakoutMonitor:
                 execution["mirror"] = decision
                 self._persist_execution(record, execution)
                 return True
+            if not self._pattern_flow_allows_entry(record):
+                return False
             if not self._arm_entry_coverage(record.symbol.value):
                 return False
             result = robot_entry_limit.submit_initial_retest_limit(
@@ -1620,31 +1650,11 @@ class RobotBreakoutMonitor:
                 reason, details = rr_skip
                 self._invalidate_pre_entry_candidate(record, reason=reason, details=details)
                 return True
-            # An exact, recent, independently certified taker wave may refine
-            # WHEN the already-confirmed Wedge enters. Contradictory/foreign
-            # evidence defers this candidate by one normal tick; missing
-            # evidence leaves its original entry policy entirely unchanged.
-            # The observer never creates candidates, orders or risk terms.
-            observe_flow = self._get_pattern_flow_evidence
-            if observe_flow is not None:
-                try:
-                    receipt = observe_flow(record)
-                except Exception:
-                    receipt = None  # optional observation never bypasses risk
-                if receipt is not None:
-                    scope = ExistingPatternEntryScope(
-                        candidate_id=record.candidate_id,
-                        symbol=record.symbol.value,
-                        pattern=str(record.signal_snapshot.get("pattern", "")),
-                        direction=str(record.robot_state.get("direction", "")),
-                        state_revision=record.state_revision,
-                        status=record.status,
-                        phase=str(record.robot_state.get("phase", "")),
-                    )
-                    if not match_existing_pattern_flow(
-                        scope, receipt, now_ms=self._now_ms(),
-                    ):
-                        return False
+            # The same approved-pattern timing overlay shared with L-shape,
+            # MIRROR, double extrema and the unowned Box grid. No second
+            # strategy, candidate, order or STOP/TAKE is ever introduced.
+            if not self._pattern_flow_allows_entry(record):
+                return False
             if not self._arm_entry_coverage(record.symbol.value):
                 return False
             result = robot_entry_limit.submit_initial_retest_limit(self._action_executor, plan)
@@ -1894,6 +1904,10 @@ class RobotBreakoutMonitor:
             self._persist_state(record, expired_state)
             return True
         if decision.action != LATE_DECISION_MARKET_ENTRY:
+            return False
+        # No new Market entry can bypass the same exact-ID timing check.
+        # Persisted intents skip this check and remain owned by recovery.
+        if not self._pattern_flow_allows_entry(record):
             return False
 
         intent = durable_late_admission_market_intent(

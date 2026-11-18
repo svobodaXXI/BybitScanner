@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
+from typing import Mapping
 
 ZERO = Decimal("0")
 ONE_THOUSAND = Decimal("1000")
@@ -578,6 +579,78 @@ class CandidateBoundFlowEvidence:
     transition: FlowTransition
 
 
+# Only established canonical Robot order-entry families. Do not equate a
+# visual Scanner signal or a BOX_PLAN_ONLY source with approved Robot ownership.
+# In particular, Double Top/Bottom and MIRROR share L-shape's LIMIT executor;
+# Ikigai Box enters through its protected mixed/grid owner, not that executor.
+_PATTERN_FLOW_PHASES = {
+    "Falling Wedge": "RETEST_DETECTED",
+    "Rising Wedge": "RETEST_DETECTED",
+    "L-shape": "RETEST_DETECTED",
+    "MIRROR": "RETEST_DETECTED",
+    "Double Top": "RETEST_DETECTED",
+    "Double Bottom": "RETEST_DETECTED",
+    "IKIGAI_BOX": "BOX_ENTRY_READY",
+}
+_FIXED_PATTERN_DIRECTIONS = {
+    "Falling Wedge": "LONG", "Rising Wedge": "SHORT",
+    "Double Top": "SHORT", "Double Bottom": "LONG",
+}
+_FROZEN_DIRECTION_TERMS = {
+    "L-shape": "l_shape", "MIRROR": "mirror_entry",
+    "Double Top": "neckline_entry", "Double Bottom": "neckline_entry",
+    "IKIGAI_BOX": "identity",
+}
+
+
+def existing_pattern_entry_scope(record) -> ExistingPatternEntryScope | None:
+    """Exact persisted approved candidate & frozen direction at its own entry gate.
+
+    Pure and read-only: never substitutes a new candidate or invents strategy
+    terms. The normal Robot admission/risk/order preflight remains mandatory.
+    """
+    try:
+        snapshot = record.signal_snapshot
+        state = record.robot_state
+        if (not isinstance(snapshot, Mapping) or not isinstance(state, Mapping)
+                or record.status != "APPROVED"):
+            return None
+        pattern = snapshot.get("pattern")
+        phase = state.get("phase")
+        direction = state.get("direction")
+        if (_PATTERN_FLOW_PHASES.get(pattern) != phase
+                or direction not in ("LONG", "SHORT")):
+            return None
+        expected_direction = _FIXED_PATTERN_DIRECTIONS.get(pattern)
+        if expected_direction is None:
+            terms = snapshot.get(_FROZEN_DIRECTION_TERMS[pattern])
+            if not isinstance(terms, Mapping):
+                return None
+            expected_direction = terms.get("direction")
+        if expected_direction != direction:
+            return None
+        candidate_id = record.candidate_id
+        symbol = record.symbol.value
+        revision = record.state_revision
+        if (not isinstance(candidate_id, str) or not candidate_id
+                or not isinstance(symbol, str) or not symbol.endswith("USDT")
+                or type(revision) is not int or revision < 0):
+            return None
+        if pattern == "IKIGAI_BOX":
+            # The source plan stays BOX_PLAN_ONLY, while this immutable
+            # *linked approved candidate* owns the first grid entry.
+            source_id = snapshot.get("source_box_candidate_id")
+            if (not isinstance(source_id, str) or not source_id
+                    or state.get("source_box_candidate_id") != source_id):
+                return None
+        return ExistingPatternEntryScope(
+            candidate_id, symbol, pattern, direction, revision,
+            record.status, phase,
+        )
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return None
+
+
 def match_existing_pattern_flow(
     candidate: ExistingPatternEntryScope,
     evidence: CandidateBoundFlowEvidence | None,
@@ -595,10 +668,10 @@ def match_existing_pattern_flow(
             or not isinstance(evidence, CandidateBoundFlowEvidence)
             or type(now_ms) is not int):
         return False
-    if (candidate.pattern not in
-            {"Falling Wedge", "Rising Wedge", "L-shape", "MIRROR"}
+    if (_PATTERN_FLOW_PHASES.get(candidate.pattern) != candidate.phase
             or candidate.status != "APPROVED"
-            or candidate.phase != "RETEST_DETECTED"
+            or (_FIXED_PATTERN_DIRECTIONS.get(candidate.pattern)
+                not in (None, candidate.direction))
             or candidate.direction not in ("LONG", "SHORT")
             or not candidate.candidate_id or not candidate.symbol.endswith("USDT")
             or type(candidate.state_revision) is not int

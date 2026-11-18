@@ -11,7 +11,7 @@ from robot_entry_flow_evidence import (
     CandidateBoundFlowEvidence,
     ExistingPatternEntryScope,
     FlowTransition,
-    match_existing_pattern_flow,
+    match_existing_pattern_flow, existing_pattern_entry_scope,
 )
 
 
@@ -87,7 +87,7 @@ class PatternEntryFlowOverlayTests(unittest.TestCase):
     def test_standalone_or_unapproved_pattern_is_rejected(self):
         for update in (
             {"pattern": "IMPULSE_FLOW"},
-            {"pattern": "IKIGAI_BOX"},
+            {"pattern": "IKIGAI_BOX"},  # Box requires BOX_ENTRY_READY
             {"status": "AVAILABLE"},
             {"phase": "WAITING_BREAKOUT"},
             {"state_revision": -1},
@@ -96,6 +96,62 @@ class PatternEntryFlowOverlayTests(unittest.TestCase):
                 self.assertFalse(match_existing_pattern_flow(
                     replace(scope(), **update), certificate(), now_ms=181_000,
                 ))
+
+    def test_all_existing_pattern_families_use_frozen_candidate_identity(self):
+        from types import SimpleNamespace
+
+        families = (
+            ("Falling Wedge", "LONG", "RETEST_DETECTED", None),
+            ("Rising Wedge", "SHORT", "RETEST_DETECTED", None),
+            ("L-shape", "LONG", "RETEST_DETECTED", "l_shape"),
+            ("MIRROR", "SHORT", "RETEST_DETECTED", "mirror_entry"),
+            ("Double Top", "SHORT", "RETEST_DETECTED", "neckline_entry"),
+            ("Double Bottom", "LONG", "RETEST_DETECTED", "neckline_entry"),
+            ("IKIGAI_BOX", "LONG", "BOX_ENTRY_READY", "identity"),
+        )
+        for pattern, direction, phase, terms_key in families:
+            with self.subTest(pattern=pattern):
+                snap = {"pattern": pattern}
+                state = {"phase": phase, "direction": direction}
+                if terms_key:
+                    snap[terms_key] = {"direction": direction}
+                if pattern == "IKIGAI_BOX":
+                    snap["source_box_candidate_id"] = "box-plan-1"
+                    state["source_box_candidate_id"] = "box-plan-1"
+                record = SimpleNamespace(
+                    candidate_id="exact-1", symbol=SimpleNamespace(value="BTCUSDT"),
+                    status="APPROVED", state_revision=4,
+                    signal_snapshot=snap, robot_state=state,
+                )
+                chosen = existing_pattern_entry_scope(record)
+                self.assertIsNotNone(chosen)
+                self.assertEqual((chosen.pattern, chosen.direction, chosen.phase),
+                                 (pattern, direction, phase))
+                proof = certificate()
+                proof = replace(proof, candidate_id="exact-1", state_revision=4,
+                                direction=direction,
+                                transition=transition(
+                                    buy=(direction == "LONG"),
+                                    sell=(direction == "SHORT"),
+                                ))
+                self.assertTrue(match_existing_pattern_flow(
+                    chosen, proof, now_ms=181_000,
+                ))
+                self.assertFalse(match_existing_pattern_flow(
+                    chosen, replace(proof, state_revision=3), now_ms=181_000,
+                ))
+                self.assertIsNone(existing_pattern_entry_scope(replace(
+                    record, robot_state={**state, "direction":
+                         ("SHORT" if direction == "LONG" else "LONG")}
+                )))
+                if pattern == "IKIGAI_BOX":
+                    self.assertIsNone(existing_pattern_entry_scope(replace(
+                        record, status="BOX_PLAN_ONLY",
+                    )))
+                else:
+                    self.assertIsNone(existing_pattern_entry_scope(replace(
+                        record, robot_state={**state, "phase": "WAITING_RETEST"},
+                    )))
 
     def test_missing_or_forged_source_proof_rejected(self):
         original = certificate()

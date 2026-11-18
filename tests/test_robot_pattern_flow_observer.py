@@ -114,6 +114,44 @@ class ObserverTests(unittest.TestCase):
         self.assertEqual(rest.requests, [])
         observer.close()
 
+    def test_observer_covers_all_existing_pattern_entry_families(self):
+        observed, recent, previous, current = PatternFlowSourceTests.source()
+        patterns = (
+            ("L-shape", "LONG", "RETEST_DETECTED", "l_shape"),
+            ("MIRROR", "LONG", "RETEST_DETECTED", "mirror_entry"),
+            ("Double Top", "SHORT", "RETEST_DETECTED", "neckline_entry"),
+            ("Double Bottom", "LONG", "RETEST_DETECTED", "neckline_entry"),
+            ("IKIGAI_BOX", "LONG", "BOX_ENTRY_READY", "identity"),
+            ("Rising Wedge", "SHORT", "RETEST_DETECTED", None),
+        )
+        for pattern, direction, phase, terms_key in patterns:
+            with self.subTest(pattern=pattern):
+                record = _candidate(direction=direction, phase=phase)
+                frozen = {"pattern": pattern}
+                state = dict(record.robot_state)
+                if terms_key:
+                    frozen[terms_key] = {"direction": direction}
+                if pattern == "IKIGAI_BOX":
+                    frozen["source_box_candidate_id"] = "box-plan-1"
+                    state["source_box_candidate_id"] = "box-plan-1"
+                record = SimpleNamespace(
+                    **{**vars(record), "signal_snapshot": frozen,
+                       "robot_state": state}
+                )
+                rest = _REST(recent, previous, current)
+                observer = PatternFlowObserver(
+                    SimpleNamespace(list_contexts=lambda: (_Context(observed),)),
+                    rest, "unused",
+                    clock_ms=lambda: PatternFlowSourceTests.CLOSE + 5_000,
+                    get_candidates=lambda: (record,),
+                )
+                self.assertEqual(observer.once(), 1)
+                proof = observer.get(record)
+                self.assertIsNotNone(proof)
+                self.assertEqual(proof.candidate_id, record.candidate_id)
+                self.assertEqual(len(rest.requests), 3)
+                observer.close()
+
     def test_stale_or_revised_evidence_not_accepted_for_entry(self):
         observed, recent, previous, current = PatternFlowSourceTests.source()
         ctx = _Context(observed)
