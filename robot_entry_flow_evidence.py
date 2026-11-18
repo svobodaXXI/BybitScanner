@@ -539,3 +539,101 @@ def plan_impulse_protected_entry(
     if not rr.is_finite() or rr < min_entry_rr():
         raise ValueError("protected impulse net RR below shared Robot floor")
     return ImpulseProtectedPlan(signal, entry, stop, take, quantity, rr, worst_loss)
+
+
+# Entry-timing overlay ONLY: it is never an independent Scanner candidate,
+# Admission permission, entry order, STOP/TAKE plan or Robot state transition.
+@dataclass(frozen=True, slots=True)
+class ExistingPatternEntryScope:
+    """Exact durable candidate at its already-authorized pre-entry boundary."""
+
+    candidate_id: str
+    symbol: str
+    pattern: str
+    direction: str
+    state_revision: int
+    status: str
+    phase: str
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateBoundFlowEvidence:
+    """Bounded causal flow observation, bound to the SAME frozen candidate.
+
+    A producer must independently certify REST/WS parity and timely receipts;
+    constructing this object alone NEVER establishes source completeness.
+    """
+
+    candidate_id: str
+    symbol: str
+    direction: str
+    state_revision: int
+    source_kind: str
+    closed_at_ms: int
+    decision_ms: int
+    print_facts_sha256: str
+    source_complete: bool
+    receipt_cutoff_proven: bool
+    transport_generation_proven: bool
+    transition: FlowTransition
+
+
+def match_existing_pattern_flow(
+    candidate: ExistingPatternEntryScope,
+    evidence: CandidateBoundFlowEvidence | None,
+    *,
+    now_ms: int,
+) -> bool:
+    """True only for fresh, same-owner, same-direction pre-entry flow.
+
+    Descriptive signal timing only. The canonical Robot must INDEPENDENTLY
+    prove breakout/retest, admission, risk, ownership, STOP/TAKE and entry
+    protection before it can place any order. UNKNOWN evidence is False,
+    never an independently executable IMPULSE_FLOW candidate.
+    """
+    if (not isinstance(candidate, ExistingPatternEntryScope)
+            or not isinstance(evidence, CandidateBoundFlowEvidence)
+            or type(now_ms) is not int):
+        return False
+    if (candidate.pattern not in
+            {"Falling Wedge", "Rising Wedge", "L-shape", "MIRROR"}
+            or candidate.status != "APPROVED"
+            or candidate.phase != "RETEST_DETECTED"
+            or candidate.direction not in ("LONG", "SHORT")
+            or not candidate.candidate_id or not candidate.symbol.endswith("USDT")
+            or type(candidate.state_revision) is not int
+            or candidate.state_revision < 0):
+        return False
+    if (evidence.candidate_id != candidate.candidate_id
+            or evidence.symbol != candidate.symbol
+            or evidence.direction != candidate.direction
+            or type(evidence.state_revision) is not int
+            or evidence.state_revision != candidate.state_revision):
+        return False
+    if (evidence.source_kind != "BYBIT_TRIPLE_CLOSED_M1_CERTIFIED"
+            or evidence.source_complete is not True
+            or evidence.receipt_cutoff_proven is not True
+            or evidence.transport_generation_proven is not True
+            or not isinstance(evidence.print_facts_sha256, str)
+            or len(evidence.print_facts_sha256) != 64
+            or any(c not in "0123456789abcdef"
+                   for c in evidence.print_facts_sha256)):
+        return False
+    if (type(evidence.closed_at_ms) is not int
+            or type(evidence.decision_ms) is not int
+            or evidence.closed_at_ms <= 0
+            or evidence.closed_at_ms % 60_000
+            or not evidence.closed_at_ms <= evidence.decision_ms
+               <= evidence.closed_at_ms + 60_000
+            or not evidence.decision_ms <= now_ms
+               <= evidence.closed_at_ms + 120_000):
+        return False
+    transition = evidence.transition
+    if (not isinstance(transition, FlowTransition)
+            or transition.known_at_ms != evidence.decision_ms):
+        return False
+    return (
+        transition.buy_wave_accelerating is True
+        if candidate.direction == "LONG"
+        else transition.sell_wave_accelerating is True
+    )
