@@ -9,6 +9,11 @@ because it can still be open. See DOCUMENTS/IKIGAI_BOX_STRATEGY_SPEC.md.
 
 import os
 import re
+import time
+
+from geometry.double_extremum import (
+    attach_auxiliary_reversal, build_auxiliary_reversal_evidence,
+)
 
 from geometry.ikigai_box import IkigaiBoxWatch, detect_ikigai_box
 from geometry.ikigai_box_completion import box_first_grid_already_completed
@@ -146,6 +151,22 @@ def send_ikigai_box_observation(
         closed, formation, chart_path, symbol=symbol, timeframe=timeframe
     )
     message = ikigai_box_signal_text(symbol, timeframe, formation)
+    # Optional, causal evidence is visibly associated with THIS Box signal.
+    # Keep box_robot_formation and BOX_PLAN_ONLY immutable plan unchanged:
+    # this confirmation must not create an order or alter Box STOP/TAKE.
+    now_ms = int(time.time() * 1000)
+    reversal = build_auxiliary_reversal_evidence(
+        symbol, timeframe, closed.to_dict("records"), now_ms=now_ms,
+    ) if timeframe in {"1", "5"} else None
+    hosted = attach_auxiliary_reversal({
+        "pattern": "IKIGAI_BOX",
+        "identity": {"symbol": symbol, "timeframe": timeframe,
+                     "direction": formation.direction},
+    }, reversal, now_ms=now_ms)
+    if "auxiliary_reversal" in hosted:
+        label = ("Двойная вершина" if reversal["pattern"] == "Double Top"
+                 else "Двойное дно")
+        message += f"\nДоп. подтверждение: {label} (закрытые свечи)"
     delivered = True
     archived_image = None
     if robot_handle:
