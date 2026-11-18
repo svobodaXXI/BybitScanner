@@ -360,6 +360,11 @@ def scanner_candidate_admission_error(candidate: Mapping[str, Any]) -> str | Non
     if (snapshot.get("pattern") == "IKIGAI_BOX"
             or candidate.get("status") == "BOX_PLAN_ONLY"):
         return "BOX_PLAN_ONLY cannot enter execution admission"
+    # An old durable JSON candidate may still have status APPROVED and a
+    # frozen neckline entry. Neither manual Admission nor PAPER_AUTO may
+    # admit a *new* standalone double-extremum trade from that source.
+    if str(snapshot.get("pattern", "")).strip() in robot_l_shape.DOUBLE_PATTERNS:
+        return "Double Top/Bottom is auxiliary-only, not a Robot entry strategy"
     is_l_shape = robot_l_shape.is_l_shape_snapshot(snapshot)
     if not is_l_shape and not is_supported_pattern(snapshot.get("pattern")):
         return "Scanner candidate pattern is not supported by Robot"
