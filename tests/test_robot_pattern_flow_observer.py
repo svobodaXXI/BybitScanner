@@ -146,6 +146,27 @@ class ObserverTests(unittest.TestCase):
         self.assertTrue(match_existing_pattern_flow(scope, receipt, now_ms=clock()))
         observer.close()
 
+    def test_opt_in_certification_window_is_enabled_on_existing_candidate_only(self):
+        from terminal.market_data.impulse_observation import PublicTradeObservation
+        observed, recent, previous, current = PatternFlowSourceTests.source()
+        real = PublicTradeObservation("BTCUSDT")
+        # Observer must not create a subscriber or trade. Its read-only source
+        # is already attached, so a real opt-in source can expand its buffer.
+        context = _Context(observed)
+        context.impulse_observation = real
+        rest = _REST(recent, previous, current)
+        observer = PatternFlowObserver(
+            SimpleNamespace(list_contexts=lambda: (context,)), rest,
+            "unused", clock_ms=lambda: PatternFlowSourceTests.CLOSE + 5_000,
+            get_candidates=lambda: (_candidate(),),
+        )
+        self.assertEqual(real.snapshot()["buffer_capacity"], 512)
+        self.assertEqual(observer.once(), 0)
+        self.assertEqual(real.snapshot()["buffer_capacity"], 1000)
+        self.assertEqual(real.snapshot()["observed_prints"], 0)
+        self.assertEqual(rest.requests, [])
+        observer.close()
+
     def test_no_existing_candidate_or_no_subscription_means_zero_rest(self):
         observed, recent, previous, current = PatternFlowSourceTests.source()
         rest = _REST(recent, previous, current)

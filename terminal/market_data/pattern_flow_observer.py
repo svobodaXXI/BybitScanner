@@ -81,9 +81,14 @@ def source_coverage_audit(
                 or not isinstance(prints, tuple)):
             counts["invalid_observation"] += 1
             continue
-        if len(prints) >= 512:
-            # The 512-print cap is not automatically proof of truncation,
-            # but a capacity warning for the exact two-minute parity gate.
+        capacity = observed.get("buffer_capacity", 512)
+        if type(capacity) is not int or capacity not in (512, 1000):
+            counts["invalid_observation"] += 1
+            continue
+        if len(prints) >= capacity:
+            # Capacity is a warning, not a claim of source completeness.
+            # The opt-in exact window can hold 1000, but REST must still
+            # independently bracket both minutes with its own <=1000 page.
             counts["buffer_at_limit"] += 1
         previous = any(
             closed - 120_000 <= getattr(p, "timestamp_ms", -1) < closed - 60_000
@@ -230,6 +235,14 @@ class PatternFlowObserver:
             self._attempted.add(key)
             attempts += 1
             context = contexts[record.symbol.value]
+            # This method is available on real PublicTradeObservation, and
+            # only when this opt-in observer was explicitly created. Never
+            # increase the default ingress buffer in the normal PAPER path.
+            enable_window = getattr(
+                context.impulse_observation, "enable_certification_buffer", None,
+            )
+            if enable_window is not None:
+                enable_window()
             if (context.trades_subscription_state != "SUBSCRIBED"
                     or context.trade_bootstrap_complete is not True):
                 continue
