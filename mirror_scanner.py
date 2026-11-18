@@ -774,7 +774,7 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
 
 def _hand_off_standalone_entries(
     symbol: str, state: dict[str, Any], root=None, *,
-    now_ms: int | None = None,
+    now_ms: int | None = None, reversal_by_tf: Mapping[str, Any] | None = None,
 ) -> list[str]:
     """Hand each new standalone entry to the common Robot handoff at most once.
 
@@ -791,6 +791,8 @@ def _hand_off_standalone_entries(
         # The auxiliary must have been frozen from THIS MIRROR confirmation,
         # not acquired from a newer candle during a retry or restart.
         auxiliary = entry.get("auxiliary_reversal")
+        if reversal_by_tf is not None:
+            auxiliary = reversal_by_tf.get(str(entry["terms"].get("source_timeframe")))
         confirmation = entry["terms"].get("confirmation")
         if (not isinstance(auxiliary, Mapping)
                 or not isinstance(confirmation, Mapping)
