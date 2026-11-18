@@ -481,7 +481,8 @@ describe("Closed deals / exact episode index", () => {
       target: { value: "ETH" },
     });
     expect(screen.getByText("Нет убыточных сделок по выбранным фильтрам")).toBeInTheDocument();
-    fireEvent.click(loss);
+    // The Deals result bar is remounted when the period changes; use the current control.
+    fireEvent.click(screen.getByRole("button", { name: "Убыточные" }));
     expect(orderedSymbols()).toEqual(["ETHUSDT"]);
     fireEvent.change(pattern, { target: { value: "__NO_VERIFIED_PATTERN__" } });
     expect(orderedSymbols()).toEqual(["ETHUSDT"]);
@@ -1048,7 +1049,7 @@ describe("Finrez first-screen UI", () => {
     fireEvent.click(screen.getAllByRole("button", {
       name: "Показать все сделки по паттерну Falling Wedge",
     })[0]);
-    expect(screen.getByRole("button", { name: "Убыточные" })).toHaveAttribute("aria-pressed", "false");
+    expect(await screen.findByRole("button", { name: "Убыточные" })).toHaveAttribute("aria-pressed", "false");
     expect(await screen.findAllByText("Клин ↘")).toHaveLength(3);
   });
 
@@ -1062,9 +1063,11 @@ describe("Finrez first-screen UI", () => {
     const episodes = patterns.map(([pattern, pnl_usdt], index) => {
       const id = (index + 10).toString(16).padStart(24, "0");
       return {
-        ...robotDeal, trade_episode_id: "te_" + id, symbol: "BTCUSDT",
+        trade_episode_id: "te_" + id, symbol: "BTCUSDT", side: "LONG",
         pnl_usdt, opened_at_ms: 1_793_001_000_000,
-        closed_at_ms: 1_793_002_000_000, opening_controller: "ROBOT",
+        closed_at_ms: 1_793_002_000_000, execution_count: 2,
+        cohort: "ROBOT", replay_evidence: "EPISODE_INDEX_ONLY",
+        opening_controller: "ROBOT",
         setup_context: {
           status: "EXACT_D2_LINK", source: "TRADING_DIARY_D2",
           consistency: "INDEPENDENT_READ_SNAPSHOT_NOT_ATOMIC_WITH_PAPER",
