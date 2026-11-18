@@ -1872,6 +1872,162 @@ def start_installed_paper_from_editor(
     )
 
 
+def _start_active_stopped_paper(
+    target: str, *, root: Path, env_file: Path | None,
+) -> str:
+    """Owner START for an already-live exact PAPER backend with a stopped Robot.
+
+    No systemd restart/STOP, SQLite writes or direct Autopilot toggle.
+    Gate each single canonical intent on proven clean ownership and stable
+    backend identity. Ambiguous effects are never replayed.
+    """
+    from tools.runtime_intent import (
+        expected_database_identity, http_get, http_post_json,
+    )
+    from tools.stop_robot_runtime import _database_path
+    from tools.vps_paper_auto_start import (
+        StartupBlocked, enable_from_authorized_start,
+    )
+    from tools.vps_release_identity import ReleaseIdentityBlocked, verify_release
+    from tools.vps_gitless_release_activate import TRANSACTIONS, _sync_directory
+
+    env = _environment(env_file)
+    if not env.get("BYBITSCANNER_AUTOPILOT_OWNER_TOKEN"):
+        from tools.vps_check import OWNER_ENV_FILE, parse_env_file
+        try:
+            if OWNER_ENV_FILE.is_file() and not OWNER_ENV_FILE.is_symlink():
+                env.update(parse_env_file(OWNER_ENV_FILE))
+        except OSError:
+            pass
+    if (env.get("BYBITSCANNER_VPS_PAPER_AUTO_ON_START") != "1"
+            or len(env.get("BYBITSCANNER_AUTOPILOT_OWNER_TOKEN", "").strip()) < 32):
+        return "BLOCKED: active_stopped_PAPER_owner_authority_unproven; no_mutation"
+
+    db = _database_path(root, env)
+    expected_state = ("ROBOT_STOPPED", "ROBOT_STOPPED", None)
+    try:
+        if verify_release(root) != target:
+            return "BLOCKED: active_stopped_PAPER_release_changed; no_mutation"
+        identity = expected_database_identity(root, env)
+
+        def get(path: str) -> dict:
+            reply = http_get("http://127.0.0.1:8765" + path, 5)
+            body = reply.json()
+            if (reply.status != 200 or not isinstance(body, dict)
+                    or body.get("ok") is not True):
+                raise ValueError("unproven PAPER response")
+            return body
+
+        health = get("/api/health")
+        instance = health.get("process_instance_id")
+        if (health.get("component") != "paper_backend"
+                or health.get("mode") != "paper"
+                or health.get("build_sha") != target
+                or health.get("database_identity") != identity
+                or health.get("paper_live_safe") is not True
+                or not isinstance(instance, str) or not instance):
+            return "BLOCKED: active_stopped_PAPER_backend_identity_unproven; no_mutation"
+
+        def backend_same() -> bool:
+            h = get("/api/health")
+            return (h.get("process_instance_id") == instance
+                    and h.get("build_sha") == target
+                    and h.get("database_identity") == identity
+                    and h.get("paper_live_safe") is True
+                    and h.get("mode") == "paper")
+
+        # Stronger than the incident-specific flat proof: also reject all
+        # nonterminal candidates, including APPROVED entry ideas.
+        if (not _paper_start_quiescent(root, env_file)
+                or _active_required_flat_proof(db) != expected_state
+                or get("/api/scanner/status").get("mode") != "SCANNER_STOPPED"
+                or get("/api/robot/autopilot").get("mode") != "OFF"
+                or not _editor_telegram_ready(identity)):
+            return "BLOCKED: active_stopped_PAPER_ownership_or_editor_unproven; no_mutation"
+
+        protection = get("/api/robot/protection-health")
+        ingress = protection.get("ingress")
+        recent = protection.get("ingress_recent")
+        if (protection.get("healthy") is not True
+                or protection.get("unhealthy_symbols") != {}
+                or protection.get("covered_symbols") not in ([], ())
+                or protection.get("armed_symbols") not in ([], ())
+                or protection.get("coverage_roles") != {}
+                or not isinstance(ingress, dict)
+                or type(ingress.get("current_pending")) is not int
+                or ingress["current_pending"] != 0
+                or not isinstance(recent, dict)
+                or type(recent.get("current_pending")) is not int
+                or recent["current_pending"] != 0):
+            return "BLOCKED: active_stopped_PAPER_protection_or_ingress_unproven; no_mutation"
+        if (not backend_same() or not _paper_start_quiescent(root, env_file)
+                or _active_required_flat_proof(db) != expected_state):
+            return "BLOCKED: active_stopped_PAPER_prestart_state_changed; no_mutation"
+
+        # Durable one-shot fence before sending any state-changing intent.
+        # A lost response cannot be retried with another owner request UUID.
+        with sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=2.0) as conn:
+            conn.execute("PRAGMA query_only=ON")
+            rows = conn.execute(
+                "SELECT mode, recovery_status, reason, version, updated_at_ms "
+                "FROM robot_runtime_state WHERE trading_account_id='paper'"
+            ).fetchall()
+        if (len(rows) != 1 or tuple(rows[0][:3]) != expected_state
+                or type(rows[0][3]) is not int or type(rows[0][4]) is not int):
+            return "BLOCKED: active_stopped_PAPER_state_version_unproven; no_mutation"
+        if (not TRANSACTIONS.is_dir() or TRANSACTIONS.is_symlink()
+                or TRANSACTIONS.stat().st_uid != 0
+                or TRANSACTIONS.stat().st_mode & 0o077):
+            return "BLOCKED: active_stopped_PAPER_owner_journal_unproven; no_mutation"
+        key = hashlib.sha256(("\\n".join((
+            target, identity, str(rows[0][3]), str(rows[0][4]),
+        ))).encode("utf-8")).hexdigest()
+        marker = TRANSACTIONS / (".robot-stopped-start-" + key)
+        fd = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "wb") as receipt:
+            receipt.write(b"ONE_SHOT_OWNER_STOPPED_START_INTENT\\n")
+            receipt.flush()
+            os.fsync(receipt.fileno())
+        _sync_directory(TRANSACTIONS)
+
+        def post_intent(intent: str) -> dict | None:
+            try:
+                reply = http_post_json(
+                    "http://127.0.0.1:8765/api/runtime/intent",
+                    {"intent": intent}, 30,
+                )
+                body = reply.json()
+                return body if (reply.status == 200
+                                and isinstance(body, dict)
+                                and body.get("ok") is True) else None
+            except Exception:
+                return None
+
+        if not backend_same():
+            return "BLOCKED: active_stopped_PAPER_backend_changed_before_Robot; no_replay"
+        robot = post_intent("ROBOT")
+        if (robot is None or robot.get("intent") != "ROBOT"
+                or robot.get("final", {}).get("robot") != "READY"
+                or robot.get("final", {}).get("protection") != "HEALTHY"):
+            return "BLOCKED: active_stopped_PAPER_Robot_READY_unproven; no_replay"
+        if not backend_same():
+            return "BLOCKED: active_stopped_PAPER_backend_changed_before_Scanner; no_replay"
+        scanner = post_intent("SCANNER")
+        if (scanner is None or scanner.get("intent") != "SCANNER"
+                or scanner.get("final", {}).get("scanner") != "RUNNING"):
+            return "BLOCKED: active_stopped_PAPER_Scanner_RUNNING_unproven; no_replay"
+        if not backend_same():
+            return "BLOCKED: active_stopped_PAPER_backend_changed_before_AUTO; no_replay"
+        enable_from_authorized_start(env)
+        return _paper_full_readiness(
+            root=root, env_file=env_file, target=target,
+            require_gitless_telegram=True,
+        )
+    except (ReleaseIdentityBlocked, StartupBlocked, FileExistsError, OSError,
+            ValueError, TypeError, sqlite3.Error):
+        return "BLOCKED: active_stopped_PAPER_preflight_or_transition_unproven; no_replay"
+
+
 def _active_exact_paper_blocker(
     target: str, *, root: Path, env_file: Path | None,
 ) -> str | None:
@@ -2968,7 +3124,14 @@ def main(argv=None) -> int:
                     args.sha, root=REPO, env_file=args.env_file,
                 )
                 if blocked is not None:
-                    if ((blocked.startswith(
+                    if blocked.startswith(
+                        "BLOCKED: active_exact_PAPER_not_ready; "
+                        "Robot=ROBOT_STOPPED/ROBOT_STOPPED"
+                    ):
+                        blocked = _start_active_stopped_paper(
+                            args.sha, root=REPO, env_file=args.env_file,
+                        )
+                    elif ((blocked.startswith(
                             "BLOCKED: active_PAPER_Robot_RECONCILIATION_REQUIRED")
                             and "reason=ROBOT_PROTECTION_COVERAGE_LOST" in blocked)
                             or blocked.startswith(
