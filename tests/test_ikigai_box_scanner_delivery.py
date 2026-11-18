@@ -388,8 +388,8 @@ class IkigaiBoxOwnerRobotAdmissionTests(unittest.TestCase):
         self.assertEqual(formation["direction"], expected.direction)
         owner, guest = photo.call_args_list
         handle = "bp-" + SOURCE_ID.removeprefix("box-plan-")[:40]
-        self.assertIn(("🤖 Робот", f"robot:approve:{handle}"), _markup_callbacks(owner))
-        self.assertLessEqual(len(f"robot:approve:{handle}".encode("utf-8")), 64)
+        self.assertIn(("🤖 Робот", "workspace:AUTOPILOT:TESTUSDT:5m"), _markup_callbacks(owner))
+        self.assertLessEqual(len("workspace:AUTOPILOT:TESTUSDT:5m".encode("utf-8")), 64)
         self.assertFalse(any(
             (data or "").startswith("robot:") for _text, data in _markup_callbacks(guest)
         ))
@@ -503,7 +503,7 @@ class IkigaiBoxOwnerRobotAdmissionTests(unittest.TestCase):
         self.assertEqual(photo.call_count, 2)
         owner = photo.call_args_list[0]
         handle = "bp-" + SOURCE_ID.removeprefix("box-plan-")[:40]
-        self.assertIn(("🤖 Робот", f"robot:approve:{handle}"), _markup_callbacks(owner))
+        self.assertIn(("🤖 Робот", "workspace:AUTOPILOT:TESTUSDT:5m"), _markup_callbacks(owner))
         record, = history.values()
         self.assertNotIn("robot_plan", record)
         warn.assert_not_called()
@@ -570,7 +570,7 @@ class IkigaiBoxOwnerRobotAdmissionTests(unittest.TestCase):
         handoff.assert_not_called()
         photo.assert_called_once()
         self.assertIn(
-            ("🤖 Робот", "robot:approve:bp-" + SOURCE_ID.removeprefix("box-plan-")[:40]),
+            ("🤖 Робот", "workspace:AUTOPILOT:TESTUSDT:5m"),
             _markup_callbacks(photo.call_args),
         )
 
