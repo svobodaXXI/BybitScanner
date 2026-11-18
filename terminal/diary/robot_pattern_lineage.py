@@ -47,10 +47,10 @@ def attach_verified_robot_pattern_signals(
     Does not replace Wedge's stricter exit proof, D2, or financial attribution.
     Only fully Robot-controlled economic episodes may receive this label.
     """
-    evidence = snapshot.wedge_evidence
+    evidence = getattr(snapshot, "wedge_evidence", None)
     rows = report.get("closed_episodes")
     if (report.get("account_id") != "paper" or report.get("owner") != "ROBOT"
-            or report.get("source_revision") != snapshot.source_revision
+            or report.get("source_revision") != getattr(snapshot, "source_revision", None)
             or not isinstance(rows, list) or evidence is None
             or not {"candidates", "trades", "robot_entries"}.issubset(evidence)):
         return report
