@@ -86,7 +86,6 @@ def observe_l_shape(symbol, candles, *, timeframe, chart_dir="charts"):
         "source_candle_time_ms": source_time,
         "chart_path": str(chart),
         "auxiliary_reversal": auxiliary,
-        "auxiliary_observed_at_ms": auxiliary_now_ms,
     }
 
 
@@ -115,7 +114,7 @@ def _robot_signal_snapshot(symbol, timeframe, observation):
     }
     return attach_auxiliary_reversal(
         snapshot, observation.get("auxiliary_reversal"),
-        now_ms=int(observation.get("auxiliary_observed_at_ms") or time.time() * 1000),
+        now_ms=int(time.time() * 1000),
     )
 
 
