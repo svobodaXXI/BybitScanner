@@ -16,7 +16,7 @@ param(
 )
 $ErrorActionPreference='Stop'
 $repo='svobodaXXI/BybitScanner'
-$prior='67c6cf522b14f711792396fee104fc6c6f2fed16'
+$prior='ac3edca1a93cdda9e570289cf5fd5bd7adf26345'
 $target='root@' + $VpsHost
 $known=Join-Path $env:USERPROFILE '.ssh\known_hosts'
 foreach($command in @('ssh','scp','ssh-keygen')){

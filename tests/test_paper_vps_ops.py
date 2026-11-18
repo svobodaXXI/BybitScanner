@@ -159,6 +159,7 @@ class OwnerBridgeTests(unittest.TestCase):
                     CREATE TABLE paper_limit_orders (
                         trading_account_id TEXT, status TEXT);
                     CREATE TABLE robot_trades (
+                        trade_id TEXT PRIMARY KEY,
                         trading_account_id TEXT, exit_time_ms INTEGER, exit_reason TEXT);
                     CREATE TABLE position_projections (
                         trading_account_id TEXT, side TEXT, quantity TEXT);
@@ -171,12 +172,12 @@ class OwnerBridgeTests(unittest.TestCase):
                      "ROBOT_PROTECTION_COVERAGE_LOST symbol=ALICEUSDT "
                      "reason=SECRET-SHOULD-NOT-LEAK", 19, now_ms - 5000),
                 )
-                conn.executemany("INSERT INTO robot_trades VALUES (?,?,?)", [
-                    ("paper", now_ms - 1000, "EMERGENCY_CLOSE"),
-                    ("paper", now_ms - 2000, "STOP"),
-                    ("paper", now_ms - 80 * 60 * 60 * 1000, "TAKE"),
-                    ("paper", 1794870000000, "EMERGENCY_CLOSE"),
-                    ("paper", 1794960000000, "EMERGENCY_CLOSE"),
+                conn.executemany("INSERT INTO robot_trades VALUES (?,?,?,?)", [
+                    ("te_today", "paper", now_ms - 1000, "EMERGENCY_CLOSE"),
+                    ("te_stop", "paper", now_ms - 2000, "STOP"),
+                    ("te_old", "paper", now_ms - 80 * 60 * 60 * 1000, "TAKE"),
+                    ("te_nov17", "paper", 1794870000000, "EMERGENCY_CLOSE"),
+                    ("te_nov18", "paper", 1794960000000, "EMERGENCY_CLOSE"),
                 ])
                 conn.executemany("INSERT INTO position_projections VALUES (?,?,?)", [
                     ("paper", "LONG", "3.5"), ("paper", "FLAT", "0"),
@@ -185,6 +186,18 @@ class OwnerBridgeTests(unittest.TestCase):
                     "INSERT INTO paper_protection_obligations VALUES (?,?)",
                     ("paper", "DISPATCHING"),
                 )
+            incident_dir = root / "robot_incidents"
+            incident_dir.mkdir()
+            (incident_dir / "incident.json").write_text(json.dumps({
+                "schema_version": 1, "timestamp_ms": 1794869999999,
+                "incident_type": "ROBOT_PROTECTION_EMERGENCY_CLOSE",
+                "reason_code": "MARKET_DATA_CONTINUITY_LOST",
+                "trade_id": "te_nov17",
+                "facts": {
+                    "continuity_reason": "synthetic gap SECRET-SHOULD-NOT-LEAK",
+                    "intended_stop_crossed": False,
+                },
+            }), encoding="utf-8")
             with (
                 mock.patch.object(bridge.time, "time", return_value=now_ms / 1000),
                 mock.patch.object(bridge.urlrequest, "urlopen",
@@ -210,13 +223,43 @@ class OwnerBridgeTests(unittest.TestCase):
                 "2026-11-17": {"EMERGENCY_CLOSE": 1},
                 "2026-11-18": {"EMERGENCY_CLOSE": 2, "STOP": 1},
             })
+            self.assertEqual(db["nov17_18_emergency_incidents"], {
+                "emergency_trades": 3,
+                "journal_state": "COMPLETE_SCAN",
+                "retained_files": 1,
+                "unreadable_files": 0,
+                "linked_emergency_trades": 1,
+                "linked_continuity_loss_trades": 1,
+                "incident_not_after_exit_trades": 1,
+                "linked_stop_already_crossed_trades": 0,
+                "distinct_continuity_reason_values": 1,
+                "without_matching_incident_trades": 2,
+            })
             self.assertNotIn("SECRET", json.dumps(snapshot))
             self.assertEqual(http.call_count, 4)
             self.assertEqual(commands.call_count, 3)
 
+    def test_missing_incident_journal_never_claims_zero_incidents(self):
+        import sqlite3
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with sqlite3.connect(":memory:") as conn:
+                conn.execute("CREATE TABLE robot_trades "
+                             "(trade_id TEXT, trading_account_id TEXT, "
+                             "exit_time_ms INTEGER, exit_reason TEXT)")
+                conn.execute("INSERT INTO robot_trades VALUES (?,?,?,?)",
+                             ("te_missing", "paper", 1794870000000,
+                              "EMERGENCY_CLOSE"))
+                result = bridge._nov17_18_emergency_incidents(
+                    conn, root / "paper.sqlite3", 1794988800000)
+            self.assertEqual(result["emergency_trades"], 1)
+            self.assertEqual(result["journal_state"], "MISSING_DIRECTORY")
+            self.assertNotIn("linked_emergency_trades", result)
+
     def test_diagnostic_upgrade_preserves_original_ssh_credentials(self):
         script = Path("tools/upgrade_paper_vps_diagnostics.ps1").read_text()
-        self.assertIn("67c6cf522b14f711792396fee104fc6c6f2fed16", script)
+        self.assertIn("ac3edca1a93cdda9e570289cf5fd5bd7adf26345", script)
         self.assertIn('test "$(sha256sum "$target" | cut -d \' \' -f1)" = "$old"', script)
         self.assertIn("DIAGNOSTICS_HANDLER_INSTALLED", script)
         for forbidden in ("authorized_keys", "gh secret set", "systemctl stop",

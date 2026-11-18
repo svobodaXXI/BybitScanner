@@ -215,7 +215,100 @@ def _robot_reason_public_summary(reason: object) -> dict:
     return result
 
 
-# Restricted diagnostics: fixed GET/SELECT and systemctl is-active only.
+def _nov17_18_emergency_incidents(conn: sqlite3.Connection, db_path: Path,
+                                  captured_ms: int) -> dict:
+    """Join a fixed PAPER close window to retained local incident records.
+
+    Only aggregate counts leave the VPS. No trade IDs, raw reasons, symbols,
+    filenames or incident JSON are returned to GitHub Actions.
+    """
+    start_ms = 1794862800000  # 2026-11-17 00:00 MSK
+    end_ms = min(1795035600000, captured_ms)  # 2026-11-19 00:00 MSK
+    trades = {
+        trade_id: exit_ms
+        for trade_id, exit_ms in conn.execute(
+            "SELECT trade_id,exit_time_ms FROM robot_trades "
+            "WHERE trading_account_id='paper' AND exit_reason='EMERGENCY_CLOSE' "
+            "AND exit_time_ms >= ? AND exit_time_ms < ?",
+            (start_ms, end_ms),
+        ).fetchall()
+    }
+    report = {"emergency_trades": len(trades), "journal_state": "UNAVAILABLE"}
+    directory = db_path.parent / "robot_incidents"  # paper_runtime's fixed path
+    try:
+        if directory.is_symlink():
+            report["journal_state"] = "UNTRUSTED_DIRECTORY"
+            return report
+        if not directory.is_dir():
+            report["journal_state"] = "MISSING_DIRECTORY"
+            return report
+        paths = list(directory.glob("*.json"))
+        if len(paths) > 200:  # recorder retains at most 200
+            report["journal_state"] = "EXCEEDS_RETENTION_BOUND"
+            return report
+    except OSError:
+        report["journal_state"] = "READ_ERROR"
+        return report
+
+    matched, continuity, ordered, stop_crossed, reasons = (
+        set(), set(), set(), set(), set()
+    )
+    unreadable = 0
+    for path in paths:
+        try:
+            # No arbitrary paths, no symlink following, no unbounded payloads.
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+            try:
+                info = os.fstat(fd)
+                if not stat.S_ISREG(info.st_mode) or info.st_size > 16384:
+                    unreadable += 1
+                    continue
+                payload = json.loads(os.read(fd, 16385))
+            finally:
+                os.close(fd)
+            if not isinstance(payload, dict) or payload.get("schema_version") != 1:
+                unreadable += 1
+                continue
+            timestamp = payload.get("timestamp_ms")
+            if type(timestamp) is not int or not start_ms <= timestamp < end_ms:
+                continue
+            trade_id = payload.get("trade_id")
+            if (trade_id not in trades or
+                    payload.get("incident_type") != "ROBOT_PROTECTION_EMERGENCY_CLOSE"):
+                continue
+            matched.add(trade_id)
+            if timestamp <= trades[trade_id]:
+                ordered.add(trade_id)
+            if payload.get("reason_code") == "MARKET_DATA_CONTINUITY_LOST":
+                continuity.add(trade_id)
+                facts = payload.get("facts")
+                if isinstance(facts, dict):
+                    if facts.get("intended_stop_crossed") is True:
+                        stop_crossed.add(trade_id)
+                    cause = facts.get("continuity_reason")
+                    if isinstance(cause, str) and cause:
+                        reasons.add(hashlib.sha256(
+                            cause.encode("utf-8", errors="replace")
+                        ).digest())
+        except (OSError, ValueError, UnicodeError, TypeError):
+            unreadable += 1
+    report.update({
+        "journal_state": "COMPLETE_SCAN" if unreadable == 0 else "PARTIAL_SCAN",
+        "retained_files": len(paths),
+        "unreadable_files": unreadable,
+        "linked_emergency_trades": len(matched),
+        "linked_continuity_loss_trades": len(continuity),
+        "incident_not_after_exit_trades": len(ordered),
+        "linked_stop_already_crossed_trades": len(stop_crossed),
+        "distinct_continuity_reason_values": len(reasons),
+        "without_matching_incident_trades": len(trades) - len(matched),
+    })
+    return report
+
+
+# Restricted diagnostics: fixed GET/SELECT, bounded incident JSON, and
+# systemctl is-active only. No user-supplied SQL/paths, raw records, secrets,
+# general shell, or state mutation; no one-shot marker for diagnose.
 # No shell, arbitrary filesystem reads, user-supplied SQL, journal dumps, or
 # secrets. This mode never stages code or writes one-shot transaction markers.
 def _read_only_diag(sha: str, *, root: Path = Path("/opt/BybitScanner"),
@@ -387,6 +480,8 @@ def _read_only_diag(sha: str, *, root: Path = Path("/opt/BybitScanner"),
                             ("2026-11-18", 1794949200000, 1795035600000),
                         )
                     },
+                    "nov17_18_emergency_incidents": _nov17_18_emergency_incidents(
+                        conn, db_path, int(time.time() * 1000)),
                     "approvals": one(
                         "SELECT COUNT(*) FROM robot_candidates "
                         "WHERE trading_account_id='paper' AND status='APPROVED'"),
