@@ -52,11 +52,13 @@ class SignalRepostTests(unittest.TestCase):
             self.addCleanup(fixture.stop)
 
     def _archive(self, candidate_id="cand-ena", *, text="Сканер: ENAUSDT\nПаттерн", image=PNG,
-                 file_id="FILE-ID", sent_at_ms=SENT_AT_MS, symbol="ENAUSDT", timeframe="5"):
+                 file_id="FILE-ID", sent_at_ms=SENT_AT_MS, symbol="ENAUSDT", timeframe="5",
+                 source_formation_ids=None, geometry_snapshot=None):
         response = {"ok": True, "result": {"message_id": 5, "photo": [{"file_id": file_id}]}}
         self.assertTrue(signal_archive.record_original_signal(
             candidate_id, symbol=symbol, timeframe=timeframe, pattern="Falling Wedge",
-            text=text, image_bytes=image, photo_response=response, sent_at_ms=sent_at_ms))
+            text=text, image_bytes=image, photo_response=response, sent_at_ms=sent_at_ms,
+            source_formation_ids=source_formation_ids, geometry_snapshot=geometry_snapshot))
 
     def _press(self, records):
         with patch("telegram_monitoring._robot_store") as store:
@@ -82,6 +84,86 @@ class SignalRepostTests(unittest.TestCase):
         self.assertIn("Сканер: ENAUSDT\nПаттерн", caption)
         by_path.assert_not_called()
         text.assert_not_called()
+
+    @patch("telegram_monitoring._send_text")
+    @patch("telegram_monitoring.telegram_bot.send_photo_by_file_id")
+    def test_duplicate_editor_links_to_same_immutable_source_as_original(self, by_id, text):
+        from urllib.parse import parse_qs, urlsplit
+        from signal_geometry_producer import build_wedge_geometry_snapshot
+        from tests.test_signal_geometry_producer import Candles, GEOMETRY
+
+        source_id = "source-original:" + "a" * 24
+        frozen = build_wedge_geometry_snapshot(
+            source_id, "ENAUSDT", "5", GEOMETRY, Candles(), now_ms=602000,
+        )
+        self.assertIsNotNone(frozen)
+        self._archive(source_id, geometry_snapshot=frozen, file_id="SOURCE-PHOTO")
+        # A duplicate with only its candidate PNG still reopens the canonical
+        # source Editor rather than an independent candidate review.
+        self._archive("cand-ena", source_formation_ids=[source_id])
+        by_id.return_value = {"ok": True}
+        with patch.dict("os.environ", {
+            "BYBITSCANNER_TERMINAL_HTTPS_URL": "https://terminal.example.com",
+        }):
+            self._press([_record()])
+        markup = by_id.call_args.kwargs["reply_markup"]["inline_keyboard"]
+        editor = next(b for row in markup for b in row if b["text"] == "✏️ Редактор")
+        self.assertEqual(
+            parse_qs(urlsplit(editor["web_app"]["url"]).query)["signal_id"], [source_id],
+        )
+        self.assertEqual(by_id.call_args.args[2], "FILE-ID")
+        self.assertEqual(
+            monitoring._repost_editor_source_id(signal_archive.load_original_signal(["cand-ena"])),
+            source_id,
+        )
+        text.assert_not_called()
+
+    @patch("telegram_monitoring.telegram_bot.send_photo_by_file_id")
+    def test_duplicate_editor_callback_preserves_source_token_without_https(self, by_id):
+        from signal_geometry_producer import build_wedge_geometry_snapshot
+        from tests.test_signal_geometry_producer import Candles, GEOMETRY
+
+        source_id = "source-original:" + "b" * 24
+        frozen = build_wedge_geometry_snapshot(
+            source_id, "ENAUSDT", "5", GEOMETRY, Candles(), now_ms=602000,
+        )
+        self.assertIsNotNone(frozen)
+        self._archive(source_id, geometry_snapshot=frozen)
+        self._archive("cand-ena", source_formation_ids=[source_id])
+        by_id.return_value = {"ok": True}
+        with patch.dict("os.environ", {
+            "BYBITSCANNER_TERMINAL_HTTPS_URL": "", "BYBITSCANNER_WORKSPACE_URL": "",
+        }):
+            self._press([_record()])
+        markup = by_id.call_args.kwargs["reply_markup"]["inline_keyboard"]
+        editor = next(b for row in markup for b in row if b["text"] == "✏️ Редактор")
+        self.assertEqual(editor["callback_data"], "workspace:EDITOR:S:" + "b" * 24)
+
+    @patch("telegram_monitoring.telegram_bot.send_photo_by_file_id")
+    def test_never_redirects_to_different_source_or_missing_geometry(self, by_id):
+        from urllib.parse import parse_qs, urlsplit
+        from signal_geometry_producer import build_wedge_geometry_snapshot
+        from tests.test_signal_geometry_producer import Candles, GEOMETRY
+
+        source_id = "source-original:" + "c" * 24
+        frozen = build_wedge_geometry_snapshot(
+            source_id, "ENAUSDT", "5", GEOMETRY, Candles(), now_ms=602000,
+        )
+        self.assertIsNotNone(frozen)
+        self._archive(source_id, geometry_snapshot=frozen, image=b"different-image")
+        self._archive("cand-ena", source_formation_ids=[source_id])
+        by_id.return_value = {"ok": True}
+        with patch.dict("os.environ", {
+            "BYBITSCANNER_TERMINAL_HTTPS_URL": "https://terminal.example.com",
+        }):
+            self._press([_record()])
+        markup = by_id.call_args.kwargs["reply_markup"]["inline_keyboard"]
+        editor = next(b for row in markup for b in row if b["text"] == "✏️ Редактор")
+        self.assertEqual(
+            parse_qs(urlsplit(editor["web_app"]["url"]).query)["signal_id"], ["cand-ena"],
+        )
+        # Neither a different signal's rays nor the current market are substituted.
+        self.assertIsNone(signal_archive.load_frozen_signal_geometry("cand-ena"))
 
     @patch("telegram_monitoring._send_text")
     @patch("telegram_monitoring.telegram_bot.send_photo")
