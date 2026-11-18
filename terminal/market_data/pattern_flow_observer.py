@@ -134,14 +134,16 @@ class PatternFlowObserver:
                     and record.symbol.value in contexts):
                 eligible.append(record)
 
-        for record in eligible[:MAX_CANDIDATES_PER_PASS]:
-            if self._stop.is_set():
+        attempts = 0
+        for record in eligible:
+            if self._stop.is_set() or attempts >= MAX_CANDIDATES_PER_PASS:
                 break
             key = (record.candidate_id, record.state_revision, closed)
             if key in self._attempted:
                 continue
             self._attempted = {k for k in self._attempted if k[2] >= closed - 60_000}
             self._attempted.add(key)
+            attempts += 1
             context = contexts[record.symbol.value]
             if (context.trades_subscription_state != "SUBSCRIBED"
                     or context.trade_bootstrap_complete is not True):
@@ -151,6 +153,15 @@ class PatternFlowObserver:
             # Only PublicTradeObservation's own before/after generation
             # comparison proves absence of a reconnect during REST reads.
             if before.get("invalid_frames") != 0:
+                continue
+            # Without BOTH closed-minute prints, independent parity cannot
+            # succeed. Avoid network calls and ingress pressure entirely.
+            prints = before.get("prints")
+            if (not isinstance(prints, tuple)
+                    or not any(closed - 120_000 <= p.timestamp_ms < closed - 60_000
+                               for p in prints)
+                    or not any(closed - 60_000 <= p.timestamp_ms < closed
+                               for p in prints)):
                 continue
             try:
                 recent = self._json("/v5/market/recent-trade", params={
