@@ -59,13 +59,15 @@ blocker, explaining the single needed decision. Never suppress safety gates,
 assume authorization, or claim success without observed evidence. After the
 blocker is resolved, return directly to the original end result.
 
-## VPS access priority — single canonical SSH authority (owner updated 2026-11-17)
+## VPS access priority — single canonical SSH authority (owner updated 2026-11-18)
 
-**THE ONLY OPERATIVE SSH ROUTE DOCUMENT:** `DOCUMENTS/WINDOWS_PC_VPS_ACCESS_RECOVERY_20261108.md`, section **0** for Happ/VPN ON and section **1** for Happ/VPN OFF. Read the applicable route **before** suggesting any SSH, Codex, VPN or VPS Manager invocation; do not copy IPs, commands or divergent routing priorities into AGENTS or another runbook.
+**FIRST READ for any VPS SSH, Windows PowerShell, VPN, Codex or VPS Manager access:** [canonical VPS connection register](DOCUMENTS/WINDOWS_PC_VPS_ACCESS_RECOVERY_20261108.md) (top section, **18.11.2026**). That document is the **only operative SSH route authority**; older sections 0/1 and other runbooks describe historical contexts, not a higher priority. Do not copy SSH commands, IPs, or a conflicting default into AGENTS or other docs.
 
-**Owner's 17.11 verified main-PC conditions are distinct**: both the existing PC identity with Happ/VPN OFF (§1) and the subsequent Happ «Основной 1» (VLESS/TCP/REALITY) ON (§0) have one authenticated SSH_OK/exit 0 receipt apiece. Earlier timeout trials through a different VPN node do not invalidate the later successful session. One success does not prove persistent stability. The laptop is separately documented.
+**Critical verified recovery:** repeated `banner exchange timeout`/exit 255 did **not** mean SSH was permanently unavailable. Owner's main PC then authenticated as root with the documented standard PowerShell SSH invocation **without `-F none`**, and confirmed Happ/VPN was **ON**. Receipt: `SSH_OK`, expected VPS hostname, exit 0, followed by successful read-only Robot/Scanner/protection API calls. This supersedes the 17.11 assumption that VPN must be OFF for the old IP or that the new IP with `-F none` is always preferred. The exact VPN node and root cause remain unproven. Consult the register before any new retry; stop after failed evidence instead of broad alias/IP/key/VPN exploration.
 
-Minimize the owner's time: use GitHub for repo evidence, and an actually authorized host-execution path for VPS work; do not pretend GitHub access equals SSH. If agent execution cannot access the Windows host route, escalate the *exact* missing execution boundary rather than repeating manual diagnostics or selecting an older SSH default. One successful SSH login proves transport only. No GitHub merge, VPS deploy, STOP/START, PAPER/DB, admission or LIVE authority follows from it; all fail-closed safety gates remain unchanged.
+**Documentation link graph:** AGENTS → [single SSH register](DOCUMENTS/WINDOWS_PC_VPS_ACCESS_RECOVERY_20261108.md) ↔ [VPS Manager interface/monolith guide](tools/WINDOWS_VPS_MANAGER.md). The register owns working Windows routes and incident chronology; the Manager guide owns GUI/CLI controls; [ASSISTANT_PROTOCOL](DOCUMENTS/ASSISTANT_PROTOCOL.md) owns operational authority. Source code or installed client behavior may differ from the successful manual PowerShell route; prove it before claiming equivalence.
+
+Minimize owner time: GitHub evidence is not host access. If Windows host execution is unavailable, report the exact missing boundary, not another unproven SSH command. SSH_OK proves transport only, never deploy, STOP/START, PAPER/DB, admission, or LIVE authority; all fail-closed gates remain unchanged.
 
 ## Outcome-owned delegation — proven lesson (2026-10-28)
 
