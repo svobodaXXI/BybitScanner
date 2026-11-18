@@ -93,6 +93,25 @@ def test_entry_risk_mismatch_and_invalid_stop_fail_closed_only_for_risk():
         assert result["exit_reason"] == "TAKE"
 
 
+def test_short_entry_risk_with_multiple_exact_open_fills():
+    from decimal import Decimal
+    from types import SimpleNamespace as S
+    from terminal.diary.wedge_lineage import _verified_wedge_entry_risk
+
+    rows = [
+        (S(quantity=Decimal("1")), S(price=S(value=Decimal("99")))),
+        (S(quantity=Decimal("1")), S(price=S(value=Decimal("101")))),
+    ]
+    terms = {
+        "average_entry": "100", "entry_quantity": "2",
+        "stop_price": "106", "take_price": "90",
+    }
+    result = _verified_wedge_entry_risk(terms, rows, direction="SHORT")
+    assert result["status"] == "PROVEN_PERSISTED_ENTRY_TERMS"
+    assert Decimal(result["initial_risk_price"]) == Decimal("6")
+    assert Decimal(result["initial_risk_pct"]) == Decimal("6")
+
+
 def test_legacy_wedge_without_trade_terms_keeps_exact_pattern_not_risk():
     snapshot, kwargs = case()
     report = project_selected_paper_wedge(snapshot, **kwargs)
