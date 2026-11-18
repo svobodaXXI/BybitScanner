@@ -616,6 +616,24 @@ class RobotBreakoutMonitor:
             self._store(), self._account_id, clock_ms=self._clock_ms,
         )._candidate_is_inert(record)
 
+    def _cancelled_legacy_double_is_inert(
+        self, record: RobotCandidateRecord, order_id: str,
+    ) -> bool:
+        """A cancelled, zero-filled legacy LIMIT is not proof of zero exposure.
+
+        Verify the immutable fill ledger and all canonical owner-side
+        order/command/position/protection reads before retiring the candidate.
+        Unavailable or contradictory evidence fails closed.
+        """
+        store = self._store()
+        if store.get_robot_trade(f"robot-trade-{record.candidate_id}") is not None:
+            return False
+        if store.load_executions_for_order(self._account_id, OrderId(order_id)):
+            return False
+        return RobotRecoveryCoordinator(
+            store, self._account_id, clock_ms=self._clock_ms,
+        )._candidate_is_inert(record)
+
     def _advance_one(self, record: RobotCandidateRecord) -> bool:
         if (
             record.signal_snapshot.get("pattern") == "IKIGAI_BOX"
@@ -1534,6 +1552,10 @@ class RobotBreakoutMonitor:
                 # Never claim an inert candidate from an absent/unknown order
                 # or a contradictory FILLED state without an actual fill.
                 if order.status != "cancelled":
+                    return False
+                if not self._cancelled_legacy_double_is_inert(
+                    record, execution["limit_order_id"],
+                ):
                     return False
                 self._invalidate_pre_entry_candidate(
                     record, reason="Double Top/Bottom legacy LIMIT cancelled without fill",
