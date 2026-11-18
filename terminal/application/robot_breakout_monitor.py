@@ -1403,6 +1403,15 @@ class RobotBreakoutMonitor:
         execution = dict(record.robot_state.get("execution") or {})
 
         if "limit_order_id" not in execution:
+            # Previously APPROVED standalone Double Top/Bottom candidates
+            # from an older release must not place their first order.
+            # Do not invalidate OPEN/filled trades or interrupt STOP/TAKE.
+            if (record.status == "APPROVED"
+                    and record.signal_snapshot.get("pattern") in robot_l_shape.DOUBLE_PATTERNS):
+                self._invalidate_pre_entry_candidate(
+                    record, reason="Double Top/Bottom is auxiliary-only",
+                )
+                return True
             candle = self._get_closed_candle(record.symbol.value)
             if candle is not None:
                 invalidation = robot_l_shape.invalidation_event(
