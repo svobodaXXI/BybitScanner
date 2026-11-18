@@ -58,6 +58,7 @@ from terminal.application.ikigai_box_catchup import (
     ready_box_exit_slots,
     restore_box_market_plan,
 )
+from terminal.application.robot_recovery import RobotRecoveryCoordinator
 from terminal.application.robot_admission import active_robot_owner_candidate_ids
 from terminal.application.robot_admission_catchup import (
     LATE_ADMISSION_MARKET,
@@ -86,6 +87,7 @@ from terminal.persistence.sqlite_store import (
 
 DEFAULT_TICK_INTERVAL_S = 60.0
 DEFAULT_LATE_MARKET_MAX_BOOK_AGE_MS = 1000
+PAPER_CANDIDATE_ERROR_QUARANTINE_THRESHOLD = 3
 
 INACTIVE_LIMIT_STATUSES = {"filled", "cancelled"}
 PHASE_INVALIDATED_UNSUPPORTED_PATTERN = "INVALIDATED_UNSUPPORTED_PATTERN"
@@ -543,16 +545,76 @@ class RobotBreakoutMonitor:
         return changed
 
     def _record_execution_error(self, record: RobotCandidateRecord, error: Exception) -> None:
+        """Count repeat faults durably; quarantine only a proven inert PAPER candidate.
+
+        The error path may run after an execution callback has committed a
+        simulated fill. Never infer that APPROVED means pre-execution.
+        """
         if record.robot_state is None:
             return
         try:
-            execution = dict(record.robot_state.get("execution") or {})
+            fresh = self._store().get_robot_candidate(record.candidate_id)
+            if fresh is None or fresh.status != "APPROVED" or fresh.robot_state is None:
+                return
+            state = dict(fresh.robot_state)
+            execution = dict(state.get("execution") or {})
+            fingerprint = f"{type(error).__name__}:{error}"
+            previous = execution.get("paper_candidate_error")
+            repeated = (
+                int(previous.get("consecutive", 0)) + 1
+                if isinstance(previous, Mapping) and previous.get("fingerprint") == fingerprint
+                else 1
+            )
+            execution["paper_candidate_error"] = {
+                "fingerprint": fingerprint, "consecutive": repeated,
+            }
             execution["last_execution_error"] = str(error)
             execution["last_attempt_at_ms"] = self._now_ms()
             execution["attempt_count"] = int(execution.get("attempt_count", 0) or 0) + 1
-            self._persist_execution(record, execution)
+            state["execution"] = execution
+
+            if (
+                repeated >= PAPER_CANDIDATE_ERROR_QUARANTINE_THRESHOLD
+                and self._account_id.value == "paper"
+                and self._paper_candidate_is_inert(fresh)
+            ):
+                state["paper_quarantine"] = {
+                    "reason": "REPEATED_CANDIDATE_ERROR",
+                    "error_type": type(error).__name__,
+                    "consecutive": repeated,
+                    "at_ms": self._now_ms(),
+                }
+                status = "INVALIDATED"
+            else:
+                status = "APPROVED"
+            self._store().save_robot_candidate_state(
+                fresh.candidate_id,
+                status=status,
+                robot_state=state,
+                expected_revision=fresh.state_revision,
+                updated_at_ms=self._now_ms(),
+            )
         except Exception:
+            # A failed proof or persistence write never justifies quarantine.
+            # Existing account-wide protection/admission authority is unchanged.
             pass
+
+    def _paper_candidate_is_inert(self, record: RobotCandidateRecord) -> bool:
+        """Require no candidate execution intent AND no durable trading lineage."""
+        execution = (record.robot_state or {}).get("execution") or {}
+        if not isinstance(execution, Mapping):
+            return False
+        # Every other execution field may be an order, fill, or entry intent.
+        if set(execution) - {
+            "last_execution_error", "last_attempt_at_ms",
+            "attempt_count", "paper_candidate_error",
+        }:
+            return False
+        if self._store().get_robot_trade(f"robot-trade-{record.candidate_id}") is not None:
+            return False
+        return RobotRecoveryCoordinator(
+            self._store(), self._account_id, clock_ms=self._clock_ms,
+        )._candidate_is_inert(record)
 
     def _advance_one(self, record: RobotCandidateRecord) -> bool:
         if (
