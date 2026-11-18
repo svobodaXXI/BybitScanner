@@ -491,7 +491,7 @@ describe("Closed deals / exact episode index", () => {
     fireEvent.click(screen.getByRole("button", { name: "Финрез" }));
     fireEvent.click(await screen.findByRole("button", { name: "Показать сделки по ETHUSDT" }));
     expect(screen.getByRole("combobox", { name: "Выбор паттерна" })).toHaveValue("");
-    expect(screen.getByRole("button", { name: "Прибыльные" })).toHaveAttribute("aria-pressed", "false");
+    expect(await screen.findByRole("button", { name: "Прибыльные" })).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByRole("button", { name: "Убыточные" })).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByRole("button", { name: "LONG" })).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByRole("button", { name: "SHORT" })).toHaveAttribute("aria-pressed", "false");
@@ -1097,7 +1097,8 @@ describe("Finrez first-screen UI", () => {
     fireEvent.click(screen.getByRole("button", { name: "Убыточные паттерны" }));
     expect(cards()).toHaveLength(4);
     fireEvent.click(screen.getByRole("button", { name: "Показать все сделки по паттерну Double Bottom" }));
-    expect(screen.getByRole("combobox", { name: "Выбор паттерна" })).toHaveValue("Double Bottom");
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Выбор паттерна" }))
+      .toHaveValue("Double Bottom"));
     const dealBar = screen.getByRole("group", { name: "Распределение результатов сделок" });
     expect(dealBar).toHaveTextContent("Всего: 1");
     expect(dealBar).toHaveTextContent("Убыточных: 1");
