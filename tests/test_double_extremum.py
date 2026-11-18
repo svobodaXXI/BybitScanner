@@ -498,6 +498,7 @@ def test_legacy_double_cancel_unknown_never_advances_or_invalidates():
     store = Mock()
     store.get_paper_limit.return_value = SimpleNamespace(
         status="open", quantity=Decimal("1"), filled_quantity=Decimal("0"),
+        symbol=Symbol("LABUSDT"),
     )
     candidate = SimpleNamespace(
         candidate_id="legacy", symbol=Symbol("LABUSDT"), status="APPROVED",
