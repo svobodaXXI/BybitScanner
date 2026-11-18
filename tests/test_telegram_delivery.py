@@ -288,6 +288,10 @@ class TelegramSignalDeliveryTests(unittest.TestCase):
             keyboard = notification.build_tradingview_keyboard(
                 "HEIUSDT", "5m", include_review_actions=True,
             )["inline_keyboard"]
+            self.assertEqual(keyboard[-2][0], {
+                "text": "🤖 Робот",
+                "web_app": {"url": "https://83.217.213.181/login?mode=AUTOPILOT&symbol=HEIUSDT&timeframe=5m"},
+            })
             self.assertEqual(keyboard[-1][0], {
                 "text": "✏️ Редактор",
                 "web_app": {"url": "https://83.217.213.181/login?mode=EDITOR&symbol=HEIUSDT&timeframe=5m"},
