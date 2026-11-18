@@ -193,7 +193,7 @@ class PublicTradeObservationTests(unittest.TestCase):
         for index in range(1001):
             self.assertTrue(source.observe(frame(trade(
                 f"more-{index}", 180_000 + index,
-                sequence=index + 1,
+                sequence=index + 101,
             )), received_at_ms=181_100))
         snapshot = source.snapshot()
         self.assertEqual(snapshot["buffer_capacity"], 1000)
