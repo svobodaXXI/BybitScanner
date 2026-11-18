@@ -1052,6 +1052,56 @@ describe("Finrez first-screen UI", () => {
     expect(await screen.findAllByText("Клин ↘")).toHaveLength(3);
   });
 
+
+  it("ranks every evidence-backed pattern name and drills into its own deals", async () => {
+    const patterns = [
+      ["IKIGAI_BOX", "2"], ["L-shape", "-1"], ["Falling Wedge", "-8"],
+      ["Rising Wedge", "5"], ["Triangle Compression", "0.5"],
+      ["Double Top", "-2"], ["Double Bottom", "-3"], ["MIRROR", "1"],
+    ] as const;
+    const episodes = patterns.map(([pattern, pnl_usdt], index) => {
+      const id = (index + 10).toString(16).padStart(24, "0");
+      return {
+        ...robotDeal, trade_episode_id: "te_" + id, symbol: "BTCUSDT",
+        pnl_usdt, opened_at_ms: 1_793_001_000_000,
+        closed_at_ms: 1_793_002_000_000, opening_controller: "ROBOT",
+        setup_context: {
+          status: "EXACT_D2_LINK", source: "TRADING_DIARY_D2",
+          consistency: "INDEPENDENT_READ_SNAPSHOT_NOT_ATOMIC_WITH_PAPER",
+          decision_scope: "D2_OBSERVATIONS_NOT_ROBOT_RUNTIME_LOG",
+          setup: {
+            setup_id: "candidate-" + id, symbol: "BTCUSDT", direction: "LONG",
+            origin: "ROBOT", pattern, timeframe: "5", strategy_version: "v1",
+            created_at_ms: 1_793_000_000_000,
+          },
+        },
+      };
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ...finrezResponse, closed_episodes: episodes,
+    }), { status: 200 })));
+    render(<DiaryOverlay accountKey="paper:all-proven-patterns" initialSection="PATTERNS"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    const region = await screen.findByRole("region", { name: "Паттерны по подтверждённым сделкам" });
+    const cards = () => Array.from(region.querySelectorAll(".diary-pattern-card"));
+    expect(cards().map((card) => card.querySelector(".diary-pattern-label strong")?.textContent))
+      .toEqual(["Rising Wedge", "IKIGAI_BOX", "MIRROR", "Triangle Compression",
+        "L-shape", "Double Top", "Double Bottom", "Falling Wedge"]);
+    const bar = screen.getByRole("group", { name: "Распределение результатов паттернов" });
+    expect(bar).toHaveTextContent("Прибыльных: 4");
+    expect(bar).toHaveTextContent("Убыточных: 4");
+    expect(bar).toHaveTextContent("Всего: 8");
+    fireEvent.click(screen.getByRole("button", { name: "Убыточные паттерны" }));
+    expect(cards()).toHaveLength(4);
+    fireEvent.click(screen.getByRole("button", { name: "Показать все сделки по паттерну Double Bottom" }));
+    expect(screen.getByRole("combobox", { name: "Выбор паттерна" })).toHaveValue("Double Bottom");
+    const dealBar = screen.getByRole("group", { name: "Распределение результатов сделок" });
+    expect(dealBar).toHaveTextContent("Всего: 1");
+    expect(dealBar).toHaveTextContent("Убыточных: 1");
+    expect(screen.getByRole("button", { name: "Убыточные" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: /BTCUSDT/ })).toHaveTextContent("Double Bottom");
+  });
+
   it("never shows an unknown pattern as a zero result and respects ticker filtering", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
       ...finrezResponse,
@@ -1073,6 +1123,11 @@ describe("Finrez first-screen UI", () => {
     expect(region).toHaveTextContent("неполное покрытие атрибуции");
     expect(region).toHaveTextContent("Нет сделок с подтверждённым паттерном");
     expect(region).not.toHaveTextContent("0 USDT");
+    const emptyPatternBar = screen.getByRole("group", { name: "Распределение результатов паттернов" });
+    expect(emptyPatternBar).toHaveTextContent("Всего: 0");
+    expect(emptyPatternBar.querySelector(".diary-outcome-track")).toHaveTextContent("");
+    expect(screen.getByRole("button", { name: "Прибыльные паттерны" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Убыточные паттерны" })).toBeDisabled();
     fireEvent.change(screen.getByRole("searchbox", { name: "Поиск по тикеру" }), {
       target: { value: "ETH" },
     });
