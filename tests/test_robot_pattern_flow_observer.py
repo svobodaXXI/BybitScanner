@@ -318,6 +318,98 @@ class ObserverTests(unittest.TestCase):
                 self.assertEqual(len(rest.requests), 3)
                 observer.close()
 
+    def test_cached_certificate_dies_on_reconnect_or_source_replacement(self):
+        from terminal.market_data.impulse_observation import PublicTradeObservation
+        observed, recent, previous, current = PatternFlowSourceTests.source()
+        clock = lambda: PatternFlowSourceTests.CLOSE + 5_000
+        live = PublicTradeObservation("BTCUSDT")
+        live.enable_certification_buffer()
+        # Test via a live observer source, so generation changes are observable.
+        prints = observed["prints"]
+        for item in prints:
+            self.assertTrue(live.observe({
+                "topic": "publicTrade.BTCUSDT", "data": [{
+                    "i": item.trade_id, "s": "BTCUSDT", "T": item.timestamp_ms,
+                    "seq": item.sequence, "S": item.side,
+                    "p": str(item.price), "v": str(item.quantity),
+                }],
+            }, received_at_ms=item.received_at_ms))
+        context = _Context(observed)
+        context.impulse_observation = live
+        hub = SimpleNamespace(list_contexts=lambda: (context,))
+        observer = PatternFlowObserver(
+            hub, _REST(recent, previous, current), "unused",
+            clock_ms=clock, get_candidates=lambda: (_candidate(),),
+        )
+        try:
+            self.assertEqual(observer.once(), 1)
+            self.assertIsNotNone(observer.get(_candidate()))
+            live.mark_gap()
+            self.assertIsNone(observer.get(_candidate()))
+            # Replacement with the same symbol and even the same generation
+            # must not resurrect a certificate from the previous object.
+            replacement = PublicTradeObservation("BTCUSDT")
+            replacement.enable_certification_buffer()
+            context.impulse_observation = replacement
+            self.assertIsNone(observer.get(_candidate()))
+        finally:
+            observer.close()
+
+    def test_warmed_ws_prints_certify_only_after_canonical_retest(self):
+        from terminal.market_data.hub import MarketDataHub
+        from tests.test_terminal_market_data_hub import _Registry, _context
+        observed, recent, previous, current = PatternFlowSourceTests.source()
+        hub = MarketDataHub(_Registry(), _context,
+                            connection_factory=lambda *_a, **_k: None)
+        candidate = _candidate(phase="WAITING_BREAKOUT")
+        record = [candidate]
+        rest = _REST(recent, previous, current)
+        observer = PatternFlowObserver(
+            hub, rest, "unused",
+            clock_ms=lambda: PatternFlowSourceTests.CLOSE + 5_000,
+            get_candidates=lambda: tuple(record),
+        )
+        try:
+            self.assertEqual(observer.once(), 0)
+            self.assertEqual(len(hub.list_flow_contexts()), 1)
+            self.assertEqual(rest.requests, [])
+            hub._dispatch({
+                "op": "subscribe", "req_id": "flow:BTCUSDT", "success": True,
+            })
+            for item in observed["prints"]:
+                raw = {
+                    "topic": "publicTrade.BTCUSDT",
+                    "data": [{
+                        "i": item.trade_id, "s": "BTCUSDT",
+                        "T": item.timestamp_ms, "seq": item.sequence,
+                        "S": item.side, "p": str(item.price),
+                        "v": str(item.quantity),
+                    }],
+                }
+                with patch("terminal.market_data.hub.time.time",
+                           return_value=item.received_at_ms / 1000):
+                    hub._dispatch(raw)
+            self.assertEqual(observer.once(), 0)
+            self.assertEqual(rest.requests, [])
+            record[0] = SimpleNamespace(
+                **{**vars(candidate),
+                   "state_revision": candidate.state_revision + 1,
+                   "robot_state": {**candidate.robot_state,
+                                   "phase": "RETEST_DETECTED"}}
+            )
+            self.assertEqual(observer.once(), 1)
+            proof = observer.get(record[0])
+            self.assertIsNotNone(proof)
+            self.assertEqual(proof.candidate_id, candidate.candidate_id)
+            self.assertEqual(proof.state_revision, candidate.state_revision + 1)
+            self.assertEqual(len(rest.requests), 3)
+            self.assertEqual(hub.list_contexts(), ())  # still no orderbook
+            hub.list_flow_contexts()[0].impulse_observation.mark_gap()
+            self.assertIsNone(observer.get(record[0]))
+        finally:
+            observer.close()
+            hub.close()
+
     def test_stale_or_revised_evidence_not_accepted_for_entry(self):
         observed, recent, previous, current = PatternFlowSourceTests.source()
         ctx = _Context(observed)

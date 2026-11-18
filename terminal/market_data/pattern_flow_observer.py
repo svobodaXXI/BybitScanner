@@ -151,7 +151,10 @@ class PatternFlowObserver:
             lambda: read_approved_pattern_candidates(self._db_path)
         )
         self._lock = threading.Lock()
-        self._receipts: dict[str, CandidateBoundFlowEvidence] = {}
+        # A certificate is usable only while its originating observation
+        # object AND transport generation are still the live source.
+        # Never let a reconnect, release or same-symbol replacement reuse it.
+        self._receipts: dict[str, tuple[CandidateBoundFlowEvidence, object, int]] = {}
         self._attempted: set[tuple[str, int, int]] = set()
         self._stop = threading.Event()
         self._thread = threading.Thread(
@@ -233,14 +236,32 @@ class PatternFlowObserver:
             self._rest.close()
 
     def get(self, record) -> CandidateBoundFlowEvidence | None:
-        """Read-only, lock-bounded lookup; no REST or SQLite on Robot tick."""
+        """Only live same-epoch evidence; no REST or SQLite on Robot tick."""
         with self._lock:
-            evidence = self._receipts.get(record.candidate_id)
-        if evidence is None:
+            cached = self._receipts.get(record.candidate_id)
+        if cached is None:
             return None
+        evidence, source, generation = cached
         now_ms = self._clock()
         if (type(now_ms) is not int or now_ms < evidence.decision_ms
                 or now_ms - evidence.closed_at_ms > 120_000):
+            return None
+        list_contexts = getattr(
+            self._hub, "list_flow_contexts", self._hub.list_contexts,
+        )
+        # Passive/full promotions retain the SAME PublicTradeObservation.
+        # Reconnect, release or replacement invalidate its lineage.
+        context = next((
+            c for c in list_contexts()
+            if c.symbol == evidence.symbol and c.impulse_observation is source
+        ), None)
+        if (context is None
+                or context.trades_subscription_state != "SUBSCRIBED"
+                or context.trade_bootstrap_complete is not True):
+            return None
+        snapshot = source.snapshot()
+        if (snapshot.get("generation") != generation
+                or snapshot.get("invalid_frames") != 0):
             return None
         return evidence
 
@@ -275,6 +296,13 @@ class PatternFlowObserver:
         if type(now) is not int or now < 180_000:
             return 0
         closed = now // 60_000 * 60_000
+        with self._lock:
+            # Drop old candidates proactively: the Robot may never call get()
+            # for closed/invalidated IDs. Do not hold source objects forever.
+            self._receipts = {
+                cid: cached for cid, cached in self._receipts.items()
+                if 0 <= now - cached[0].closed_at_ms <= 120_000
+            }
         if not 2_000 <= now - closed <= 45_000:
             return 0
 
@@ -385,7 +413,10 @@ class PatternFlowObserver:
                 # Evidence is advisory until the Robot independently checks
                 # exact candidate/revision/direction and normal entry gates.
                 with self._lock:
-                    self._receipts[record.candidate_id] = receipt
+                    self._receipts[record.candidate_id] = (
+                        receipt, context.impulse_observation,
+                        before["generation"],
+                    )
                 return 1
             except Exception as error:
                 LOGGER.warning(
