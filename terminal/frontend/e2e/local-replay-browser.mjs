@@ -744,6 +744,10 @@ try {
   });
   const factNote = page.getByRole("status", { name: "PAPER факты сделки" });
   await factNote.waitFor();
+  assert.match(await factNote.innerText(), /BTCUSDT · LONG · 2 исполнения · PnL: -1,00 USDT/);
+  assert.match(await factNote.innerText(), /Свечи M5 сопоставлены/);
+  assert.doesNotMatch(await factNote.innerText(), /Gross PnL/);
+  await factNote.locator("summary").click();
   assert.match(await factNote.innerText(), /Треугольники на закрытых свечах/);
   assert.match(await factNote.innerText(), /JSON без криптографической подписи/);
   assert.match(await factNote.innerText(), /Falling Wedge · 5m · версия v1/);
