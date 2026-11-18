@@ -418,3 +418,50 @@ def test_legacy_double_cancel_race_preserves_actual_partial_fill():
         entry_path="LIMIT", actual_wv=Decimal("0.25"),
     )
     monitor._match_resting_orders.assert_not_called()
+
+
+def test_auxiliary_double_bottom_long_confirms_all_supported_hosts():
+    from geometry.double_extremum import (
+        attach_auxiliary_reversal, build_auxiliary_reversal_evidence,
+    )
+    candles = [
+        bar(102, 98, 100), bar(101, 94, 96), bar(98, 90, 92),
+        bar(101, 95, 99), bar(106, 99, 104), bar(102, 97, 99),
+        bar(99, 90.2, 92), bar(104, 96, 100), bar(107, 98, 106.5),
+    ]
+    for i, candle in enumerate(candles):
+        candle["time"] = 3_000_000 + i * 60_000
+    closed_at = candles[-1]["time"] + 60_000
+    reversal = build_auxiliary_reversal_evidence(
+        "LABUSDT", "1", candles, now_ms=closed_at,
+    )
+    assert reversal is not None
+    assert reversal["pattern"] == "Double Bottom"
+    assert reversal["direction"] == "LONG"
+    assert "robot_handoff_ready" not in reversal
+    assert "candidate_id" not in reversal
+
+    hosts = [
+        {"pattern": "Falling Wedge", "symbol": "LABUSDT", "timeframe": "1"},
+        {"pattern": "IKIGAI_BOX", "identity": {
+            "symbol": "LABUSDT", "timeframe": "1", "direction": "LONG",
+        }},
+        {"pattern": "L-shape", "symbol": "LABUSDT", "timeframe": "1",
+         "l_shape": {"direction": "LONG"}},
+        {"pattern": "MIRROR", "symbol": "LABUSDT", "timeframe": "1",
+         "mirror_entry": {"direction": "LONG"}},
+    ]
+    for host in hosts:
+        linked = attach_auxiliary_reversal(host, reversal, now_ms=closed_at)
+        assert linked["pattern"] == host["pattern"]
+        assert linked["auxiliary_reversal"] == reversal
+        assert "auxiliary_reversal" not in host
+        assert "candidate_id" not in linked
+
+    wrong = {"pattern": "Rising Wedge", "symbol": "LABUSDT", "timeframe": "1"}
+    assert "auxiliary_reversal" not in attach_auxiliary_reversal(
+        wrong, reversal, now_ms=closed_at,
+    )
+    assert "auxiliary_reversal" not in attach_auxiliary_reversal(
+        hosts[0], reversal, now_ms=closed_at + 120_000,
+    )
