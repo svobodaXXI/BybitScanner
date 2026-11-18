@@ -29,5 +29,6 @@ jobs:
           numpy==2.5.1
           matplotlib==3.11.1
           mplfinance==0.12.10b0
+          six==1.17.0
       - name: Run position card tests
         run: python -m unittest -v tests.test_robot_position_card tests.test_robot_position_box_grid
