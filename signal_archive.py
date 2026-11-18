@@ -22,6 +22,7 @@ from signal_geometry_snapshot import validate_snapshot
 
 ARCHIVE_VERSION = 1
 ARCHIVE_ENV = "BYBITSCANNER_SIGNAL_ARCHIVE_DIR"
+SYSTEMD_STATE_ENV = "STATE_DIRECTORY"
 _DEFAULT_DIR = Path(__file__).resolve().parent / "review_queue" / "signal_archive"
 
 
@@ -29,7 +30,26 @@ def archive_dir(directory=None) -> Path:
     if directory is not None:
         return Path(directory)
     override = os.environ.get(ARCHIVE_ENV, "").strip()
-    return Path(override) if override else _DEFAULT_DIR
+    if override:
+        return Path(override)
+    # systemd StateDirectory=bybitscanner is shared by the PAPER backend and
+    # Telegram worker, and writable by their unprivileged service account.
+    # The release checkout need not be writable.
+    state = os.environ.get(SYSTEMD_STATE_ENV, "").strip()
+    if state:
+        state_root = Path(state.split(":", 1)[0])
+        if state_root.is_absolute():
+            return state_root / "signal_archive"
+    return _DEFAULT_DIR
+
+
+def _read_roots(directory=None) -> tuple[Path, ...]:
+    preferred = archive_dir(directory)
+    # Preserve records archived under the original checkout-relative path,
+    # including when an explicit archive directory is configured later.
+    if directory is None and preferred != _DEFAULT_DIR:
+        return (preferred, _DEFAULT_DIR)
+    return (preferred,)
 
 
 def _key(candidate_id: str) -> str:
@@ -67,6 +87,10 @@ def record_original_signal(
         if not candidate_id or not isinstance(image_bytes, (bytes, bytearray)) or not image_bytes:
             return False
         root = archive_dir(directory)
+        # Do not overwrite an intact legacy original after switching storage.
+        if directory is None and root != _DEFAULT_DIR:
+            if load_original_signal([candidate_id], directory=_DEFAULT_DIR) is not None:
+                return True
         root.mkdir(parents=True, exist_ok=True)
         key = _key(candidate_id)
         meta_path, image_path = root / f"{key}.json", root / f"{key}.png"
@@ -124,27 +148,29 @@ def load_original_signal(candidate_ids: Iterable, *, directory=None) -> dict | N
     """The archived original for the first exact id that has an intact record, else None.
 
     A record is returned only if its key matches, the image exists and its bytes
-    match the stored sha256. Anything else is treated as not archived.
+    match the stored sha256. Anything else is treated as not archived. Legacy
+    lookup is exact-ID-only and never substitutes another symbol's signal.
     """
-    root = archive_dir(directory)
+    roots = _read_roots(directory)
     for candidate_id in candidate_ids:
         candidate_id = str(candidate_id or "").strip()
         if not candidate_id:
             continue
         key = _key(candidate_id)
-        try:
-            meta = json.loads((root / f"{key}.json").read_text(encoding="utf-8"))
-            if (meta.get("version") != ARCHIVE_VERSION
-                    or meta.get("candidate_id") != candidate_id
-                    or meta.get("image_file") != f"{key}.png"):
+        for root in roots:
+            try:
+                meta = json.loads((root / f"{key}.json").read_text(encoding="utf-8"))
+                if (meta.get("version") != ARCHIVE_VERSION
+                        or meta.get("candidate_id") != candidate_id
+                        or meta.get("image_file") != f"{key}.png"):
+                    continue
+                image_path = root / meta["image_file"]
+                if hashlib.sha256(image_path.read_bytes()).hexdigest() != meta.get("image_sha256"):
+                    continue
+                meta["image_path"] = str(image_path)
+                return meta
+            except (OSError, ValueError, TypeError, KeyError):
                 continue
-            image_path = root / meta["image_file"]
-            if hashlib.sha256(image_path.read_bytes()).hexdigest() != meta.get("image_sha256"):
-                continue
-            meta["image_path"] = str(image_path)
-            return meta
-        except (OSError, ValueError, TypeError, KeyError):
-            continue
     return None
 
 
@@ -156,7 +182,9 @@ def load_frozen_signal_geometry(candidate_id: str, *, directory=None) -> dict | 
     key = _key(candidate_id)
     if original.get("geometry_file") != f"{key}.geometry.json" or not original.get("geometry_sha256"):
         return None
-    path = archive_dir(directory) / original["geometry_file"]
+    # The record may have been read from the legacy directory, not the
+    # current systemd state directory; keep image and geometry together.
+    path = Path(original["image_path"]).parent / original["geometry_file"]
     try:
         raw = path.read_bytes()
         if hashlib.sha256(raw).hexdigest() != original["geometry_sha256"]:
