@@ -423,7 +423,17 @@ describe("Closed deals / exact episode index", () => {
     const controls = screen.getByRole("searchbox", { name: "Поиск по тикеру" }).closest(".diary-ticker-search");
     expect(controls).toHaveClass("diary-ticker-search-deals");
     expect(controls?.querySelectorAll("input, select")).toHaveLength(2);
-    expect(controls?.querySelectorAll(".diary-deal-filter-group")).toHaveLength(2);
+    expect(controls?.querySelectorAll(".diary-deal-filter-group")).toHaveLength(1);
+    expect(controls?.querySelector(".diary-deal-side-filters")).not.toBeNull();
+    expect(controls?.querySelector(".diary-deal-filter-button.profit")).toBeNull();
+    expect(controls?.querySelector(".diary-deal-filter-button.loss")).toBeNull();
+    const dealDistribution = screen.getByRole("group", { name: "Распределение результатов сделок" });
+    expect(dealDistribution).toHaveTextContent("Прибыльных: 1");
+    expect(dealDistribution).toHaveTextContent("Убыточных: 3");
+    expect(dealDistribution).toHaveTextContent("Всего: 5 · в ноль: 1");
+    expect(dealDistribution.querySelector(".diary-outcome-segment.profit")).toHaveStyle({ width: "20%" });
+    expect(dealDistribution.querySelector(".diary-outcome-segment.loss")).toHaveStyle({ width: "60%" });
+    expect(dealDistribution.querySelector(".diary-outcome-segment.neutral")).toHaveStyle({ width: "20%" });
 
     const profit = screen.getByRole("button", { name: "Прибыльные" });
     const loss = screen.getByRole("button", { name: "Убыточные" });
@@ -1001,6 +1011,22 @@ describe("Finrez first-screen UI", () => {
     expect(region).toHaveTextContent("Робот · сделок: 2 · прибыльных: 1 · убыточных: 1");
     expect(screen.getByTitle("-1.4012345678 USDT")).toHaveTextContent("-1,4012 USDT");
     expect(screen.getByTitle("20.2 USDT")).toHaveTextContent("+20,20 USDT");
+    const rankedCards = Array.from(region.querySelectorAll(".diary-pattern-card"));
+    expect(rankedCards.map((card) => card.querySelector("span[title$='USDT']")?.textContent?.trim()))
+      .toEqual(["+20,20 USDT", "+3,00 USDT", "-1,4012 USDT"]);
+    const patternDistribution = screen.getByRole("group", { name: "Распределение результатов паттернов" });
+    expect(patternDistribution).toHaveTextContent("Прибыльных: 2");
+    expect(patternDistribution).toHaveTextContent("Убыточных: 1");
+    expect(patternDistribution).toHaveTextContent("Всего: 3");
+    expect(patternDistribution.querySelector(".diary-outcome-segment.profit")).toHaveStyle({ width: "66.66666666666666%" });
+    fireEvent.click(screen.getByRole("button", { name: "Прибыльные паттерны" }));
+    expect(region.querySelectorAll(".diary-pattern-card")).toHaveLength(2);
+    expect(patternDistribution).toHaveTextContent("Всего: 3");
+    fireEvent.click(screen.getByRole("button", { name: "Убыточные паттерны" }));
+    expect(region.querySelectorAll(".diary-pattern-card")).toHaveLength(1);
+    expect(region.querySelector(".diary-pattern-card")).toHaveTextContent("-1,4012 USDT");
+    fireEvent.click(screen.getByRole("button", { name: "Показать все паттернов" }));
+    expect(region.querySelectorAll(".diary-pattern-card")).toHaveLength(3);
     expect(screen.queryByTitle("-999 USDT")).not.toBeInTheDocument();
     const openWedge = screen.getAllByRole("button", { name: "Показать все сделки по паттерну Falling Wedge" });
     expect(openWedge).toHaveLength(2);
