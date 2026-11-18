@@ -451,6 +451,41 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         proof = self.store.prove_box_owned_position(source.candidate_id)
         self.assertEqual(proof.entry_by_slot, (Decimal("2"), Decimal(0), Decimal(0), Decimal(0)))
 
+    def test_box_flow_rejects_unbound_receipt_before_any_entry_ownership(self):
+        """Box source is non-executable; only its linked APPROVED ID may enter."""
+        data = box_snapshot()
+        data["identity"]["symbol"] = SYMBOL
+        source, _ = self.store.save_box_plan_only(snapshot=data, created_at_ms=3001)
+        candidate, _ = self.store.handoff_box_plan_to_robot(
+            source.candidate_id,
+            symbol=source.symbol,
+            expected_snapshot_sha256=source.snapshot_sha256,
+            approved_at_ms=3002,
+        )
+        self.clock.value = 4000
+        self.monitor._get_market_book = lambda symbol: _ready_book("95")
+        seen = []
+        def opposite_certificate(record):
+            seen.append((record.candidate_id, record.state_revision))
+            # An unbound object is never accepted as causal evidence, and
+            # cannot authorize/create a new Box ownership/Market intent.
+            return object()
+        self.monitor.bind_pattern_flow_observer(opposite_certificate)
+        self.assertEqual(self.monitor.tick(), ())
+        self.assertEqual([x[0] for x in seen], [candidate.candidate_id])
+        self.assertEqual(self.store.load_box_order_ownership(source.candidate_id), ())
+        self.assertIsNone(self.store.get_robot_trade("robot-trade-" + candidate.candidate_id))
+        self.assertEqual(self.store.get_robot_candidate(candidate.candidate_id).status,
+                         "APPROVED")
+
+        # Missing flow observation falls back to the exact same protected
+        # ordinary Box entry preparation, not a new impulse strategy.
+        self.monitor._get_pattern_flow_evidence = lambda _: None
+        self.assertEqual(self.monitor.tick(), (candidate.candidate_id,))
+        planned = self.store.get_robot_candidate(candidate.candidate_id)
+        self.assertIn("box_catchup", planned.robot_state["execution"])
+        self.assertEqual(self.executor.limit_calls, [])
+
     def test_box_mixed_catchup_market_then_slot_take_cancels_untouched_entries(self):
         data = box_snapshot()
         data["identity"]["symbol"] = SYMBOL
