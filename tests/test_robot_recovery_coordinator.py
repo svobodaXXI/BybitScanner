@@ -81,13 +81,13 @@ class RobotRecoveryCoordinatorTests(unittest.TestCase):
             updated_at_ms=self.clock(),
         )
 
-    def _create_waiting_candidate(self):
+    def _create_waiting_candidate(self, *, snapshot=None):
         candidate, created = self.store.create_robot_candidate(
             candidate_id="candidate-1",
             trading_account_id=ACCOUNT_ID,
             symbol=Symbol("TESTUSDT"),
             status="APPROVED",
-            signal_snapshot=_snapshot(),
+            signal_snapshot=snapshot or _snapshot(),
             approved_at_ms=self.clock(),
             updated_at_ms=self.clock(),
         )
@@ -301,7 +301,8 @@ class RobotRecoveryCoordinatorTests(unittest.TestCase):
 
     def test_candidate_cannot_be_quarantined_when_same_symbol_has_open_trade(self):
         self._create_open_candidate()
-        self._create_waiting_candidate()
+        # Distinct source snapshots are a durable identity invariant.
+        self._create_waiting_candidate(snapshot={**_snapshot(), "test_source": "independent"})
         self._initialize_running()
         coordinator = RobotRecoveryCoordinator(self.store, ACCOUNT_ID, clock_ms=self.clock)
         result = coordinator.recover()
