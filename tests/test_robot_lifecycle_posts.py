@@ -183,11 +183,10 @@ class LifecycleCaptionTests(unittest.TestCase):
                 event = LifecycleEvent(EVENT_CLOSED, "t1", "SAGAUSDT", 1, reason)
                 caption = format_lifecycle_caption(event, self._view(exit_reason=reason))
                 self.assertTrue(caption.startswith(f"🤖 Сделка закрыта · {label}\n\n"))
-                self.assertIn(f"Выход: 0.0249 ({label})", caption)
+                self.assertNotIn("Выход:", caption)
                 # (-0.5 - 0.0277) / (1000 * 0.0254) * 100 = -2.08
                 self.assertIn(
-                    "Итог: -0.5 USDT (до комиссий), комиссии 0.0277 USDT (вход + выход), "
-                    "-2.08% (после комиссий)",
+                    "Итог: -0.5277 USDT (-2.08%) (комиссия: 0.0277 USDT)",
                     caption,
                 )
                 self.assertNotIn("PnL:", caption)
@@ -196,7 +195,8 @@ class LifecycleCaptionTests(unittest.TestCase):
     def test_closed_caption_without_fees(self):
         event = LifecycleEvent(EVENT_CLOSED, "t1", "SAGAUSDT", 1, "TAKE")
         caption = format_lifecycle_caption(event, self._view(fees_usdt=None))
-        self.assertIn("комиссии — (вход + выход), — (после комиссий)", caption)
+        self.assertIn("Итог: — (комиссия: —)", caption)
+        self.assertNotIn("до комиссий", caption)
 
 
 class LifecycleDeliveryRaceTests(unittest.TestCase):
