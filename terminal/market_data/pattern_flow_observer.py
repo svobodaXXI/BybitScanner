@@ -35,6 +35,79 @@ def pattern_flow_enabled(environ: Mapping[str, str] | None = None) -> bool:
     return values.get(PATTERN_FLOW_PAPER_OPT_IN) == "1"
 
 
+
+def source_coverage_audit(
+    candidates: tuple, contexts: tuple, *, now_ms: int,
+) -> dict[str, object]:
+    """Read-only, aggregate pre-REST coverage for ALL executable Robot families.
+
+    Diagnostics only: neither a market subscription nor two observed windows
+    can prove complete prints. Counts NEVER authorize an entry or PAPER.
+    No raw trade, candidate identity, symbol or private payload is returned.
+    """
+    if type(now_ms) is not int or now_ms < 120_000:
+        raise ValueError("source coverage clock must be an integer >= 120000")
+    closed = now_ms // 60_000 * 60_000
+    subscribed = {ctx.symbol: ctx for ctx in contexts}
+    counts = {
+        "approved_exact_scope": 0,
+        "missing_subscription": 0,
+        "unready_subscription": 0,
+        "invalid_observation": 0,
+        "missing_two_closed_minutes": 0,
+        "window_present_needs_rest_parity": 0,
+        "buffer_at_limit": 0,
+    }
+    for candidate in candidates:
+        scope = existing_pattern_entry_scope(candidate)
+        if scope is None:
+            continue
+        counts["approved_exact_scope"] += 1
+        context = subscribed.get(scope.symbol)
+        if context is None:
+            counts["missing_subscription"] += 1
+            continue
+        if (context.trades_subscription_state != "SUBSCRIBED"
+                or context.trade_bootstrap_complete is not True):
+            counts["unready_subscription"] += 1
+            continue
+        observed = context.impulse_observation.snapshot()
+        prints = observed.get("prints") if isinstance(observed, dict) else None
+        if (not isinstance(observed, dict)
+                or observed.get("symbol") != scope.symbol
+                or type(observed.get("generation")) is not int
+                or type(observed.get("invalid_frames")) is not int
+                or observed["invalid_frames"] != 0
+                or not isinstance(prints, tuple)):
+            counts["invalid_observation"] += 1
+            continue
+        if len(prints) >= 512:
+            # The 512-print cap is not automatically proof of truncation,
+            # but a capacity warning for the exact two-minute parity gate.
+            counts["buffer_at_limit"] += 1
+        previous = any(
+            closed - 120_000 <= getattr(p, "timestamp_ms", -1) < closed - 60_000
+            for p in prints
+        )
+        current = any(
+            closed - 60_000 <= getattr(p, "timestamp_ms", -1) < closed
+            for p in prints
+        )
+        if not previous or not current:
+            counts["missing_two_closed_minutes"] += 1
+        else:
+            # Actual admission still needs exact REST and M1 parity, receipt
+            # cutoff and same-generation proof. This is NOT source-complete.
+            counts["window_present_needs_rest_parity"] += 1
+    return {
+        "status": "SOURCE_COVERAGE_DIAGNOSTIC_ONLY",
+        "scope": "APPROVED_CANONICAL_PATTERN_ENTRY_CANDIDATES",
+        "counts": counts,
+        "source_complete": False,
+        "trading_authorized": False,
+    }
+
+
 def read_approved_pattern_candidates(database_path: Path) -> tuple:
     """Read approved candidates from immutable, query-only SQLite connection.
 
@@ -120,6 +193,13 @@ class PatternFlowObserver:
         if not isinstance(value, dict):
             raise ValueError("malformed Bybit REST response")
         return value
+
+    def source_coverage(self) -> dict[str, object]:
+        """Offline/read-only diagnostic of missing source, without subscriptions."""
+        return source_coverage_audit(
+            tuple(self._get_candidates()), tuple(self._hub.list_contexts()),
+            now_ms=self._clock(),
+        )
 
     def once(self) -> int:
         """At most one existing approved Robot pattern per M1; zero owner/DB writes."""

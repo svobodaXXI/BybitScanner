@@ -8,6 +8,7 @@ from unittest.mock import patch
 from robot_entry_flow_evidence import ExistingPatternEntryScope, match_existing_pattern_flow
 from terminal.market_data.pattern_flow_observer import (
     PatternFlowObserver, pattern_flow_enabled, PATTERN_FLOW_PAPER_OPT_IN,
+    source_coverage_audit,
 )
 from tests.test_robot_pattern_flow_source import PatternFlowSourceTests
 
@@ -59,6 +60,61 @@ def _candidate(direction="LONG", phase="RETEST_DETECTED"):
 
 
 class ObserverTests(unittest.TestCase):
+    def test_coverage_audit_proves_missing_source_without_auto_subscribing(self):
+        observed, recent, previous, current = PatternFlowSourceTests.source()
+        now = PatternFlowSourceTests.CLOSE + 5_000
+        # A valid canonical candidate with no publicTrade subscription is
+        # UNKNOWN, not a certified flow or an invitation to subscribe.
+        absent = _candidate()
+        absent.symbol = SimpleNamespace(value="ETHUSDT")
+        with_source = _candidate()
+        result = source_coverage_audit(
+            (absent, with_source), (_Context(observed),), now_ms=now,
+        )
+        counts = result["counts"]
+        self.assertEqual(counts["approved_exact_scope"], 2)
+        self.assertEqual(counts["missing_subscription"], 1)
+        self.assertEqual(counts["window_present_needs_rest_parity"], 1)
+        self.assertEqual(counts["buffer_at_limit"], 0)
+        self.assertFalse(result["source_complete"])
+        self.assertFalse(result["trading_authorized"])
+        # No raw IDs, trade prints, symbol names or order authority leak.
+        self.assertNotIn("BTCUSDT", str(result))
+        self.assertNotIn("ETHUSDT", str(result))
+
+    def test_capacity_and_unready_are_distinct_from_complete_source(self):
+        observed, *_ = PatternFlowSourceTests.source()
+        clock = PatternFlowSourceTests.CLOSE + 5_000
+        first = source_coverage_audit(
+            (_candidate(),), (_Context(observed),), now_ms=clock,
+        )
+        self.assertEqual(
+            first["counts"]["window_present_needs_rest_parity"], 1,
+        )
+        # Buffer capacity can mask the previous closed minute; never
+        # treat a full 512-print buffer as complete 2-minute history.
+        from terminal.market_data.impulse_observation import ObservedPrint
+        filled = dict(observed)
+        filled["prints"] = tuple(
+            ObservedPrint(
+                f"trade-{i}", PatternFlowSourceTests.CLOSE - 30_000,
+                i, "Buy", Decimal("100"), Decimal("1"),
+            ) for i in range(512)
+        )
+        saturated = source_coverage_audit(
+            (_candidate(),), (_Context(filled),), now_ms=clock,
+        )
+        self.assertEqual(saturated["counts"]["buffer_at_limit"], 1)
+        self.assertEqual(saturated["counts"]["missing_two_closed_minutes"], 1)
+        self.assertEqual(saturated["counts"]["window_present_needs_rest_parity"], 0)
+        unready = _Context(observed)
+        unready.trades_subscription_state = "CONNECTING"
+        diagnostic = source_coverage_audit(
+            (_candidate(),), (unready,), now_ms=clock,
+        )
+        self.assertEqual(diagnostic["counts"]["unready_subscription"], 1)
+        self.assertEqual(diagnostic["counts"]["buffer_at_limit"], 0)
+
     def test_opt_in_is_explicit_and_default_off(self):
         with patch.dict(os.environ, {}, clear=True):
             self.assertFalse(pattern_flow_enabled())
