@@ -1611,13 +1611,94 @@ function PatternsView({ report, symbolFilter, onSelectPattern }: {
   );
 }
 
+
+type FinrezMoneyTotals = { profit: string; loss: string; net: string };
+
+/** Split individual closed episode net PnL, never the netted ticker ranks.
+ * Exact Robot/Manual cohort sums must reconcile with the existing ticker API.
+ * Assisted and joint episodes are excluded, not counted in either scope.
+ */
+function verifiedFinrezMoneyTotals(report: FinrezResponse): FinrezMoneyTotals | null {
+  if (!validClosedEpisodes(report)) return null;
+  const episodes = (report.closed_episodes ?? []).filter((deal) => deal.cohort === report.owner);
+  const net = sumVerifiedPnl(episodes.map((deal) => deal.pnl_usdt));
+  const tickerNet = sumVerifiedPnl(report.tickers.map((ticker) => ticker.pnl_usdt));
+  if (net === null || tickerNet === null || net !== tickerNet) return null;
+  const profit = sumVerifiedPnl(episodes.filter((deal) => verifiedPnlSign(deal.pnl_usdt) > 0)
+    .map((deal) => deal.pnl_usdt));
+  const loss = sumVerifiedPnl(episodes.filter((deal) => verifiedPnlSign(deal.pnl_usdt) < 0)
+    .map((deal) => deal.pnl_usdt.slice(1)));
+  return profit === null || loss === null ? null : { profit, loss, net };
+}
+
+function FinrezMoneyBar({ report, filter, onFilter }: {
+  report: FinrezResponse; filter: FinrezPnlFilter;
+  onFilter: (next: FinrezPnlFilter) => void;
+}) {
+  const totals = verifiedFinrezMoneyTotals(report);
+  if (totals === null) return <p className="diary-finrez-coverage">
+    Суммарный результат недоступен: невозможно сверить подтверждённые закрытые сделки с итогами по тикерам.
+    Непроверенные суммы не выдаются за ноль.
+  </p>;
+  const gross = Number(totals.profit) + Number(totals.loss);
+  const profitPct = gross > 0 ? Number(totals.profit) / gross * 100 : 0;
+  const lossPct = gross > 0 ? 100 - profitPct : 0;
+  const toggle = (next: FinrezPnlFilter) => onFilter(filter === next ? "ALL" : next);
+  const lossSigned = totals.loss === "0" ? "0" : "-" + totals.loss;
+  return (
+    <div className="diary-outcome-distribution diary-finrez-money" role="group"
+      aria-label="Финрез: прибыль и убыток в USDT">
+      <div className="diary-outcome-track">
+        <button type="button" className="diary-outcome-segment profit"
+          aria-label="Прибыль за период" aria-pressed={filter === "PROFIT"}
+          disabled={totals.profit === "0" && filter !== "PROFIT"}
+          title={`Прибыль за период: ${totals.profit} USDT · ${profitPct.toFixed(1)}%`}
+          onClick={() => toggle("PROFIT")} style={{ width: `${profitPct}%` }} />
+        <button type="button" className="diary-outcome-segment loss"
+          aria-label="Убыток за период" aria-pressed={filter === "LOSS"}
+          disabled={totals.loss === "0" && filter !== "LOSS"}
+          title={`Убыток за период: ${lossSigned} USDT · ${lossPct.toFixed(1)}%`}
+          onClick={() => toggle("LOSS")} style={{ width: `${lossPct}%` }} />
+      </div>
+      <div className="diary-outcome-footer">
+        <button type="button" className="diary-outcome-count profit"
+          aria-label="Показать прибыльные тикеры" aria-pressed={filter === "PROFIT"}
+          disabled={totals.profit === "0" && filter !== "PROFIT"}
+          onClick={() => toggle("PROFIT")}>
+          Прибыль: {formatFinrezPnl(totals.profit)}
+        </button>
+        <button type="button" className="diary-outcome-total"
+          aria-label="Показать все тикеры" aria-pressed={filter === "ALL"}
+          onClick={() => onFilter("ALL")}>
+          {report.attribution_coverage.status === "PARTIAL" ? "Частичный итог" : "Итог"}
+          <strong className={verifiedPnlSign(totals.net) > 0 ? "profit"
+            : verifiedPnlSign(totals.net) < 0 ? "loss" : ""}>
+            {formatFinrezPnl(totals.net)}
+          </strong>
+        </button>
+        <button type="button" className="diary-outcome-count loss"
+          aria-label="Показать убыточные тикеры" aria-pressed={filter === "LOSS"}
+          disabled={totals.loss === "0" && filter !== "LOSS"}
+          onClick={() => toggle("LOSS")}>
+          Убыток: {formatFinrezPnl(lossSigned)}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function FinrezView({ report, symbolFilter, onSelectTicker }: {
   report: FinrezResponse; symbolFilter: string; onSelectTicker: (symbol: string) => void;
 }) {
   const tickerQuery = symbolFilter.trim().toUpperCase();
+  const [resultFilter, setResultFilter] = useState<FinrezPnlFilter>("ALL");
   const matchesTicker = (ticker: FinrezTicker) => ticker.symbol.includes(tickerQuery);
+  const visibleTickers = report.tickers.filter((ticker) => matchesTicker(ticker)
+    && (resultFilter === "ALL" || (resultFilter === "PROFIT"
+      ? verifiedPnlSign(ticker.pnl_usdt) > 0 : verifiedPnlSign(ticker.pnl_usdt) < 0)));
   return (
     <div className="diary-finrez" aria-label="Финансовый результат по тикерам">
+      <FinrezMoneyBar report={report} filter={resultFilter} onFilter={setResultFilter} />
       <p className="diary-finrez-basis">
         {report.owner === "ROBOT" ? "Только полностью роботизированные сделки" : "Только ручные сделки"}
         {" · "}Реализованный PnL (цена − комиссии исполнений) · USDT
@@ -1630,17 +1711,19 @@ function FinrezView({ report, symbolFilter, onSelectTicker }: {
           атрибутированным сделкам, не полный результат за период.
         </p>
       ) : null}
-      {report.tickers.filter(matchesTicker).length === 0 ? (
+      {visibleTickers.length === 0 ? (
         <p className="diary-state">
           {report.tickers.length > 0
-            ? "По заданному тикеру результатов нет"
+            ? resultFilter !== "ALL"
+              ? "Нет тикеров с выбранным результатом"
+              : "По заданному тикеру результатов нет"
             : report.attribution_coverage.status === "PARTIAL"
               ? "Нет достоверно атрибутированных закрытых сделок этого типа за выбранный период"
               : "Нет закрытых сделок этого типа за выбранный период"}
         </p>
       ) : (
         <div className="diary-finrez-list">
-          {report.tickers.filter(matchesTicker).map((ticker) => (
+          {visibleTickers.map((ticker) => (
             <FinrezTickerRow key={ticker.symbol} ticker={ticker} onSelectTicker={onSelectTicker} />
           ))}
         </div>
