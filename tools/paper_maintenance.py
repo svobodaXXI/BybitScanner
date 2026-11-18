@@ -1874,6 +1874,7 @@ def start_installed_paper_from_editor(
 
 def _start_active_stopped_paper(
     target: str, *, root: Path, env_file: Path | None,
+    trusted_uid: int = 0,
 ) -> str:
     """Owner START for an already-live exact PAPER backend with a stopped Robot.
 
@@ -1976,7 +1977,7 @@ def _start_active_stopped_paper(
                 or type(rows[0][3]) is not int or type(rows[0][4]) is not int):
             return "BLOCKED: active_stopped_PAPER_state_version_unproven; no_mutation"
         if (not TRANSACTIONS.is_dir() or TRANSACTIONS.is_symlink()
-                or TRANSACTIONS.stat().st_uid != 0
+                or TRANSACTIONS.stat().st_uid != trusted_uid
                 or TRANSACTIONS.stat().st_mode & 0o077):
             return "BLOCKED: active_stopped_PAPER_owner_journal_unproven; no_mutation"
         key = hashlib.sha256(("\\n".join((
