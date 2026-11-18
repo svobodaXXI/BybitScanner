@@ -155,3 +155,95 @@ def test_neckline_signal_is_not_independently_executable_even_when_fresh():
         else:
             broken["robot_handoff_ready"] = False
         assert proven_pattern_entry(broken, now_ms=confirmed_at) is None, tamper
+
+
+def _confirmed_auxiliary_top():
+    from geometry.double_extremum import build_auxiliary_reversal_evidence
+    bars = [
+        bar(100, 98, 99), bar(104, 99, 103), bar(110, 102, 108),
+        bar(105, 100, 102), bar(103, 95, 98), bar(105, 99, 103),
+        bar(109.8, 102, 107), bar(106, 98, 101), bar(103, 94, 94.5),
+    ]
+    for i, candle in enumerate(bars):
+        candle["time"] = 3_000_000 + i * 60_000
+    closed_at = bars[-1]["time"] + 60_000
+    return bars, closed_at, build_auxiliary_reversal_evidence(
+        "LABUSDT", "1", bars, now_ms=closed_at,
+    )
+
+
+def test_auxiliary_double_reversal_has_causal_exact_identity_and_expiry():
+    from geometry.double_extremum import build_auxiliary_reversal_evidence
+    bars, closed_at, evidence = _confirmed_auxiliary_top()
+    assert evidence is not None
+    assert evidence["version"] == 1
+    assert evidence["kind"] == "DOUBLE_REVERSAL_AUXILIARY"
+    assert evidence["pattern"] == "Double Top"
+    assert evidence["direction"] == "SHORT"
+    assert evidence["confirmed_at_ms"] == closed_at
+    assert evidence["expires_at_ms"] == closed_at + 120_000
+    assert evidence["source_id"].startswith("double-reversal:")
+    assert "robot_handoff_ready" not in evidence
+    assert "neckline_entry" not in evidence
+    assert build_auxiliary_reversal_evidence("LABUSDT", "1", bars, now_ms=closed_at) == evidence
+    assert build_auxiliary_reversal_evidence("LABUSDT", "1", bars, now_ms=closed_at - 1) is None
+    assert build_auxiliary_reversal_evidence("LABUSDT", "1", bars, now_ms=closed_at + 120_000) is None
+    late = [dict(v) for v in bars]
+    late[-1]["time"] += 60_000  # missing candle: no causal source
+    assert build_auxiliary_reversal_evidence("LABUSDT", "1", late, now_ms=closed_at + 60_000) is None
+    modified = [dict(v) for v in bars]
+    modified[0]["high"] = "100.1"
+    another = build_auxiliary_reversal_evidence("LABUSDT", "1", modified, now_ms=closed_at)
+    assert another is not None and another["source_id"] != evidence["source_id"]
+
+
+def test_auxiliary_is_host_context_for_wedge_box_lshape_mirror_but_never_a_trade():
+    from geometry.double_extremum import attach_auxiliary_reversal
+    _, closed_at, reversal = _confirmed_auxiliary_top()
+    assert reversal is not None
+    hosts = [
+        {"symbol": "LABUSDT", "pattern": "Rising Wedge", "timeframe": "1"},
+        {"pattern": "IKIGAI_BOX", "identity": {
+            "symbol": "LABUSDT", "timeframe": "1", "direction": "SHORT",
+        }},
+        {"symbol": "LABUSDT", "timeframe": "1", "pattern": "L-shape",
+         "l_shape": {"direction": "SHORT"}},
+        {"symbol": "LABUSDT", "timeframe": "1", "pattern": "MIRROR",
+         "mirror_entry": {"direction": "SHORT"}},
+    ]
+    for host in hosts:
+        attached = attach_auxiliary_reversal(host, reversal, now_ms=closed_at)
+        assert attached is not host
+        assert "auxiliary_reversal" not in host
+        assert attached["auxiliary_reversal"] == reversal
+        assert attached["pattern"] == host["pattern"]
+        assert "robot_handoff_ready" not in attached
+        assert "candidate_id" not in attached
+    for host in [
+        {"symbol": "LABUSDT", "pattern": "Falling Wedge", "timeframe": "1"},  # opposite
+        {"symbol": "OTHERUSDT", "pattern": "Rising Wedge", "timeframe": "1"},
+        {"symbol": "LABUSDT", "pattern": "Rising Wedge", "timeframe": "5"},
+        {"symbol": "LABUSDT", "pattern": "Double Top", "timeframe": "1"},
+    ]:
+        assert "auxiliary_reversal" not in attach_auxiliary_reversal(
+            host, reversal, now_ms=closed_at,
+        )
+    assert "auxiliary_reversal" not in attach_auxiliary_reversal(
+        hosts[0], reversal, now_ms=closed_at + 120_000,
+    )
+    tampered = dict(reversal, source_id="double-reversal:" + "x" * 64)
+    assert "auxiliary_reversal" not in attach_auxiliary_reversal(
+        hosts[0], tampered, now_ms=closed_at,
+    )
+
+
+def test_legacy_double_snapshot_is_observational_not_robot_ready():
+    from geometry.double_extremum import frozen_neckline_snapshot
+    from pattern_robot_integration import is_robot_executable_signal
+    bars, _, _ = _confirmed_auxiliary_top()
+    legacy = frozen_neckline_snapshot("LABUSDT", "1", bars)
+    assert legacy is not None
+    assert legacy["pattern"] == "Double Top"
+    assert legacy["scanner_observational_only"] is True
+    assert legacy["robot_handoff_ready"] is False
+    assert is_robot_executable_signal(legacy, timeframe="1") is False
