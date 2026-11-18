@@ -167,7 +167,23 @@ class LifecycleCaptionTests(unittest.TestCase):
         self.assertEqual(format_lifecycle_caption(opened, view),
             "🪞 MIRROR · SAGAUSDT · 5m\nГоризонтальный уровень · смена роли не подтверждена\nПовторный перезаход №1")
         closed = LifecycleEvent(EVENT_CLOSED, "t1", "SAGAUSDT", 2, "STOP")
-        self.assertIn("Сделка закрыта · по стопу", format_lifecycle_caption(closed, view))
+        closed_view = replace(
+            view, is_open=False, fees_usdt=Decimal("0.0277"),
+            trade=SimpleNamespace(
+                realized_pnl_usdt=Decimal("-0.5"),
+                entry_quantity=Decimal("100"),
+                average_entry=Decimal("0.0254"),
+            ),
+        )
+        closed_caption = format_lifecycle_caption(closed, closed_view)
+        self.assertIn("Сделка закрыта · по стопу", closed_caption)
+        self.assertIn(
+            "SAGAUSDT · SHORT\nЗеркало\n"
+            "Итог: -0.5277 USDT (-20.78%) (комиссия: 0.0277 USDT)",
+            closed_caption,
+        )
+        self.assertNotIn("Статус: закрыта", closed_caption)
+        self.assertIn("Горизонтальный уровень", closed_caption)
         self.assertIn("Зеркальный уровень", format_lifecycle_caption(opened,
             replace(view, mirror_retest_confirmed=True)))
         pattern = replace(view, mirror_level_source="pattern_boundary",
