@@ -697,3 +697,62 @@ def test_real_box_cpusdt_and_l_shape_levels_come_from_the_scanner_engines(root):
     l_record = next(r for r in record.values() if any(s["parent_pattern"] == "L-shape" for s in r["sources"]))
     assert l_record["status"] == STATUS_UNTESTED                          # the L-shape breakout candle itself
     assert l_record["naked_retest"]["breakout"]["open_time_ms"] == breakout_open
+
+
+def test_mirror_standalone_handoff_carries_double_reversal_only_as_context(monkeypatch, tmp_path):
+    """One existing MIRROR candidate receives compatible causal evidence, never a second one."""
+    from copy import deepcopy
+    from types import SimpleNamespace
+    import pattern_robot_integration as bridge
+
+    monkeypatch.setattr(ms, "save_state", lambda *_args, **_kw: None)
+    monkeypatch.setattr(ms, "append_event", lambda *_args, **_kw: None)
+    monkeypatch.setattr(bridge, "is_robot_executable_signal", lambda *_args, **_kw: True)
+    seen = []
+    def handoff(snapshot, *, timeframe, enabled):
+        seen.append(deepcopy(snapshot))
+        assert timeframe == "1" and enabled is True
+        return SimpleNamespace(candidate_id="original-mirror-host")
+    monkeypatch.setattr(bridge, "prepare_robot_handoff", handoff)
+
+    evidence = {
+        "version": 1, "kind": "DOUBLE_REVERSAL_AUXILIARY",
+        "source_id": "double-reversal:" + "a" * 64,
+        "symbol": "TESTUSDT", "source_timeframe": "1",
+        "pattern": "Double Top", "direction": "SHORT",
+        "confirmed_at_ms": 420_000, "expires_at_ms": 540_000,
+    }
+    def run(auxiliary, now_ms):
+        state = {"standalone_entries": [{
+            "entry_id": "frozen-mirror-entry",
+            "terms": {
+                "source_timeframe": "1", "direction": "SHORT",
+                "confirmation": {"close_time_ms": 420_000},
+            },
+            "handoff": "PENDING", "candidate_id": None,
+        }]}
+        result = ms._hand_off_standalone_entries(
+            "TESTUSDT", state, tmp_path,
+            reversal_by_tf={"1": auxiliary}, now_ms=now_ms,
+        )
+        assert result == ["original-mirror-host"]
+        assert state["standalone_entries"][0]["handoff"] == "HANDED"
+        assert state["standalone_entries"][0]["candidate_id"] == "original-mirror-host"
+        return seen.pop()
+
+    attached = run(evidence, 420_000)
+    assert attached["pattern"] == "MIRROR"
+    assert attached["auxiliary_reversal"] == evidence
+    assert "candidate_id" not in attached
+    assert "entry_order" not in attached
+    assert "stop_loss" not in attached
+    assert "take_profit" not in attached
+
+    # Later or contradictory reversals cannot be backfilled into an earlier
+    # MIRROR confirmation, although the host handoff itself remains unchanged.
+    future = run(dict(evidence, confirmed_at_ms=480_000), 480_000)
+    assert "auxiliary_reversal" not in future
+    opposite = run(dict(evidence, direction="LONG", pattern="Double Bottom"), 420_000)
+    assert "auxiliary_reversal" not in opposite
+    expired = run(evidence, 540_000)
+    assert "auxiliary_reversal" not in expired
