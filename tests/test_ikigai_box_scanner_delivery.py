@@ -112,7 +112,7 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
             for row in photo.call_args.kwargs["reply_markup"]["inline_keyboard"]
             for button in row
         ]
-        self.assertNotIn("🤖 Робот", buttons)
+        self.assertIn("🤖 Робот", buttons)  # Navigation only; no Robot candidate action
         callbacks = [
             button.get("callback_data")
             for row in photo.call_args.kwargs["reply_markup"]["inline_keyboard"]
