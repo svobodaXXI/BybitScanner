@@ -73,6 +73,100 @@ class PatternFlowSourceTests(unittest.TestCase):
         self.assertNotIn("candidate_id", item)
         self.assertFalse(is_robot_executable_signal(item, timeframe="1"))
 
+    def test_600_prints_pass_whole_pattern_source_contract_without_lookahead(self):
+        """Three-source truth at 600 trades, then same-candidate overlay binding."""
+        from terminal.market_data.impulse_observation import PublicTradeObservation
+        from tests.test_public_trade_impulse_observation import (
+            frame, trade, recent_record, recent_response, closed_m1_response,
+        )
+        from robot_entry_flow_evidence import (
+            CandidateBoundFlowEvidence, ExistingPatternEntryScope,
+            match_existing_pattern_flow,
+        )
+        source = PublicTradeObservation("BTCUSDT")
+        source.enable_certification_buffer()
+        previous = [
+            trade(f"p-{i}", 120_000 + i * 200,
+                  "Buy" if i % 2 == 0 else "Sell", "100", "1",
+                  sequence=i + 100)
+            for i in range(300)
+        ]
+        current = [
+            trade(f"c-{i}", 180_000 + i * 200, "Buy",
+                  "100" if i == 0 else "102", "1", sequence=i + 400)
+            for i in range(300)
+        ]
+        all_trades = (
+            trade("before", 119_999, "Sell", "100", "1", sequence=90),
+            *previous, *current,
+            trade("after", 240_000, "Sell", "102", "1", sequence=700),
+        )
+        for start in range(0, len(all_trades), 90):
+            self.assertTrue(source.observe(
+                frame(*all_trades[start:start+90]),
+                received_at_ms=241_000,
+            ))
+        rest = recent_response(*(recent_record(p) for p in reversed(all_trades)))
+        rest["time"] = 241_000
+        old_kline = closed_m1_response(
+            start=120_000, open_px="100", high="100", low="100",
+            close="100", volume="300", turnover="30000",
+            server_time=241_000,
+        )
+        new_kline = closed_m1_response(
+            start=180_000, open_px="100", high="102", low="100",
+            close="102", volume="300", turnover="30598",
+            server_time=241_000,
+        )
+        kwargs = {"closed_at_ms": 240_000, "decision_ms": 242_000}
+        result = certified_snapshot(
+            source.snapshot(), rest, old_kline, new_kline, **kwargs,
+        )
+        self.assertIsNotNone(result)
+        self.assertEqual(result["flow_observation"]["direction"], "LONG")
+        self.assertEqual(result["flow_source"]["print_count"], 600)
+        self.assertEqual(len(result["flow_source"]["print_facts_sha256"]), 64)
+        self.assertTrue(
+            result["flow_observation"]["transition"].buy_wave_accelerating,
+        )
+        src = result["flow_source"]
+        receipt = CandidateBoundFlowEvidence(
+            candidate_id="wedge-exact-1", symbol="BTCUSDT",
+            direction=result["flow_observation"]["direction"],
+            state_revision=7, source_kind=src["kind"],
+            closed_at_ms=src["closed_at_ms"], decision_ms=src["decision_ms"],
+            print_facts_sha256=src["print_facts_sha256"],
+            source_complete=src["source_complete"],
+            receipt_cutoff_proven=src["receipt_cutoff_proven"],
+            transport_generation_proven=src["transport_generation_proven"],
+            transition=result["flow_observation"]["transition"],
+        )
+        scope = ExistingPatternEntryScope(
+            "wedge-exact-1", "BTCUSDT", "Falling Wedge", "LONG",
+            7, "APPROVED", "RETEST_DETECTED",
+        )
+        self.assertTrue(match_existing_pattern_flow(
+            scope, receipt, now_ms=242_000,
+        ))
+        # No stale/foreign revision may authorize the original order.
+        other = ExistingPatternEntryScope(
+            "wedge-exact-1", "BTCUSDT", "Falling Wedge", "LONG",
+            8, "APPROVED", "RETEST_DETECTED",
+        )
+        self.assertFalse(match_existing_pattern_flow(
+            other, receipt, now_ms=242_000,
+        ))
+        # Removal of one real REST execution invalidates both the source
+        # certificate and any derived entry-timing evidence.
+        incomplete = dict(rest, result={
+            "category": "linear",
+            "list": [row for row in rest["result"]["list"]
+                     if row["execId"] != "c-25"],
+        })
+        self.assertIsNone(certified_snapshot(
+            source.snapshot(), incomplete, old_kline, new_kline, **kwargs,
+        ))
+
     def test_partial_missing_late_or_mismatched_source_stays_unknown(self):
         for fault in ("drop_ws", "late", "wrong_kline"):
             with self.subTest(fault=fault):
