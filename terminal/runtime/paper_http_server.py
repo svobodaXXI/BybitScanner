@@ -5503,15 +5503,23 @@ def main() -> None:
         # It reads APPROVED candidate identities from SQLite mode=ro; REST
         # certification runs off the serialized PAPER owner. The Robot's
         # canonical pre-entry gates remain the sole trade authority.
-        from terminal.market_data.pattern_flow_observer import PatternFlowObserver
-        pattern_flow_observer = PatternFlowObserver(
-            hub, create_bybit_rest_session(), database_path,
+        from terminal.market_data.pattern_flow_observer import (
+            PatternFlowObserver, pattern_flow_enabled,
         )
-        runtime.call(lambda owned: owned.bind_robot_pattern_flow_observer(
-            pattern_flow_observer.get,
-        ))
+        # DEFAULT OFF: even passive flow evidence can DEFER a real entry.
+        # It must never alter PAPER decisions without an independent,
+        # owner-approved activation. OFF creates no session/thread/DB reads.
+        pattern_flow_observer = None
+        if pattern_flow_enabled():
+            pattern_flow_observer = PatternFlowObserver(
+                hub, create_bybit_rest_session(), database_path,
+            )
+            runtime.call(lambda owned: owned.bind_robot_pattern_flow_observer(
+                pattern_flow_observer.get,
+            ))
         runtime.start_robot_monitor()
-        pattern_flow_observer.start()
+        if pattern_flow_observer is not None:
+            pattern_flow_observer.start()
 
         server.operator_token = os.environ.get("BYBITSCANNER_OPERATOR_TOKEN", "").strip()
         server.autopilot_owner_token = os.environ.get(AUTOPILOT_OWNER_TOKEN_ENV, "").strip()
@@ -5538,7 +5546,8 @@ def main() -> None:
             print("Bybit public market data streams: active workspace symbol (initial ONGUSDT)")
             server.serve_forever()
         finally:
-            pattern_flow_observer.close()
+            if pattern_flow_observer is not None:
+                pattern_flow_observer.close()
             robot_protection_coverage.close()
             market_data.close()
             runtime.close()

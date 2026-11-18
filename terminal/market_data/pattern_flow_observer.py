@@ -7,11 +7,12 @@ Missing or uncertain data never creates independent IMPULSE_FLOW trading.
 from __future__ import annotations
 
 import logging
+import os
 import sqlite3
 import threading
 import time
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Mapping
 
 from robot_entry_flow_evidence import (
     CandidateBoundFlowEvidence, ExistingPatternEntryScope, FlowTransition,
@@ -25,6 +26,13 @@ LOGGER = logging.getLogger(__name__)
 BASE_URL = "https://api.bybit.com"
 _PAPER = TradingAccountId("paper")
 MAX_CANDIDATES_PER_PASS = 1
+PATTERN_FLOW_PAPER_OPT_IN = "BYBITSCANNER_ROBOT_PATTERN_FLOW_PAPER_AUTO"
+
+
+def pattern_flow_enabled(environ: Mapping[str, str] | None = None) -> bool:
+    """Explicit owner-approved PAPER opt-in; OFF for any other value."""
+    values = os.environ if environ is None else environ
+    return values.get(PATTERN_FLOW_PAPER_OPT_IN) == "1"
 
 
 def read_approved_pattern_candidates(database_path: Path) -> tuple:

@@ -1,10 +1,14 @@
 """Passive same-candidate pattern flow observer: zero new Scanner/Robot actions."""
+import os
 import unittest
 from decimal import Decimal
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from robot_entry_flow_evidence import ExistingPatternEntryScope, match_existing_pattern_flow
-from terminal.market_data.pattern_flow_observer import PatternFlowObserver
+from terminal.market_data.pattern_flow_observer import (
+    PatternFlowObserver, pattern_flow_enabled, PATTERN_FLOW_PAPER_OPT_IN,
+)
 from tests.test_robot_pattern_flow_source import PatternFlowSourceTests
 
 
@@ -55,6 +59,14 @@ def _candidate(direction="LONG", phase="RETEST_DETECTED"):
 
 
 class ObserverTests(unittest.TestCase):
+    def test_opt_in_is_explicit_and_default_off(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertFalse(pattern_flow_enabled())
+        for value in ("", "0", "true", "yes", "2"):
+            with self.subTest(value=value):
+                self.assertFalse(pattern_flow_enabled({PATTERN_FLOW_PAPER_OPT_IN: value}))
+        self.assertTrue(pattern_flow_enabled({PATTERN_FLOW_PAPER_OPT_IN: "1"}))
+
     def test_certified_tape_is_bound_to_existing_candidate_no_signal_or_order(self):
         observed, recent, previous, current = PatternFlowSourceTests.source()
         ctx = _Context(observed)
