@@ -42,6 +42,32 @@ EXIT_REASON_LABELS = {
     "EMERGENCY_CLOSE": "аварийное закрытие",
 }
 
+# Read-only closed-trade captions use the executed host pattern, never a
+# guessed pattern from the ticker. Wedge names agree with chart_clean.py.
+CLOSED_PATTERN_LABELS_RU = {
+    "Falling Wedge": "Нисходящий клин",
+    "Rising Wedge": "Восходящий клин",
+    "Triangle Compression": "Треугольник",
+    "IKIGAI_BOX": "Коробка Икигаи",
+    "Ikigai Box": "Коробка Икигаи",
+    "L-shape": "Г-образная",
+    "Double Top": "Двойная вершина",
+    "Double Bottom": "Двойное дно",
+    "MIRROR": "Зеркало",
+}
+
+
+def _closed_pattern_ru(pattern: Any) -> str:
+    original = str(pattern or "").strip()
+    if not original:
+        return "Паттерн не указан"
+    if original in CLOSED_PATTERN_LABELS_RU:
+        return CLOSED_PATTERN_LABELS_RU[original]
+    # A pre-localized source may already provide the proper Russian label.
+    if all(char.isascii() for char in original):
+        return "Неизвестный паттерн"
+    return original
+
 
 def exit_reason_label(reason: Any) -> str:
     text = str(reason or "").strip()
@@ -415,28 +441,37 @@ def format_position_card(view: PositionView) -> str:
         if notional is not None
         else _format_quantity(view.quantity)
     )
-    lines = [
-        f"{view.symbol} · {view.direction}",
-        "",
-        f"Статус: {'открыта' if view.is_open else 'закрыта'}",
-        f"Объём: {volume_text}",
-        f"Средний вход: {format_price(view.average_entry)}",
-    ]
     if view.is_open:
+        # Preserve the open-position presentation and its live PnL semantics.
+        lines = [
+            f"{view.symbol} · {view.direction}",
+            "",
+            "Статус: открыта",
+            f"Объём: {volume_text}",
+            f"Средний вход: {format_price(view.average_entry)}",
+        ]
         pnl = _unrealized_pnl(view)
         lines.append(
             f"PnL: ≈ {_signed_2dp(pnl[0], ' USDT')} ({_signed_2dp(pnl[1], '%')})"
             if pnl is not None else "PnL: —"
         )
     else:
-        trade = view.trade
-        if trade.realized_pnl_usdt is not None:
-            lines.append(format_trade_result(view))
+        # The next two lines after the ticker must be the Russian host
+        # pattern and proven net outcome; no redundant "закрыта" status.
+        lines = [
+            f"{view.symbol} · {view.direction}",
+            _closed_pattern_ru(view.pattern),
+            format_trade_result(view) if view.trade is not None else "Итог: — (комиссия: —)",
+            f"Объём: {volume_text}",
+            f"Средний вход: {format_price(view.average_entry)}",
+        ]
     lines += [
         f"SL: {format_price(view.stop_price)}",
         f"TP: {format_price(view.take_price)}",
-        f"Паттерн: {view.pattern or '—'}",
     ]
+    if view.is_open:
+        lines.append(f"Паттерн: {view.pattern or '—'}")
+
     if view.entry_before_chart:
         lines.append(ENTRY_BEFORE_CHART_LINE)
     if not view.is_robot:
