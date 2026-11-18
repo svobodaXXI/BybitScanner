@@ -56,7 +56,7 @@ def test_unequal_extrema_or_old_confirmation_rejected():
     assert detect_confirmed_double_extremum(candles) is None
 
 
-def test_real_neckline_signal_proves_double_top_reentry_and_rejects_wick_only():
+def test_confirmed_double_top_keeps_historical_state_but_never_proves_new_reentry():
     import robot_l_shape
     from geometry.double_extremum import frozen_neckline_snapshot
     from terminal.application.robot_reentry_adapter import proven_pattern_entry
@@ -77,19 +77,23 @@ def test_real_neckline_signal_proves_double_top_reentry_and_rejects_wick_only():
     })
     assert state["phase"] == robot_l_shape.PHASE_RETEST_DETECTED
     confirmation = frozen["neckline_entry"]["confirmation"]["close_time_ms"]
-    proof = proven_pattern_entry(frozen, now_ms=confirmation)
-    assert proof is not None
-    assert proof.pattern == "Double Top"
-    assert proof.direction == "SHORT"
-    assert proof.confirmed_at_ms == confirmation
+    # Legacy frozen state remains readable for protected historical trades,
+    # but cannot authorize another independent DT order/reentry.
+    assert proven_pattern_entry(frozen, now_ms=confirmation) is None
     assert proven_pattern_entry(frozen, now_ms=confirmation - 1) is None
+    import pytest
+    with pytest.raises(robot_l_shape.RobotLShapeError, match="cannot submit standalone"):
+        robot_l_shape.build_initial_retest_limit({
+            "candidate_id": "double-top", "status": "APPROVED",
+            "signal_snapshot": frozen,
+        }, state, tick_size=Decimal("0.1"))
     # A wick penetrating the neck without the candle body's close is rejected.
     bad = [dict(c) for c in bars]
     bad[-1]["close"] = "95.5"
     assert frozen_neckline_snapshot("LABUSDT", "1", bad) is None
 
 
-def test_double_bottom_new_closed_neckline_is_same_campaign_proposal_after_stop(prepared):
+def test_double_bottom_confirmation_cannot_create_new_stop_reentry(prepared):
     from geometry.double_extremum import frozen_neckline_snapshot
     from terminal.application.robot_reentry_adapter import automatic_reentry_proposal
     from terminal.domain.models import TradingAccountId, Symbol
@@ -110,14 +114,10 @@ def test_double_bottom_new_closed_neckline_is_same_campaign_proposal_after_stop(
             symbol=Symbol("LABUSDT"), snapshot=new_snapshot,
             now_ms=900_000,
         )
-    assert proposed is not None
-    assert proposed.previous_stop_exec_id == "stop-exec-1"
-    assert proposed.confirmed_at_ms == 900_000
-    assert proposed.strategy_confirmation_proven is True
-    assert proposed.original_risk_budget_usdt is None
+    assert proposed is None
 
 
-def test_neckline_retry_rejects_forged_and_stale_confirmation():
+def test_neckline_signal_is_not_independently_executable_even_when_fresh():
     from copy import deepcopy
     from geometry.double_extremum import frozen_neckline_snapshot
     from terminal.application.robot_reentry_adapter import proven_pattern_entry
@@ -132,7 +132,7 @@ def test_neckline_retry_rejects_forged_and_stale_confirmation():
     valid = frozen_neckline_snapshot("LABUSDT", "1", bars)
     assert valid is not None
     confirmed_at = valid["neckline_entry"]["confirmation"]["close_time_ms"]
-    assert proven_pattern_entry(valid, now_ms=confirmed_at) is not None
+    assert proven_pattern_entry(valid, now_ms=confirmed_at) is None
 
     for tamper in ("future", "wrong_kind", "wrong_timeframe", "bad_close",
                    "bad_direction", "wrong_neckline", "no_handoff"):
