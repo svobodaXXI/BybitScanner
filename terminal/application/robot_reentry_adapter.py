@@ -45,6 +45,10 @@ def proven_pattern_entry(
     if not isinstance(snapshot, Mapping):
         return None
     pattern = str(snapshot.get("pattern", "")).strip()
+    # Versioned double reversal can inform a host Wedge/Box/L-shape/MIRROR,
+    # but must never create a new independent STOP reentry campaign.
+    if pattern in robot_l_shape.DOUBLE_PATTERNS:
+        return None
     if pattern == "IKIGAI_BOX":
         # This is the immutable *canonical Box plan*, never a mutable scanner
         # observation. The source reader verifies its hash and BOX_PLAN_ONLY
