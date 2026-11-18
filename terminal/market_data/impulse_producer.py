@@ -110,6 +110,7 @@ def certified_snapshot(
     return {
         "symbol": symbol,
         "flow_observation": {
+            "transition": transition,
             "direction": signal.direction,
             "known_at_ms": decision_ms,
             "closed_price": str(signal.closed_price),

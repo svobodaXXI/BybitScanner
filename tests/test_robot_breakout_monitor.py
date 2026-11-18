@@ -1105,6 +1105,77 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertEqual(self.armed_entry_coverage, [SYMBOL])
         self.assertEqual(self.released_entry_coverage, [])
 
+    def test_existing_pattern_flow_can_defer_wedge_entry_without_new_signal(self):
+        from robot_entry_flow_evidence import (
+            CandidateBoundFlowEvidence, FlowTransition,
+        )
+        from dataclasses import replace
+        self._create_candidate()
+        record = self._drive_to_retest_detected(push_followup_candle=False)
+        receipt_time = 1_800_000
+        positive = FlowTransition(
+            known_at_ms=receipt_time, current_delta_fraction=Decimal("0.5"),
+            current_price_change_bps=Decimal("10"),
+            buy_wave_accelerating=True, sell_wave_accelerating=False,
+            sell_impact_fading=False, buy_impact_fading=False,
+            bid_refill_observed=None, ask_refill_observed=None,
+            sell_absorption_candidate=None, buy_absorption_candidate=None,
+        )
+        receipt = CandidateBoundFlowEvidence(
+            candidate_id=record.candidate_id, symbol=record.symbol.value,
+            direction="LONG", state_revision=record.state_revision,
+            source_kind="BYBIT_TRIPLE_CLOSED_M1_CERTIFIED",
+            closed_at_ms=receipt_time, decision_ms=receipt_time,
+            print_facts_sha256="a" * 64,
+            source_complete=True, receipt_cutoff_proven=True,
+            transport_generation_proven=True, transition=positive,
+        )
+        # A foreign revision cannot place the existing candidate's order.
+        self.monitor.bind_pattern_flow_observer(
+            lambda _: replace(receipt, state_revision=receipt.state_revision - 1),
+        )
+        self.feed.push(SYMBOL, _candle_at(104, high=99, low=97, close=98))
+        self.clock.value = receipt_time + 500
+        self.assertEqual(self.monitor.tick(), ())
+        self.assertEqual(self.executor.limit_calls, [])
+        self.assertEqual(self.store.get_robot_candidate(record.candidate_id).status, "APPROVED")
+
+        # The next original tick without extra observation preserves the
+        # initial Wedge LIMIT identity, geometry, risk and normal protection.
+        self.monitor._get_pattern_flow_evidence = lambda _: None
+        self.feed.push(SYMBOL, _candle_at(105, high=99, low=97, close=98))
+        self.assertEqual(self.monitor.tick(), (record.candidate_id,))
+        self.assertEqual(len(self.executor.limit_calls), 1)
+        self.assertEqual(self.executor.limit_calls[0].symbol, SYMBOL)
+
+    def test_compatible_pattern_flow_preserves_canonical_entry_limit(self):
+        from robot_entry_flow_evidence import CandidateBoundFlowEvidence, FlowTransition
+        self._create_candidate()
+        record = self._drive_to_retest_detected()
+        self.clock.value = 1_800_500
+        transition = FlowTransition(
+            known_at_ms=1_800_000, current_delta_fraction=Decimal("0.4"),
+            current_price_change_bps=Decimal("8"),
+            buy_wave_accelerating=True, sell_wave_accelerating=False,
+            sell_impact_fading=False, buy_impact_fading=False,
+            bid_refill_observed=None, ask_refill_observed=None,
+            sell_absorption_candidate=None, buy_absorption_candidate=None,
+        )
+        receipt = CandidateBoundFlowEvidence(
+            candidate_id=record.candidate_id, symbol=record.symbol.value,
+            direction="LONG", state_revision=record.state_revision,
+            source_kind="BYBIT_TRIPLE_CLOSED_M1_CERTIFIED",
+            closed_at_ms=1_800_000, decision_ms=1_800_000,
+            print_facts_sha256="b" * 64, source_complete=True,
+            receipt_cutoff_proven=True, transport_generation_proven=True,
+            transition=transition,
+        )
+        self.monitor.bind_pattern_flow_observer(lambda _: receipt)
+        self.assertEqual(self.monitor.tick(), (record.candidate_id,))
+        self.assertEqual(len(self.executor.limit_calls), 1)
+        record = self.store.get_robot_candidate(record.candidate_id)
+        self.assertEqual(record.robot_state["execution"]["limit_order_id"], "test-limit-1")
+
     def test_resting_entry_limit_is_never_created_without_armed_coverage(self):
         # RVL-R4: a refused arm, or no bound arm at all, leaves the candidate pre-LIMIT.
         self._create_candidate()

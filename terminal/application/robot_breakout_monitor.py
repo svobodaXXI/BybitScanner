@@ -31,6 +31,10 @@ from typing import Callable, Mapping, Protocol
 
 import mirror_retest_robot as mirror
 import robot_entry_limit
+from robot_entry_flow_evidence import (
+    CandidateBoundFlowEvidence, ExistingPatternEntryScope,
+    match_existing_pattern_flow,
+)
 import robot_l_shape
 import robot_protection
 import robot_state_machine
@@ -254,6 +258,9 @@ class RobotBreakoutMonitor:
         emergency_close_path: EmergencyClosePath | None = None,
         mirror_policy: "mirror.MirrorRobotPolicy | None" = None,
         wedge_be_auto_paper_enabled: bool = False,
+        get_pattern_flow_evidence: Callable[
+            [RobotCandidateRecord], CandidateBoundFlowEvidence | None
+        ] | None = None,
     ) -> None:
         self._emergency_close_path = emergency_close_path
         # MIRROR RETEST overlay for Box attempts (OFF unless a policy is bound; see mirror_retest_robot).
@@ -261,6 +268,7 @@ class RobotBreakoutMonitor:
         if type(wedge_be_auto_paper_enabled) is not bool:
             raise ValueError("Wedge BE PAPER auto gate must be explicit bool")
         self._wedge_be_auto_paper_enabled = wedge_be_auto_paper_enabled
+        self._get_pattern_flow_evidence = get_pattern_flow_evidence
         # Resting entry LIMITs become fill-capable the moment they are durable, so
         # protection coverage for the symbol must already be listening. Without a
         # bound arm this monitor never creates a resting entry LIMIT (fail closed).
@@ -299,6 +307,17 @@ class RobotBreakoutMonitor:
             store = self._store_factory()
             self._local.store = store
         return store
+
+    def bind_pattern_flow_observer(
+        self,
+        observer: Callable[[RobotCandidateRecord], CandidateBoundFlowEvidence | None],
+    ) -> None:
+        """One in-process read-only overlay, bound before the Robot tick starts."""
+        if self._started or self._get_pattern_flow_evidence is not None:
+            raise RuntimeError("Robot pattern flow observer is already bound or running")
+        if not callable(observer):
+            raise TypeError("pattern flow observer must be callable")
+        self._get_pattern_flow_evidence = observer
 
     def start(self) -> None:
         if self._started:
@@ -1601,6 +1620,31 @@ class RobotBreakoutMonitor:
                 reason, details = rr_skip
                 self._invalidate_pre_entry_candidate(record, reason=reason, details=details)
                 return True
+            # An exact, recent, independently certified taker wave may refine
+            # WHEN the already-confirmed Wedge enters. Contradictory/foreign
+            # evidence defers this candidate by one normal tick; missing
+            # evidence leaves its original entry policy entirely unchanged.
+            # The observer never creates candidates, orders or risk terms.
+            observe_flow = self._get_pattern_flow_evidence
+            if observe_flow is not None:
+                try:
+                    receipt = observe_flow(record)
+                except Exception:
+                    receipt = None  # optional observation never bypasses risk
+                if receipt is not None:
+                    scope = ExistingPatternEntryScope(
+                        candidate_id=record.candidate_id,
+                        symbol=record.symbol.value,
+                        pattern=str(record.signal_snapshot.get("pattern", "")),
+                        direction=str(record.robot_state.get("direction", "")),
+                        state_revision=record.state_revision,
+                        status=record.status,
+                        phase=str(record.robot_state.get("phase", "")),
+                    )
+                    if not match_existing_pattern_flow(
+                        scope, receipt, now_ms=self._now_ms(),
+                    ):
+                        return False
             if not self._arm_entry_coverage(record.symbol.value):
                 return False
             result = robot_entry_limit.submit_initial_retest_limit(self._action_executor, plan)

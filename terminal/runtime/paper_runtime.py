@@ -1166,6 +1166,12 @@ class PaperRuntime:
         )
         self._wedge_terminal_producer.start()
 
+    def bind_robot_pattern_flow_observer(self, observer) -> None:
+        """Bind a read-only market-flow hint to the EXISTING Robot monitor."""
+        if self._robot_command_dispatcher is not None:
+            raise RuntimeError("Cannot bind pattern flow after Robot monitor start")
+        self._robot_breakout_monitor.bind_pattern_flow_observer(observer)
+
     def start_robot_monitor(
         self, dispatcher: Callable[[Callable[["PaperRuntime"], object]], object],
     ) -> None:

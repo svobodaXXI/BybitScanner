@@ -1,0 +1,226 @@
+"""Read-only market-flow overlay for already approved Robot pattern candidates.
+
+No new WebSocket subscription, Scanner signal, candidate, order, admission,
+or STOP/TAKE authority. One existing symbol per M1, off-owner REST reads only.
+Missing or uncertain data never creates independent IMPULSE_FLOW trading.
+"""
+from __future__ import annotations
+
+import logging
+import sqlite3
+import threading
+import time
+from pathlib import Path
+from typing import Callable
+
+from robot_entry_flow_evidence import (
+    CandidateBoundFlowEvidence, ExistingPatternEntryScope, FlowTransition,
+)
+from terminal.domain.models import TradingAccountId
+from terminal.market_data.impulse_producer import certified_snapshot
+from terminal.persistence.sqlite_store import SQLiteStore
+
+
+LOGGER = logging.getLogger(__name__)
+BASE_URL = "https://api.bybit.com"
+_PAPER = TradingAccountId("paper")
+MAX_CANDIDATES_PER_PASS = 1
+
+
+def read_approved_pattern_candidates(database_path: Path) -> tuple:
+    """Read approved candidates from immutable, query-only SQLite connection.
+
+    Crucially, SQLiteStore.open() is NOT used here: that can create indexes.
+    No mutations, owner callbacks, runtime locks or schema changes.
+    """
+    path = Path(database_path)
+    connection = sqlite3.connect(
+        path.resolve().as_uri() + "?mode=ro", uri=True,
+        timeout=1, isolation_level=None,
+    )
+    try:
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA query_only=ON")
+        connection.execute("PRAGMA busy_timeout=1000")
+        store = SQLiteStore(connection, path, 1000)
+        return store.load_robot_candidates_by_status(_PAPER, ("APPROVED",))
+    finally:
+        connection.close()
+
+
+class PatternFlowObserver:
+    """Source-complete two-minute evidence cache bound to existing pattern IDs."""
+
+    def __init__(
+        self, hub, rest_session, database_path: Path,
+        *, clock_ms: Callable[[], int] | None = None,
+        get_candidates: Callable[[], tuple] | None = None,
+    ) -> None:
+        self._hub = hub
+        self._rest = rest_session
+        self._db_path = Path(database_path)
+        self._clock = clock_ms or (lambda: int(time.time() * 1000))
+        self._get_candidates = get_candidates or (
+            lambda: read_approved_pattern_candidates(self._db_path)
+        )
+        self._lock = threading.Lock()
+        self._receipts: dict[str, CandidateBoundFlowEvidence] = {}
+        self._attempted: set[tuple[str, int, int]] = set()
+        self._stop = threading.Event()
+        self._thread = threading.Thread(
+            target=self._run, name="robot-pattern-flow-readonly", daemon=True,
+        )
+        self._started = False
+
+    def start(self) -> None:
+        if self._started:
+            raise RuntimeError("pattern flow observer is already started")
+        self._started = True
+        self._thread.start()
+
+    def close(self) -> None:
+        self._stop.set()
+        if self._started and self._thread is not threading.current_thread():
+            self._thread.join(timeout=18)
+        # Never close a requests.Session while the observer is still using it.
+        if not self._thread.is_alive():
+            self._rest.close()
+
+    def get(self, record) -> CandidateBoundFlowEvidence | None:
+        """Read-only, lock-bounded lookup; no REST or SQLite on Robot tick."""
+        with self._lock:
+            evidence = self._receipts.get(record.candidate_id)
+        if evidence is None:
+            return None
+        now_ms = self._clock()
+        if (type(now_ms) is not int or now_ms < evidence.decision_ms
+                or now_ms - evidence.closed_at_ms > 120_000):
+            return None
+        return evidence
+
+    def _json(self, endpoint: str, *, params: dict) -> dict:
+        if getattr(self._rest, "verify", True) is False:
+            raise ValueError("unverified REST TLS")
+        response = self._rest.get(
+            BASE_URL + endpoint, params=params, timeout=(2, 4),
+            allow_redirects=False,
+        )
+        response.raise_for_status()
+        if response.status_code != 200:
+            raise ValueError("Bybit REST did not return HTTP 200")
+        value = response.json()
+        if not isinstance(value, dict):
+            raise ValueError("malformed Bybit REST response")
+        return value
+
+    def once(self) -> int:
+        """At most one existing APPROVED Wedge per M1; zero owner/DB writes."""
+        now = self._clock()
+        if type(now) is not int or now < 180_000:
+            return 0
+        closed = now // 60_000 * 60_000
+        if not 2_000 <= now - closed <= 45_000:
+            return 0
+
+        contexts = {context.symbol: context for context in self._hub.list_contexts()}
+        eligible = []
+        for record in self._get_candidates():
+            state = record.robot_state or {}
+            if (record.status == "APPROVED"
+                    and record.signal_snapshot.get("pattern") in
+                    ("Falling Wedge", "Rising Wedge")
+                    and state.get("phase") == "RETEST_DETECTED"
+                    and state.get("direction") in ("LONG", "SHORT")
+                    and record.symbol.value in contexts):
+                eligible.append(record)
+
+        for record in eligible[:MAX_CANDIDATES_PER_PASS]:
+            if self._stop.is_set():
+                break
+            key = (record.candidate_id, record.state_revision, closed)
+            if key in self._attempted:
+                continue
+            self._attempted = {k for k in self._attempted if k[2] >= closed - 60_000}
+            self._attempted.add(key)
+            context = contexts[record.symbol.value]
+            if (context.trades_subscription_state != "SUBSCRIBED"
+                    or context.trade_bootstrap_complete is not True):
+                continue
+            before = context.impulse_observation.snapshot()
+            if (before.get("invalid_frames") != 0
+                    or before.get("generation") != context.generation):
+                continue
+            try:
+                recent = self._json("/v5/market/recent-trade", params={
+                    "category": "linear", "symbol": record.symbol.value, "limit": 1000,
+                })
+                previous = self._json("/v5/market/kline", params={
+                    "category": "linear", "symbol": record.symbol.value,
+                    "interval": "1", "start": closed - 120_000,
+                    "end": closed - 60_001, "limit": 1,
+                })
+                current = self._json("/v5/market/kline", params={
+                    "category": "linear", "symbol": record.symbol.value,
+                    "interval": "1", "start": closed - 60_000,
+                    "end": closed - 1, "limit": 1,
+                })
+                decision = self._clock()
+                after = context.impulse_observation.snapshot()
+                # A changed generation, removed old print, or newly discovered
+                # pre-close print invalidates the pre-fetch source snapshot.
+                original = {p.trade_id: p for p in before.get("prints", ())
+                            if p.timestamp_ms < closed}
+                observed = {p.trade_id: p for p in after.get("prints", ())
+                            if p.timestamp_ms < closed}
+                if (context.trades_subscription_state != "SUBSCRIBED"
+                        or context.trade_bootstrap_complete is not True
+                        or after.get("generation") != before.get("generation")
+                        or after.get("invalid_frames") != before.get("invalid_frames")
+                        or original != observed):
+                    continue
+                result = certified_snapshot(
+                    before, recent, previous, current,
+                    closed_at_ms=closed, decision_ms=decision,
+                )
+                if result is None:
+                    continue
+                source = result["flow_source"]
+                observed_flow = result["flow_observation"]
+                transition = observed_flow["transition"]
+                if not isinstance(transition, FlowTransition):
+                    continue
+                receipt = CandidateBoundFlowEvidence(
+                    candidate_id=record.candidate_id,
+                    symbol=record.symbol.value,
+                    direction=observed_flow["direction"],
+                    state_revision=record.state_revision,
+                    source_kind=source["kind"],
+                    closed_at_ms=source["closed_at_ms"],
+                    decision_ms=source["decision_ms"],
+                    print_facts_sha256=source["print_facts_sha256"],
+                    source_complete=source["source_complete"],
+                    receipt_cutoff_proven=source["receipt_cutoff_proven"],
+                    transport_generation_proven=source["transport_generation_proven"],
+                    transition=transition,
+                )
+                # Evidence is advisory until the Robot independently checks
+                # exact candidate/revision/direction and normal entry gates.
+                with self._lock:
+                    self._receipts[record.candidate_id] = receipt
+                return 1
+            except Exception as error:
+                LOGGER.warning(
+                    "Pattern flow read-only source unavailable: %s",
+                    type(error).__name__,
+                )
+                continue
+        return 0
+
+    def _run(self) -> None:
+        while not self._stop.wait(8):
+            try:
+                self.once()
+            except Exception as error:
+                LOGGER.warning(
+                    "Pattern flow observer skipped: %s", type(error).__name__,
+                )
