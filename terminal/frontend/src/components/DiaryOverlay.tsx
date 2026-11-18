@@ -1034,6 +1034,7 @@ function OutcomeSplitBar({ kind, wins, losses, breakeven, filter, onFilter }: {
 }) {
   const total = wins + losses + breakeven;
   const noun = kind === "deals" ? "сделок" : "паттернов";
+  const plural = kind === "deals" ? "сделки" : "паттерны";
   const toggle = (next: FinrezPnlFilter) => onFilter(filter === next ? "ALL" : next);
   const pct = (count: number) => total > 0 ? count / total * 100 : 0;
   return (
@@ -1058,15 +1059,15 @@ function OutcomeSplitBar({ kind, wins, losses, breakeven, filter, onFilter }: {
       </div>
       <div className="diary-outcome-footer">
         <button type="button" className="diary-outcome-count profit"
-          aria-label={`Показать прибыльные ${noun}`}
+          aria-label={`Показать прибыльные ${plural}`}
           aria-pressed={filter === "PROFIT"} disabled={wins === 0 && filter !== "PROFIT"}
           onClick={() => toggle("PROFIT")}>Прибыльных: {wins}</button>
         <button type="button" className="diary-outcome-total"
-          aria-label={`Показать все ${noun}`}
+          aria-label={`Показать все ${plural}`}
           aria-pressed={filter === "ALL"}
           onClick={() => onFilter("ALL")}>Всего: {total}{breakeven > 0 ? ` · в ноль: ${breakeven}` : ""}</button>
         <button type="button" className="diary-outcome-count loss"
-          aria-label={`Показать убыточные ${noun}`}
+          aria-label={`Показать убыточные ${plural}`}
           aria-pressed={filter === "LOSS"} disabled={losses === 0 && filter !== "LOSS"}
           onClick={() => toggle("LOSS")}>Убыточных: {losses}</button>
       </div>
