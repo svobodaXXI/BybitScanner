@@ -1025,7 +1025,7 @@ describe("Finrez first-screen UI", () => {
     fireEvent.click(screen.getByRole("button", { name: "Убыточные паттерны" }));
     expect(region.querySelectorAll(".diary-pattern-card")).toHaveLength(1);
     expect(region.querySelector(".diary-pattern-card")).toHaveTextContent("-1,4012 USDT");
-    fireEvent.click(screen.getByRole("button", { name: "Показать все паттернов" }));
+    fireEvent.click(screen.getByRole("button", { name: "Показать все паттерны" }));
     expect(region.querySelectorAll(".diary-pattern-card")).toHaveLength(3);
     expect(screen.queryByTitle("-999 USDT")).not.toBeInTheDocument();
     const openWedge = screen.getAllByRole("button", { name: "Показать все сделки по паттерну Falling Wedge" });
