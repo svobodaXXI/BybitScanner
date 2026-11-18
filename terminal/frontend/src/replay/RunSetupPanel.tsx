@@ -298,7 +298,7 @@ export function RunSetupPanel({
         <fieldset className="replay-run-dates">
           <legend>Исторический период · UTC</legend>
           <div className="replay-run-coordinates">
-            <label>Вставить тикер и даты · UTC
+            <label>Вставьте тикер, даты или ID сделки
               <input aria-label="Координаты прогона" type="text" value={coordinateText}
                 placeholder=""
                 onChange={e => { setCoordinateText(e.target.value); setCoordinateError(""); }} />
