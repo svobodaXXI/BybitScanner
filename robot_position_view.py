@@ -372,24 +372,23 @@ def _signed_usdt(value: Decimal) -> str:
 
 
 def format_trade_result(view: PositionView) -> str:
-    # realized_pnl_usdt excludes fees. The stored fees_costs_usdt / realized_pnl_pct
-    # cover only the closing execution, so fees here are summed over the trade's
-    # executions (entry + exit) and the net percentage is recomputed from them.
+    """Show only proven net PnL and separately the whole entry+exit commission.
+
+    realized_pnl_usdt is gross. The view fee aggregation covers all executions;
+    an unknown fee must never silently be treated as zero.
+    """
     trade = view.trade
     gross = trade.realized_pnl_usdt
     fees = view.fees_usdt
+    if gross is None or fees is None:
+        return "Итог: — (комиссия: —)"
+    net = gross - fees
     notional = (
         trade.entry_quantity * trade.average_entry
         if trade.entry_quantity is not None and trade.average_entry is not None else None
     )
-    fees_text = f"{format_price(fees)} USDT" if fees is not None else "—"
-    net_text = (
-        f"{(gross - fees) / notional * 100:+.2f}%" if fees is not None and notional else "—"
-    )
-    return (
-        f"Итог: {_signed_usdt(gross)} (до комиссий), "
-        f"комиссии {fees_text} (вход + выход), {net_text} (после комиссий)"
-    )
+    net_percent = f"{net / notional * 100:+.2f}%" if notional else "—"
+    return f"Итог: {_signed_usdt(net)} ({net_percent}) (комиссия: {format_price(fees)} USDT)"
 
 
 def _signed_2dp(value: Decimal, suffix: str) -> str:
@@ -431,8 +430,6 @@ def format_position_card(view: PositionView) -> str:
         )
     else:
         trade = view.trade
-        reason = f" ({exit_reason_label(trade.exit_reason)})" if trade.exit_reason else ""
-        lines.append(f"Выход: {format_price(trade.exit_price)}{reason}")
         if trade.realized_pnl_usdt is not None:
             lines.append(format_trade_result(view))
     lines += [
