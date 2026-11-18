@@ -1040,24 +1040,26 @@ function OutcomeSplitBar({ kind, wins, losses, breakeven, filter, onFilter }: {
     <div className="diary-outcome-distribution" role="group"
       aria-label={`Распределение результатов ${noun}`}>
       <div className="diary-outcome-track">
-        {wins > 0 ? <button type="button" className="diary-outcome-segment profit"
+        <button type="button" className="diary-outcome-segment profit"
           aria-label={kind === "deals" ? "Прибыльные" : "Прибыльные паттерны"}
           title={`Прибыльных: ${wins}, ${pct(wins).toFixed(1)}%`}
           aria-pressed={filter === "PROFIT"} onClick={() => toggle("PROFIT")}
-          style={{ width: `${pct(wins)}%` }} /> : null}
+          disabled={wins === 0 && filter !== "PROFIT"}
+          style={{ width: `${pct(wins)}%` }} />
         {breakeven > 0 ? <span className="diary-outcome-segment neutral"
           title={`В ноль: ${breakeven}, ${pct(breakeven).toFixed(1)}%`}
           style={{ width: `${pct(breakeven)}%` }} /> : null}
-        {losses > 0 ? <button type="button" className="diary-outcome-segment loss"
+        <button type="button" className="diary-outcome-segment loss"
           aria-label={kind === "deals" ? "Убыточные" : "Убыточные паттерны"}
           title={`Убыточных: ${losses}, ${pct(losses).toFixed(1)}%`}
           aria-pressed={filter === "LOSS"} onClick={() => toggle("LOSS")}
-          style={{ width: `${pct(losses)}%` }} /> : null}
+          disabled={losses === 0 && filter !== "LOSS"}
+          style={{ width: `${pct(losses)}%` }} />
       </div>
       <div className="diary-outcome-footer">
         <button type="button" className="diary-outcome-count profit"
           aria-label={`Показать прибыльные ${noun}`}
-          aria-pressed={filter === "PROFIT"} disabled={wins === 0}
+          aria-pressed={filter === "PROFIT"} disabled={wins === 0 && filter !== "PROFIT"}
           onClick={() => toggle("PROFIT")}>Прибыльных: {wins}</button>
         <button type="button" className="diary-outcome-total"
           aria-label={`Показать все ${noun}`}
@@ -1065,7 +1067,7 @@ function OutcomeSplitBar({ kind, wins, losses, breakeven, filter, onFilter }: {
           onClick={() => onFilter("ALL")}>Всего: {total}{breakeven > 0 ? ` · в ноль: ${breakeven}` : ""}</button>
         <button type="button" className="diary-outcome-count loss"
           aria-label={`Показать убыточные ${noun}`}
-          aria-pressed={filter === "LOSS"} disabled={losses === 0}
+          aria-pressed={filter === "LOSS"} disabled={losses === 0 && filter !== "LOSS"}
           onClick={() => toggle("LOSS")}>Убыточных: {losses}</button>
       </div>
     </div>
