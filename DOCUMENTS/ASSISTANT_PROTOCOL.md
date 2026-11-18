@@ -227,6 +227,35 @@ Before any copy-ready block, classify who is expected to act.
 This labeling rule is part of the user-action preflight. If a response could plausibly be interpreted in more than
 one of these three ways, rewrite it before sending.
 
+### 2.1.2 INTERACTIVE OWNER AUTHORIZATION — PERMANENT RULE (2026-11-18)
+
+When ChatGPT can render **functional clickable controls**, every request for an
+owner's explicit approval of a gated action must be an **interactive button
+choice**, not a typed `разрешаю`, copied reply, or passive question. Show the
+smallest clear pair of actions: **«Разрешаю [precise operation]»** and
+**«Не разрешаю»**. The affirmative choice must submit the owner's exact
+authorization in a follow-up chat turn (e.g. an interactive control that sends a
+new message); negative choice must explicitly decline the operation. Do not
+present an inert button or claim an approval before that message arrives.
+
+Before presenting a choice, state **one** narrow operation/PR/SHA, what it may
+change, and its safety exclusions. Separate merge, deployment, trading
+authorization, reconciliation, and other independent permissions: one approval
+never implies the next. After the affirmative owner turn, independently prove
+all normal safety/preflight conditions and stop on failure. No UI preference
+overrides LIVE prohibition, PAPER ownership, STOP/Admission/TAKE protections,
+or GitHub PR/monolith gates.
+
+The existing `Сейчас сделай:` and dedicated code-block rules in §§2.1–2.2
+continue for genuine **external actions and prompts**; for **approval-only**
+requests, supported buttons replace the older exact-reply code-block fallback.
+When controls are technically unavailable (such as a plain-text-only agent
+surface), use the existing exact-reply fallback and do not fabricate a UI.
+
+All BybitScanner ChatGPT workstreams must follow this rule. A Codex/CLI agent
+cannot render ChatGPT buttons; when preparing a handoff, preserve the exact
+authorization scope, and the ChatGPT workstream presents the approval buttons.
+
 ## 2.2 COPY_READY_ACTION_BLOCK_RULE
 
 Payload intended for copying, pasting, sending, or execution must appear alone in a dedicated code block.
