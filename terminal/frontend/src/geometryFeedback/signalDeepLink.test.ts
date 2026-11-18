@@ -10,8 +10,13 @@ describe("GFL editor and terminal deep link", () => {
       mode: "TERMINAL", symbol: "SOLUSDT", timeframe: "1m", signalId: null,
     });
   });
+  it("opens the owner Autopilot tab directly without inventing signal identity", () => {
+    expect(parseSignalWorkspaceLink("?mode=AUTOPILOT&symbol=BTCUSDT&timeframe=5m")).toEqual({
+      mode: "AUTOPILOT", symbol: "BTCUSDT", timeframe: "5m", signalId: null,
+    });
+  });
   it("rejects unknown modes, malformed symbols and unsupported timeframes", () => {
-    for (const query of ["?mode=AUTOPILOT&symbol=BTCUSDT&timeframe=5m",
+    for (const query of ["?mode=SCANNER&symbol=BTCUSDT&timeframe=5m",
       "?mode=EDITOR&symbol=BTCUSDT&timeframe=bad",
       "?mode=EDITOR&symbol=../BTCUSDT&timeframe=5m",
       "?mode=EDITOR&symbol=BTCUSDT&timeframe=5m&signal_id=a%2Fb",
