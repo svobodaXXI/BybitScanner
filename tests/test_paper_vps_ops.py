@@ -215,6 +215,29 @@ class OwnerBridgeTests(unittest.TestCase):
                     "ingress_max_processing_ms": "1900.2",
                 },
             }), encoding="utf-8")
+            owner_dir = root / "owner_incidents"
+            owner_dir.mkdir()
+            for name, timestamp, stage, facts in (
+                ("slow", 1794869987000, "OWNER_SLOW", {
+                    "task_kind": "protection", "task_label": "SECRET-NEVER-PUBLISH",
+                    "processing_ms": "812.5", "ingress_queue_latency_ms": "103.2",
+                    "symbol": "SECRETUSDT",
+                }),
+                ("overflow", 1794869989000, "INGRESS_OVERFLOW", {
+                    "capacity": 64, "pending": 64, "symbol": "SECRETUSDT",
+                }),
+                ("watermark", 1794869988000, "INGRESS_WATERMARK", {
+                    "capacity": 64, "pending": 64,
+                }),
+                ("outside", 1794875000000, "OWNER_SLOW", {
+                    "task_kind": "call", "processing_ms": "9999",
+                }),
+            ):
+                (owner_dir / (name + ".json")).write_text(json.dumps({
+                    "schema_version": 1, "timestamp_ms": timestamp,
+                    "incident_type": "PAPER_OWNER_OBSERVABILITY",
+                    "stage": stage, "reason_code": stage, "facts": facts,
+                }), encoding="utf-8")
             with (
                 mock.patch.object(bridge.time, "time", return_value=now_ms / 1000),
                 mock.patch.object(bridge.urlrequest, "urlopen",
@@ -257,6 +280,21 @@ class OwnerBridgeTests(unittest.TestCase):
                 "fence_processing_over_2s_trades": 0,
                 "fence_max_queue_latency_ms": 2240.7,
                 "fence_max_processing_ms": 1900.2,
+                "owner_ingress_history": {
+                    "journal_state": "COMPLETE_SCAN",
+                    "retained_files": 4, "unreadable_files": 0,
+                    "nov17_18_retained_records": 4,
+                    "around_fence_write_records": 3,
+                    "fence_windows_with_records": 1,
+                    "fence_windows_checked": 1,
+                    "around_fence_ingress_overflow_records": 1,
+                    "around_fence_full_watermark_records": 1,
+                    "around_fence_slow_task_records": 1,
+                    "around_fence_slow_task_kinds": {"protection": 1},
+                    "around_fence_max_slow_processing_ms": 812.5,
+                    "around_fence_max_slow_queue_latency_ms": 103.2,
+                    "possible_pruned_history": False,
+                },
                 "without_matching_incident_trades": 2,
             })
             self.assertNotIn("SECRET", json.dumps(snapshot))
@@ -271,6 +309,13 @@ class OwnerBridgeTests(unittest.TestCase):
         self.assertEqual(bridge._continuity_reason_class(
             "unknown SECRET-SHOULD-NOT-LEAK"), "OTHER")
         self.assertEqual(bridge._continuity_reason_class(None), "UNAVAILABLE")
+
+    def test_missing_owner_ingress_journal_is_not_a_negative_diagnosis(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            result = bridge._nov17_18_owner_ingress_telemetry(
+                Path(directory) / "paper.sqlite3", (1794869990000,), 1794988800000)
+            self.assertEqual(result, {"journal_state": "MISSING_DIRECTORY"})
 
     def test_missing_incident_journal_never_claims_zero_incidents(self):
         import sqlite3
