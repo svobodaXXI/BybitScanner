@@ -365,6 +365,28 @@ def _read_only_diag(sha: str, *, root: Path = Path("/opt/BybitScanner"),
                             (int(time.time() * 1000) - 72 * 60 * 60 * 1000,),
                         ).fetchall()
                     },
+                    # Incident #1134: fixed Moscow civil-day window, no
+                    # caller-provided SQL, symbols, IDs or raw reasons in logs.
+                    # End at capture time; 18 November remains an open day.
+                    "nov17_18_msk_exit_reasons": {
+                        day: {
+                            reason if reason in (
+                                "STOP", "TAKE", "MANUAL", "TAKEOVER",
+                                "EMERGENCY_CLOSE", "EMERGENCY_PROTECTION_FAILURE"
+                            ) else "OTHER": count
+                            for reason, count in conn.execute(
+                                "SELECT exit_reason, COUNT(*) FROM robot_trades "
+                                "WHERE trading_account_id='paper' "
+                                "AND exit_time_ms >= ? AND exit_time_ms < ? "
+                                "GROUP BY exit_reason",
+                                (start, min(end, int(time.time() * 1000))),
+                            ).fetchall()
+                        }
+                        for day, start, end in (
+                            ("2026-11-17", 1794862800000, 1794949200000),
+                            ("2026-11-18", 1794949200000, 1795035600000),
+                        )
+                    },
                     "approvals": one(
                         "SELECT COUNT(*) FROM robot_candidates "
                         "WHERE trading_account_id='paper' AND status='APPROVED'"),
