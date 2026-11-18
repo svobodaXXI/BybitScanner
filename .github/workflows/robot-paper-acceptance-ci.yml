@@ -145,7 +145,7 @@ jobs:
           mplfinance==0.12.10b0
           six==1.17.0
       - name: Verify shared causal Impulse Flow rules without order runtime
-        run: python -m unittest tests.test_robot_entry_flow_evidence -v
+        run: python -m unittest tests.test_robot_entry_flow_evidence tests.test_robot_pattern_flow_overlay -v
       - name: Verify gated Impulse through canonical Robot PAPER admission and protection
         run: python -m unittest tests.test_robot_impulse_canonical_paper -v
       - name: Verify publicTrade observation without order runtime
