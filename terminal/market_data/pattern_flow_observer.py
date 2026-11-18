@@ -1,7 +1,8 @@
 """Read-only market-flow overlay for already approved Robot pattern candidates.
 
-No new WebSocket subscription, Scanner signal, candidate, order, admission,
-or STOP/TAKE authority. One existing symbol per M1, off-owner REST reads only.
+One strictly bounded publicTrade-only probe on the EXISTING WebSocket,
+or reuse an existing context. No extra orderbook, Scanner signal, candidate,
+order, admission or STOP/TAKE authority. REST reads stay off-owner.
 Missing or uncertain data never creates independent IMPULSE_FLOW trading.
 """
 from __future__ import annotations
@@ -157,6 +158,46 @@ class PatternFlowObserver:
             target=self._run, name="robot-pattern-flow-readonly", daemon=True,
         )
         self._started = False
+        self._flow_probe_symbol: str | None = None
+
+    def _sync_flow_probe(self, candidates: tuple) -> None:
+        """Warm one APPROVED candidate, including before its first retest.
+
+        Source warming alone grants no flow proof or order authority. When
+        another candidate takes priority, release ONLY our passive topic.
+        """
+        subscribe = getattr(self._hub, "subscribe_flow_only", None)
+        release = getattr(self._hub, "release_flow_only", None)
+        if subscribe is None or release is None:
+            return
+        allowed = {
+            "Falling Wedge", "Rising Wedge", "L-shape", "MIRROR",
+            "Double Top", "Double Bottom", "IKIGAI_BOX",
+        }
+        # Prefer the exact canonical entry phase over earlier warm-up.
+        chosen = None
+        priority = None
+        for record in candidates:
+            if (record.status != "APPROVED"
+                    or record.signal_snapshot.get("pattern") not in allowed):
+                continue
+            symbol = record.symbol.value
+            state = record.robot_state or {}
+            if state.get("phase") not in (
+                    "WAITING_RETEST", "RETEST_DETECTED", "BOX_ENTRY_READY"):
+                continue
+            score = (0 if existing_pattern_entry_scope(record) is not None else 1,
+                     str(record.candidate_id))
+            if priority is None or score < priority:
+                chosen, priority = symbol, score
+        if chosen != self._flow_probe_symbol:
+            if self._flow_probe_symbol is not None:
+                release(self._flow_probe_symbol)
+            self._flow_probe_symbol = None
+        if chosen is not None:
+            context = subscribe(chosen)
+            if context is not None:
+                self._flow_probe_symbol = chosen
 
     def start(self) -> None:
         if self._started:
@@ -168,6 +209,10 @@ class PatternFlowObserver:
         self._stop.set()
         if self._started and self._thread is not threading.current_thread():
             self._thread.join(timeout=18)
+        release = getattr(self._hub, "release_flow_only", None)
+        if release is not None and self._flow_probe_symbol is not None:
+            release(self._flow_probe_symbol)
+            self._flow_probe_symbol = None
         # Never close a requests.Session while the observer is still using it.
         if not self._thread.is_alive():
             self._rest.close()
@@ -201,8 +246,11 @@ class PatternFlowObserver:
 
     def source_coverage(self) -> dict[str, object]:
         """Offline/read-only diagnostic of missing source, without subscriptions."""
+        list_contexts = getattr(
+            self._hub, "list_flow_contexts", self._hub.list_contexts,
+        )
         return source_coverage_audit(
-            tuple(self._get_candidates()), tuple(self._hub.list_contexts()),
+            tuple(self._get_candidates()), tuple(list_contexts()),
             now_ms=self._clock(),
         )
 
@@ -215,9 +263,14 @@ class PatternFlowObserver:
         if not 2_000 <= now - closed <= 45_000:
             return 0
 
-        contexts = {context.symbol: context for context in self._hub.list_contexts()}
+        candidates = tuple(self._get_candidates())
+        self._sync_flow_probe(candidates)
+        list_contexts = getattr(
+            self._hub, "list_flow_contexts", self._hub.list_contexts,
+        )
+        contexts = {context.symbol: context for context in list_contexts()}
         eligible = []
-        for record in self._get_candidates():
+        for record in candidates:
             # Exact approved-entry scope, including frozen direction. Sources
             # without an executable linked Robot ID (Box plan) are excluded.
             if (existing_pattern_entry_scope(record) is not None

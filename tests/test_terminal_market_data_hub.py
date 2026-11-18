@@ -371,6 +371,79 @@ def test_scanner_impulse_source_status_reports_existing_contexts_only_without_or
     hub.close()
 
 
+def test_flow_only_probe_uses_same_ws_no_book_and_no_protection_callback():
+    ws = _WebSocket()
+    hub = MarketDataHub(_Registry(), _context, connection_factory=lambda *_a, **_k: ws)
+    try:
+        hub._ws = ws  # simulate the already-owned WS, without starting threads
+        passive = hub.subscribe_flow_only("BTCUSDT")
+        assert passive.symbol == "BTCUSDT"
+        assert hub.list_contexts() == ()
+        assert hub.list_flow_contexts() == (passive,)
+        assert passive.impulse_observation.snapshot()["buffer_capacity"] == 1000
+        assert ws.sent == [{
+            "op": "subscribe", "req_id": "flow:BTCUSDT",
+            "args": ["publicTrade.BTCUSDT"],
+        }]
+        assert hub.subscribe_flow_only("ONGUSDT") is None  # hard budget 1
+        hub._dispatch({
+            "op": "subscribe", "req_id": "flow:BTCUSDT", "success": True,
+        })
+        hub._dispatch({
+            "topic": "publicTrade.BTCUSDT",
+            "data": [{"i": "1", "s": "BTCUSDT", "T": 1000, "seq": 1,
+                      "S": "Buy", "p": "100", "v": "1"}],
+        })
+        assert passive.impulse_observation.snapshot()["observed_prints"] == 1
+        assert passive.trade_bootstrap_complete is True
+        assert not any("orderbook" in t for row in ws.sent
+                       for t in row["args"])
+        assert hub.release_flow_only("BTCUSDT") is True
+        assert ws.sent[-1]["args"] == ["publicTrade.BTCUSDT"]
+        assert ws.sent[-1]["op"] == "unsubscribe"
+        assert hub.list_flow_contexts() == ()
+        assert hub.list_contexts() == ()
+    finally:
+        hub.close()
+
+
+def test_protection_upgrades_passive_source_without_duplicate_trade_or_unsubscribe():
+    ws = _WebSocket()
+    hub = MarketDataHub(_Registry(), _context, connection_factory=lambda *_a, **_k: ws)
+    try:
+        hub._ws = ws
+        passive = hub.subscribe_flow_only("BTCUSDT")
+        hub._dispatch({
+            "op": "subscribe", "req_id": "flow:BTCUSDT", "success": True,
+        })
+        hub._dispatch({
+            "topic": "publicTrade.BTCUSDT",
+            "data": [{"i": "before-cover", "s": "BTCUSDT", "T": 1000,
+                      "seq": 1, "S": "Buy", "p": "100", "v": "1"}],
+        })
+        book = hub.subscribe("BTCUSDT")  # protection uses canonical subscribe
+        assert hub.list_contexts() == (book,)
+        assert hub.list_flow_contexts() == (book,)
+        assert book.impulse_observation is passive.impulse_observation
+        assert book.impulse_observation.snapshot()["observed_prints"] == 1
+        assert book.trade_bootstrap_complete is True
+        assert ws.sent[-1]["args"] == ["orderbook.1000.BTCUSDT"]
+        assert not any(row["op"] == "unsubscribe" for row in ws.sent)
+        assert hub.release_flow_only("BTCUSDT") is False
+        # Existing protected book listener cannot be removed by flow observer.
+        observed = []
+        book.add_update_listener("robot-protection", observed.append)
+        hub._dispatch({
+            "topic": "orderbook.1000.BTCUSDT", "type": "snapshot",
+            "data": {"u": 10, "seq": 10, "b": [["100", "1"]],
+                     "a": [["101", "1"]]},
+            "ts": 5000,
+        })
+        assert len(book.public_orderbook.messages) == 1
+    finally:
+        hub.close()
+
+
 TESTS = (
     test_hub_uses_one_connection_for_multiple_reusable_symbol_contexts,
     test_hub_rejects_unsupported_symbol_without_creating_context,
@@ -382,6 +455,8 @@ TESTS = (
     test_symbol_context_listener_failure_does_not_block_sibling_listener,
     test_hub_discard_is_deferred_while_an_independent_listener_remains,
     test_scanner_impulse_source_status_reports_existing_contexts_only_without_orders,
+    test_flow_only_probe_uses_same_ws_no_book_and_no_protection_callback,
+    test_protection_upgrades_passive_source_without_duplicate_trade_or_unsubscribe,
 )
 
 
