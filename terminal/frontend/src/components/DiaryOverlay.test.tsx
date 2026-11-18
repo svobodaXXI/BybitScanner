@@ -1836,6 +1836,36 @@ describe("Verified Wedge lineage in Statistics", () => {
     expect(screen.queryByText("Версия стратегии")).not.toBeInTheDocument();
   });
 
+  it("accepts exact non-Wedge Robot entry proof without inventing original geometry", async () => {
+    const example = {
+      ...deal,
+      verified_signal: {
+        ...verified, pattern: "Double Bottom",
+        evidence_scope: "EXACT_ROBOT_CANDIDATE_ENTRY_ORDER_EXECUTION_EPISODE",
+      },
+    };
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+      if (url.startsWith("/api/diary/episode-facts")
+          || url.startsWith("/api/workspace/signal-geometry")) {
+        return new Response("", { status: 404 });
+      }
+      return new Response(JSON.stringify(mockReport([example])), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<DiaryOverlay accountKey="paper:nonwedge-source" initialSection="PATTERNS"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    const region = await screen.findByRole("region", { name: "Паттерны по подтверждённым сделкам" });
+    expect(region).toHaveTextContent("Паттерн подтверждён для 1 из 1");
+    expect(region).toHaveTextContent("Robot ID: 1");
+    fireEvent.click(screen.getByRole("button", { name: "Показать все сделки по паттерну Double Bottom" }));
+    expect(await screen.findByRole("combobox", { name: "Выбор паттерна" })).toHaveValue("Double Bottom");
+    fireEvent.click(screen.getByRole("button", { name: /BTCUSDT/ }));
+    expect(await screen.findByText("candidate-42")).toBeInTheDocument();
+    expect(screen.getByText(/точная цепочка Robot candidate/)).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([url]) =>
+      String(url).startsWith("/api/workspace/signal-geometry"))).toBe(false);
+  });
+
   it("requests an immutable original chart only for exact Robot Wedge lineage", async () => {
     const fetchMock = vi.fn().mockImplementation(async (url: string) => {
       if (url.startsWith("/api/workspace/signal-geometry")
