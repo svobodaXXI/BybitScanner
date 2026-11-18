@@ -250,7 +250,8 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
                     callbacks = [b["callback_data"] for b in buttons if "callback_data" in b]
                     # Owner-only controls: MetaScalp plus the PC workspace launcher that
                     # replaced the review:* buttons (#589, shared build_tradingview_keyboard).
-                    self.assertEqual(callbacks, ["ms:open:TESTUSDT", "workspace:EDITOR:TESTUSDT:5m",
+                    self.assertEqual(callbacks, ["ms:open:TESTUSDT", "workspace:AUTOPILOT:TESTUSDT:5m",
+                                                 "workspace:EDITOR:TESTUSDT:5m",
                                                  "workspace:TERMINAL:TESTUSDT:5m"] if index == 0 else [])
                     self.assertTrue(any("url" in b for b in buttons))
                 saved.assert_not_called()
