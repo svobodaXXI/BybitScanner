@@ -1026,9 +1026,64 @@ function compactDealPattern(pattern: string | null): string {
   return pattern ?? "не установлен";
 }
 
-function ClosedDealsView({ report, symbolFilter, patternFilter, pnlFilter, sideFilter, onClearSymbolFilter }: {
+
+/** One accessible, proportional control for either pattern cards or closed deals. */
+function OutcomeSplitBar({ kind, wins, losses, breakeven, filter, onFilter }: {
+  kind: "deals" | "patterns"; wins: number; losses: number; breakeven: number;
+  filter: FinrezPnlFilter; onFilter: (filter: FinrezPnlFilter) => void;
+}) {
+  const total = wins + losses + breakeven;
+  const noun = kind === "deals" ? "сделок" : "паттернов";
+  const toggle = (next: FinrezPnlFilter) => onFilter(filter === next ? "ALL" : next);
+  const pct = (count: number) => total > 0 ? count / total * 100 : 0;
+  return (
+    <div className="diary-outcome-distribution" role="group"
+      aria-label={`Распределение результатов ${noun}`}>
+      <div className="diary-outcome-track">
+        {wins > 0 ? <button type="button" className="diary-outcome-segment profit"
+          aria-label={kind === "deals" ? "Прибыльные" : "Прибыльные паттерны"}
+          title={`Прибыльных: ${wins}, ${pct(wins).toFixed(1)}%`}
+          aria-pressed={filter === "PROFIT"} onClick={() => toggle("PROFIT")}
+          style={{ width: `${pct(wins)}%` }} /> : null}
+        {breakeven > 0 ? <span className="diary-outcome-segment neutral"
+          title={`В ноль: ${breakeven}, ${pct(breakeven).toFixed(1)}%`}
+          style={{ width: `${pct(breakeven)}%` }} /> : null}
+        {losses > 0 ? <button type="button" className="diary-outcome-segment loss"
+          aria-label={kind === "deals" ? "Убыточные" : "Убыточные паттерны"}
+          title={`Убыточных: ${losses}, ${pct(losses).toFixed(1)}%`}
+          aria-pressed={filter === "LOSS"} onClick={() => toggle("LOSS")}
+          style={{ width: `${pct(losses)}%` }} /> : null}
+      </div>
+      <div className="diary-outcome-footer">
+        <button type="button" className="diary-outcome-count profit"
+          aria-label={`Показать прибыльные ${noun}`}
+          aria-pressed={filter === "PROFIT"} disabled={wins === 0}
+          onClick={() => toggle("PROFIT")}>Прибыльных: {wins}</button>
+        <button type="button" className="diary-outcome-total"
+          aria-label={`Показать все ${noun}`}
+          aria-pressed={filter === "ALL"}
+          onClick={() => onFilter("ALL")}>Всего: {total}{breakeven > 0 ? ` · в ноль: ${breakeven}` : ""}</button>
+        <button type="button" className="diary-outcome-count loss"
+          aria-label={`Показать убыточные ${noun}`}
+          aria-pressed={filter === "LOSS"} disabled={losses === 0}
+          onClick={() => toggle("LOSS")}>Убыточных: {losses}</button>
+      </div>
+    </div>
+  );
+}
+
+/** Exact sign; avoid Number underflow for tiny financial results. */
+function verifiedPnlSign(value: string): -1 | 0 | 1 {
+  const negative = value.trim().startsWith("-");
+  const significantDigits = value.trim().replace(/^[+-]/, "").split(/[eE]/)[0].replace(/[^0-9]/g, "");
+  if (!significantDigits.replace(/0/g, "")) return 0;
+  return negative ? -1 : 1;
+}
+
+function ClosedDealsView({ report, symbolFilter, patternFilter, pnlFilter, sideFilter, onPnlFilterChange, onClearSymbolFilter }: {
   report: FinrezResponse; symbolFilter: string; patternFilter: string;
-  pnlFilter: FinrezPnlFilter; sideFilter: FinrezSideFilter; onClearSymbolFilter: () => void;
+  pnlFilter: FinrezPnlFilter; sideFilter: FinrezSideFilter;
+  onPnlFilterChange: (filter: FinrezPnlFilter) => void; onClearSymbolFilter: () => void;
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const tickerQuery = symbolFilter.trim().toUpperCase();
@@ -1061,11 +1116,8 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, pnlFilter, sideF
     const d2 = setupFor(deal.trade_episode_id);
     return d2 ? { ...d2, source: "D2" } : verifiedWedgeSignal(deal, report);
   };
-  const deals = useMemo(() => (report.closed_episodes ?? []).filter((deal) => {
+  const contextDeals = useMemo(() => (report.closed_episodes ?? []).filter((deal) => {
     if (!deal.symbol.includes(tickerQuery)) return false;
-    const pnl = Number(deal.pnl_usdt);
-    if (pnlFilter === "PROFIT" && pnl <= 0) return false;
-    if (pnlFilter === "LOSS" && pnl >= 0) return false;
     if (sideFilter !== "ALL" && deal.side !== sideFilter) return false;
     const setup = Object.prototype.hasOwnProperty.call(verifiedSetups, deal.trade_episode_id)
       ? verifiedSetups[deal.trade_episode_id]
@@ -1074,13 +1126,20 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, pnlFilter, sideF
     if (patternFilter === NO_VERIFIED_PATTERN_FILTER) return pattern === null;
     if (patternFilter && pattern !== patternFilter) return false;
     return true;
+  }), [report.closed_episodes, report.source_revision, report.owner, tickerQuery, patternFilter, sideFilter, verifiedSetups, indexedVerifiedSetups]);
+  const wins = contextDeals.filter((deal) => verifiedPnlSign(deal.pnl_usdt) > 0).length;
+  const losses = contextDeals.filter((deal) => verifiedPnlSign(deal.pnl_usdt) < 0).length;
+  const breakeven = contextDeals.length - wins - losses;
+  const deals = useMemo(() => contextDeals.filter((deal) => {
+    const sign = verifiedPnlSign(deal.pnl_usdt);
+    return pnlFilter === "ALL" || (pnlFilter === "PROFIT" ? sign > 0 : sign < 0);
   }).sort((a, b) => {
     if (pnlFilter === "ALL") return 0; // Preserve API ordering when no result filter is active.
     const aPnl = Number(a.pnl_usdt), bPnl = Number(b.pnl_usdt);
     if (aPnl < bPnl) return pnlFilter === "LOSS" ? -1 : 1;
     if (aPnl > bPnl) return pnlFilter === "LOSS" ? 1 : -1;
     return b.closed_at_ms - a.closed_at_ms || a.trade_episode_id.localeCompare(b.trade_episode_id);
-  }), [report.closed_episodes, report.source_revision, report.owner, tickerQuery, patternFilter, pnlFilter, sideFilter, verifiedSetups, indexedVerifiedSetups]);
+  }), [contextDeals, pnlFilter]);
   const selected = deals.find((deal) => deal.trade_episode_id === selectedId);
   const selectedPattern = selected ? patternFor(selected) : null;
   useEffect(() => {
@@ -1299,6 +1358,8 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, pnlFilter, sideF
           с неизвестным источником исполнений.
         </p>
       ) : null}
+      <OutcomeSplitBar kind="deals" wins={wins} losses={losses} breakeven={breakeven}
+        filter={pnlFilter} onFilter={onPnlFilterChange} />
       {deals.length === 0 ? <p className="diary-state">
         {pnlFilter === "LOSS" ? "Нет убыточных сделок по выбранным фильтрам"
           : pnlFilter === "PROFIT" ? "Нет прибыльных сделок по выбранным фильтрам"
