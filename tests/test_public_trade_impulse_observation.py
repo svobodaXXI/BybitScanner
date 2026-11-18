@@ -141,8 +141,11 @@ class PublicTradeObservationTests(unittest.TestCase):
                 frame(*boundary[i:i+90]), received_at_ms=241_000,
             ))
         snapshot = source.snapshot()
-        self.assertEqual(snapshot["observed_prints"], 602)
-        self.assertEqual(snapshot["prints"][0].trade_id, "before")
+        # Rolling minute retention intentionally prunes the older REST
+        # bracketing trade; it must still be present in the independent
+        # REST page, NOT in the two-minute WS proof window.
+        self.assertEqual(snapshot["observed_prints"], 601)
+        self.assertEqual(snapshot["prints"][0].trade_id, "p-0")
         self.assertFalse(snapshot["order_authority"])
         self.assertEqual(snapshot["continuity"], "UNPROVEN")
         recent = recent_response(*(recent_record(x) for x in reversed(boundary)))
@@ -202,7 +205,7 @@ class PublicTradeObservationTests(unittest.TestCase):
         self.assertEqual(snapshot["prints"][0].trade_id, "more-1")
         # Crossing two more minute boundaries prunes older unused prints.
         self.assertTrue(source.observe(frame(trade(
-            "new-minute", 360_000, sequence=1005,
+            "new-minute", 360_000, sequence=1105,
         )), received_at_ms=360_010))
         self.assertEqual(source.snapshot()["prints"][0].trade_id, "new-minute")
 
