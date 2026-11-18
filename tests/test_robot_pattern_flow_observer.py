@@ -115,6 +115,32 @@ class ObserverTests(unittest.TestCase):
         self.assertEqual(diagnostic["counts"]["unready_subscription"], 1)
         self.assertEqual(diagnostic["counts"]["buffer_at_limit"], 0)
 
+    def test_approved_pattern_warms_one_passive_trade_only_context(self):
+        from terminal.market_data.hub import MarketDataHub
+        from tests.test_terminal_market_data_hub import _Registry, _context
+        observed, recent, previous, current = PatternFlowSourceTests.source()
+        hub = MarketDataHub(_Registry(), _context,
+                            connection_factory=lambda *_a, **_k: None)
+        record = _candidate()
+        observer = PatternFlowObserver(
+            hub, _REST(recent, previous, current), "unused",
+            clock_ms=lambda: PatternFlowSourceTests.CLOSE + 5_000,
+            get_candidates=lambda: (record,),
+        )
+        try:
+            self.assertEqual(observer.once(), 0)
+            self.assertEqual(hub.list_contexts(), ())
+            self.assertEqual(len(hub.list_flow_contexts()), 1)
+            flow = hub.list_flow_contexts()[0]
+            self.assertEqual(flow.symbol, "BTCUSDT")
+            self.assertEqual(flow.impulse_observation.snapshot()["buffer_capacity"], 1000)
+            self.assertFalse(flow.trade_bootstrap_complete)
+            self.assertEqual(observer.source_coverage()["counts"]["unready_subscription"], 1)
+        finally:
+            observer.close()
+            self.assertEqual(hub.list_flow_contexts(), ())
+            hub.close()
+
     def test_opt_in_is_explicit_and_default_off(self):
         with patch.dict(os.environ, {}, clear=True):
             self.assertFalse(pattern_flow_enabled())

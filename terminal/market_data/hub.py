@@ -283,30 +283,36 @@ class MarketDataHub:
             self._flow_only[normalized] = passive
             ws = self._ws
         if ws is not None:
-            self._send_flow_only(ws, passive)
+            with self._lock:
+                # A release/full-coverage promotion may have happened while
+                # waiting for the send lock. Never subscribe an orphan lease.
+                if self._flow_only.get(normalized) is passive and self._ws is ws:
+                    self._send_flow_only(ws, passive)
         return passive
 
     def release_flow_only(self, symbol: str) -> bool:
         """Release ONLY a passive topic; never unsubscribe protected books."""
         with self._lock:
             passive = self._flow_only.pop(symbol, None)
+            if passive is None:
+                return False
+            passive.trade_bootstrap_complete = False
+            passive.trades_subscription_state = "NOT_SUBSCRIBED"
+            passive.impulse_observation.mark_gap()
+            # Atomically fence promotion of a protected full context until
+            # this unsubscribe has been queued on the SAME socket.
             ws = self._ws
-        if passive is None:
-            return False
-        passive.trade_bootstrap_complete = False
-        passive.trades_subscription_state = "NOT_SUBSCRIBED"
-        passive.impulse_observation.mark_gap()
-        if ws is not None:
-            try:
-                with self._send_lock:
-                    ws.send(json.dumps({
-                        "op": "unsubscribe",
-                        "req_id": f"flow:{symbol}:release",
-                        "args": [f"publicTrade.{symbol}"],
-                    }))
-            except Exception:
-                pass  # disconnect/reconnect still fences the source
-        return True
+            if ws is not None:
+                try:
+                    with self._send_lock:
+                        ws.send(json.dumps({
+                            "op": "unsubscribe",
+                            "req_id": f"flow:{symbol}:release",
+                            "args": [f"publicTrade.{symbol}"],
+                        }))
+                except Exception:
+                    pass  # disconnect/reconnect still fences the source
+            return True
 
     def list_flow_contexts(self) -> tuple[SymbolContext | _FlowOnlyContext, ...]:
         """All FULL plus passive contexts, solely for read-only flow audits."""
@@ -469,7 +475,9 @@ class MarketDataHub:
                 for context in contexts:
                     self._send_subscribe(ws, context)
                 for flow in passive:
-                    self._send_flow_only(ws, flow)
+                    with self._lock:
+                        if self._flow_only.get(flow.symbol) is flow and self._ws is ws:
+                            self._send_flow_only(ws, flow)
                 while not self._stop.is_set():
                     try:
                         message = json.loads(ws.recv())
