@@ -229,6 +229,111 @@ def _continuity_reason_class(value: object) -> str:
     }.get(value, "OTHER")
 
 
+def _nov17_18_owner_ingress_telemetry(db_path: Path,
+                                       fence_times: tuple[int, ...],
+                                       captured_ms: int) -> dict:
+    """Bounded owner-telemetry scan near proven first continuity fences.
+
+    Incident timestamps are asynchronous write times, not event timestamps.
+    Aggregate only; an empty retained window cannot disprove prior overload.
+    """
+    start, end = 1794862800000, min(1795035600000, captured_ms)
+    report = {"journal_state": "UNAVAILABLE"}
+    directory = db_path.parent / "owner_incidents"
+    try:
+        if directory.is_symlink():
+            return {"journal_state": "UNTRUSTED_DIRECTORY"}
+        if not directory.is_dir():
+            return {"journal_state": "MISSING_DIRECTORY"}
+        paths = list(directory.glob("*.json"))
+        if len(paths) > 200:
+            return {"journal_state": "EXCEEDS_RETENTION_BOUND"}
+    except OSError:
+        return {"journal_state": "READ_ERROR"}
+
+    seen = slow_count = overflow_count = full_watermark_count = unreadable = 0
+    near_count = 0
+    kinds = {"protection": 0, "call": 0, "book_update": 0, "OTHER": 0}
+    max_processing = max_queue_latency = None
+    windows_with_records = set()
+    for path in paths:
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+            try:
+                meta = os.fstat(fd)
+                if not stat.S_ISREG(meta.st_mode) or meta.st_size > 16384:
+                    unreadable += 1
+                    continue
+                payload = json.loads(os.read(fd, 16385))
+            finally:
+                os.close(fd)
+            if (not isinstance(payload, dict)
+                    or payload.get("schema_version") != 1):
+                unreadable += 1
+                continue
+            timestamp = payload.get("timestamp_ms")
+            if (type(timestamp) is not int or not start <= timestamp < end
+                    or payload.get("incident_type") != "PAPER_OWNER_OBSERVABILITY"):
+                continue
+            seen += 1
+            coincident = tuple(i for i, fence in enumerate(fence_times)
+                               if fence - 300_000 <= timestamp <= fence + 30_000)
+            if not coincident:
+                continue
+            windows_with_records.update(coincident)
+            near_count += 1
+            facts = payload.get("facts")
+            if not isinstance(facts, dict):
+                continue
+            stage = payload.get("stage")
+            if stage == "INGRESS_OVERFLOW":
+                overflow_count += 1
+            elif stage == "INGRESS_WATERMARK":
+                capacity, pending = facts.get("capacity"), facts.get("pending")
+                if (type(capacity) is int and capacity > 0 and
+                        type(pending) is int and pending >= capacity):
+                    full_watermark_count += 1
+            elif stage == "OWNER_SLOW":
+                slow_count += 1
+                kind = facts.get("task_kind")
+                kinds[kind if kind in ("protection", "call", "book_update")
+                      else "OTHER"] += 1
+                for key, old in (("processing_ms", max_processing),
+                                 ("ingress_queue_latency_ms", max_queue_latency)):
+                    value = facts.get(key)
+                    try:
+                        number = float(value) if type(value) in (int, float, str) else -1
+                    except (TypeError, ValueError):
+                        continue
+                    if 0 <= number <= 1_000_000_000:
+                        if key == "processing_ms":
+                            max_processing = max(old or 0, number)
+                        else:
+                            max_queue_latency = max(old or 0, number)
+        except (OSError, ValueError, UnicodeError, TypeError):
+            unreadable += 1
+
+    report.update({
+        "journal_state": "COMPLETE_SCAN" if not unreadable else "PARTIAL_SCAN",
+        "retained_files": len(paths),
+        "unreadable_files": unreadable,
+        "nov17_18_retained_records": seen,
+        "around_fence_write_records": near_count,
+        "fence_windows_with_records": len(windows_with_records),
+        "fence_windows_checked": len(fence_times),
+        "around_fence_ingress_overflow_records": overflow_count,
+        "around_fence_full_watermark_records": full_watermark_count,
+        "around_fence_slow_task_records": slow_count,
+        "around_fence_slow_task_kinds": {k: v for k, v in kinds.items() if v},
+        "around_fence_max_slow_processing_ms": (
+            round(max_processing, 1) if max_processing is not None else None),
+        "around_fence_max_slow_queue_latency_ms": (
+            round(max_queue_latency, 1) if max_queue_latency is not None else None),
+        "possible_pruned_history": len(paths) >= 200,
+    })
+    return report
+
+
 def _nov17_18_emergency_incidents(conn: sqlite3.Connection, db_path: Path,
                                   captured_ms: int) -> dict:
     """Join a fixed PAPER close window to retained local incident records.
@@ -335,6 +440,7 @@ def _nov17_18_emergency_incidents(conn: sqlite3.Connection, db_path: Path,
         return number if 0 <= number <= 1_000_000_000 else None
 
     linked_fences = 0
+    linked_fence_times: set[int] = set()
     watermark_at_capacity = 0
     max_queue_ms, max_processing_ms = None, None
     queue_over_2s = processing_over_2s = 0
@@ -343,6 +449,7 @@ def _nov17_18_emergency_incidents(conn: sqlite3.Connection, db_path: Path,
         if record is None or record[0] > closed_at:
             continue
         linked_fences += 1
+        linked_fence_times.add(record[0])
         facts = record[1]
         capacity = nonnegative_number(facts.get("ingress_capacity"))
         watermark = nonnegative_number(facts.get("ingress_high_watermark"))
@@ -375,6 +482,8 @@ def _nov17_18_emergency_incidents(conn: sqlite3.Connection, db_path: Path,
             round(max_queue_ms, 1) if max_queue_ms is not None else None),
         "fence_max_processing_ms": (
             round(max_processing_ms, 1) if max_processing_ms is not None else None),
+        "owner_ingress_history": _nov17_18_owner_ingress_telemetry(
+            db_path, tuple(sorted(linked_fence_times)), captured_ms),
         "without_matching_incident_trades": len(trades) - len(matched),
     })
     return report
