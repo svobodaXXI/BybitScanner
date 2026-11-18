@@ -182,7 +182,8 @@ type ClosedEpisodeLocator = {
 
 type VerifiedEpisodePattern =
   | (VerifiedEpisodeSetup & { source: "D2" })
-  | { source: "WEDGE"; pattern: string; timeframe: string; candidateId: string };
+  | { source: "WEDGE"; pattern: string; timeframe: string; candidateId: string }
+  | { source: "ROBOT_ENTRY"; pattern: string; timeframe: string; candidateId: string };
 
 type FinrezTicker = { symbol: string; pnl_usdt: string; trade_count: number };
 type FinrezResponse = {
@@ -488,29 +489,43 @@ function exactD2Setup(facts: Record<string, unknown>, deal: ClosedEpisodeLocator
   };
 }
 
-/** Only the backend's exact-ID Robot Wedge proof may supply this label.
- * Candidate metadata is not original geometry or a D2 setup/decision.
+/** Accept only separately attested exact-ID Robot candidate-to-entry proof.
+ * Neither a ticker/time match nor source metadata alone proves this label.
  */
-function verifiedWedgeSignal(deal: ClosedEpisodeLocator, report: FinrezResponse): Extract<VerifiedEpisodePattern, { source: "WEDGE" }> | null {
+function verifiedRobotSignal(
+  deal: ClosedEpisodeLocator, report: FinrezResponse,
+): Extract<VerifiedEpisodePattern, { source: "WEDGE" | "ROBOT_ENTRY" }> | null {
   if (report.account_id !== "paper" || report.owner !== "ROBOT" || deal.cohort !== "ROBOT"
     || !/^te_[0-9a-f]{24}$/.test(deal.trade_episode_id)) return null;
   const value = deal.verified_signal;
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const signal = value as Record<string, unknown>;
-  if (signal.status !== "PROVEN"
-    || signal.evidence_scope !== "EXACT_WEDGE_CANDIDATE_ENTRY_ORDER_EXECUTION_EPISODE"
+  const wedge = signal.evidence_scope === "EXACT_WEDGE_CANDIDATE_ENTRY_ORDER_EXECUTION_EPISODE"
+    && ["Falling Wedge", "Rising Wedge"].includes(String(signal.pattern));
+  const other = signal.evidence_scope === "EXACT_ROBOT_CANDIDATE_ENTRY_ORDER_EXECUTION_EPISODE"
+    && typeof signal.pattern === "string" && !!signal.pattern.trim()
+    && signal.pattern.length <= 128
+    && !["Falling Wedge", "Rising Wedge"].includes(signal.pattern);
+  if (signal.status !== "PROVEN" || (!wedge && !other)
     || signal.provenance !== "DURABLE_ROBOT_TRADE_METADATA_NOT_ORIGINAL_GEOMETRY"
     || signal.trade_episode_id !== deal.trade_episode_id
     || signal.source_revision !== report.source_revision
-    || !["Falling Wedge", "Rising Wedge"].includes(String(signal.pattern))
     || typeof signal.candidate_id !== "string"
     || !signal.candidate_id.trim() || signal.candidate_id.length > 256
     || typeof signal.source_timeframe !== "string"
     || !signal.source_timeframe.trim() || signal.source_timeframe.length > 40) return null;
   return {
-    source: "WEDGE", pattern: signal.pattern as string,
+    source: wedge ? "WEDGE" : "ROBOT_ENTRY",
+    pattern: signal.pattern as string,
     timeframe: signal.source_timeframe, candidateId: signal.candidate_id,
   };
+}
+
+function verifiedWedgeSignal(
+  deal: ClosedEpisodeLocator, report: FinrezResponse,
+): Extract<VerifiedEpisodePattern, { source: "WEDGE" }> | null {
+  const signal = verifiedRobotSignal(deal, report);
+  return signal?.source === "WEDGE" ? signal : null;
 }
 
 function verifiedIndexedPattern(deal: ClosedEpisodeLocator, report: FinrezResponse): VerifiedEpisodePattern | null {
@@ -521,7 +536,7 @@ function verifiedIndexedPattern(deal: ClosedEpisodeLocator, report: FinrezRespon
     }, deal);
     if (setup) return { ...setup, source: "D2" };
   }
-  return verifiedWedgeSignal(deal, report);
+  return verifiedRobotSignal(deal, report);
 }
 
 type TradeExecutionPoint = { at: number; price: number };
@@ -1117,7 +1132,7 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, pnlFilter, sideF
       ? verifiedSetups[episodeId] : indexedVerifiedSetups[episodeId] ?? null;
   const patternFor = (deal: ClosedEpisodeLocator): VerifiedEpisodePattern | null => {
     const d2 = setupFor(deal.trade_episode_id);
-    return d2 ? { ...d2, source: "D2" } : verifiedWedgeSignal(deal, report);
+    return d2 ? { ...d2, source: "D2" } : verifiedRobotSignal(deal, report);
   };
   const contextDeals = useMemo(() => (report.closed_episodes ?? []).filter((deal) => {
     if (!deal.symbol.includes(tickerQuery)) return false;
@@ -1125,7 +1140,7 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, pnlFilter, sideF
     const setup = Object.prototype.hasOwnProperty.call(verifiedSetups, deal.trade_episode_id)
       ? verifiedSetups[deal.trade_episode_id]
       : indexedVerifiedSetups[deal.trade_episode_id];
-    const pattern = setup?.pattern ?? verifiedWedgeSignal(deal, report)?.pattern ?? null;
+    const pattern = setup?.pattern ?? verifiedRobotSignal(deal, report)?.pattern ?? null;
     if (patternFilter === NO_VERIFIED_PATTERN_FILTER) return pattern === null;
     if (patternFilter && pattern !== patternFilter) return false;
     return true;
@@ -1297,8 +1312,8 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, pnlFilter, sideF
               )}
             </dl>
           ) : <p className="diary-finrez-basis">Связь с паттерном по точному ID не подтверждена.</p>}
-          <small>{selectedPattern?.source === "WEDGE"
-            ? "Источник: точная цепочка Robot candidate → order → execution → episode. Не D2, без исходной геометрии и журнала решений."
+          <small>{selectedPattern?.source === "WEDGE" || selectedPattern?.source === "ROBOT_ENTRY"
+            ? "Источник: точная цепочка Robot candidate → entry order → execution → episode. Не D2, без исходной геометрии и журнала решений."
             : "Источник при наличии D2-связи: отдельные наблюдения Trading Diary D2, не полный журнал решений Робота."}</small>
         </section>
         <OriginalEpisodeSignalChart
@@ -1379,8 +1394,8 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, pnlFilter, sideF
                   <span className="diary-deal-pattern"
                     title={patternFor(deal)?.source === "D2"
                       ? "Точная связь эпизода с наблюдательным сетапом Diary D2"
-                      : patternFor(deal)?.source === "WEDGE"
-                        ? "Доказанное происхождение Wedge по точным идентификаторам Robot, не D2"
+                      : patternFor(deal)?.source === "WEDGE" || patternFor(deal)?.source === "ROBOT_ENTRY"
+                        ? "Подтверждённый паттерн по точным идентификаторам входа Robot, не D2"
                         : "Связь сделки с паттерном пока не подтверждена"}>
                     {compactDealPattern(patternFor(deal)?.pattern ?? null)}
                   </span>
@@ -1511,7 +1526,7 @@ function PatternsView({ report, symbolFilter, onSelectPattern }: {
   const episodes = (report.closed_episodes ?? []).filter((deal) => deal.symbol.includes(tickerQuery));
   const groups = new Map<string, {
     pattern: string; cohort: ClosedEpisodeLocator["cohort"]; deals: ClosedEpisodeLocator[];
-    d2Count: number; wedgeCount: number;
+    d2Count: number; wedgeCount: number; robotEntryCount: number;
   }>();
   let provenCount = 0;
   for (const deal of episodes) {
@@ -1523,11 +1538,13 @@ function PatternsView({ report, symbolFilter, onSelectPattern }: {
     if (group) {
       group.deals.push(deal);
       if (pattern.source === "D2") group.d2Count += 1;
-      else group.wedgeCount += 1;
+      else if (pattern.source === "WEDGE") group.wedgeCount += 1;
+      else group.robotEntryCount += 1;
     } else groups.set(key, {
       pattern: pattern.pattern, cohort: deal.cohort, deals: [deal],
       d2Count: pattern.source === "D2" ? 1 : 0,
       wedgeCount: pattern.source === "WEDGE" ? 1 : 0,
+      robotEntryCount: pattern.source === "ROBOT_ENTRY" ? 1 : 0,
     });
   }
   const ranked = [...groups.values()].map((group) => ({
@@ -1547,7 +1564,7 @@ function PatternsView({ report, symbolFilter, onSelectPattern }: {
       <OutcomeSplitBar kind="patterns" wins={wins} losses={losses} breakeven={breakeven}
         filter={resultFilter} onFilter={setResultFilter} />
       <p className="diary-finrez-basis">
-        Только точные D2-связи и доказанные Wedge-сигналы Robot. Wedge-lineage не заменяет D2 и не подтверждает журнал решений или исходную геометрию.
+        Только точные D2-связи и доказанные цепочки Robot candidate → entry order → execution → episode. Эти данные не заменяют D2, журнал решений или исходную геометрию.
         Категории управления не объединяются; суммы ниже — только по подтверждённым эпизодам.
       </p>
       <p className="diary-finrez-coverage" role="status">
@@ -1578,7 +1595,7 @@ function PatternsView({ report, symbolFilter, onSelectPattern }: {
                 onClick={() => onSelectPattern(row.pattern)}>
                 <span className="diary-pattern-label">
                   <strong title={row.pattern}>{row.pattern}</strong>
-                  <small>{dealLabels[row.cohort]} · сделок: {row.deals.length} · прибыльных: {wins} · убыточных: {losses} · D2: {row.d2Count} · Wedge: {row.wedgeCount}</small>
+                  <small>{dealLabels[row.cohort]} · сделок: {row.deals.length} · прибыльных: {wins} · убыточных: {losses} · D2: {row.d2Count} · Wedge: {row.wedgeCount} · Robot ID: {row.robotEntryCount}</small>
                 </span>
                 <span title={row.pnl === null ? "Точная сумма недоступна" : row.pnl + " USDT"}
                   className={sign > 0 ? "profit" : sign < 0 ? "loss" : ""}>
