@@ -60,10 +60,12 @@ class LShapeObserverTests(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as directory, \
                 patch.object(observer, "build_auxiliary_reversal_evidence", return_value=auxiliary) as find, \
+                patch.object(observer.time, "time", return_value=auxiliary["confirmed_at_ms"] / 1000), \
                 contextlib.redirect_stdout(io.StringIO()):
             result = observer.observe_l_shape(
                 "TESTUSDT", candles, timeframe="5", chart_dir=directory,
             )
+            candidate_snapshot = observer._robot_signal_snapshot("TESTUSDT", "5", result)
         self.assertIsNotNone(result)
         self.assertEqual(result["auxiliary_reversal"], auxiliary)
         args, kwargs = find.call_args
@@ -72,11 +74,13 @@ class LShapeObserverTests(unittest.TestCase):
         self.assertEqual(int(args[2][-1]["time"]), int(closed.time.iloc[-1]))
         self.assertNotEqual(int(args[2][-1]["time"]), int(candles.time.iloc[-1]))
         self.assertEqual(kwargs["now_ms"], auxiliary["confirmed_at_ms"])
-        snapshot_data = observer._robot_signal_snapshot("TESTUSDT", "5", result)
-        self.assertEqual(snapshot_data["pattern"], "L-shape")
-        self.assertEqual(snapshot_data["auxiliary_reversal"], auxiliary)
-        self.assertTrue(snapshot_data["robot_handoff_ready"])
-        self.assertNotIn("neckline_entry", snapshot_data)
+        self.assertEqual(candidate_snapshot["pattern"], "L-shape")
+        self.assertEqual(candidate_snapshot["auxiliary_reversal"], auxiliary)
+        self.assertTrue(candidate_snapshot["robot_handoff_ready"])
+        self.assertNotIn("neckline_entry", candidate_snapshot)
+        with patch.object(observer.time, "time", return_value=auxiliary["expires_at_ms"] / 1000):
+            expired = observer._robot_signal_snapshot("TESTUSDT", "5", result)
+        self.assertNotIn("auxiliary_reversal", expired)
         # The auxiliary context is one field on the ORIGINAL host candidate.
         assert "candidate_id" not in auxiliary
 
