@@ -175,6 +175,8 @@ class OwnerBridgeTests(unittest.TestCase):
                     ("paper", now_ms - 1000, "EMERGENCY_CLOSE"),
                     ("paper", now_ms - 2000, "STOP"),
                     ("paper", now_ms - 80 * 60 * 60 * 1000, "TAKE"),
+                    ("paper", 1794870000000, "EMERGENCY_CLOSE"),
+                    ("paper", 1794960000000, "EMERGENCY_CLOSE"),
                 ])
                 conn.executemany("INSERT INTO position_projections VALUES (?,?,?)", [
                     ("paper", "LONG", "3.5"), ("paper", "FLAT", "0"),
@@ -203,7 +205,11 @@ class OwnerBridgeTests(unittest.TestCase):
             self.assertEqual(db["nonflat_position_projections"], 1)
             self.assertEqual(db["unresolved_protection_obligations"], 1)
             self.assertEqual(db["recent_exit_reasons_72h"],
-                             {"EMERGENCY_CLOSE": 1, "STOP": 1})
+                             {"EMERGENCY_CLOSE": 3, "STOP": 1})
+            self.assertEqual(db["nov17_18_msk_exit_reasons"], {
+                "2026-11-17": {"EMERGENCY_CLOSE": 1},
+                "2026-11-18": {"EMERGENCY_CLOSE": 2, "STOP": 1},
+            })
             self.assertNotIn("SECRET", json.dumps(snapshot))
             self.assertEqual(http.call_count, 4)
             self.assertEqual(commands.call_count, 3)
