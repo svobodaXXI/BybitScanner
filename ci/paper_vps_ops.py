@@ -215,6 +215,20 @@ def _robot_reason_public_summary(reason: object) -> dict:
     return result
 
 
+def _continuity_reason_class(value: object) -> str:
+    """Classify known installed-PAPER ingress reasons without exposing raw text."""
+    if not isinstance(value, str) or not value:
+        return "UNAVAILABLE"
+    if value.startswith("websocket_disconnect:"):
+        return "WEBSOCKET_DISCONNECT"
+    return {
+        "ingress_overflow": "INGRESS_OVERFLOW",
+        "event_identity_mismatch": "EVENT_IDENTITY_MISMATCH",
+        "admission_failed": "ADMISSION_FAILED",
+        "subscribe_failed": "SUBSCRIBE_FAILED",
+    }.get(value, "OTHER")
+
+
 def _nov17_18_emergency_incidents(conn: sqlite3.Connection, db_path: Path,
                                   captured_ms: int) -> dict:
     """Join a fixed PAPER close window to retained local incident records.
@@ -250,9 +264,8 @@ def _nov17_18_emergency_incidents(conn: sqlite3.Connection, db_path: Path,
         report["journal_state"] = "READ_ERROR"
         return report
 
-    matched, continuity, ordered, stop_crossed, reasons = (
-        set(), set(), set(), set(), set()
-    )
+    matched, continuity, ordered, stop_crossed = set(), set(), set(), set()
+    recovery_classes, fence_classes, fence_refs, fence_events = {}, {}, {}, {}
     unreadable = 0
     for path in paths:
         try:
@@ -272,6 +285,14 @@ def _nov17_18_emergency_incidents(conn: sqlite3.Connection, db_path: Path,
             timestamp = payload.get("timestamp_ms")
             if type(timestamp) is not int or not start_ms <= timestamp < end_ms:
                 continue
+            facts = payload.get("facts")
+            if (payload.get("incident_type") == "ROBOT_PROTECTION_CONTINUITY_FENCE"
+                    and payload.get("reason_code") == "MARKET_DATA_CONTINUITY_FENCE"
+                    and isinstance(facts, dict)):
+                key = (facts.get("fence_id"), payload.get("symbol"))
+                if all(isinstance(k, str) and k for k in key):
+                    fence_events[key] = (timestamp, facts)
+                continue
             trade_id = payload.get("trade_id")
             if (trade_id not in trades or
                     payload.get("incident_type") != "ROBOT_PROTECTION_EMERGENCY_CLOSE"):
@@ -281,17 +302,61 @@ def _nov17_18_emergency_incidents(conn: sqlite3.Connection, db_path: Path,
                 ordered.add(trade_id)
             if payload.get("reason_code") == "MARKET_DATA_CONTINUITY_LOST":
                 continuity.add(trade_id)
-                facts = payload.get("facts")
                 if isinstance(facts, dict):
                     if facts.get("intended_stop_crossed") is True:
                         stop_crossed.add(trade_id)
-                    cause = facts.get("continuity_reason")
-                    if isinstance(cause, str) and cause:
-                        reasons.add(hashlib.sha256(
-                            cause.encode("utf-8", errors="replace")
-                        ).digest())
+                    # Installed runtime c6f6990 stores two *different* reasons:
+                    # recovery_reason (this exit) and continuity_fence_reason
+                    # (the earlier admission fence). Never emit raw values.
+                    recovery_classes[trade_id] = _continuity_reason_class(
+                        facts.get("recovery_reason"))
+                    fence_classes[trade_id] = _continuity_reason_class(
+                        facts.get("continuity_fence_reason"))
+                    fence_refs[trade_id] = (
+                        facts.get("continuity_fence_id"),
+                        facts.get("continuity_fence_symbol"), timestamp)
         except (OSError, ValueError, UnicodeError, TypeError):
             unreadable += 1
+    def counts_by_class(values: dict) -> dict:
+        return {kind: sum(category == kind for category in values.values())
+                for kind in (
+                    "WEBSOCKET_DISCONNECT", "INGRESS_OVERFLOW",
+                    "EVENT_IDENTITY_MISMATCH", "ADMISSION_FAILED",
+                    "SUBSCRIBE_FAILED", "OTHER", "UNAVAILABLE")
+                if any(category == kind for category in values.values())}
+
+    def nonnegative_number(value: object) -> float | None:
+        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+            return None
+        try:
+            number = float(value)
+        except ValueError:
+            return None
+        return number if 0 <= number <= 1_000_000_000 else None
+
+    linked_fences = 0
+    watermark_at_capacity = 0
+    max_queue_ms, max_processing_ms = None, None
+    queue_over_2s = processing_over_2s = 0
+    for fence_id, symbol, closed_at in fence_refs.values():
+        record = fence_events.get((fence_id, symbol))
+        if record is None or record[0] > closed_at:
+            continue
+        linked_fences += 1
+        facts = record[1]
+        capacity = nonnegative_number(facts.get("ingress_capacity"))
+        watermark = nonnegative_number(facts.get("ingress_high_watermark"))
+        if capacity is not None and capacity > 0 and watermark is not None:
+            watermark_at_capacity += int(watermark >= capacity)
+        queue_ms = nonnegative_number(facts.get("ingress_max_queue_latency_ms"))
+        processing_ms = nonnegative_number(facts.get("ingress_max_processing_ms"))
+        if queue_ms is not None:
+            max_queue_ms = max(max_queue_ms or 0, queue_ms)
+            queue_over_2s += int(queue_ms > 2000)
+        if processing_ms is not None:
+            max_processing_ms = max(max_processing_ms or 0, processing_ms)
+            processing_over_2s += int(processing_ms > 2000)
+
     report.update({
         "journal_state": "COMPLETE_SCAN" if unreadable == 0 else "PARTIAL_SCAN",
         "retained_files": len(paths),
@@ -300,7 +365,16 @@ def _nov17_18_emergency_incidents(conn: sqlite3.Connection, db_path: Path,
         "linked_continuity_loss_trades": len(continuity),
         "incident_not_after_exit_trades": len(ordered),
         "linked_stop_already_crossed_trades": len(stop_crossed),
-        "distinct_continuity_reason_values": len(reasons),
+        "recovery_trigger_classes": counts_by_class(recovery_classes),
+        "fence_trigger_classes": counts_by_class(fence_classes),
+        "linked_original_fence_trades": linked_fences,
+        "fence_ingress_watermark_at_capacity_trades": watermark_at_capacity,
+        "fence_queue_latency_over_2s_trades": queue_over_2s,
+        "fence_processing_over_2s_trades": processing_over_2s,
+        "fence_max_queue_latency_ms": (
+            round(max_queue_ms, 1) if max_queue_ms is not None else None),
+        "fence_max_processing_ms": (
+            round(max_processing_ms, 1) if max_processing_ms is not None else None),
         "without_matching_incident_trades": len(trades) - len(matched),
     })
     return report

@@ -194,8 +194,25 @@ class OwnerBridgeTests(unittest.TestCase):
                 "reason_code": "MARKET_DATA_CONTINUITY_LOST",
                 "trade_id": "te_nov17",
                 "facts": {
-                    "continuity_reason": "synthetic gap SECRET-SHOULD-NOT-LEAK",
+                    "recovery_reason": "websocket_disconnect:SECRET-SHOULD-NOT-LEAK",
+                    "continuity_fence_reason": "websocket_disconnect:SECRET-SHOULD-NOT-LEAK",
+                    "continuity_fence_id": "continuity-fence-138",
+                    "continuity_fence_symbol": "FAKEUSDT",
                     "intended_stop_crossed": False,
+                },
+            }), encoding="utf-8")
+            (incident_dir / "fence.json").write_text(json.dumps({
+                "schema_version": 1, "timestamp_ms": 1794869990000,
+                "incident_type": "ROBOT_PROTECTION_CONTINUITY_FENCE",
+                "reason_code": "MARKET_DATA_CONTINUITY_FENCE",
+                "symbol": "FAKEUSDT",
+                "facts": {
+                    "fence_id": "continuity-fence-138",
+                    "continuity_reason": "websocket_disconnect:SECRET-SHOULD-NOT-LEAK",
+                    "ingress_capacity": 64,
+                    "ingress_high_watermark": 64,
+                    "ingress_max_queue_latency_ms": "2240.7",
+                    "ingress_max_processing_ms": "1900.2",
                 },
             }), encoding="utf-8")
             with (
@@ -226,18 +243,34 @@ class OwnerBridgeTests(unittest.TestCase):
             self.assertEqual(db["nov17_18_emergency_incidents"], {
                 "emergency_trades": 3,
                 "journal_state": "COMPLETE_SCAN",
-                "retained_files": 1,
+                "retained_files": 2,
                 "unreadable_files": 0,
                 "linked_emergency_trades": 1,
                 "linked_continuity_loss_trades": 1,
                 "incident_not_after_exit_trades": 1,
                 "linked_stop_already_crossed_trades": 0,
-                "distinct_continuity_reason_values": 1,
+                "recovery_trigger_classes": {"WEBSOCKET_DISCONNECT": 1},
+                "fence_trigger_classes": {"WEBSOCKET_DISCONNECT": 1},
+                "linked_original_fence_trades": 1,
+                "fence_ingress_watermark_at_capacity_trades": 1,
+                "fence_queue_latency_over_2s_trades": 1,
+                "fence_processing_over_2s_trades": 0,
+                "fence_max_queue_latency_ms": 2240.7,
+                "fence_max_processing_ms": 1900.2,
                 "without_matching_incident_trades": 2,
             })
             self.assertNotIn("SECRET", json.dumps(snapshot))
             self.assertEqual(http.call_count, 4)
             self.assertEqual(commands.call_count, 3)
+
+    def test_continuity_reason_class_only_allows_fixed_labels(self):
+        self.assertEqual(bridge._continuity_reason_class("ingress_overflow"),
+                         "INGRESS_OVERFLOW")
+        self.assertEqual(bridge._continuity_reason_class(
+            "websocket_disconnect:SECRET-SHOULD-NOT-LEAK"), "WEBSOCKET_DISCONNECT")
+        self.assertEqual(bridge._continuity_reason_class(
+            "unknown SECRET-SHOULD-NOT-LEAK"), "OTHER")
+        self.assertEqual(bridge._continuity_reason_class(None), "UNAVAILABLE")
 
     def test_missing_incident_journal_never_claims_zero_incidents(self):
         import sqlite3
@@ -259,7 +292,7 @@ class OwnerBridgeTests(unittest.TestCase):
 
     def test_diagnostic_upgrade_preserves_original_ssh_credentials(self):
         script = Path("tools/upgrade_paper_vps_diagnostics.ps1").read_text()
-        self.assertIn("ac3edca1a93cdda9e570289cf5fd5bd7adf26345", script)
+        self.assertIn("b2ae206e685de274bd56370451dd41bb64b1584d", script)
         self.assertIn('test "$(sha256sum "$target" | cut -d \' \' -f1)" = "$old"', script)
         self.assertIn("DIAGNOSTICS_HANDLER_INSTALLED", script)
         for forbidden in ("authorized_keys", "gh secret set", "systemctl stop",
