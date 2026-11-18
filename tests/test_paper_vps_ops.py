@@ -216,7 +216,7 @@ class OwnerBridgeTests(unittest.TestCase):
 
     def test_diagnostic_upgrade_preserves_original_ssh_credentials(self):
         script = Path("tools/upgrade_paper_vps_diagnostics.ps1").read_text()
-        self.assertIn("d0a26216c2681ae1b81eff22790bdfa6c97d6437", script)
+        self.assertIn("67c6cf522b14f711792396fee104fc6c6f2fed16", script)
         self.assertIn('test "$(sha256sum "$target" | cut -d \' \' -f1)" = "$old"', script)
         self.assertIn("DIAGNOSTICS_HANDLER_INSTALLED", script)
         for forbidden in ("authorized_keys", "gh secret set", "systemctl stop",
