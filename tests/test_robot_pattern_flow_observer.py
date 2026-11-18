@@ -305,8 +305,12 @@ class ObserverTests(unittest.TestCase):
                        "robot_state": state}
                 )
                 rest = _REST(recent, previous, current)
+                # The real Hub keeps a stable source object through every
+                # list_contexts call. Do not synthesize a fresh observer for
+                # each read: source-identity matching must reject replacements.
+                context = _Context(observed)
                 observer = PatternFlowObserver(
-                    SimpleNamespace(list_contexts=lambda: (_Context(observed),)),
+                    SimpleNamespace(list_contexts=lambda: (context,)),
                     rest, "unused",
                     clock_ms=lambda: PatternFlowSourceTests.CLOSE + 5_000,
                     get_candidates=lambda: (record,),
