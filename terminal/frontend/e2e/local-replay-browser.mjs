@@ -711,7 +711,7 @@ try {
       ],
     },
     execution_allocations: [
-      { execution_id: "exec-1", order_id: "order-1", order_side: "Buy",
+      { execution_id: "exec-" + "b".repeat(120), order_id: "order-" + "a".repeat(120), order_side: "Buy",
         execution_price: "100.12345678", allocated_quantity: "2", allocated_fee: "0.05",
         occurred_at_ms: t + 2 * 300000 + 2123, allocation_role: "OPEN", controller: "ROBOT" },
       { execution_id: "exec-2", order_id: "order-2", order_side: "Sell",
@@ -771,7 +771,16 @@ try {
   assert.match(await rows.nth(2).innerText(), /Открытие позиции · Buy/);
   assert.match(await rows.nth(2).innerText(), /100\.12345678/);
   assert.match(await rows.nth(2).innerText(), /количество 2 · комиссия 0\.05 USDT/);
-  assert.match(await rows.nth(2).innerText(), /order_id order-1 · execution_id exec-1/);
+  assert.match(await rows.nth(2).innerText(), /order_id order-a{120} · execution_id exec-b{120}/);
+  // The owner's fixed-width journal must wrap arbitrarily long original IDs,
+  // retain all characters and never require horizontal scrolling.
+  const journalFits = await page.locator(".replay-events-list").evaluate((list) => {
+    const width = list.clientWidth;
+    const items = Array.from(list.querySelectorAll(".replay-evidence-event > span"));
+    return width > 0 && list.scrollWidth <= width + 1 &&
+      items.every((span) => span.clientWidth > 0 && span.scrollWidth <= span.clientWidth + 1);
+  });
+  assert.equal(journalFits, true, "exact PAPER IDs must wrap inside the journal without horizontal overflow");
   assert.match(await rows.nth(3).innerText(), /Закрытие позиции · Sell · причина STOP\/TAKE не подтверждена/);
   assert.match(await rows.nth(3).innerText(), /99\.5/);
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "0",
