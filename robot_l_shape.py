@@ -446,6 +446,10 @@ def build_initial_retest_limit(
     snapshot = candidate.get("signal_snapshot")
     if not isinstance(snapshot, Mapping):
         raise RobotLShapeError("signal snapshot is missing")
+    # Retain snapshot/state parsing for reconciliation of historic trades,
+    # but hard-stop creation of any NEW Double Top/Bottom LIMIT order.
+    if snapshot_pattern(snapshot) in DOUBLE_PATTERNS:
+        raise RobotLShapeError("Double Top/Bottom cannot submit standalone entry")
     terms = _validate_state(snapshot, state)
     if state.get("phase") != PHASE_RETEST_DETECTED:
         raise RobotLShapeError("L-shape entry requires RETEST_DETECTED")

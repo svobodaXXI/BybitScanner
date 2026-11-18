@@ -616,6 +616,24 @@ class RobotBreakoutMonitor:
             self._store(), self._account_id, clock_ms=self._clock_ms,
         )._candidate_is_inert(record)
 
+    def _cancelled_legacy_double_is_inert(
+        self, record: RobotCandidateRecord, order_id: str,
+    ) -> bool:
+        """A cancelled, zero-filled legacy LIMIT is not proof of zero exposure.
+
+        Verify the immutable fill ledger and all canonical owner-side
+        order/command/position/protection reads before retiring the candidate.
+        Unavailable or contradictory evidence fails closed.
+        """
+        store = self._store()
+        if store.get_robot_trade(f"robot-trade-{record.candidate_id}") is not None:
+            return False
+        if store.load_executions_for_order(self._account_id, OrderId(order_id)):
+            return False
+        return RobotRecoveryCoordinator(
+            store, self._account_id, clock_ms=self._clock_ms,
+        )._candidate_is_inert(record)
+
     def _advance_one(self, record: RobotCandidateRecord) -> bool:
         if (
             record.signal_snapshot.get("pattern") == "IKIGAI_BOX"
@@ -1403,6 +1421,20 @@ class RobotBreakoutMonitor:
         execution = dict(record.robot_state.get("execution") or {})
 
         if "limit_order_id" not in execution:
+            # Previously APPROVED standalone Double Top/Bottom candidates
+            # from an older release must not place their first order.
+            # Do not invalidate OPEN/filled trades or interrupt STOP/TAKE.
+            if (record.status == "APPROVED"
+                    and record.signal_snapshot.get("pattern") in robot_l_shape.DOUBLE_PATTERNS):
+                # APPROVED alone does not prove that an earlier fill, trade or
+                # protection obligation is absent. Only retire a proven inert
+                # pre-entry candidate; preserve ambiguous/exposed lifecycles.
+                if not self._paper_candidate_is_inert(record):
+                    return False
+                self._invalidate_pre_entry_candidate(
+                    record, reason="Double Top/Bottom is auxiliary-only",
+                )
+                return True
             candle = self._get_closed_candle(record.symbol.value)
             if candle is not None:
                 invalidation = robot_l_shape.invalidation_event(
@@ -1494,6 +1526,47 @@ class RobotBreakoutMonitor:
         )
         if order is None or order.quantity <= 0:
             return False
+
+        # An old APPROVED standalone Double Top/Bottom may already own an
+        # entry LIMIT from a previous release. Blocking fresh submissions is
+        # insufficient: it could still match on the next owner tick.
+        if (record.status == "APPROVED"
+                and record.signal_snapshot.get("pattern") in robot_l_shape.DOUBLE_PATTERNS):
+            # The durable execution ID must still name this candidate's symbol.
+            # Never cancel a different symbol's PAPER order through stale state.
+            if order.symbol != record.symbol:
+                return False
+            if order.status not in INACTIVE_LIMIT_STATUSES:
+                cancellation = self._action_executor.cancel_limit(
+                    PaperLimitCancelRequest(
+                        _cancel_blocked_entry_action_id(record.candidate_id),
+                        record.symbol.value, execution["limit_order_id"],
+                    )
+                )
+                if getattr(cancellation, "status", None) != CommandResultStatus.COMPLETED:
+                    return False
+                order = self._store().get_paper_limit(
+                    execution["limit_order_id"], self._account_id,
+                )
+                if order is None or order.quantity <= 0 or order.symbol != record.symbol:
+                    return False
+            if order.status not in INACTIVE_LIMIT_STATUSES:
+                return False
+            if order.filled_quantity <= 0:
+                # Never claim an inert candidate from an absent/unknown order
+                # or a contradictory FILLED state without an actual fill.
+                if order.status != "cancelled":
+                    return False
+                if not self._cancelled_legacy_double_is_inert(
+                    record, execution["limit_order_id"],
+                ):
+                    return False
+                self._invalidate_pre_entry_candidate(
+                    record, reason="Double Top/Bottom legacy LIMIT cancelled without fill",
+                )
+                return True
+            # An actual partial/full fill must retain normal Robot trade,
+            # protection and STOP/TAKE finalization, never be invalidated.
 
         filled_fraction = min(order.filled_quantity / order.quantity, Decimal("1"))
         inactive = order.status in INACTIVE_LIMIT_STATUSES

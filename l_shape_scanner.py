@@ -6,9 +6,13 @@ L-shape Robot candidate, but this module never approves or executes it.
 
 from pathlib import Path
 import re
+import time
 
 import config
 from geometry.l_shape import detect_l_shape, l_shape_signal_plan
+from geometry.double_extremum import (
+    attach_auxiliary_reversal, build_auxiliary_reversal_evidence,
+)
 from geometry.l_shape_preview import l_shape_caption, render_l_shape_preview
 from pattern_robot_integration import prepare_robot_handoff
 from notification import (
@@ -68,19 +72,27 @@ def observe_l_shape(symbol, candles, *, timeframe, chart_dir="charts"):
         closed, formation, chart, symbol=symbol, timeframe=timeframe,
     )
     print(f"{symbol:<15} L-SHAPE preview {chart}")
+    # Informational reversal confirmation from the SAME already closed bar
+    # window; no new candidate, independent order, or entry permission.
+    auxiliary_now_ms = int(time.time() * 1000)
+    auxiliary = build_auxiliary_reversal_evidence(
+        symbol, timeframe, closed.to_dict("records"),
+        now_ms=auxiliary_now_ms,
+    )
     return {
         "formation": formation,
         "signal_plan": plan,
         "extreme_time_ms": extreme_time,
         "source_candle_time_ms": source_time,
         "chart_path": str(chart),
+        "auxiliary_reversal": auxiliary,
     }
 
 
 def _robot_signal_snapshot(symbol, timeframe, observation):
     formation = observation["formation"]
     plan = observation["signal_plan"]
-    return {
+    snapshot = {
         "pattern": "L-shape",
         "symbol": str(symbol).strip().upper(),
         "timeframe": str(timeframe).strip(),
@@ -100,6 +112,10 @@ def _robot_signal_snapshot(symbol, timeframe, observation):
             "reward_risk": plan.reward_risk,
         },
     }
+    return attach_auxiliary_reversal(
+        snapshot, observation.get("auxiliary_reversal"),
+        now_ms=int(time.time() * 1000),
+    )
 
 
 def send_l_shape_observation(symbol, observation, *, timeframe, test_mode=False):

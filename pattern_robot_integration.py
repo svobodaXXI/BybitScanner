@@ -84,11 +84,10 @@ def is_robot_executable_signal(
     normalized_timeframe = str(timeframe).strip()
     pattern = str(signal_snapshot.get("pattern", "")).strip()
 
+    # Double extrema are auxiliary reversal evidence for a host setup, never
+    # independent entry candidates, even when a legacy snapshot says ready.
     if pattern in {"Double Top", "Double Bottom"}:
-        return (
-            normalized_timeframe in L_SHAPE_SOURCE_TIMEFRAMES
-            and signal_snapshot.get("robot_handoff_ready") is True
-        )
+        return False
 
     if pattern == L_SHAPE_PATTERN:
         return (

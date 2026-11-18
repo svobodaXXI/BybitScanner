@@ -23,6 +23,9 @@ from bybit_api import get_symbols
 from config import MODE, MIN_SCORE, MAX_SYMBOLS
 
 from signal_adapter import prepare_signal
+from geometry.double_extremum import (
+    attach_auxiliary_reversal, build_auxiliary_reversal_evidence,
+)
 from signal_memory import update_signal, record_telegram_delivery
 from scanner_diary import record_scanner_diary_observation
 from scanner_diary_factors import record_scanner_p0_factors
@@ -283,50 +286,23 @@ def _run_scan_pass(*, box_plan_preparer=None, control_checkpoint=None, progress_
                         error_count += 1
                         print(f"{symbol:<15} {timeframe}m L-SHAPE ERROR: {observation_error}")
 
-                # #592: independently confirmed double TOP/BOTTOM after STOP.
-                # Reuse this pass's already fetched 1m/5m closed bars and
-                # the existing Scanner→Robot candidate observer/Admission.
-                # OFF unless the owner's STOP-reentry feature is opted in.
-                if (
-                    os.environ.get("BYBITSCANNER_STOP_REENTRY_AUTO") == "1"
-                    and analysis_result.get("data") is not None
-                    and timeframe in ("1", "5")
-                ):
+                # Closed Double Top/Bottom is an auxiliary argument only.
+                # No independent Robot candidate, STOP-reentry or order.
+                # Scan only the already fetched CLOSED source prefix. An old
+                # confirmation is stale and never becomes a new host argument.
+                reversal_evidence = None
+                reversal_now_ms = int(time.time() * 1000)
+                if analysis_result.get("data") is not None and timeframe in ("1", "5"):
                     try:
-                        from geometry.double_extremum import frozen_neckline_snapshot
-                        from pattern_robot_integration import prepare_robot_handoff
-                        from signal_memory import load_memory, save_memory
-
                         frame = analysis_result["data"]
-                        if len(frame) >= 8:
-                            closed_rows = frame.iloc[:-1].to_dict("records")
-                            candidate = frozen_neckline_snapshot(
-                                symbol, timeframe, closed_rows,
+                        if len(frame) >= 9:
+                            reversal_evidence = build_auxiliary_reversal_evidence(
+                                symbol, timeframe, frame.iloc[:-1].to_dict("records"),
+                                now_ms=reversal_now_ms,
                             )
-                            if candidate is not None:
-                                identity = (
-                                    f"neckline:{symbol}:{timeframe}:"
-                                    f"{candidate['pattern']}:"
-                                    f"{candidate['neckline_entry']['breakout_time_ms']}"
-                                )
-                                memory = load_memory()
-                                if identity not in memory:
-                                    result = prepare_robot_handoff(
-                                        candidate, timeframe=timeframe, enabled=True,
-                                    )
-                                    if result.candidate_id:
-                                        memory[identity] = {
-                                            "robot_candidate_id": result.candidate_id,
-                                            "pattern": candidate["pattern"],
-                                        }
-                                        save_memory(memory)
-                    except Exception as neckline_error:
-                        error_count += 1
-                        print(
-                            f"{symbol:<15} {timeframe}m NECKLINE ERROR: "
-                            f"{type(neckline_error).__name__}",
-                            flush=True,
-                        )
+                    except (TypeError, ValueError, AttributeError, KeyError):
+                        # Optional context cannot block Scanner signal delivery.
+                        reversal_evidence = None
 
                 # Broadening («Рупор») is observation only: chart + evidence,
                 # no Robot/admission/orders. It runs next to Wedge and never
@@ -509,6 +485,14 @@ def _run_scan_pass(*, box_plan_preparer=None, control_checkpoint=None, progress_
                     "symbol": symbol,
                     "final_score": signal["score"]
                 }
+                if reversal_evidence is not None:
+                    # Host stays the Wedge signal. Only validated
+                    # source/timeframe/direction evidence is attached; no
+                    # second candidate or change to STOP/TAKE/risk.
+                    telegram_payload = attach_auxiliary_reversal(
+                        {**telegram_payload, "timeframe": timeframe},
+                        reversal_evidence, now_ms=reversal_now_ms,
+                    )
 
                 if config.TELEGRAM_TEST_MODE:
                     telegram_sent = send_signal(

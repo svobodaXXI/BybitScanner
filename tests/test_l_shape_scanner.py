@@ -47,6 +47,43 @@ class LShapeObserverTests(unittest.TestCase):
                     self.assertIn("L-SHAPE candidate", output.getvalue())
                 assert_frame_equal(candles, before)
 
+    def test_closed_lshape_signal_passes_optional_reversal_without_new_candidate(self):
+        closed = _short_shape()
+        candles = snapshot(closed)
+        auxiliary = {
+            "version": 1, "kind": "DOUBLE_REVERSAL_AUXILIARY",
+            "source_id": "double-reversal:" + "a" * 64,
+            "symbol": "TESTUSDT", "source_timeframe": "5",
+            "pattern": "Double Top", "direction": "SHORT",
+            "confirmed_at_ms": int(closed.time.iloc[-1]) + 300_000,
+            "expires_at_ms": int(closed.time.iloc[-1]) + 900_000,
+        }
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(observer, "build_auxiliary_reversal_evidence", return_value=auxiliary) as find, \
+                patch.object(observer.time, "time", return_value=auxiliary["confirmed_at_ms"] / 1000), \
+                contextlib.redirect_stdout(io.StringIO()):
+            result = observer.observe_l_shape(
+                "TESTUSDT", candles, timeframe="5", chart_dir=directory,
+            )
+            candidate_snapshot = observer._robot_signal_snapshot("TESTUSDT", "5", result)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["auxiliary_reversal"], auxiliary)
+        args, kwargs = find.call_args
+        self.assertEqual((args[0], args[1]), ("TESTUSDT", "5"))
+        self.assertEqual(len(args[2]), len(closed))
+        self.assertEqual(int(args[2][-1]["time"]), int(closed.time.iloc[-1]))
+        self.assertNotEqual(int(args[2][-1]["time"]), int(candles.time.iloc[-1]))
+        self.assertEqual(kwargs["now_ms"], auxiliary["confirmed_at_ms"])
+        self.assertEqual(candidate_snapshot["pattern"], "L-shape")
+        self.assertEqual(candidate_snapshot["auxiliary_reversal"], auxiliary)
+        self.assertTrue(candidate_snapshot["robot_handoff_ready"])
+        self.assertNotIn("neckline_entry", candidate_snapshot)
+        with patch.object(observer.time, "time", return_value=auxiliary["expires_at_ms"] / 1000):
+            expired = observer._robot_signal_snapshot("TESTUSDT", "5", result)
+        self.assertNotIn("auxiliary_reversal", expired)
+        # The auxiliary context is one field on the ORIGINAL host candidate.
+        assert "candidate_id" not in auxiliary
+
     def test_stale_cakeusdt_breakout_is_not_emitted_but_latest_one_is(self):
         """CAKEUSDT 5m, 2026-09-23: at the 15:40 decision candle the newest
         eligible L-shape broke out at 06:40 (108 candles earlier) and was sent
@@ -114,6 +151,32 @@ class LShapeObserverTests(unittest.TestCase):
             main.run_scan_pass()
             robot.assert_not_called()
         return observe, lshape_send, send, prepare, update, candles
+
+    def test_stop_reentry_flag_never_makes_double_extremum_standalone_candidate(self):
+        # Old Scanner loop created a second Robot snapshot on the same source
+        # even when there was no Wedge/L-shape host pattern.
+        from tests.test_double_extremum import bar
+        closed = pd.DataFrame([
+            bar(100, 98, 99), bar(104, 99, 103), bar(110, 102, 108),
+            bar(105, 100, 102), bar(103, 95, 98), bar(105, 99, 103),
+            bar(109.8, 102, 107), bar(106, 98, 101), bar(96.5, 94, 94.5),
+        ])
+        closed["time"] = [3_000_000 + i * 60_000 for i in range(len(closed))]
+        frame = snapshot(closed)
+        with patch.dict(os.environ, {
+            "BYBITSCANNER_STOP_REENTRY_AUTO": "1",
+            "BYBITSCANNER_IKIGAI_BOX_SIGNALS": "0",
+            "BYBITSCANNER_L_SHAPE_OBSERVATIONS": "0",
+        }), patch.object(main, "MAX_SYMBOLS", None), \
+                patch.object(main, "get_symbols", return_value=["TESTUSDT"]), \
+                patch.object(main, "analyze_symbol", return_value={"result": None, "data": frame}), \
+                patch.object(observer, "observe_l_shape", return_value=None), \
+                patch.object(main, "send_signal") as send, \
+                patch("pattern_robot_integration.prepare_robot_handoff") as handoff, \
+                contextlib.redirect_stdout(io.StringIO()):
+            main.run_scan_pass()
+        send.assert_not_called()
+        handoff.assert_not_called()
 
     def test_observer_runs_without_wedge_but_does_not_send_without_candidate(self):
         observe, lshape_send, send, prepare, update, candles = self.run_mock_pass(enabled=True, analysis=None)

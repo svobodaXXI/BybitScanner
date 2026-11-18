@@ -32,6 +32,43 @@ def _candles():
 
 
 class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
+    def test_double_reversal_is_box_caption_argument_not_frozen_plan_mutation(self):
+        source = _candles()
+        closed = source.iloc[:-1]
+        formation = detect_ikigai_box(closed)
+        self.assertIsNotNone(formation)
+        frozen_before = box.box_robot_formation(closed, formation)
+        reversal = {
+            "version": 1, "kind": "DOUBLE_REVERSAL_AUXILIARY",
+            "source_id": "double-reversal:" + "a" * 64,
+            "symbol": "TESTUSDT", "source_timeframe": "5",
+            "pattern": "Double Top", "direction": "SHORT",
+            "confirmed_at_ms": 100, "expires_at_ms": 700,
+        }
+        with patch.object(box, "build_auxiliary_reversal_evidence", return_value=reversal):
+            note = box._box_auxiliary_note(
+                "TESTUSDT", "5", closed, "SHORT", now_ms=200,
+            )
+            self.assertIn("Двойная вершина", note)
+            self.assertEqual(
+                box._box_auxiliary_note(
+                    "TESTUSDT", "5", closed, "LONG", now_ms=200,
+                ), "",
+            )
+            self.assertEqual(
+                box._box_auxiliary_note(
+                    "OTHERUSDT", "5", closed, "SHORT", now_ms=200,
+                ), "",
+            )
+            self.assertEqual(
+                box._box_auxiliary_note(
+                    "TESTUSDT", "5", closed, "SHORT", now_ms=700,
+                ), "",
+            )
+        self.assertEqual(box.box_robot_formation(closed, formation), frozen_before)
+        self.assertNotIn("auxiliary_reversal", frozen_before)
+        self.assertNotIn("robot_handoff_ready", reversal)
+
     def test_actual_scanner_without_wedge_sends_confirmed_box_without_robot_affordance(self):
         source = _candles()
         original = source.copy(deep=True)
