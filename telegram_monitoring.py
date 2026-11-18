@@ -746,6 +746,41 @@ def _repost_keyboard(symbol: str, timeframe: str, signal_id: str | None = None) 
     return {"inline_keyboard": rows}
 
 
+def _repost_editor_source_id(original: Mapping) -> str | None:
+    """Prefer the original immutable Editor history, never a ticker match.
+
+    The live Scanner card and the later Robot candidate repost have different
+    archive IDs. Only direct Scanner-recorded lineage with matching original
+    image, text, pattern and symbol may point a duplicate at the same Editor
+    geometry/review. Pre-lineage candidate archives can still use their own
+    validated frozen geometry. If neither exists, keep the archived ID so the
+    Editor reports missing evidence instead of silently opening live candles.
+    """
+    own_id = str(original.get("candidate_id") or "").strip() or None
+    linked = original.get("source_formation_ids")
+    if isinstance(linked, list):
+        for source_id in linked:
+            if not (isinstance(source_id, str)
+                    and source_id.startswith("source-original:")
+                    and len(source_id) == len("source-original:") + 24
+                    and all(ch in "0123456789abcdef" for ch in source_id[16:])):
+                continue
+            source = signal_archive.load_original_signal([source_id])
+            if source is None:
+                continue
+            match_fields = ("symbol", "timeframe", "pattern", "text", "image_sha256")
+            if any(source.get(field) != original.get(field) for field in match_fields):
+                continue
+            frozen = signal_archive.load_frozen_signal_geometry(source_id)
+            if (frozen is not None and frozen.get("signal_id") == source_id
+                    and frozen.get("symbol") == original.get("symbol")
+                    and str(frozen.get("timeframe")) == str(original.get("timeframe"))):
+                return source_id
+    if own_id:
+        return own_id
+    return None
+
+
 def _repost_caption(original: Mapping) -> str:
     head = f"{SIGNAL_REPOST_MARK}\nОригинал отправлен: {_format_signal_time(original['sent_at_ms'])}\n\n"
     body = str(original.get("text") or "").strip()
@@ -762,7 +797,10 @@ def _repost_original_signal(chat_id, original: Mapping) -> bool:
     The original message is never edited or deleted.
     """
     caption = _repost_caption(original)
-    markup = _repost_keyboard(str(original.get("symbol", "")), str(original.get("timeframe", "")), str(original.get("candidate_id") or "") or None)
+    markup = _repost_keyboard(
+        str(original.get("symbol", "")), str(original.get("timeframe", "")),
+        _repost_editor_source_id(original),
+    )
     file_id = original.get("photo_file_id")
     if file_id:
         try:
@@ -801,7 +839,9 @@ def _send_source_signal_card(chat_id, token: str) -> None:
             f"{SIGNAL_REPOST_MARK}\nОригинал отправлен: {_format_signal_time(original['sent_at_ms'])}\n\n"
             f"{original.get('text', '')}\n\n"
             "⚠️ Изображение оригинала не удалось отправить повторно.",
-            reply_markup=_repost_keyboard(symbol, str(original.get("timeframe", "")), str(original.get("candidate_id") or "") or None),
+            reply_markup=_repost_keyboard(
+                symbol, str(original.get("timeframe", "")), _repost_editor_source_id(original),
+            ),
         )
         return
     # No archived original (a candidate created before the archive existed, or it was
