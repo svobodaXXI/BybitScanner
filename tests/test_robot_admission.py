@@ -137,6 +137,40 @@ class RobotAdmissionGateTests(unittest.TestCase):
             finally:
                 store.close()
 
+    def test_preexisting_double_extremum_candidate_never_passes_admission(self):
+        from terminal.application.robot_admission import scanner_candidate_admission_error
+        from unittest.mock import patch
+
+        # Frozen snapshots from an older release may still claim Robot-ready.
+        # Both manual and autopilot share this exact pure Admission fence.
+        for pattern in ("Double Top", "Double Bottom"):
+            for status in ("AVAILABLE", "APPROVED"):
+                with self.subTest(pattern=pattern, status=status):
+                    with tempfile.TemporaryDirectory() as tmp:
+                        root = Path(tmp)
+                        candidate_dir = root / "candidates"
+                        db_path = root / "paper.sqlite3"
+                        self._make_candidate(candidate_dir, pattern=pattern)
+                        legacy = load_candidate("candidate-1", store_dir=candidate_dir)
+                        legacy["status"] = status
+                        legacy["signal_snapshot"]["robot_handoff_ready"] = True
+                        legacy["signal_snapshot"]["neckline_entry"] = {
+                            "direction": "SHORT", "source_timeframe": "1",
+                        }
+                        error = scanner_candidate_admission_error(legacy)
+                        self.assertIn("auxiliary-only", error)
+                        with patch("terminal.application.robot_admission.load_candidate", return_value=legacy):
+                            with self.assertRaisesRegex(
+                                RobotAdmissionRejected, "auxiliary-only",
+                            ):
+                                admit_robot_candidate(
+                                    "candidate-1",
+                                    database_path=db_path,
+                                    store_dir=candidate_dir,
+                                    clock_ms=lambda: 2000,
+                                )
+                        self.assertFalse(db_path.exists())
+
     def test_5m_candidate_without_projected_robot_geometry_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
