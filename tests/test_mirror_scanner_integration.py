@@ -730,10 +730,10 @@ def test_mirror_standalone_handoff_carries_double_reversal_only_as_context(monke
                 "confirmation": {"close_time_ms": 420_000},
             },
             "handoff": "PENDING", "candidate_id": None,
+            "auxiliary_reversal": auxiliary,
         }]}
         result = ms._hand_off_standalone_entries(
-            "TESTUSDT", state, tmp_path,
-            reversal_by_tf={"1": auxiliary}, now_ms=now_ms,
+            "TESTUSDT", state, tmp_path, now_ms=now_ms,
         )
         assert result == ["original-mirror-host"]
         assert state["standalone_entries"][0]["handoff"] == "HANDED"
