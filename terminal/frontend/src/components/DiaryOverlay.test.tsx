@@ -1080,7 +1080,8 @@ describe("Finrez first-screen UI", () => {
         },
       };
     });
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+    // Each navigation requests a new one-shot HTTP body.
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => new Response(JSON.stringify({
       ...finrezResponse, closed_episodes: episodes,
     }), { status: 200 })));
     render(<DiaryOverlay accountKey="paper:all-proven-patterns" initialSection="PATTERNS"
