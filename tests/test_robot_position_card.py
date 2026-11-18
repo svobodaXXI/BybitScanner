@@ -128,13 +128,11 @@ class FormatPositionCardTests(unittest.TestCase):
         )
         card = format_position_card(_view(is_open=False, trade=trade, fees_usdt=Decimal("0.0026")))
         self.assertIn("Статус: закрыта", card)
-        self.assertIn("Выход: 0.0249 (по стопу)", card)
-        # Before fees, then entry + exit fees and (-0.05 - 0.0026) / (100 * 0.0254) * 100.
-        self.assertIn(
-            "Итог: -0.05 USDT (до комиссий), комиссии 0.0026 USDT (вход + выход), "
-            "-2.07% (после комиссий)",
-            card,
-        )
+        self.assertNotIn("Выход:", card)
+        # (-0.05 - 0.0026) / (100 * 0.0254) * 100 = -2.07%.
+        self.assertIn("Итог: -0.0526 USDT (-2.07%) (комиссия: 0.0026 USDT)", card)
+        self.assertNotIn("до комиссий", card)
+        self.assertNotIn("после комиссий", card)
         self.assertNotIn("PnL:", card)
 
     def test_caption_fits_telegram_limit(self):
@@ -305,7 +303,7 @@ class LoadPositionViewTests(unittest.TestCase):
                 self.assertEqual([(m.side, m.filled) for m in view.markers],
                                  [("Buy", True), ("Buy", True), ("Sell", True)])
                 self.assertIn(
-                    "комиссии 0.0026 USDT (вход + выход), -2.07% (после комиссий)",
+                    "Итог: -0.0526 USDT (-2.07%) (комиссия: 0.0026 USDT)",
                     format_position_card(view),
                 )
 
