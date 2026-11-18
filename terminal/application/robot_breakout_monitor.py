@@ -1408,6 +1408,11 @@ class RobotBreakoutMonitor:
             # Do not invalidate OPEN/filled trades or interrupt STOP/TAKE.
             if (record.status == "APPROVED"
                     and record.signal_snapshot.get("pattern") in robot_l_shape.DOUBLE_PATTERNS):
+                # APPROVED alone does not prove that an earlier fill, trade or
+                # protection obligation is absent. Only retire a proven inert
+                # pre-entry candidate; preserve ambiguous/exposed lifecycles.
+                if not self._paper_candidate_is_inert(record):
+                    return False
                 self._invalidate_pre_entry_candidate(
                     record, reason="Double Top/Bottom is auxiliary-only",
                 )
@@ -1503,6 +1508,39 @@ class RobotBreakoutMonitor:
         )
         if order is None or order.quantity <= 0:
             return False
+
+        # An old APPROVED standalone Double Top/Bottom may already own an
+        # entry LIMIT from a previous release. Blocking fresh submissions is
+        # insufficient: it could still match on the next owner tick.
+        if (record.status == "APPROVED"
+                and record.signal_snapshot.get("pattern") in robot_l_shape.DOUBLE_PATTERNS):
+            if order.status not in INACTIVE_LIMIT_STATUSES:
+                cancellation = self._action_executor.cancel_limit(
+                    PaperLimitCancelRequest(
+                        _cancel_blocked_entry_action_id(record.candidate_id),
+                        record.symbol.value, execution["limit_order_id"],
+                    )
+                )
+                if getattr(cancellation, "status", None) != CommandResultStatus.COMPLETED:
+                    return False
+                order = self._store().get_paper_limit(
+                    execution["limit_order_id"], self._account_id,
+                )
+                if order is None or order.quantity <= 0:
+                    return False
+            if order.status not in INACTIVE_LIMIT_STATUSES:
+                return False
+            if order.filled_quantity <= 0:
+                # Never claim an inert candidate from an absent/unknown order
+                # or a contradictory FILLED state without an actual fill.
+                if order.status != "cancelled":
+                    return False
+                self._invalidate_pre_entry_candidate(
+                    record, reason="Double Top/Bottom legacy LIMIT cancelled without fill",
+                )
+                return True
+            # An actual partial/full fill must retain normal Robot trade,
+            # protection and STOP/TAKE finalization, never be invalidated.
 
         filled_fraction = min(order.filled_quantity / order.quantity, Decimal("1"))
         inactive = order.status in INACTIVE_LIMIT_STATUSES
