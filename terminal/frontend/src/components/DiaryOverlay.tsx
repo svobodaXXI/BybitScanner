@@ -182,7 +182,8 @@ type ClosedEpisodeLocator = {
 
 type VerifiedEpisodePattern =
   | (VerifiedEpisodeSetup & { source: "D2" })
-  | { source: "WEDGE"; pattern: string; timeframe: string; candidateId: string };
+  | { source: "WEDGE"; pattern: string; timeframe: string; candidateId: string }
+  | { source: "ROBOT_ENTRY"; pattern: string; timeframe: string; candidateId: string };
 
 type FinrezTicker = { symbol: string; pnl_usdt: string; trade_count: number };
 type FinrezResponse = {
@@ -488,29 +489,43 @@ function exactD2Setup(facts: Record<string, unknown>, deal: ClosedEpisodeLocator
   };
 }
 
-/** Only the backend's exact-ID Robot Wedge proof may supply this label.
- * Candidate metadata is not original geometry or a D2 setup/decision.
+/** Accept only separately attested exact-ID Robot candidate-to-entry proof.
+ * Neither a ticker/time match nor source metadata alone proves this label.
  */
-function verifiedWedgeSignal(deal: ClosedEpisodeLocator, report: FinrezResponse): Extract<VerifiedEpisodePattern, { source: "WEDGE" }> | null {
+function verifiedRobotSignal(
+  deal: ClosedEpisodeLocator, report: FinrezResponse,
+): Extract<VerifiedEpisodePattern, { source: "WEDGE" | "ROBOT_ENTRY" }> | null {
   if (report.account_id !== "paper" || report.owner !== "ROBOT" || deal.cohort !== "ROBOT"
     || !/^te_[0-9a-f]{24}$/.test(deal.trade_episode_id)) return null;
   const value = deal.verified_signal;
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const signal = value as Record<string, unknown>;
-  if (signal.status !== "PROVEN"
-    || signal.evidence_scope !== "EXACT_WEDGE_CANDIDATE_ENTRY_ORDER_EXECUTION_EPISODE"
+  const wedge = signal.evidence_scope === "EXACT_WEDGE_CANDIDATE_ENTRY_ORDER_EXECUTION_EPISODE"
+    && ["Falling Wedge", "Rising Wedge"].includes(String(signal.pattern));
+  const other = signal.evidence_scope === "EXACT_ROBOT_CANDIDATE_ENTRY_ORDER_EXECUTION_EPISODE"
+    && typeof signal.pattern === "string" && !!signal.pattern.trim()
+    && signal.pattern.length <= 128
+    && !["Falling Wedge", "Rising Wedge"].includes(signal.pattern);
+  if (signal.status !== "PROVEN" || (!wedge && !other)
     || signal.provenance !== "DURABLE_ROBOT_TRADE_METADATA_NOT_ORIGINAL_GEOMETRY"
     || signal.trade_episode_id !== deal.trade_episode_id
     || signal.source_revision !== report.source_revision
-    || !["Falling Wedge", "Rising Wedge"].includes(String(signal.pattern))
     || typeof signal.candidate_id !== "string"
     || !signal.candidate_id.trim() || signal.candidate_id.length > 256
     || typeof signal.source_timeframe !== "string"
     || !signal.source_timeframe.trim() || signal.source_timeframe.length > 40) return null;
   return {
-    source: "WEDGE", pattern: signal.pattern as string,
+    source: wedge ? "WEDGE" : "ROBOT_ENTRY",
+    pattern: signal.pattern as string,
     timeframe: signal.source_timeframe, candidateId: signal.candidate_id,
   };
+}
+
+function verifiedWedgeSignal(
+  deal: ClosedEpisodeLocator, report: FinrezResponse,
+): Extract<VerifiedEpisodePattern, { source: "WEDGE" }> | null {
+  const signal = verifiedRobotSignal(deal, report);
+  return signal?.source === "WEDGE" ? signal : null;
 }
 
 function verifiedIndexedPattern(deal: ClosedEpisodeLocator, report: FinrezResponse): VerifiedEpisodePattern | null {
@@ -521,7 +536,7 @@ function verifiedIndexedPattern(deal: ClosedEpisodeLocator, report: FinrezRespon
     }, deal);
     if (setup) return { ...setup, source: "D2" };
   }
-  return verifiedWedgeSignal(deal, report);
+  return verifiedRobotSignal(deal, report);
 }
 
 type TradeExecutionPoint = { at: number; price: number };
@@ -1026,9 +1041,67 @@ function compactDealPattern(pattern: string | null): string {
   return pattern ?? "не установлен";
 }
 
-function ClosedDealsView({ report, symbolFilter, patternFilter, pnlFilter, sideFilter, onClearSymbolFilter }: {
+
+/** One accessible, proportional control for either pattern cards or closed deals. */
+function OutcomeSplitBar({ kind, wins, losses, breakeven, filter, onFilter }: {
+  kind: "deals" | "patterns"; wins: number; losses: number; breakeven: number;
+  filter: FinrezPnlFilter; onFilter: (filter: FinrezPnlFilter) => void;
+}) {
+  const total = wins + losses + breakeven;
+  const noun = kind === "deals" ? "сделок" : "паттернов";
+  const plural = kind === "deals" ? "сделки" : "паттерны";
+  const toggle = (next: FinrezPnlFilter) => onFilter(filter === next ? "ALL" : next);
+  const pct = (count: number) => total > 0 ? count / total * 100 : 0;
+  return (
+    <div className="diary-outcome-distribution" role="group"
+      aria-label={`Распределение результатов ${noun}`}>
+      <div className="diary-outcome-track">
+        <button type="button" className="diary-outcome-segment profit"
+          aria-label={kind === "deals" ? "Прибыльные" : "Прибыльные паттерны"}
+          title={`Прибыльных: ${wins}, ${pct(wins).toFixed(1)}%`}
+          aria-pressed={filter === "PROFIT"} onClick={() => toggle("PROFIT")}
+          disabled={wins === 0 && filter !== "PROFIT"}
+          style={{ width: `${pct(wins)}%` }} />
+        {breakeven > 0 ? <span className="diary-outcome-segment neutral"
+          title={`В ноль: ${breakeven}, ${pct(breakeven).toFixed(1)}%`}
+          style={{ width: `${pct(breakeven)}%` }} /> : null}
+        <button type="button" className="diary-outcome-segment loss"
+          aria-label={kind === "deals" ? "Убыточные" : "Убыточные паттерны"}
+          title={`Убыточных: ${losses}, ${pct(losses).toFixed(1)}%`}
+          aria-pressed={filter === "LOSS"} onClick={() => toggle("LOSS")}
+          disabled={losses === 0 && filter !== "LOSS"}
+          style={{ width: `${pct(losses)}%` }} />
+      </div>
+      <div className="diary-outcome-footer">
+        <button type="button" className="diary-outcome-count profit"
+          aria-label={`Показать прибыльные ${plural}`}
+          aria-pressed={filter === "PROFIT"} disabled={wins === 0 && filter !== "PROFIT"}
+          onClick={() => toggle("PROFIT")}>Прибыльных: {wins}</button>
+        <button type="button" className="diary-outcome-total"
+          aria-label={`Показать все ${plural}`}
+          aria-pressed={filter === "ALL"}
+          onClick={() => onFilter("ALL")}>Всего: {total}{breakeven > 0 ? ` · в ноль: ${breakeven}` : ""}</button>
+        <button type="button" className="diary-outcome-count loss"
+          aria-label={`Показать убыточные ${plural}`}
+          aria-pressed={filter === "LOSS"} disabled={losses === 0 && filter !== "LOSS"}
+          onClick={() => toggle("LOSS")}>Убыточных: {losses}</button>
+      </div>
+    </div>
+  );
+}
+
+/** Exact sign; avoid Number underflow for tiny financial results. */
+function verifiedPnlSign(value: string): -1 | 0 | 1 {
+  const negative = value.trim().startsWith("-");
+  const significantDigits = value.trim().replace(/^[+-]/, "").split(/[eE]/)[0].replace(/[^0-9]/g, "");
+  if (!significantDigits.replace(/0/g, "")) return 0;
+  return negative ? -1 : 1;
+}
+
+function ClosedDealsView({ report, symbolFilter, patternFilter, pnlFilter, sideFilter, onPnlFilterChange, onClearSymbolFilter }: {
   report: FinrezResponse; symbolFilter: string; patternFilter: string;
-  pnlFilter: FinrezPnlFilter; sideFilter: FinrezSideFilter; onClearSymbolFilter: () => void;
+  pnlFilter: FinrezPnlFilter; sideFilter: FinrezSideFilter;
+  onPnlFilterChange: (filter: FinrezPnlFilter) => void; onClearSymbolFilter: () => void;
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const tickerQuery = symbolFilter.trim().toUpperCase();
@@ -1059,28 +1132,32 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, pnlFilter, sideF
       ? verifiedSetups[episodeId] : indexedVerifiedSetups[episodeId] ?? null;
   const patternFor = (deal: ClosedEpisodeLocator): VerifiedEpisodePattern | null => {
     const d2 = setupFor(deal.trade_episode_id);
-    return d2 ? { ...d2, source: "D2" } : verifiedWedgeSignal(deal, report);
+    return d2 ? { ...d2, source: "D2" } : verifiedRobotSignal(deal, report);
   };
-  const deals = useMemo(() => (report.closed_episodes ?? []).filter((deal) => {
+  const contextDeals = useMemo(() => (report.closed_episodes ?? []).filter((deal) => {
     if (!deal.symbol.includes(tickerQuery)) return false;
-    const pnl = Number(deal.pnl_usdt);
-    if (pnlFilter === "PROFIT" && pnl <= 0) return false;
-    if (pnlFilter === "LOSS" && pnl >= 0) return false;
     if (sideFilter !== "ALL" && deal.side !== sideFilter) return false;
     const setup = Object.prototype.hasOwnProperty.call(verifiedSetups, deal.trade_episode_id)
       ? verifiedSetups[deal.trade_episode_id]
       : indexedVerifiedSetups[deal.trade_episode_id];
-    const pattern = setup?.pattern ?? verifiedWedgeSignal(deal, report)?.pattern ?? null;
+    const pattern = setup?.pattern ?? verifiedRobotSignal(deal, report)?.pattern ?? null;
     if (patternFilter === NO_VERIFIED_PATTERN_FILTER) return pattern === null;
     if (patternFilter && pattern !== patternFilter) return false;
     return true;
+  }), [report.closed_episodes, report.source_revision, report.owner, tickerQuery, patternFilter, sideFilter, verifiedSetups, indexedVerifiedSetups]);
+  const wins = contextDeals.filter((deal) => verifiedPnlSign(deal.pnl_usdt) > 0).length;
+  const losses = contextDeals.filter((deal) => verifiedPnlSign(deal.pnl_usdt) < 0).length;
+  const breakeven = contextDeals.length - wins - losses;
+  const deals = useMemo(() => contextDeals.filter((deal) => {
+    const sign = verifiedPnlSign(deal.pnl_usdt);
+    return pnlFilter === "ALL" || (pnlFilter === "PROFIT" ? sign > 0 : sign < 0);
   }).sort((a, b) => {
     if (pnlFilter === "ALL") return 0; // Preserve API ordering when no result filter is active.
     const aPnl = Number(a.pnl_usdt), bPnl = Number(b.pnl_usdt);
     if (aPnl < bPnl) return pnlFilter === "LOSS" ? -1 : 1;
     if (aPnl > bPnl) return pnlFilter === "LOSS" ? 1 : -1;
     return b.closed_at_ms - a.closed_at_ms || a.trade_episode_id.localeCompare(b.trade_episode_id);
-  }), [report.closed_episodes, report.source_revision, report.owner, tickerQuery, patternFilter, pnlFilter, sideFilter, verifiedSetups, indexedVerifiedSetups]);
+  }), [contextDeals, pnlFilter]);
   const selected = deals.find((deal) => deal.trade_episode_id === selectedId);
   const selectedPattern = selected ? patternFor(selected) : null;
   useEffect(() => {
@@ -1235,8 +1312,8 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, pnlFilter, sideF
               )}
             </dl>
           ) : <p className="diary-finrez-basis">Связь с паттерном по точному ID не подтверждена.</p>}
-          <small>{selectedPattern?.source === "WEDGE"
-            ? "Источник: точная цепочка Robot candidate → order → execution → episode. Не D2, без исходной геометрии и журнала решений."
+          <small>{selectedPattern?.source === "WEDGE" || selectedPattern?.source === "ROBOT_ENTRY"
+            ? "Источник: точная цепочка Robot candidate → entry order → execution → episode. Не D2, без исходной геометрии и журнала решений."
             : "Источник при наличии D2-связи: отдельные наблюдения Trading Diary D2, не полный журнал решений Робота."}</small>
         </section>
         <OriginalEpisodeSignalChart
@@ -1299,6 +1376,8 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, pnlFilter, sideF
           с неизвестным источником исполнений.
         </p>
       ) : null}
+      <OutcomeSplitBar kind="deals" wins={wins} losses={losses} breakeven={breakeven}
+        filter={pnlFilter} onFilter={onPnlFilterChange} />
       {deals.length === 0 ? <p className="diary-state">
         {pnlFilter === "LOSS" ? "Нет убыточных сделок по выбранным фильтрам"
           : pnlFilter === "PROFIT" ? "Нет прибыльных сделок по выбранным фильтрам"
@@ -1315,8 +1394,8 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, pnlFilter, sideF
                   <span className="diary-deal-pattern"
                     title={patternFor(deal)?.source === "D2"
                       ? "Точная связь эпизода с наблюдательным сетапом Diary D2"
-                      : patternFor(deal)?.source === "WEDGE"
-                        ? "Доказанное происхождение Wedge по точным идентификаторам Robot, не D2"
+                      : patternFor(deal)?.source === "WEDGE" || patternFor(deal)?.source === "ROBOT_ENTRY"
+                        ? "Подтверждённый паттерн по точным идентификаторам входа Robot, не D2"
                         : "Связь сделки с паттерном пока не подтверждена"}>
                     {compactDealPattern(patternFor(deal)?.pattern ?? null)}
                   </span>
@@ -1424,14 +1503,30 @@ function sumVerifiedPnl(values: string[]): string | null {
   return (total < 0n ? "-" : "") + integer + (fraction ? "." + fraction : "");
 }
 
+
+/** Sort financial totals without floating-point rounding or locale heuristics. */
+function compareExactPnlDescending(left: string | null, right: string | null): number {
+  if (left === null || right === null) return left === right ? 0 : left === null ? 1 : -1;
+  const parse = (value: string) => {
+    const [whole, fraction = ""] = value.split(".");
+    return { units: BigInt(whole + fraction), scale: fraction.length };
+  };
+  const a = parse(left), b = parse(right);
+  const scale = Math.max(a.scale, b.scale);
+  const x = a.units * (10n ** BigInt(scale - a.scale));
+  const y = b.units * (10n ** BigInt(scale - b.scale));
+  return x === y ? 0 : x > y ? -1 : 1;
+}
+
 function PatternsView({ report, symbolFilter, onSelectPattern }: {
   report: FinrezResponse; symbolFilter: string; onSelectPattern: (pattern: string) => void;
 }) {
   const tickerQuery = symbolFilter.trim().toUpperCase();
+  const [resultFilter, setResultFilter] = useState<FinrezPnlFilter>("ALL");
   const episodes = (report.closed_episodes ?? []).filter((deal) => deal.symbol.includes(tickerQuery));
   const groups = new Map<string, {
     pattern: string; cohort: ClosedEpisodeLocator["cohort"]; deals: ClosedEpisodeLocator[];
-    d2Count: number; wedgeCount: number;
+    d2Count: number; wedgeCount: number; robotEntryCount: number;
   }>();
   let provenCount = 0;
   for (const deal of episodes) {
@@ -1443,19 +1538,33 @@ function PatternsView({ report, symbolFilter, onSelectPattern }: {
     if (group) {
       group.deals.push(deal);
       if (pattern.source === "D2") group.d2Count += 1;
-      else group.wedgeCount += 1;
+      else if (pattern.source === "WEDGE") group.wedgeCount += 1;
+      else group.robotEntryCount += 1;
     } else groups.set(key, {
       pattern: pattern.pattern, cohort: deal.cohort, deals: [deal],
       d2Count: pattern.source === "D2" ? 1 : 0,
       wedgeCount: pattern.source === "WEDGE" ? 1 : 0,
+      robotEntryCount: pattern.source === "ROBOT_ENTRY" ? 1 : 0,
     });
   }
-  const rows = [...groups.values()].sort((a, b) =>
-    a.pattern.localeCompare(b.pattern, "ru") || a.cohort.localeCompare(b.cohort));
+  const ranked = [...groups.values()].map((group) => ({
+    ...group,
+    pnl: sumVerifiedPnl(group.deals.map((deal) => deal.pnl_usdt)),
+  })).sort((a, b) => compareExactPnlDescending(a.pnl, b.pnl)
+    || a.pattern.localeCompare(b.pattern, "ru") || a.cohort.localeCompare(b.cohort));
+  const wins = ranked.filter((row) => row.pnl !== null && verifiedPnlSign(row.pnl) > 0).length;
+  const losses = ranked.filter((row) => row.pnl !== null && verifiedPnlSign(row.pnl) < 0).length;
+  const breakeven = ranked.filter((row) => row.pnl !== null && verifiedPnlSign(row.pnl) === 0).length;
+  const rows = ranked.filter((row) => row.pnl !== null && (
+    resultFilter === "ALL" || (resultFilter === "PROFIT"
+      ? verifiedPnlSign(row.pnl) > 0 : verifiedPnlSign(row.pnl) < 0)
+  ));
   return (
     <section className="diary-finrez" aria-label="Паттерны по подтверждённым сделкам">
+      <OutcomeSplitBar kind="patterns" wins={wins} losses={losses} breakeven={breakeven}
+        filter={resultFilter} onFilter={setResultFilter} />
       <p className="diary-finrez-basis">
-        Только точные D2-связи и доказанные Wedge-сигналы Robot. Wedge-lineage не заменяет D2 и не подтверждает журнал решений или исходную геометрию.
+        Только точные D2-связи и доказанные цепочки Robot candidate → entry order → execution → episode. Эти данные не заменяют D2, журнал решений или исходную геометрию.
         Категории управления не объединяются; суммы ниже — только по подтверждённым эпизодам.
       </p>
       <p className="diary-finrez-coverage" role="status">
@@ -1466,7 +1575,8 @@ function PatternsView({ report, symbolFilter, onSelectPattern }: {
           : ""}
       </p>
       {rows.length === 0 ? <p className="diary-state">
-        Нет сделок с подтверждённым паттерном за выбранный период
+        {ranked.length === 0 ? "Нет сделок с подтверждённым паттерном за выбранный период"
+          : "Нет паттернов с выбранным финансовым результатом"}
       </p> : (
         <>
           <p className="diary-finrez-basis">
@@ -1474,28 +1584,25 @@ function PatternsView({ report, symbolFilter, onSelectPattern }: {
           </p>
           <div className="diary-finrez-list">
             {rows.map((row) => {
-              const pnl = sumVerifiedPnl(row.deals.map((deal) => deal.pnl_usdt));
-              const numeric = pnl === null ? NaN : Number(pnl);
-              const wins = row.deals.filter((deal) => Number(deal.pnl_usdt) > 0).length;
-              const losses = row.deals.filter((deal) => Number(deal.pnl_usdt) < 0).length;
-              return <div className="diary-finrez-row" key={JSON.stringify([row.pattern, row.cohort])}>
-                <div className="diary-pattern-label">
+              const wins = row.deals.filter((deal) => verifiedPnlSign(deal.pnl_usdt) > 0).length;
+              const losses = row.deals.filter((deal) => verifiedPnlSign(deal.pnl_usdt) < 0).length;
+              const sign = row.pnl === null ? 0 : verifiedPnlSign(row.pnl);
+              return <button type="button"
+                className="diary-finrez-row diary-finrez-row-action diary-pattern-card"
+                key={JSON.stringify([row.pattern, row.cohort])}
+                aria-label={`Показать все сделки по паттерну ${row.pattern}`}
+                title="Перейти к сделкам с подтверждённым паттерном"
+                onClick={() => onSelectPattern(row.pattern)}>
+                <span className="diary-pattern-label">
                   <strong title={row.pattern}>{row.pattern}</strong>
-                  <small>{dealLabels[row.cohort]} · сделок: {row.deals.length} · прибыльных: {wins} · убыточных: {losses} · D2: {row.d2Count} · Wedge: {row.wedgeCount}</small>
-                </div>
-                <span title={pnl === null ? "Точная сумма недоступна" : pnl + " USDT"}
-                  className={numeric > 0 ? "profit" : numeric < 0 ? "loss" : ""}>
-                  {pnl === null ? "—" : formatFinrezPnl(pnl)}
+                  <small>{dealLabels[row.cohort]} · сделок: {row.deals.length} · прибыльных: {wins} · убыточных: {losses} · D2: {row.d2Count} · Wedge: {row.wedgeCount} · Robot ID: {row.robotEntryCount}</small>
                 </span>
-                <button type="button" className="diary-finrez-list-button"
-                  aria-label={`Показать все сделки по паттерну ${row.pattern}`}
-                  title="Перейти к сделкам с подтверждённым паттерном"
-                  onClick={() => onSelectPattern(row.pattern)}>
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01" />
-                  </svg>
-                </button>
-              </div>;
+                <span title={row.pnl === null ? "Точная сумма недоступна" : row.pnl + " USDT"}
+                  className={sign > 0 ? "profit" : sign < 0 ? "loss" : ""}>
+                  {row.pnl === null ? "—" : formatFinrezPnl(row.pnl)}
+                </span>
+                <span className="diary-pattern-drilldown" aria-hidden="true">›</span>
+              </button>;
             })}
           </div>
         </>
@@ -1827,19 +1934,7 @@ export function DiaryOverlay({
                     ))}
                     <option value={NO_VERIFIED_PATTERN_FILTER}>Без подтверждённого паттерна</option>
                   </select>
-                  <div className="diary-deal-filter-group" role="group" aria-label="Фильтр результата">
-                    <button className="diary-deal-filter-button profit" aria-pressed={finrezPnlFilter === "PROFIT"}
-                      title="Только сделки с положительным реализованным PnL"
-                      type="button" onClick={() => setFinrezPnlFilter((prior) => prior === "PROFIT" ? "ALL" : "PROFIT")}>
-                      Прибыльные
-                    </button>
-                    <button className="diary-deal-filter-button loss" aria-pressed={finrezPnlFilter === "LOSS"}
-                      title="Только сделки с отрицательным реализованным PnL, начиная с наибольшего убытка"
-                      type="button" onClick={() => setFinrezPnlFilter((prior) => prior === "LOSS" ? "ALL" : "LOSS")}>
-                      Убыточные
-                    </button>
-                  </div>
-                  <div className="diary-deal-filter-group" role="group" aria-label="Фильтр направления">
+                  <div className="diary-deal-filter-group diary-deal-side-filters" role="group" aria-label="Фильтр направления">
                     <button className="diary-deal-filter-button long" aria-pressed={finrezSideFilter === "LONG"}
                       type="button" onClick={() => setFinrezSideFilter((prior) => prior === "LONG" ? "ALL" : "LONG")}>
                       LONG
@@ -1897,6 +1992,7 @@ export function DiaryOverlay({
             <ClosedDealsView key={`${finrez.account_id}:${finrez.owner}:${finrez.period}:${finrez.source_revision}:${finrezSymbolFilter}:${finrezPatternFilter}`}
               report={finrez} symbolFilter={finrezSymbolFilter} patternFilter={finrezPatternFilter}
               pnlFilter={finrezPnlFilter} sideFilter={finrezSideFilter}
+              onPnlFilterChange={setFinrezPnlFilter}
               onClearSymbolFilter={() => setFinrezSymbolFilter("")} />
           ) : null}
           {!loading && !loadError && selectedTrade ? <TradeDetailsView trade={selectedTrade} onBack={() => { setRequestedTradeMissing(false); setSelectedTradeId(null); }} /> : null}
