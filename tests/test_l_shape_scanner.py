@@ -148,6 +148,32 @@ class LShapeObserverTests(unittest.TestCase):
             robot.assert_not_called()
         return observe, lshape_send, send, prepare, update, candles
 
+    def test_stop_reentry_flag_never_makes_double_extremum_standalone_candidate(self):
+        # Old Scanner loop created a second Robot snapshot on the same source
+        # even when there was no Wedge/L-shape host pattern.
+        from tests.test_double_extremum import bar
+        closed = pd.DataFrame([
+            bar(100, 98, 99), bar(104, 99, 103), bar(110, 102, 108),
+            bar(105, 100, 102), bar(103, 95, 98), bar(105, 99, 103),
+            bar(109.8, 102, 107), bar(106, 98, 101), bar(96.5, 94, 94.5),
+        ])
+        closed["time"] = [3_000_000 + i * 60_000 for i in range(len(closed))]
+        frame = snapshot(closed)
+        with patch.dict(os.environ, {
+            "BYBITSCANNER_STOP_REENTRY_AUTO": "1",
+            "BYBITSCANNER_IKIGAI_BOX_SIGNALS": "0",
+            "BYBITSCANNER_L_SHAPE_OBSERVATIONS": "0",
+        }), patch.object(main, "MAX_SYMBOLS", None), \
+                patch.object(main, "get_symbols", return_value=["TESTUSDT"]), \
+                patch.object(main, "analyze_symbol", return_value={"result": None, "data": frame}), \
+                patch.object(observer, "observe_l_shape", return_value=None), \
+                patch.object(main, "send_signal") as send, \
+                patch("pattern_robot_integration.prepare_robot_handoff") as handoff, \
+                contextlib.redirect_stdout(io.StringIO()):
+            main.run_scan_pass()
+        send.assert_not_called()
+        handoff.assert_not_called()
+
     def test_observer_runs_without_wedge_but_does_not_send_without_candidate(self):
         observe, lshape_send, send, prepare, update, candles = self.run_mock_pass(enabled=True, analysis=None)
         observe.assert_called_once_with("TESTUSDT", candles, timeframe=main.config.TIMEFRAME)
