@@ -648,6 +648,12 @@ def send_signal(
             pattern=result.get("pattern", ""), text=message,
             image_bytes=archived_image, photo_response=owner_photo_response,
             geometry_snapshot=candidate_geometry,
+            # Keep the original Editor identity alongside the candidate copy.
+            # A duplicate must reopen the same reviewed frozen source, not
+            # create an independent per-candidate correction history.
+            source_formation_ids=(
+                [f"source-original:{source_token}"] if frozen_source is not None else None
+            ),
         )
 
     # After the ordinary card/photo delivery, tell the owner (only) why the
