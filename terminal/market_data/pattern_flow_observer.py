@@ -183,8 +183,23 @@ class PatternFlowObserver:
                 continue
             symbol = record.symbol.value
             state = record.robot_state or {}
-            if state.get("phase") not in (
-                    "WAITING_RETEST", "RETEST_DETECTED", "BOX_ENTRY_READY"):
+            phase = state.get("phase")
+            pattern = record.signal_snapshot.get("pattern")
+            # Wedges can stay WAITING_BREAKOUT for multiple M1; warming only
+            # after breakout loses the entire initial impulse window. L-shape
+            # uses a DISTINCT state name, not Wedge's WAITING_RETEST.
+            # These phases warm data ONLY; REST certification and entry
+            # remain restricted to exact durable approved-entry scope.
+            warmable = {
+                "Falling Wedge": ("WAITING_BREAKOUT", "WAITING_RETEST", "RETEST_DETECTED"),
+                "Rising Wedge": ("WAITING_BREAKOUT", "WAITING_RETEST", "RETEST_DETECTED"),
+                "L-shape": ("L_SHAPE_WAITING_RETEST", "RETEST_DETECTED"),
+                "MIRROR": ("RETEST_DETECTED",),
+                "Double Top": ("RETEST_DETECTED",),
+                "Double Bottom": ("RETEST_DETECTED",),
+                "IKIGAI_BOX": ("BOX_ENTRY_READY",),
+            }
+            if phase not in warmable[pattern]:
                 continue
             score = (0 if existing_pattern_entry_scope(record) is not None else 1,
                      str(record.candidate_id))

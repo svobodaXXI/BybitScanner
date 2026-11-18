@@ -141,6 +141,69 @@ class ObserverTests(unittest.TestCase):
             self.assertEqual(hub.list_flow_contexts(), ())
             hub.close()
 
+    def test_wedge_and_l_shape_warm_before_retest_without_rest_or_orders(self):
+        """Warm historical prints at canonical WAITING states, not just at entry."""
+        from terminal.market_data.hub import MarketDataHub
+        from tests.test_terminal_market_data_hub import _Registry, _context
+        observed, recent, previous, current = PatternFlowSourceTests.source()
+        phases = (
+            ("Falling Wedge", "WAITING_BREAKOUT"),
+            ("Rising Wedge", "WAITING_RETEST"),
+            ("L-shape", "L_SHAPE_WAITING_RETEST"),
+        )
+        for pattern, phase in phases:
+            with self.subTest(pattern=pattern, phase=phase):
+                hub = MarketDataHub(_Registry(), _context,
+                                    connection_factory=lambda *_a, **_k: None)
+                record = _candidate(phase=phase)
+                record.signal_snapshot = {"pattern": pattern}
+                rest = _REST(recent, previous, current)
+                observer = PatternFlowObserver(
+                    hub, rest, "unused",
+                    clock_ms=lambda: PatternFlowSourceTests.CLOSE + 5_000,
+                    get_candidates=lambda: (record,),
+                )
+                try:
+                    self.assertEqual(observer.once(), 0)
+                    self.assertEqual(hub.list_contexts(), ())
+                    self.assertEqual(len(hub.list_flow_contexts()), 1)
+                    self.assertEqual(hub.list_flow_contexts()[0].symbol, "BTCUSDT")
+                    self.assertEqual(rest.requests, [])
+                    self.assertIsNone(observer.get(record))
+                finally:
+                    observer.close()
+                    self.assertEqual(hub.list_flow_contexts(), ())
+                    hub.close()
+
+    def test_unknown_or_terminal_patterns_never_warm_trade_subscription(self):
+        from terminal.market_data.hub import MarketDataHub
+        from tests.test_terminal_market_data_hub import _Registry, _context
+        observed, recent, previous, current = PatternFlowSourceTests.source()
+        for pattern, phase in (
+            ("IMPULSE_FLOW", "WAITING_RETEST"),
+            ("L-shape", "WAITING_RETEST"),
+            ("Falling Wedge", "EXPIRED_AT_APEX"),
+            ("IKIGAI_BOX", "BOX_PLAN_ONLY"),
+        ):
+            with self.subTest(pattern=pattern, phase=phase):
+                hub = MarketDataHub(_Registry(), _context,
+                                    connection_factory=lambda *_a, **_k: None)
+                record = _candidate(phase=phase)
+                record.signal_snapshot = {"pattern": pattern}
+                rest = _REST(recent, previous, current)
+                observer = PatternFlowObserver(
+                    hub, rest, "unused",
+                    clock_ms=lambda: PatternFlowSourceTests.CLOSE + 5_000,
+                    get_candidates=lambda: (record,),
+                )
+                try:
+                    self.assertEqual(observer.once(), 0)
+                    self.assertEqual(hub.list_flow_contexts(), ())
+                    self.assertEqual(rest.requests, [])
+                finally:
+                    observer.close()
+                    hub.close()
+
     def test_opt_in_is_explicit_and_default_off(self):
         with patch.dict(os.environ, {}, clear=True):
             self.assertFalse(pattern_flow_enabled())
