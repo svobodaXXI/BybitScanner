@@ -1327,6 +1327,83 @@ describe("Finrez first-screen UI", () => {
     expect(screen.getByText("ETHUSDT")).toBeInTheDocument();
   });
 
+  it("shows the exact money-weighted Finrez split above tickers and filters without changing period totals", async () => {
+    const episode = (id: string, symbol: string, pnl_usdt: string,
+      cohort: "ROBOT" | "ROBOT_MANUAL_CLOSE" | "JOINT_MANAGEMENT" = "ROBOT") => ({
+      trade_episode_id: "te_" + id.repeat(24), symbol, side: "LONG" as const,
+      opened_at_ms: 1_793_001_000_000, closed_at_ms: 1_793_002_000_000,
+      pnl_usdt, execution_count: 2, cohort,
+      replay_evidence: "EPISODE_INDEX_ONLY" as const,
+    });
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => new Response(JSON.stringify({
+      ...finrezResponse,
+      period: new URL(url, "http://localhost").searchParams.get("period") ?? "DAY",
+      tickers: [
+        { symbol: "ETHUSDT", pnl_usdt: "4.0", trade_count: 2 },
+        { symbol: "BTCUSDT", pnl_usdt: "-3", trade_count: 1 },
+      ],
+      closed_episodes: [
+        episode("a", "ETHUSDT", "6.0"),
+        episode("b", "ETHUSDT", "-2.0"),
+        episode("c", "BTCUSDT", "-3"),
+        episode("d", "EXCLUDEDUSDT", "-90", "ROBOT_MANUAL_CLOSE"),
+        episode("e", "SHAREDUSDT", "+25", "JOINT_MANAGEMENT"),
+      ],
+      manual_interventions: [{ symbol: "EXCLUDEDUSDT", pnl_usdt: "-90", trade_count: 1 }],
+      joint_management: [{ symbol: "SHAREDUSDT", pnl_usdt: "25", trade_count: 1 }],
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<DiaryOverlay accountKey="paper:finrez-money" initialSection="FINREZ"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    const money = await screen.findByRole("group", { name: "Финрез: прибыль и убыток в USDT" });
+    expect(money).toHaveTextContent("Прибыль: +6,00 USDT");
+    expect(money).toHaveTextContent("Убыток: -5,00 USDT");
+    expect(screen.getByRole("button", { name: "Показать все тикеры" })).toHaveTextContent("Итог+1,00 USDT");
+    const profitSegment = screen.getByRole("button", { name: "Прибыль за период" });
+    const lossSegment = screen.getByRole("button", { name: "Убыток за период" });
+    expect(Number.parseFloat(profitSegment.style.width)).toBeCloseTo(600 / 11, 4);
+    expect(Number.parseFloat(lossSegment.style.width)).toBeCloseTo(500 / 11, 4);
+    fireEvent.click(profitSegment);
+    expect(profitSegment).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText("ETHUSDT")).toBeInTheDocument();
+    expect(screen.queryByText("BTCUSDT")).not.toBeInTheDocument();
+    expect(money).toHaveTextContent("Итог+1,00 USDT");
+    fireEvent.click(screen.getByRole("button", { name: "Показать все тикеры" }));
+    expect(screen.getByText("BTCUSDT")).toBeInTheDocument();
+    fireEvent.click(lossSegment);
+    expect(screen.queryByText("ETHUSDT")).not.toBeInTheDocument();
+    expect(screen.getByText("BTCUSDT")).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("searchbox", { name: "Поиск по тикеру" }), {
+      target: { value: "ETH" },
+    });
+    expect(screen.getByText("Нет тикеров с выбранным результатом")).toBeInTheDocument();
+    expect(money).toHaveTextContent("Итог+1,00 USDT");
+    fireEvent.click(screen.getByRole("button", { name: "Неделя" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=WEEK",
+    ));
+    expect(await screen.findByRole("group", { name: "Финрез: прибыль и убыток в USDT" }))
+      .toHaveTextContent("Итог+1,00 USDT");
+  });
+
+  it("withholds an unreconciled Finrez total rather than summing unverified ticker rows", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ...finrezResponse,
+      closed_episodes: [{
+        trade_episode_id: "te_" + "a".repeat(24), symbol: "ETHUSDT", side: "LONG",
+        opened_at_ms: 1_793_001_000_000, closed_at_ms: 1_793_002_000_000,
+        pnl_usdt: "6", execution_count: 2, cohort: "ROBOT",
+        replay_evidence: "EPISODE_INDEX_ONLY",
+      }],
+    }), { status: 200 })));
+    render(<DiaryOverlay accountKey="paper:finrez-unreconciled" initialSection="FINREZ"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    expect(await screen.findByText(/Суммарный результат недоступен/)).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Финрез: прибыль и убыток в USDT" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Показать все тикеры" })).not.toBeInTheDocument();
+    expect(screen.getByText("ETHUSDT")).toBeInTheDocument();
+  });
+
   it("displays compact, exact-tooltip Finrez PnL for all management cohorts", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
       ...finrezResponse,
