@@ -4617,3 +4617,164 @@ def test_legacy_unsealed_paused_successor_only_retires_prior_after_editor_ready(
         journal, prior, root=root, uid=os.geteuid(), target=target,
         require_ready=True,
     )
+
+
+def test_active_stopped_paper_monolith_runs_one_guarded_intent_sequence(
+    monkeypatch, tmp_path,
+):
+    """Live Backend + clean STOPPED Robot is resumed without systemctl/STOP."""
+    import os
+    from types import SimpleNamespace
+    import tools.paper_maintenance as maintenance
+    import tools.runtime_intent as intent
+    import tools.stop_robot_runtime as shutdown
+    import tools.vps_release_identity as release
+    import tools.vps_paper_auto_start as auto_start
+    import tools.vps_gitless_release_activate as gitless
+
+    target, identity = "a" * 40, "d" * 64
+    db = tmp_path / "paper.sqlite3"
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "CREATE TABLE robot_runtime_state "
+            "(trading_account_id TEXT, mode TEXT, recovery_status TEXT, "
+            "reason TEXT, version INTEGER, updated_at_ms INTEGER)"
+        )
+        conn.execute(
+            "INSERT INTO robot_runtime_state VALUES "
+            "('paper','ROBOT_STOPPED','ROBOT_STOPPED',NULL,142,1795006259771)"
+        )
+    journal = tmp_path / "transactions"
+    journal.mkdir(mode=0o700)
+    journal.chmod(0o700)
+    monkeypatch.setattr(gitless, "TRANSACTIONS", journal)
+    monkeypatch.setattr(gitless, "_sync_directory", lambda *_: None)
+    env = {
+        "BYBITSCANNER_PAPER_DB": str(db),
+        "BYBITSCANNER_VPS_PAPER_AUTO_ON_START": "1",
+        "BYBITSCANNER_AUTOPILOT_OWNER_TOKEN": "x" * 40,
+    }
+    monkeypatch.setattr(maintenance, "_environment", lambda *_: env)
+    monkeypatch.setattr(maintenance, "_paper_start_quiescent", lambda *_: True)
+    monkeypatch.setattr(
+        maintenance, "_active_required_flat_proof",
+        lambda *_: ("ROBOT_STOPPED", "ROBOT_STOPPED", None),
+    )
+    monkeypatch.setattr(maintenance, "_editor_telegram_ready", lambda *_: True)
+    monkeypatch.setattr(maintenance, "_paper_full_readiness",
+                        lambda **_kw: "READY: full PAPER verified")
+    monkeypatch.setattr(shutdown, "_database_path", lambda *_: db)
+    monkeypatch.setattr(release, "verify_release", lambda *_: target)
+    monkeypatch.setattr(intent, "expected_database_identity", lambda *_: identity)
+    steps = []
+    auto = ["OFF"]
+    scanner = ["SCANNER_STOPPED"]
+    def get(url, _timeout):
+        if url.endswith("/api/health"):
+            value = {
+                "ok": True, "component": "paper_backend", "mode": "paper",
+                "build_sha": target, "database_identity": identity,
+                "paper_live_safe": True, "process_instance_id": "same-process",
+            }
+        elif url.endswith("/api/scanner/status"):
+            value = {"ok": True, "mode": scanner[0]}
+        elif url.endswith("/api/robot/autopilot"):
+            value = {"ok": True, "mode": auto[0]}
+        elif url.endswith("/api/robot/protection-health"):
+            value = {
+                "ok": True, "healthy": True, "unhealthy_symbols": {},
+                "covered_symbols": [], "armed_symbols": [], "coverage_roles": {},
+                "ingress": {"current_pending": 0},
+                "ingress_recent": {"current_pending": 0},
+            }
+        else:
+            raise AssertionError(url)
+        return SimpleNamespace(status=200, json=lambda: value)
+    def post(url, payload, _timeout):
+        assert url.endswith("/api/runtime/intent")
+        name = payload["intent"]
+        steps.append(name)
+        if name == "SCANNER":
+            scanner[0] = "SCANNER_RUNNING"
+            result = {"scanner": "RUNNING"}
+        else:
+            assert name == "ROBOT"
+            result = {"robot": "READY", "protection": "HEALTHY"}
+        return SimpleNamespace(
+            status=200, json=lambda: {
+                "ok": True, "intent": name, "final": result,
+            },
+        )
+    monkeypatch.setattr(intent, "http_get", get)
+    monkeypatch.setattr(intent, "http_post_json", post)
+    monkeypatch.setattr(
+        auto_start, "enable_from_authorized_start",
+        lambda _env: (steps.append("PAPER_AUTO"), auto.__setitem__(0, "PAPER_AUTO")),
+    )
+
+    result = maintenance._start_active_stopped_paper(
+        target, root=tmp_path, env_file=None, trusted_uid=os.geteuid(),
+    )
+    assert result == "READY: full PAPER verified"
+    assert steps == ["ROBOT", "SCANNER", "PAPER_AUTO"]
+    assert len(list(journal.glob(".robot-stopped-start-*"))) == 1
+
+    # Simulate an unknown owner response with durable STOPPED data intact:
+    # the journal, not merely running-state guards, must prevent replay.
+    auto[0] = "OFF"
+    scanner[0] = "SCANNER_STOPPED"
+    assert maintenance._start_active_stopped_paper(
+        target, root=tmp_path, env_file=None, trusted_uid=os.geteuid(),
+    ).startswith("BLOCKED:")
+    assert steps == ["ROBOT", "SCANNER", "PAPER_AUTO"]
+
+
+def test_active_stopped_paper_unhealthy_protection_never_posts(
+    monkeypatch, tmp_path,
+):
+    import os
+    from types import SimpleNamespace
+    import tools.paper_maintenance as maintenance
+    import tools.runtime_intent as intent
+    import tools.stop_robot_runtime as shutdown
+    import tools.vps_release_identity as release
+
+    target, identity = "a" * 40, "d" * 64
+    db = tmp_path / "paper.sqlite3"
+    db.touch()
+    monkeypatch.setattr(maintenance, "_environment", lambda *_: {
+        "BYBITSCANNER_PAPER_DB": str(db),
+        "BYBITSCANNER_VPS_PAPER_AUTO_ON_START": "1",
+        "BYBITSCANNER_AUTOPILOT_OWNER_TOKEN": "x" * 40,
+    })
+    monkeypatch.setattr(shutdown, "_database_path", lambda *_: db)
+    monkeypatch.setattr(release, "verify_release", lambda *_: target)
+    monkeypatch.setattr(intent, "expected_database_identity", lambda *_: identity)
+    monkeypatch.setattr(maintenance, "_paper_start_quiescent", lambda *_: True)
+    monkeypatch.setattr(
+        maintenance, "_active_required_flat_proof",
+        lambda *_: ("ROBOT_STOPPED", "ROBOT_STOPPED", None),
+    )
+    monkeypatch.setattr(maintenance, "_editor_telegram_ready", lambda *_: True)
+    def get(url, _timeout):
+        data = (
+            {"ok": True, "component": "paper_backend", "mode": "paper",
+             "build_sha": target, "database_identity": identity,
+             "paper_live_safe": True, "process_instance_id": "same-process"}
+            if url.endswith("/api/health") else
+            {"ok": True, "mode": "SCANNER_STOPPED"}
+            if url.endswith("/api/scanner/status") else
+            {"ok": True, "mode": "OFF"}
+            if url.endswith("/api/robot/autopilot") else
+            {"ok": True, "healthy": False}
+        )
+        return SimpleNamespace(status=200, json=lambda: data)
+    monkeypatch.setattr(intent, "http_get", get)
+    monkeypatch.setattr(
+        intent, "http_post_json",
+        lambda *_args: pytest.fail("protection not proven: no runtime POST"),
+    )
+    status = maintenance._start_active_stopped_paper(
+        target, root=tmp_path, env_file=None, trusted_uid=os.geteuid(),
+    )
+    assert status.startswith("BLOCKED: active_stopped_PAPER_protection")
