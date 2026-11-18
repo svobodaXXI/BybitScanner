@@ -140,17 +140,17 @@ class PatternEntryFlowOverlayTests(unittest.TestCase):
                 self.assertFalse(match_existing_pattern_flow(
                     chosen, replace(proof, state_revision=3), now_ms=181_000,
                 ))
-                self.assertIsNone(existing_pattern_entry_scope(replace(
-                    record, robot_state={**state, "direction":
-                         ("SHORT" if direction == "LONG" else "LONG")}
+                self.assertIsNone(existing_pattern_entry_scope(SimpleNamespace(
+                    **{**vars(record), "robot_state": {**state, "direction":
+                         ("SHORT" if direction == "LONG" else "LONG")}}
                 )))
                 if pattern == "IKIGAI_BOX":
-                    self.assertIsNone(existing_pattern_entry_scope(replace(
-                        record, status="BOX_PLAN_ONLY",
+                    self.assertIsNone(existing_pattern_entry_scope(SimpleNamespace(
+                        **{**vars(record), "status": "BOX_PLAN_ONLY"}
                     )))
                 else:
-                    self.assertIsNone(existing_pattern_entry_scope(replace(
-                        record, robot_state={**state, "phase": "WAITING_RETEST"},
+                    self.assertIsNone(existing_pattern_entry_scope(SimpleNamespace(
+                        **{**vars(record), "robot_state": {**state, "phase": "WAITING_RETEST"}}
                     )))
 
     def test_missing_or_forged_source_proof_rejected(self):
