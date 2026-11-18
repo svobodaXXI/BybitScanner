@@ -6,6 +6,7 @@ L-shape Robot candidate, but this module never approves or executes it.
 
 from pathlib import Path
 import re
+import time
 
 import config
 from geometry.l_shape import detect_l_shape, l_shape_signal_plan
@@ -73,9 +74,10 @@ def observe_l_shape(symbol, candles, *, timeframe, chart_dir="charts"):
     print(f"{symbol:<15} L-SHAPE preview {chart}")
     # Informational reversal confirmation from the SAME already closed bar
     # window; no new candidate, independent order, or entry permission.
+    auxiliary_now_ms = int(time.time() * 1000)
     auxiliary = build_auxiliary_reversal_evidence(
         symbol, timeframe, closed.to_dict("records"),
-        now_ms=source_time + int(timeframe) * 60_000,
+        now_ms=auxiliary_now_ms,
     )
     return {
         "formation": formation,
@@ -84,6 +86,7 @@ def observe_l_shape(symbol, candles, *, timeframe, chart_dir="charts"):
         "source_candle_time_ms": source_time,
         "chart_path": str(chart),
         "auxiliary_reversal": auxiliary,
+        "auxiliary_observed_at_ms": auxiliary_now_ms,
     }
 
 
@@ -112,7 +115,7 @@ def _robot_signal_snapshot(symbol, timeframe, observation):
     }
     return attach_auxiliary_reversal(
         snapshot, observation.get("auxiliary_reversal"),
-        now_ms=int(observation["source_candle_time_ms"]) + int(timeframe) * 60_000,
+        now_ms=int(observation.get("auxiliary_observed_at_ms") or time.time() * 1000),
     )
 
 
