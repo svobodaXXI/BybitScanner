@@ -270,10 +270,151 @@ def test_legacy_approved_double_candidate_cannot_reach_monitor_order_submission(
         # No market candle, order adapter or runtime admission call may occur.
         with patch.object(
             RobotBreakoutMonitor, "_invalidate_pre_entry_candidate",
-        ) as invalidate:
-            # This uninitialized monitor would raise if it read market/order
-            # dependencies, proving the guard returns before any such path.
+        ) as invalidate, patch.object(
+            RobotBreakoutMonitor, "_paper_candidate_is_inert", return_value=True,
+        ) as inert:
             assert monitor._advance_l_shape_retest_detected(candidate) is True
+        inert.assert_called_once_with(candidate)
         invalidate.assert_called_once_with(
             candidate, reason="Double Top/Bottom is auxiliary-only",
         )
+
+
+def test_legacy_double_without_order_preserves_ambiguous_exposure():
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    from terminal.application.robot_breakout_monitor import RobotBreakoutMonitor
+    from terminal.domain.models import Symbol
+
+    monitor = object.__new__(RobotBreakoutMonitor)
+    for pattern in ("Double Top", "Double Bottom"):
+        candidate = SimpleNamespace(
+            candidate_id="legacy", symbol=Symbol("LABUSDT"), status="APPROVED",
+            signal_snapshot={"pattern": pattern},
+            robot_state={"phase": "RETEST_DETECTED", "execution": {}},
+        )
+        with patch.object(
+            RobotBreakoutMonitor, "_paper_candidate_is_inert", return_value=False,
+        ), patch.object(
+            RobotBreakoutMonitor, "_invalidate_pre_entry_candidate",
+        ) as invalidated:
+            assert monitor._advance_l_shape_retest_detected(candidate) is False
+        invalidated.assert_not_called()
+
+
+def test_legacy_double_standing_limit_cancel_before_match():
+    from types import SimpleNamespace
+    from unittest.mock import Mock, patch
+    from terminal.application.robot_breakout_monitor import RobotBreakoutMonitor
+    from terminal.api.models import CommandResultStatus
+    from terminal.domain.models import TradingAccountId, Symbol
+
+    def order(status, qty):
+        return SimpleNamespace(
+            status=status, quantity=Decimal("1"), filled_quantity=Decimal(qty),
+        )
+
+    for pattern in ("Double Top", "Double Bottom"):
+        candidate = SimpleNamespace(
+            candidate_id="legacy", symbol=Symbol("LABUSDT"), status="APPROVED",
+            signal_snapshot={"pattern": pattern},
+            robot_state={
+                "phase": "RETEST_DETECTED",
+                "execution": {"limit_order_id": "legacy-limit"},
+            },
+        )
+        monitor = object.__new__(RobotBreakoutMonitor)
+        monitor._account_id = TradingAccountId("paper")
+        monitor._match_resting_orders = Mock()
+        cancelled = Mock(return_value=SimpleNamespace(status=CommandResultStatus.COMPLETED))
+        monitor._action_executor = SimpleNamespace(cancel_limit=cancelled)
+        store = Mock()
+        store.get_paper_limit.side_effect = [
+            order("open", "0"), order("cancelled", "0"),
+        ]
+        with patch.object(
+            RobotBreakoutMonitor, "_store", return_value=store,
+        ), patch.object(
+            RobotBreakoutMonitor, "_invalidate_pre_entry_candidate",
+        ) as invalidate, patch.object(
+            RobotBreakoutMonitor, "_confirm_entry_admission",
+        ) as confirm:
+            assert monitor._advance_l_shape_retest_detected(candidate) is True
+        cancelled.assert_called_once()
+        assert cancelled.call_args.args[0].order_id == "legacy-limit"
+        invalidate.assert_called_once_with(
+            candidate, reason="Double Top/Bottom legacy LIMIT cancelled without fill",
+        )
+        confirm.assert_not_called()
+        monitor._match_resting_orders.assert_not_called()
+
+
+def test_legacy_double_cancel_unknown_never_advances_or_invalidates():
+    from types import SimpleNamespace
+    from unittest.mock import Mock, patch
+    from terminal.application.robot_breakout_monitor import RobotBreakoutMonitor
+    from terminal.domain.models import TradingAccountId, Symbol
+
+    monitor = object.__new__(RobotBreakoutMonitor)
+    monitor._account_id = TradingAccountId("paper")
+    monitor._match_resting_orders = Mock()
+    monitor._action_executor = SimpleNamespace(
+        cancel_limit=Mock(return_value=SimpleNamespace(status="UNPROVEN")),
+    )
+    store = Mock()
+    store.get_paper_limit.return_value = SimpleNamespace(
+        status="open", quantity=Decimal("1"), filled_quantity=Decimal("0"),
+    )
+    candidate = SimpleNamespace(
+        candidate_id="legacy", symbol=Symbol("LABUSDT"), status="APPROVED",
+        signal_snapshot={"pattern": "Double Bottom"},
+        robot_state={"phase": "RETEST_DETECTED", "execution": {"limit_order_id": "legacy-limit"}},
+    )
+    with patch.object(
+        RobotBreakoutMonitor, "_store", return_value=store,
+    ), patch.object(
+        RobotBreakoutMonitor, "_invalidate_pre_entry_candidate",
+    ) as invalidated:
+        assert monitor._advance_l_shape_retest_detected(candidate) is False
+    invalidated.assert_not_called()
+    monitor._match_resting_orders.assert_not_called()
+
+
+def test_legacy_double_cancel_race_preserves_actual_partial_fill():
+    from types import SimpleNamespace
+    from unittest.mock import Mock, patch
+    from terminal.application.robot_breakout_monitor import RobotBreakoutMonitor
+    from terminal.api.models import CommandResultStatus
+    from terminal.domain.models import TradingAccountId, Symbol
+
+    monitor = object.__new__(RobotBreakoutMonitor)
+    monitor._account_id = TradingAccountId("paper")
+    monitor._match_resting_orders = Mock()
+    monitor._action_executor = SimpleNamespace(
+        cancel_limit=Mock(return_value=SimpleNamespace(status=CommandResultStatus.COMPLETED)),
+    )
+    candidate = SimpleNamespace(
+        candidate_id="legacy", symbol=Symbol("LABUSDT"), status="APPROVED",
+        signal_snapshot={"pattern": "Double Top"},
+        robot_state={"phase": "RETEST_DETECTED", "execution": {"limit_order_id": "legacy-limit"}},
+    )
+    store = Mock()
+    store.get_paper_limit.side_effect = [
+        SimpleNamespace(status="open", quantity=Decimal("1"), filled_quantity=Decimal("0")),
+        SimpleNamespace(status="cancelled", quantity=Decimal("1"), filled_quantity=Decimal("0.25")),
+    ]
+    store.get_robot_candidate.return_value = None
+    with patch.object(
+        RobotBreakoutMonitor, "_store", return_value=store,
+    ), patch.object(
+        RobotBreakoutMonitor, "_invalidate_pre_entry_candidate",
+    ) as invalidated, patch.object(
+        RobotBreakoutMonitor, "_finalize_trade",
+    ) as finalize:
+        assert monitor._advance_l_shape_retest_detected(candidate) is True
+    invalidated.assert_not_called()
+    finalize.assert_called_once_with(
+        candidate, {"limit_order_id": "legacy-limit"},
+        entry_path="LIMIT", actual_wv=Decimal("0.25"),
+    )
+    monitor._match_resting_orders.assert_not_called()
