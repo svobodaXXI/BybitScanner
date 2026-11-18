@@ -1621,6 +1621,7 @@ type FinrezMoneyTotals = { profit: string; loss: string; net: string };
 function verifiedFinrezMoneyTotals(report: FinrezResponse): FinrezMoneyTotals | null {
   if (!validClosedEpisodes(report)) return null;
   const episodes = (report.closed_episodes ?? []).filter((deal) => deal.cohort === report.owner);
+  if (report.attribution_coverage.status === "PARTIAL" && episodes.length === 0) return null;
   const net = sumVerifiedPnl(episodes.map((deal) => deal.pnl_usdt));
   const tickerNet = sumVerifiedPnl(report.tickers.map((ticker) => ticker.pnl_usdt));
   if (net === null || tickerNet === null || net !== tickerNet) return null;
