@@ -48,6 +48,58 @@ def test_exact_wedge_candidate_order_execution_episode():
     assert result["market_candles_coverage"] == "NOT_PROVIDED"
 
 
+def _wedge_with_entry_terms(snapshot, **overrides):
+    evidence = dict(snapshot.wedge_evidence)
+    trade = dict(
+        evidence["trades"][0],
+        average_entry="100", entry_quantity="1",
+        stop_price="95", take_price="110",
+    )
+    trade.update(overrides)
+    evidence["trades"] = (trade,)
+    return replace(snapshot, wedge_evidence=evidence)
+
+
+def test_entry_risk_is_exact_fill_verified_without_changing_lineage():
+    from decimal import Decimal
+    snapshot, kwargs = case()
+    result = project_selected_paper_wedge(
+        _wedge_with_entry_terms(snapshot), **kwargs,
+    )
+    risk = result["entry_risk"]
+    assert risk["status"] == "PROVEN_PERSISTED_ENTRY_TERMS"
+    assert risk["initial_stop_price"] == "95"
+    assert risk["initial_take_price"] == "110"
+    assert Decimal(risk["filled_average_entry"]) == Decimal("100")
+    assert Decimal(risk["initial_risk_price"]) == Decimal("5")
+    assert Decimal(risk["initial_risk_pct"]) == Decimal("5")
+    assert result["signal_pattern"] == "Falling Wedge"
+    assert result["market_candles_coverage"] == "NOT_PROVIDED"
+
+
+def test_entry_risk_mismatch_and_invalid_stop_fail_closed_only_for_risk():
+    snapshot, kwargs = case()
+    for overrides, reason in (
+        ({"entry_quantity": "2"}, "entry_fills_terms_mismatch"),
+        ({"average_entry": "101"}, "entry_fills_terms_mismatch"),
+        ({"stop_price": "101"}, "entry_protection_order_invalid"),
+        ({"stop_price": None}, "entry_terms_missing_or_invalid"),
+    ):
+        result = project_selected_paper_wedge(
+            _wedge_with_entry_terms(snapshot, **overrides), **kwargs,
+        )
+        assert result["entry_risk"] == {"status": "UNPROVEN", "reason": reason}
+        assert result["signal_pattern"] == "Falling Wedge"
+        assert result["exit_reason"] == "TAKE"
+
+
+def test_legacy_wedge_without_trade_terms_keeps_exact_pattern_not_risk():
+    snapshot, kwargs = case()
+    report = project_selected_paper_wedge(snapshot, **kwargs)
+    assert report["entry_risk"]["status"] == "UNPROVEN"
+    assert report["signal_pattern"] == "Falling Wedge"
+
+
 def test_rejects_candidate_without_exact_order():
     import pytest
     snapshot, kwargs = case()
