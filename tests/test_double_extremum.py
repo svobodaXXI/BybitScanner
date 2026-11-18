@@ -335,11 +335,14 @@ def test_legacy_double_standing_limit_cancel_before_match():
         with patch.object(
             RobotBreakoutMonitor, "_store", return_value=store,
         ), patch.object(
+            RobotBreakoutMonitor, "_cancelled_legacy_double_is_inert", return_value=True,
+        ) as proof, patch.object(
             RobotBreakoutMonitor, "_invalidate_pre_entry_candidate",
         ) as invalidate, patch.object(
             RobotBreakoutMonitor, "_confirm_entry_admission",
         ) as confirm:
             assert monitor._advance_l_shape_retest_detected(candidate) is True
+        proof.assert_called_once_with(candidate, "legacy-limit")
         cancelled.assert_called_once()
         assert cancelled.call_args.args[0].order_id == "legacy-limit"
         invalidate.assert_called_once_with(
@@ -347,6 +350,104 @@ def test_legacy_double_standing_limit_cancel_before_match():
         )
         confirm.assert_not_called()
         monitor._match_resting_orders.assert_not_called()
+
+
+def test_cancelled_double_without_proven_flat_does_not_invalidate_or_match():
+    from types import SimpleNamespace
+    from unittest.mock import Mock, patch
+    from terminal.application.robot_breakout_monitor import RobotBreakoutMonitor
+    from terminal.api.models import CommandResultStatus
+    from terminal.domain.models import TradingAccountId, Symbol
+
+    for pattern in ("Double Top", "Double Bottom"):
+        candidate = SimpleNamespace(
+            candidate_id="legacy", symbol=Symbol("LABUSDT"), status="APPROVED",
+            signal_snapshot={"pattern": pattern},
+            robot_state={
+                "phase": "RETEST_DETECTED",
+                "execution": {"limit_order_id": "legacy-limit"},
+            },
+        )
+        monitor = object.__new__(RobotBreakoutMonitor)
+        monitor._account_id = TradingAccountId("paper")
+        monitor._match_resting_orders = Mock()
+        cancel = Mock(return_value=SimpleNamespace(status=CommandResultStatus.COMPLETED))
+        monitor._action_executor = SimpleNamespace(cancel_limit=cancel)
+        store = Mock()
+        store.get_paper_limit.side_effect = [
+            SimpleNamespace(status="open", quantity=Decimal("1"),
+                            filled_quantity=Decimal("0")),
+            SimpleNamespace(status="cancelled", quantity=Decimal("1"),
+                            filled_quantity=Decimal("0")),
+        ]
+        with patch.object(
+            RobotBreakoutMonitor, "_store", return_value=store,
+        ), patch.object(
+            RobotBreakoutMonitor, "_cancelled_legacy_double_is_inert", return_value=False,
+        ) as proof, patch.object(
+            RobotBreakoutMonitor, "_invalidate_pre_entry_candidate",
+        ) as invalidated, patch.object(
+            RobotBreakoutMonitor, "_confirm_entry_admission",
+        ) as confirm:
+            assert monitor._advance_l_shape_retest_detected(candidate) is False
+        cancel.assert_called_once()
+        proof.assert_called_once_with(candidate, "legacy-limit")
+        confirm.assert_not_called()
+        invalidated.assert_not_called()
+        monitor._match_resting_orders.assert_not_called()
+
+
+def test_cancelled_double_proof_requires_no_order_fills_trade_or_residual_exposure():
+    from types import SimpleNamespace
+    from unittest.mock import Mock, patch
+    from terminal.application.robot_breakout_monitor import RobotBreakoutMonitor
+    from terminal.application.robot_recovery import RobotRecoveryCoordinator
+    from terminal.domain.models import TradingAccountId, Symbol
+
+    monitor = object.__new__(RobotBreakoutMonitor)
+    monitor._account_id = TradingAccountId("paper")
+    monitor._clock_ms = lambda: 1111
+    candidate = SimpleNamespace(
+        candidate_id="legacy", symbol=Symbol("LABUSDT"), status="APPROVED",
+        signal_snapshot={"pattern": "Double Top"},
+    )
+    store = Mock()
+    store.get_robot_trade.return_value = None
+    store.load_executions_for_order.return_value = ()
+    with patch.object(
+        RobotBreakoutMonitor, "_store", return_value=store,
+    ), patch.object(
+        RobotRecoveryCoordinator, "_candidate_is_inert", return_value=True,
+    ) as canonical:
+        assert monitor._cancelled_legacy_double_is_inert(candidate, "legacy-limit") is True
+    store.get_robot_trade.assert_called_once_with("robot-trade-legacy")
+    account, order_id = store.load_executions_for_order.call_args.args
+    assert account == monitor._account_id and order_id.value == "legacy-limit"
+    canonical.assert_called_once_with(candidate)
+
+    # A fill recorded in the immutable execution ledger overrides a cancelled
+    # order row that still (incorrectly) says filled_quantity == 0.
+    store.load_executions_for_order.return_value = (object(),)
+    with patch.object(
+        RobotBreakoutMonitor, "_store", return_value=store,
+    ), patch.object(
+        RobotRecoveryCoordinator, "_candidate_is_inert",
+        side_effect=AssertionError("must not inspect inertness after proven fill"),
+    ):
+        assert monitor._cancelled_legacy_double_is_inert(candidate, "legacy-limit") is False
+
+    store.load_executions_for_order.return_value = ()
+    store.get_robot_trade.return_value = object()
+    with patch.object(RobotBreakoutMonitor, "_store", return_value=store):
+        assert monitor._cancelled_legacy_double_is_inert(candidate, "legacy-limit") is False
+
+    store.get_robot_trade.return_value = None
+    with patch.object(
+        RobotBreakoutMonitor, "_store", return_value=store,
+    ), patch.object(
+        RobotRecoveryCoordinator, "_candidate_is_inert", return_value=False,
+    ):
+        assert monitor._cancelled_legacy_double_is_inert(candidate, "legacy-limit") is False
 
 
 def test_legacy_double_cancel_unknown_never_advances_or_invalidates():
