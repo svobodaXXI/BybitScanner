@@ -361,19 +361,6 @@ def scanner_candidate_admission_error(candidate: Mapping[str, Any]) -> str | Non
             or candidate.get("status") == "BOX_PLAN_ONLY"):
         return "BOX_PLAN_ONLY cannot enter execution admission"
     is_l_shape = robot_l_shape.is_l_shape_snapshot(snapshot)
-    is_impulse = snapshot.get("pattern") == "IMPULSE_FLOW"
-    if is_impulse:
-        import robot_impulse
-
-        if not robot_impulse.paper_enabled():
-            return "Impulse PAPER Robot is disabled"
-        if str(candidate.get("timeframe", "")).strip() != "1":
-            return "Impulse requires an exact 1m Scanner source"
-        try:
-            robot_impulse.frozen_terms(snapshot)
-        except robot_impulse.ImpulseRobotError:
-            return "Impulse tape and causal M1 source are unproven"
-        return None
     if not is_l_shape and not is_supported_pattern(snapshot.get("pattern")):
         return "Scanner candidate pattern is not supported by Robot"
 
@@ -478,7 +465,6 @@ def admit_robot_candidate(
             and snapshot_sha256 != expected_snapshot_sha256):
         raise RobotAdmissionRejected("Robot candidate immutable snapshot changed")
     is_l_shape = robot_l_shape.is_l_shape_snapshot(snapshot)
-    is_impulse = snapshot.get("pattern") == "IMPULSE_FLOW"
 
     resolved_database_path = (
         Path(database_path) if database_path is not None else DEFAULT_DATABASE_PATH
@@ -537,21 +523,6 @@ def admit_robot_candidate(
                 )
                 if created and is_l_shape:
                     state, _event = robot_l_shape.initialize_state({
-                        "candidate_id": candidate_id,
-                        "status": "APPROVED",
-                        "signal_snapshot": snapshot,
-                    })
-                    record = store.save_robot_candidate_state(
-                        candidate_id,
-                        status="APPROVED",
-                        robot_state=state,
-                        expected_revision=record.state_revision,
-                        updated_at_ms=now,
-                    )
-                if created and is_impulse:
-                    import robot_impulse
-
-                    state = robot_impulse.initialize_state({
                         "candidate_id": candidate_id,
                         "status": "APPROVED",
                         "signal_snapshot": snapshot,

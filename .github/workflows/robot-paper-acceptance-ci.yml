@@ -28,11 +28,11 @@ on:
       - "robot_market_confirmation.py"
       - "robot_protection.py"
       - "robot_entry_flow_evidence.py"
-      - "robot_impulse.py"
       - "tests/test_robot_entry_flow_evidence.py"
-      - "tests/test_robot_impulse_canonical_paper.py"
+      - "tests/test_robot_pattern_flow_source.py"
       - "terminal/market_data/impulse_observation.py"
       - "terminal/market_data/impulse_producer.py"
+      - "tests/test_robot_pattern_flow_overlay.py"
       - "tests/test_public_trade_impulse_observation.py"
       - "robot_flat_closure.py"
       - "tests/test_robot_flat_closure.py"
@@ -146,8 +146,8 @@ jobs:
           six==1.17.0
       - name: Verify shared causal Impulse Flow rules without order runtime
         run: python -m unittest tests.test_robot_entry_flow_evidence tests.test_robot_pattern_flow_overlay -v
-      - name: Verify gated Impulse through canonical Robot PAPER admission and protection
-        run: python -m unittest tests.test_robot_impulse_canonical_paper -v
+      - name: Verify no autonomous Impulse candidate and verified read-only flow source
+        run: python -m unittest tests.test_robot_pattern_flow_source -v
       - name: Verify publicTrade observation without order runtime
         run: python -m unittest tests.test_public_trade_impulse_observation -v
       - name: Verify subscribed-only Scanner source diagnostics
@@ -196,10 +196,10 @@ jobs:
           analyzer/core.py
           notification.py
           pattern_robot_integration.py
-          robot_impulse.py
           terminal/market_data/impulse_producer.py
           robot_entry_flow_evidence.py
-          tests/test_robot_impulse_canonical_paper.py
+          tests/test_robot_pattern_flow_source.py
+          tests/test_robot_pattern_flow_overlay.py
           robot_l_shape.py
           l_shape_scanner.py
           tools/stop_robot_runtime.py
