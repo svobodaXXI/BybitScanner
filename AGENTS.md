@@ -134,6 +134,27 @@ remote branch is unknown, stop before editing and reconcile the states
 explicitly while preserving all user-owned work. A read-only repository
 inspection does not require synchronization by itself.
 
+## Interactive approval buttons — permanent OWNER RULE 2026-11-18
+
+For **every explicit owner-authorization gate in ChatGPT** (PR merge, deployment,
+VPS/monolith operation, trading/runtime change, or another gated mutation),
+**request permission using clickable interactive buttons** when the chat
+interface supports them. Default pair: **«Разрешаю [exact action]»** and
+**«Не разрешаю»**. Each approval must name the one bounded operation, pinned
+SHA/PR where applicable, and what remains forbidden; never bundle independent
+authorizations. A button click submits a new owner message expressing that
+choice; it is **not** itself a completed operation or proof of preflight.
+Perform the authorized action only after the affirmative owner response and
+the normal task-specific safety checks. A denial leaves all state unchanged.
+
+Do not force the owner to type «разрешаю» or copy/paste an approval when
+clickable controls are available. If the interface does not support controls,
+fall back to the established exact-reply / `Сейчас сделай:` contract.
+This is a **user-interface rule, not expanded trading or VPS authority**.
+Its details are in `DOCUMENTS/ASSISTANT_PROTOCOL.md` §2.1.2; apply in every
+BybitScanner workstream/chat, including MONOLITH, Scanner/Robot, and
+Analysis/Simulator.
+
 ## Owner action vs delegated prompt labeling — OWNER RULE 2026-09-30
 
 Use `DOCUMENTS/ASSISTANT_PROTOCOL.md` §2.1.1 for every user-facing copy-ready block.
