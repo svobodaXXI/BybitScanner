@@ -1,4 +1,4 @@
-"""Offline fail-closed proof of the existing one-shot owner-PC monolith path."""
+"""Offline fail-closed proof of one protected laptop + PC owner operation."""
 import json
 import os
 from pathlib import Path
@@ -13,7 +13,8 @@ from tools.vps_check import parse_env_lines
 from tools import vps_release_resume as resume
 
 SHA = "5" * 40
-TOKEN = "A" * 64
+TOKEN_LAPTOP = "B" * 64
+TOKEN_PC = "A" * 64
 
 
 @pytest.fixture
@@ -38,7 +39,8 @@ def scenario(tmp_path, monkeypatch):
     monkeypatch.setattr(maintenance, "_paper_start_quiescent", lambda *a, **k: True)
     monkeypatch.setattr(pairing, "_robot_stopped", lambda **kwargs: True)
     monkeypatch.setattr(pairing, "_runtime_env", lambda **kwargs: state["live"].copy())
-    monkeypatch.setattr(pairing.secrets, "token_urlsafe", lambda n: TOKEN if n == 48 else None)
+    tokens = iter((TOKEN_LAPTOP, TOKEN_PC))
+    monkeypatch.setattr(pairing.secrets, "token_urlsafe", lambda n: next(tokens) if n == 48 else None)
     monkeypatch.setattr(resume, "check_resume", lambda target, **kwargs: "RESUME_READY: exact stop")
 
     def stop(*a, **kw):
@@ -64,13 +66,21 @@ def test_provision_uses_exact_existing_stop_and_editor_only_resume(scenario):
     owner, original, state, invoke = scenario
     outcome = invoke()
     assert outcome.startswith("READY:")
-    assert TOKEN not in outcome
+    assert TOKEN_LAPTOP not in outcome and TOKEN_PC not in outcome
     assert state["stop"] == 1 and state["resume"] == 1
     assert owner.read_bytes() == original
     simulator = owner.parent / "simulator.env"
     cfg = parse_env_lines(simulator.read_text().splitlines())
     assert cfg["BYBITSCANNER_SIMULATOR_BRIDGE_ORIGIN"] == pairing.ORIGIN
-    assert json.loads(cfg["BYBITSCANNER_SIMULATOR_BRIDGE_DEVICES_JSON"]) == {"owner-pc": TOKEN}
+    devices = json.loads(cfg["BYBITSCANNER_SIMULATOR_BRIDGE_DEVICES_JSON"])
+    assert devices == {"owner-laptop": TOKEN_LAPTOP, "owner-pc": TOKEN_PC}
+    from terminal.diary.simulator_launch_relay import SimulatorLaunchRelay
+    relay = SimulatorLaunchRelay(origin=pairing.ORIGIN, devices=devices)
+    for device, token in devices.items():
+        assert relay.pairing_credentials(
+            device_id=device, request_origin=pairing.ORIGIN, fetch_site="same-origin",
+        ) == {"device_id": device, "token": token}
+    assert TOKEN_LAPTOP != TOKEN_PC
     assert simulator.stat().st_mode & 0o077 == 0
 
 
@@ -129,7 +139,7 @@ def test_partial_resume_does_not_retry_stop_or_secret_write(scenario, monkeypatc
     monkeypatch.setattr(maintenance, "resume_installed_release", failed_resume)
     outcome = invoke()
     assert "editor_only_resume_unproven" in outcome
-    assert TOKEN not in outcome
+    assert TOKEN_LAPTOP not in outcome and TOKEN_PC not in outcome
     assert state["stop"] == state["resume"] == 1
     assert owner.read_bytes() == original
     assert (owner.parent / "simulator.env").is_file()
