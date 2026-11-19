@@ -353,7 +353,7 @@ class RobotRecoveryCoordinatorTests(unittest.TestCase):
         self.assertEqual(self.store.get_robot_candidate("candidate-1").status, "APPROVED")
 
     def test_malformed_external_candle_time_keeps_recovery_fenced(self):
-        # All three originate from the restart geometry evidence provider,
+        # These failures originate from the restart geometry evidence provider,
         # not from a provably broken immutable signal.
         self._create_waiting_candidate()
         self._initialize_running()
@@ -361,6 +361,8 @@ class RobotRecoveryCoordinatorTests(unittest.TestCase):
             "Scanner closed 1m candle time is invalid",
             "latest closed candle predates Scanner cursor anchor",
             "closed candle time is not aligned to Scanner 1m index space",
+            "Scanner geometry evidence is unavailable for latest snapshot",
+            "provider: latest closed candle predates Scanner cursor anchor",
         )):
             with self.subTest(reason=reason):
                 if index:
