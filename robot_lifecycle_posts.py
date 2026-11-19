@@ -77,16 +77,16 @@ def recover_legacy_lifecycle_cursor(store, state: LifecycleState, now_ms: int) -
 def save_lifecycle_state(path: Path, state: LifecycleState) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + ".tmp")
-    temporary.write_text(
-        json.dumps({
-            "initialized_at_ms": state.initialized_at_ms,
-            "opened": state.opened,
-            "closed": state.closed,
-            "retry_after_ms": state.retry_after_ms,
-            "last_notified_key": state.last_notified_key,
-        }),
-        encoding="utf-8",
-    )
+    payload = {
+        "initialized_at_ms": state.initialized_at_ms,
+        "opened": state.opened,
+        "closed": state.closed,
+        "retry_after_ms": state.retry_after_ms,
+    }
+    # Preserve the historical initial-state format until a delivery is recorded.
+    if state.last_notified_key is not None:
+        payload["last_notified_key"] = state.last_notified_key
+    temporary.write_text(json.dumps(payload), encoding="utf-8")
     os.replace(temporary, path)
 
 
