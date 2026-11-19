@@ -181,6 +181,7 @@ CONTROL_ACTIONS = {
     "Остановить PAPER-ядро": "stop",
     "Обновить и запустить PAPER": "update-and-start",
     "Сопрячь один ПК (EDITOR_ONLY)": "provision-owner-pc",
+    "Сверить FUSDT STOP (однократно)": "reconcile",
 }
 CONTROL_MODULE = "cd /opt/BybitScanner && /opt/BybitScanner/venv/bin/python -m tools.vps_owner_control"
 
@@ -376,7 +377,7 @@ def control_ssh_command(host: str, user: str, key: str, operation: str,
                         origin: str = "") -> list[str]:
     argv = ssh_command(host, user, "Состояние", key)
     if operation in CONTROL_ACTIONS.values():
-        if sha == "installed" and operation in ("start", "stop"):
+        if sha == "installed" and operation in ("start", "stop", "reconcile"):
             pass
         elif EXACT_SHA.fullmatch(sha) is None:
             raise ValueError("Нужен точный SHA релиза (40 символов)")
@@ -864,8 +865,9 @@ class VPSManager(tk.Tk):
     def run_control(self, mode: str) -> None:
         if self.busy:
             return
-        sha = self.sha.get().strip() or (
-            "installed" if mode in ("start", "stop") else "")
+        sha = ("installed" if mode == "reconcile"
+               else self.sha.get().strip() or (
+                   "installed" if mode in ("start", "stop") else ""))
         request = (uuid.uuid4().hex if mode in CONTROL_ACTIONS.values()
                    else self.request_id.get().strip() if mode == "status"
                    else self.last_request_id)
