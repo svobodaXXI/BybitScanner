@@ -392,6 +392,58 @@ class ObserverTests(unittest.TestCase):
         self.assertTrue(match_existing_pattern_flow(scope, receipt, now_ms=clock()))
         observer.close()
 
+    def test_proven_wedge_breakout_certifies_early_before_original_retest(self):
+        """Real source parity runs on a frozen host in WAITING_RETEST.
+
+        Pure research timing uses already cached evidence, no second REST
+        request, no order authority, and no fabricated Box breakout.
+        """
+        observed, recent, previous, current = PatternFlowSourceTests.source()
+        host = _candidate(phase="WAITING_RETEST")
+        host.signal_snapshot = {
+            "pattern": "Falling Wedge",
+            "geometry": {
+                "upper_line": {"slope": -1, "intercept": 200},
+                "lower_line": {"slope": -0.5, "intercept": 145},
+                "apex": {"index": 110, "valid_intersection": True},
+                "current_index": 100,
+            },
+            "scanner_geometry_cursor": {
+                "version": "1.0", "timeframe": "1",
+                "geometry_index": 100,
+                "source_candle_time_ms": PatternFlowSourceTests.CLOSE - 120_000,
+            },
+        }
+        host.robot_state = {
+            "state_version": "1.0", "pattern": "Falling Wedge",
+            "phase": "WAITING_RETEST", "direction": "LONG",
+            "geometry_cursor": 101, "breakout_index": 101,
+            "retest_index": None,
+        }
+        self.assertIsNone(existing_pattern_entry_scope(host))
+        rest = _REST(recent, previous, current)
+        ctx = _Context(observed)
+        observer = PatternFlowObserver(
+            SimpleNamespace(list_contexts=lambda: (ctx,)),
+            rest, "unused",
+            clock_ms=lambda: PatternFlowSourceTests.CLOSE + 5_000,
+            get_candidates=lambda: (host,),
+        )
+        try:
+            self.assertEqual(observer.once(), 1)
+            receipt = observer.get(host)
+            self.assertIsNotNone(receipt)
+            self.assertEqual(receipt.source_kind, "BYBIT_TRIPLE_CLOSED_M1_CERTIFIED")
+            decision = observer.research_timing(host)
+            self.assertEqual(decision.outcome, "IMPULSE_ENTRY_RESEARCH")
+            self.assertFalse(decision.trading_authorized)
+            self.assertEqual(len(rest.requests), 3)
+            # A missing/mutated frozen breakout must never reuse the receipt.
+            host.robot_state["breakout_index"] = 100
+            self.assertIsNone(observer.research_timing(host))
+        finally:
+            observer.close()
+
     def test_opt_in_certification_window_is_enabled_on_existing_candidate_only(self):
         from terminal.market_data.impulse_observation import PublicTradeObservation
         observed, recent, previous, current = PatternFlowSourceTests.source()
