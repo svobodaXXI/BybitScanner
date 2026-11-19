@@ -802,10 +802,11 @@ def _repost_editor_source_id(original: Mapping) -> str | None:
     """Prefer the original immutable Editor history, never a ticker match.
 
     The live Scanner card and the later Robot candidate repost have different
-    archive IDs. Only direct Scanner-recorded lineage with matching original
-    image, text, pattern and symbol may point a duplicate at the same Editor
-    geometry/review. Pre-lineage candidate archives can still use their own
-    validated frozen geometry. If neither exists, keep the archived ID so the
+    archive IDs. Direct Scanner-recorded lineage, or a unique integrity-checked
+    legacy frozen source with identical image/text/pattern and near send time,
+    may point to the original Editor history. Pre-lineage candidate archives
+    with their own validated frozen geometry retain their own identity.
+    If neither exists, keep the archived ID so the
     Editor reports missing evidence instead of silently opening live candles.
     """
     own_id = str(original.get("candidate_id") or "").strip() or None
@@ -828,6 +829,14 @@ def _repost_editor_source_id(original: Mapping) -> str | None:
                     and frozen.get("symbol") == original.get("symbol")
                     and str(frozen.get("timeframe")) == str(original.get("timeframe"))):
                 return source_id
+    # Pre-lineage archives can be unlinked despite containing an intact
+    # source-original from the same immutable Telegram signal. Search only
+    # when no lineage was recorded and this record lacks its own frozen rays.
+    if (not linked and own_id and not own_id.startswith("source-original:")
+            and signal_archive.load_frozen_signal_geometry(own_id) is None):
+        unique = signal_archive.find_unique_legacy_frozen_source_id(original)
+        if unique is not None:
+            return unique
     if own_id:
         return own_id
     return None
