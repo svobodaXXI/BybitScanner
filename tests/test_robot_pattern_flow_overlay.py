@@ -432,9 +432,17 @@ class PostBreakoutImpulsePriorityResearchTests(unittest.TestCase):
                 host = self._host(pattern, phase, direction)
                 proof = replace(
                     certificate(), direction=direction,
-                    transition=transition(
-                        buy=(direction == "LONG"),
-                        sell=(direction == "SHORT"),
+                    transition=replace(
+                        transition(
+                            buy=(direction == "LONG"),
+                            sell=(direction == "SHORT"),
+                        ),
+                        current_delta_fraction=Decimal(
+                            "0.45" if direction == "LONG" else "-0.45"
+                        ),
+                        current_price_change_bps=Decimal(
+                            "11" if direction == "LONG" else "-11"
+                        ),
                     ),
                 )
                 decision = self._observe(host, proof)
