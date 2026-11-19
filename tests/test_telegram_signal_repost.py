@@ -173,6 +173,29 @@ class SignalRepostTests(unittest.TestCase):
             ), "cand-ena",
         )
 
+    def test_legacy_uninspected_archive_entry_blocks_uniqueness(self):
+        from signal_geometry_producer import build_wedge_geometry_snapshot
+        from tests.test_signal_geometry_producer import Candles, GEOMETRY
+
+        source_id = "source-original:" + "9" * 24
+        frozen = build_wedge_geometry_snapshot(
+            source_id, "ENAUSDT", "5", GEOMETRY, Candles(), now_ms=602000,
+        )
+        self._archive(source_id, geometry_snapshot=frozen)
+        self._archive("cand-ena")
+        self.assertEqual(
+            monitoring._repost_editor_source_id(
+                signal_archive.load_original_signal(["cand-ena"])
+            ), source_id,
+        )
+        # The scan cannot prove uniqueness if some metadata was not examined.
+        (self.dir / "uninspectable.json").write_bytes(b"?" * 65_537)
+        self.assertEqual(
+            monitoring._repost_editor_source_id(
+                signal_archive.load_original_signal(["cand-ena"])
+            ), "cand-ena",
+        )
+
     def test_legacy_candidate_rejects_wrong_content_and_late_source(self):
         from signal_geometry_producer import build_wedge_geometry_snapshot
         from tests.test_signal_geometry_producer import Candles, GEOMETRY
