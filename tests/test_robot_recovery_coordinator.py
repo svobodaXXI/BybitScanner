@@ -352,6 +352,42 @@ class RobotRecoveryCoordinatorTests(unittest.TestCase):
         self.assertEqual(result.runtime_state.recovery_status, "RECONCILIATION_REQUIRED")
         self.assertEqual(self.store.get_robot_candidate("candidate-1").status, "APPROVED")
 
+    def test_malformed_external_candle_time_keeps_recovery_fenced(self):
+        # External candle corruption cannot prove the frozen candidate invalid.
+        # A bad source snapshot remains independently quarantinable.
+        for reason in (
+            "Scanner closed 1m candle time is invalid",
+            "closed candle time is not aligned to Scanner 1m index space",
+            "Scanner catch-up candle evidence is unavailable",
+        ):
+            with self.subTest(reason=reason):
+                # Recreate the same APPROVED candidate after every trial.
+                candidate = self.store.get_robot_candidate("candidate-1")
+                if candidate is None:
+                    self._create_waiting_candidate()
+                    self._initialize_running()
+                else:
+                    runtime = self.store.get_robot_runtime_state(ACCOUNT_ID)
+                    self.store.update_robot_runtime_state(
+                        ACCOUNT_ID, mode="ROBOT_RUNNING", recovery_status=READY,
+                        reason=None, expected_version=runtime.version,
+                        updated_at_ms=self.clock(),
+                    )
+
+                def bad_candle(symbol, snapshot, detail=reason):
+                    raise ScannerGeometryCursorError(detail)
+
+                result = RobotRecoveryCoordinator(
+                    self.store, ACCOUNT_ID,
+                    latest_geometry_index_provider=bad_candle,
+                    clock_ms=self.clock,
+                ).recover()
+                self.assertEqual(result.runtime_state.recovery_status, "RECONCILIATION_REQUIRED")
+                self.assertFalse(result.admission_ready)
+                retained = self.store.get_robot_candidate("candidate-1")
+                self.assertEqual(retained.status, "APPROVED")
+                self.assertNotIn("paper_quarantine", retained.robot_state)
+
     def test_running_open_trade_can_recover_without_geometry_read(self):
         self._create_open_candidate()
         self._initialize_running()
