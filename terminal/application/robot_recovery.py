@@ -317,6 +317,17 @@ class RobotRecoveryCoordinator:
         """
         if self._account_id.value != "paper" or candidate.status != "APPROVED":
             return False
+        # A persisted command intent can exist before an active limit or
+        # position projection. Never quarantine a candidate that may still
+        # have execution lineage just because the current account is FLAT.
+        execution = (candidate.robot_state or {}).get("execution") or {}
+        if not isinstance(execution, Mapping) or set(execution) - {
+            "last_execution_error", "last_attempt_at_ms",
+            "attempt_count", "paper_candidate_error",
+        }:
+            return False
+        if self._store.get_robot_trade(f"robot-trade-{candidate.candidate_id}") is not None:
+            return False
         symbol = candidate.symbol
         if self._store.get_open_robot_trade_for_symbol(self._account_id, symbol):
             return False

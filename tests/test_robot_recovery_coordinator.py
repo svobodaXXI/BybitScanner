@@ -310,6 +310,36 @@ class RobotRecoveryCoordinatorTests(unittest.TestCase):
         self.assertFalse(result.admission_ready)
         self.assertEqual(self.store.get_robot_candidate("candidate-1").status, "APPROVED")
 
+    def test_unconfirmed_candidate_execution_intent_cannot_be_quarantined(self):
+        candidate = self._create_waiting_candidate()
+        state = dict(candidate.robot_state)
+        state["execution"] = {"late_market_intent": {"command_id": "pending"}}
+        self.store.save_robot_candidate_state(
+            candidate.candidate_id, status="APPROVED", robot_state=state,
+            expected_revision=candidate.state_revision, updated_at_ms=self.clock(),
+        )
+        self._initialize_running()
+        result = RobotRecoveryCoordinator(self.store, ACCOUNT_ID, clock_ms=self.clock).recover()
+        self.assertEqual(result.runtime_state.recovery_status, "RECONCILIATION_REQUIRED")
+        retained = self.store.get_robot_candidate(candidate.candidate_id)
+        self.assertEqual(retained.status, "APPROVED")
+        self.assertNotIn("paper_quarantine", retained.robot_state)
+
+    def test_prior_durable_trade_blocks_candidate_only_quarantine(self):
+        from unittest.mock import patch
+
+        candidate = self._create_waiting_candidate()
+        self._initialize_running()
+        coordinator = RobotRecoveryCoordinator(self.store, ACCOUNT_ID, clock_ms=self.clock)
+        # A trade record may exist even if no currently OPEN trade or
+        # active entry LIMIT remains on the symbol.
+        with patch.object(self.store, "get_robot_trade", return_value=object()):
+            result = coordinator.recover()
+        self.assertEqual(result.runtime_state.recovery_status, "RECONCILIATION_REQUIRED")
+        retained = self.store.get_robot_candidate(candidate.candidate_id)
+        self.assertEqual(retained.status, "APPROVED")
+        self.assertNotIn("paper_quarantine", retained.robot_state)
+
     def test_transient_market_data_gap_does_not_invalidate_candidate(self):
         self._create_waiting_candidate()
         self._initialize_running()
