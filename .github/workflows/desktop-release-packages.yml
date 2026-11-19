@@ -1,8 +1,14 @@
 name: Owner desktop release packages
-# Desktop publication requires a separate owner-approved explicit dispatch.
-# A PR merge or stable push MUST NOT publish, build, or install desktop apps.
+# Desktop publication requires an explicit owner-authorized one-shot request.
+# Neither a PR merge nor a push to stable can publish or install desktop apps.
+# An owner-only request branch can trigger this same protected publication job.
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - 'desktop-publish/*'
+    paths:
+      - '.github/desktop-publish-request.txt'
 permissions:
   contents: write
 concurrency:
@@ -10,6 +16,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   publish:
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.actor == 'svobodaXXI') }}
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
@@ -33,6 +40,25 @@ jobs:
           $sha=(git rev-parse HEAD).Trim()
           $remote=((git ls-remote origin refs/heads/stable/adfb50b-forward) -split '\s+')[0].Trim()
           if ($sha -ne $remote -or $sha -notmatch '^[a-f0-9]{40}$') { throw 'STABLE_MOVED_OR_UNKNOWN' }
+          if ($env:GITHUB_EVENT_NAME -eq 'push') {
+            # Only a single exact-SHA owner request, not an ordinary push.
+            if ($env:GITHUB_REF_NAME -cnotmatch '^desktop-publish/([0-9a-f]{40})$') {
+              throw 'INVALID_DESKTOP_REQUEST_BRANCH'
+            }
+            $requestedSha=$Matches[1]
+            if ($requestedSha -cne $sha) { throw 'DESKTOP_REQUEST_SHA_MISMATCH' }
+            $changed=@(gh api "repos/$env:GITHUB_REPOSITORY/compare/$sha...$env:GITHUB_SHA" --jq '.files[].filename')
+            if ($LASTEXITCODE -ne 0 -or $changed.Count -ne 1 -or
+                $changed[0] -cne '.github/desktop-publish-request.txt') {
+              throw 'DESKTOP_REQUEST_UNEXPECTED_CHANGES'
+            }
+            $encoded=@(gh api "repos/$env:GITHUB_REPOSITORY/contents/.github/desktop-publish-request.txt?ref=$env:GITHUB_SHA" --jq '.content')
+            if ($LASTEXITCODE -ne 0 -or $encoded.Count -eq 0) { throw 'DESKTOP_REQUEST_UNREADABLE' }
+            $request=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(($encoded -join ''))).Trim()
+            if ($request -cne $sha) { throw 'DESKTOP_REQUEST_CONTENT_MISMATCH' }
+          } elseif ($env:GITHUB_EVENT_NAME -ne 'workflow_dispatch') {
+            throw 'DESKTOP_UNAUTHORIZED_EVENT'
+          }
           $tag="desktop-$sha"
           # Missing tag is the expected first-publication state. Avoid an
           # intentional gh release-view 404 that PowerShell 7 treats as fatal
@@ -77,7 +103,7 @@ jobs:
           }
           $proc.Refresh()
           if ($proc.ExitCode -ne 2) { throw 'MANAGER_PYTHON_DLL_BOOTSTRAP_UNPROVEN' }
-      - name: Publish explicit-click desktop release
+      - name: Publish owner-approved desktop release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -85,5 +111,5 @@ jobs:
           $ErrorActionPreference='Stop'
           $stable=((git ls-remote origin refs/heads/stable/adfb50b-forward) -split '\s+')[0].Trim()
           if ($stable -ne $env:DESKTOP_SHA) { throw 'STABLE_MOVED_BEFORE_PUBLISH' }
-          gh release create $env:DESKTOP_TAG release-out/BybitScanner-VPS-Manager.exe release-out/BybitScanner-MachineTime.zip --repo $env:GITHUB_REPOSITORY --target $env:DESKTOP_SHA --title "BybitScanner desktop $($env:DESKTOP_SHA.Substring(0,12))" --notes "Owner-clicked Windows local applications only. No VPS/PAPER activation." --latest=false
+          gh release create $env:DESKTOP_TAG release-out/BybitScanner-VPS-Manager.exe release-out/BybitScanner-MachineTime.zip --repo $env:GITHUB_REPOSITORY --target $env:DESKTOP_SHA --title "BybitScanner desktop $($env:DESKTOP_SHA.Substring(0,12))" --notes "Owner-approved Windows local applications only. No VPS/PAPER activation." --latest=false
           if ($LASTEXITCODE -ne 0) { throw 'DESKTOP_RELEASE_PUBLISH_FAILED' }

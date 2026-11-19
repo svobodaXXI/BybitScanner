@@ -268,3 +268,17 @@ def test_known_installed_version_can_advance():
                                      "ahead_by": 5}).encode())
         return opener(request, timeout=timeout)
     updates.require_forward_update(old, SHA, opener=compare)
+
+def test_desktop_publication_owner_request_is_exact_and_one_shot():
+    workflow = (Path(__file__).resolve().parents[1] / ".github" / "workflows"
+                / "desktop-release-packages.yml").read_text(encoding="utf-8")
+    assert "  workflow_dispatch:\n  push:" in workflow
+    assert "- 'desktop-publish/*'" in workflow
+    assert "- '.github/desktop-publish-request.txt'" in workflow
+    assert "github.actor == 'svobodaXXI'" in workflow
+    assert "DESKTOP_REQUEST_SHA_MISMATCH" in workflow
+    assert "DESKTOP_REQUEST_UNEXPECTED_CHANGES" in workflow
+    assert "DESKTOP_REQUEST_CONTENT_MISMATCH" in workflow
+    assert "STABLE_MOVED_BEFORE_PUBLISH" in workflow
+    assert "DESKTOP_TAG_ALREADY_EXISTS" in workflow
+    assert workflow.count("gh release create") == 1
