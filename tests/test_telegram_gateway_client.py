@@ -152,6 +152,93 @@ class TelegramGatewayTests(unittest.TestCase):
 
 
 
+    @patch("telegram_gateway_client.requests.Session")
+    def test_gateway_auth_401_fails_without_retry_or_secret_logging(self, session_cls):
+        response = MagicMock(status_code=401, headers={})
+        response.json.return_value = {"error": "secret-must-not-leak"}
+        session_cls.return_value.post.return_value = response
+        with self.assertRaises(gateway.TelegramGatewayError) as raised:
+            gateway.send_text("12345", "hello")
+        self.assertIn("class=PERMANENT_AUTH, status=401", str(raised.exception))
+        self.assertNotIn("secret", str(raised.exception))
+        self.assertEqual(session_cls.return_value.post.call_count, 1)
+
+    @patch("telegram_gateway_client.requests.Session")
+    def test_gateway_rate_limit_respects_long_retry_after_without_blocking(self, session_cls):
+        response = MagicMock(status_code=429, headers={"Retry-After": "30"})
+        session_cls.return_value.post.return_value = response
+        with patch("time.sleep") as sleep:
+            with self.assertRaises(gateway.TelegramGatewayError) as raised:
+                gateway.send_text("12345", "hello")
+        self.assertIn("class=RATE_LIMIT, status=429, retry_after=30s", str(raised.exception))
+        self.assertEqual(session_cls.return_value.post.call_count, 1)
+        sleep.assert_not_called()
+
+    @patch("telegram_gateway_client.requests.Session")
+    def test_rate_limit_requests_headers_short_retry_is_honored(self, session_cls):
+        # requests.Response.headers is a CaseInsensitiveDict, not a plain dict.
+        from requests.structures import CaseInsensitiveDict
+
+        limited = MagicMock(
+            status_code=429,
+            headers=CaseInsensitiveDict({"retry-after": "1"}),
+        )
+        accepted = MagicMock(
+            status_code=200,
+            headers=CaseInsensitiveDict(),
+        )
+        def accepted_result():
+            args = session_cls.return_value.post.call_args
+            return {"ok": True, "event_id": args.kwargs["json"]["event_id"],
+                    "stage": "accepted_by_telegram_api", "telegram_message_id": 22}
+        accepted.json.side_effect = accepted_result
+        session_cls.return_value.post.side_effect = [limited, accepted]
+        with patch("time.sleep") as sleep:
+            result = gateway.send_text("12345", "recovered")
+        self.assertTrue(result["ok"])
+        self.assertEqual(session_cls.return_value.post.call_count, 2)
+        sleep.assert_called_once_with(1)
+        sent = [call.kwargs["json"]["event_id"]
+                for call in session_cls.return_value.post.call_args_list]
+        self.assertEqual(sent[0], sent[1])
+
+    @patch("telegram_gateway_client.requests.Session")
+    def test_photo_transient_http_retries_same_frozen_image_once(self, session_cls):
+        from tempfile import TemporaryDirectory
+        from pathlib import Path
+        failed = MagicMock(status_code=503, headers={})
+        ok = MagicMock(status_code=200, headers={})
+        ok.json.return_value = {"ok": True, "result": {"message_id": 7}}
+        session_cls.return_value.post.side_effect = [failed, ok]
+        with TemporaryDirectory() as root:
+            file = Path(root) / "immutable.png"
+            file.write_bytes(b"same-geometry-image")
+            with patch("time.sleep") as sleep:
+                result = gateway.send_photo_upload("12345", file, caption="original")
+        self.assertTrue(result["ok"])
+        self.assertEqual(session_cls.return_value.post.call_count, 2)
+        sent = [call.kwargs["files"]["photo"][1] for call in session_cls.return_value.post.call_args_list]
+        self.assertEqual(sent, [b"same-geometry-image"] * 2)
+        sleep.assert_called_once()
+
+    @patch("telegram_gateway_client.requests.Session")
+    def test_photo_invalid_json_does_not_retry_unknown_delivery(self, session_cls):
+        from tempfile import TemporaryDirectory
+        from pathlib import Path
+        response = MagicMock(status_code=200, headers={})
+        response.json.side_effect = ValueError("private-token-must-not-leak")
+        session_cls.return_value.post.return_value = response
+        with TemporaryDirectory() as root:
+            file = Path(root) / "immutable.png"
+            file.write_bytes(b"png")
+            with self.assertRaises(gateway.TelegramGatewayError) as raised:
+                gateway.send_photo_upload("12345", file)
+        self.assertIn("class=UNKNOWN_DELIVERY, status=200", str(raised.exception))
+        self.assertNotIn("private-token", str(raised.exception))
+        self.assertEqual(session_cls.return_value.post.call_count, 1)
+
+
+
 
 if __name__ == "__main__":
     unittest.main()
