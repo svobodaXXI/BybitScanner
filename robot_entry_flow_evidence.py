@@ -542,6 +542,114 @@ def plan_impulse_protected_entry(
     return ImpulseProtectedPlan(signal, entry, stop, take, quantity, rr, worst_loss)
 
 
+
+# A background observation can strengthen or contradict ONE canonical pattern
+# entry. It never becomes a Scanner candidate, confidence probability, order,
+# new admission gate or requirement to accumulate N confirmations.
+# Closely related views of the SAME market event share an evidence group.
+_ENTRY_ARGUMENT_GROUPS = {
+    "TAKER_PRESSURE": "EXECUTED_FLOW",
+    "OPPOSING_PRESSURE_FADE": "EXECUTED_FLOW",
+    "LIQUIDATION": "LIQUIDATIONS",
+    "OPEN_INTEREST": "OPEN_INTEREST",
+    "DMI_CROSS": "DMI",
+    "DMI_PRECURSOR": "DMI",
+    "REVERSAL_CANDLE": "PRICE_REVERSAL",
+    "DOUBLE_EXTREMUM": "PRICE_REVERSAL",
+}
+_ARGUMENT_OUTCOMES = frozenset(("SUPPORT", "CONTRADICT", "NEUTRAL"))
+
+
+@dataclass(frozen=True, slots=True)
+class PatternEntryArgument:
+    """A time-stamped auxiliary fact, never authority for a new signal/order.
+
+    The respective source producer owns authenticity and availability; this
+    aggregation contract merely rejects mismatched, stale or future evidence.
+    """
+    kind: str
+    candidate_id: str
+    state_revision: int
+    symbol: str
+    direction: str
+    outcome: str
+    source_id: str
+    event_at_ms: int
+    available_at_ms: int
+
+
+@dataclass(frozen=True, slots=True)
+class PatternEntryConfluence:
+    """Read-only per-pattern evidence summary; NOT a trading score or veto."""
+    candidate_id: str
+    state_revision: int
+    symbol: str
+    pattern: str
+    direction: str
+    evaluated_at_ms: int
+    group_outcomes: tuple[tuple[str, str], ...]
+    trading_authorized: bool = False
+
+    @property
+    def supporting_groups(self) -> tuple[str, ...]:
+        return tuple(name for name, state in self.group_outcomes
+                     if state == "SUPPORT")
+
+
+def summarize_pattern_entry_arguments(
+    record, arguments: tuple[PatternEntryArgument, ...], *, decision_ms: int,
+) -> PatternEntryConfluence | None:
+    """Evaluate optional factors ONLY for an existing approved Robot entry.
+
+    This does not infer a breakout, create a candidate, or change a Robot gate.
+    A host's own immutable breakout/retest/Box/Mirror strategy must still prove
+    its original entry eligibility. Missing or unverified factors are UNKNOWN.
+    """
+    scope = existing_pattern_entry_scope(record)
+    if (scope is None or type(decision_ms) is not int or decision_ms < 0
+            or not isinstance(arguments, tuple)):
+        return None
+
+    grouped: dict[str, set[str]] = {
+        name: set() for name in set(_ENTRY_ARGUMENT_GROUPS.values())
+    }
+    for item in arguments:
+        if not isinstance(item, PatternEntryArgument):
+            continue
+        group = _ENTRY_ARGUMENT_GROUPS.get(item.kind)
+        if group is None or item.outcome not in _ARGUMENT_OUTCOMES:
+            continue
+        if (item.candidate_id != scope.candidate_id
+                or type(item.state_revision) is not int
+                or item.state_revision != scope.state_revision
+                or item.symbol != scope.symbol
+                or item.direction != scope.direction
+                or not isinstance(item.source_id, str) or not item.source_id
+                or len(item.source_id) > 128
+                or type(item.event_at_ms) is not int
+                or type(item.available_at_ms) is not int
+                or not 0 <= item.event_at_ms <= item.available_at_ms <= decision_ms):
+            continue
+        grouped[group].add(item.outcome)
+
+    def state(votes: set[str]) -> str:
+        if "SUPPORT" in votes and "CONTRADICT" in votes:
+            return "CONFLICT"
+        if "SUPPORT" in votes:
+            return "SUPPORT"
+        if "CONTRADICT" in votes:
+            return "CONTRADICT"
+        if "NEUTRAL" in votes:
+            return "NEUTRAL"
+        return "UNKNOWN"
+
+    return PatternEntryConfluence(
+        scope.candidate_id, scope.state_revision, scope.symbol,
+        scope.pattern, scope.direction, decision_ms,
+        tuple((group, state(grouped[group])) for group in sorted(grouped)),
+    )
+
+
 # Entry-timing overlay ONLY: it is never an independent Scanner candidate,
 # Admission permission, entry order, STOP/TAKE plan or Robot state transition.
 @dataclass(frozen=True, slots=True)
