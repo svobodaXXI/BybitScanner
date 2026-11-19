@@ -232,11 +232,14 @@ class RobotRecoveryCoordinator:
                         # A bad/absent candle timestamp is untrusted external
                         # evidence, NOT proof that the frozen candidate is bad.
                         # Keep recovery fenced until fresh evidence exists.
-                        str(exc).startswith((
-                            "Scanner closed 1m candle ",
-                            "latest closed candle ",
-                            "closed candle time ",
-                        ))
+                        (
+                            "evidence is unavailable" in str(exc)
+                            or "latest closed candle" in str(exc)
+                            or str(exc).startswith((
+                                "Scanner closed 1m candle ",
+                                "closed candle time ",
+                            ))
+                        )
                     ):
                         raise
                     if not self._candidate_is_inert(candidate):
