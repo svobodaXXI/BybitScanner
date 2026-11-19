@@ -120,6 +120,10 @@ class CollectLifecycleEventsTests(unittest.TestCase):
         for event in collect_new_lifecycle_events(store, state):
             mark_notified(state, event)
         self.assertEqual(len(state.closed), REMEMBERED_TRADE_IDS)
+        # CollectLifecycleEventsTests has no fixture path; own this file locally.
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.path = Path(temporary.name) / "lifecycle.json"
         save_lifecycle_state(self.path, state)
         restarted = load_lifecycle_state(self.path, INIT_MS + 200000)
         self.assertEqual(collect_new_lifecycle_events(store, restarted), [])
