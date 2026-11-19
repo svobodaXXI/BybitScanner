@@ -12,13 +12,16 @@ import os
 import sqlite3
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping
 
 from robot_entry_flow_evidence import (
-    CandidateBoundFlowEvidence, FlowTransition, existing_pattern_entry_scope,
+    CandidateBoundFlowEvidence, FlowTransition, TakerPrint,
+    aggregate_taker_prints, compare_flow_windows, existing_pattern_entry_scope,
 )
 from terminal.domain.models import TradingAccountId
+from terminal.market_data.impulse_observation import ObservedPrint
 from terminal.market_data.impulse_producer import certified_snapshot
 from terminal.persistence.sqlite_store import SQLiteStore
 
@@ -135,6 +138,27 @@ def read_approved_pattern_candidates(database_path: Path) -> tuple:
         connection.close()
 
 
+
+# Sub-minute observation only. These local windows are intentionally NOT
+# equivalent to independent REST+closed-M1 certification or entry authority.
+EARLY_PREVIEW_WINDOW_MS = 15_000
+EARLY_PREVIEW_MAX_LAST_RECEIPT_AGE_MS = 5_000
+
+
+@dataclass(frozen=True, slots=True)
+class EarlyPatternFlowPreview:
+    candidate_id: str
+    state_revision: int
+    symbol: str
+    direction: str
+    known_at_ms: int
+    transport_generation: int
+    transition: FlowTransition
+    gap_or_truncation: bool
+    source_complete: bool = False
+    trading_authorized: bool = False
+
+
 class PatternFlowObserver:
     """Source-complete two-minute evidence cache bound to existing pattern IDs."""
 
@@ -232,6 +256,90 @@ class PatternFlowObserver:
         # Never close a requests.Session while the observer is still using it.
         if not self._thread.is_alive():
             self._rest.close()
+
+    def early_preview(self, record) -> EarlyPatternFlowPreview | None:
+        """Read-only 15s/15s observed taker transition before M1 closure.
+
+        No REST, new subscription, owner callback, candidate mutation or
+        trade authority. A bounded observed tape is not source-complete;
+        missing prints are not silently reconstructed.
+        """
+        scope = existing_pattern_entry_scope(record)
+        now_ms = self._clock()
+        if scope is None or type(now_ms) is not int or now_ms < 2 * EARLY_PREVIEW_WINDOW_MS:
+            return None
+        list_contexts = getattr(self._hub, "list_flow_contexts", None)
+        if list_contexts is None:
+            list_contexts = getattr(self._hub, "list_contexts", None)
+        if not callable(list_contexts):
+            return None
+        context = next((ctx for ctx in list_contexts()
+                        if ctx.symbol == scope.symbol), None)
+        if (context is None or context.trades_subscription_state != "SUBSCRIBED"
+                or context.trade_bootstrap_complete is not True):
+            return None
+        snapshot = context.impulse_observation.snapshot()
+        if (not isinstance(snapshot, dict)
+                or snapshot.get("symbol") != scope.symbol
+                or type(snapshot.get("generation")) is not int
+                or type(snapshot.get("invalid_frames")) is not int
+                or snapshot["invalid_frames"] != 0
+                or snapshot.get("order_authority") is not False
+                or snapshot.get("continuity") != "UNPROVEN"
+                or not isinstance(snapshot.get("prints"), tuple)):
+            return None
+
+        middle = now_ms - EARLY_PREVIEW_WINDOW_MS
+        start = middle - EARLY_PREVIEW_WINDOW_MS
+        prior, current = [], []
+        seen = set()
+        last_event_ms = -1
+        last_current_receipt_ms = -1
+        for item in snapshot["prints"]:
+            if not isinstance(item, ObservedPrint):
+                return None
+            if not start <= item.timestamp_ms < now_ms:
+                continue
+            receipt = item.received_at_ms
+            # Require observed-before-decision local receipt and nonfuture
+            # exchange time. Clock uncertainty fails closed.
+            if (type(receipt) is not int or not item.timestamp_ms <= receipt <= now_ms
+                    or item.trade_id in seen or item.timestamp_ms < last_event_ms):
+                return None
+            seen.add(item.trade_id)
+            last_event_ms = item.timestamp_ms
+            trade = TakerPrint(
+                scope.symbol, item.trade_id, item.timestamp_ms,
+                item.side, item.price, item.quantity,
+            )
+            if item.timestamp_ms < middle:
+                prior.append(trade)
+            else:
+                current.append(trade)
+                last_current_receipt_ms = max(last_current_receipt_ms, receipt)
+        if (not prior or not current or
+                now_ms - last_current_receipt_ms > EARLY_PREVIEW_MAX_LAST_RECEIPT_AGE_MS):
+            return None
+
+        previous_window = aggregate_taker_prints(
+            tuple(prior), symbol=scope.symbol, start_ms=start, end_ms=middle,
+        )
+        current_window = aggregate_taker_prints(
+            tuple(current), symbol=scope.symbol, start_ms=middle, end_ms=now_ms,
+        )
+        if previous_window is None or current_window is None:
+            return None
+        transition = compare_flow_windows(
+            previous_window, current_window, decision_ms=now_ms,
+        )
+        return EarlyPatternFlowPreview(
+            candidate_id=scope.candidate_id,
+            state_revision=scope.state_revision,
+            symbol=scope.symbol, direction=scope.direction,
+            known_at_ms=now_ms, transport_generation=snapshot["generation"],
+            transition=transition,
+            gap_or_truncation=snapshot.get("gap_or_truncation") is not False,
+        )
 
     def get(self, record) -> CandidateBoundFlowEvidence | None:
         """Only live same-epoch evidence; no REST or SQLite on Robot tick."""
