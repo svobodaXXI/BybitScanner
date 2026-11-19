@@ -1097,14 +1097,74 @@ describe("Finrez first-screen UI", () => {
     expect(bar).toHaveTextContent("Всего: 8");
     fireEvent.click(screen.getByRole("button", { name: "Убыточные паттерны" }));
     expect(cards()).toHaveLength(4);
+    expect(cards().map((card) => card.querySelector(".diary-pattern-label strong")?.textContent))
+      .toEqual(["Falling Wedge", "Double Bottom", "Double Top", "L-shape"]);
     fireEvent.click(screen.getByRole("button", { name: "Показать все сделки по паттерну Double Bottom" }));
     await waitFor(() => expect(screen.getByRole("combobox", { name: "Выбор паттерна" }))
       .toHaveValue("Double Bottom"));
     const dealBar = screen.getByRole("group", { name: "Распределение результатов сделок" });
     expect(dealBar).toHaveTextContent("Всего: 1");
     expect(dealBar).toHaveTextContent("Убыточных: 1");
-    expect(screen.getByRole("button", { name: "Убыточные" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: "Убыточные" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: /BTCUSDT/ })).toHaveTextContent("Double Bottom");
+  });
+
+  it("from all-time red patterns opens only the losing episodes of a mixed-result pattern", async () => {
+    const linked = (id: string, pattern: string, pnl_usdt: string) => ({
+      trade_episode_id: "te_" + id.repeat(24), symbol: "BTCUSDT", side: "LONG",
+      opened_at_ms: 1_793_001_000_000, closed_at_ms: 1_793_002_000_000,
+      pnl_usdt, execution_count: 2, cohort: "ROBOT",
+      replay_evidence: "EPISODE_INDEX_ONLY", opening_controller: "ROBOT",
+      setup_context: {
+        status: "EXACT_D2_LINK", source: "TRADING_DIARY_D2",
+        consistency: "INDEPENDENT_READ_SNAPSHOT_NOT_ATOMIC_WITH_PAPER",
+        decision_scope: "D2_OBSERVATIONS_NOT_ROBOT_RUNTIME_LOG",
+        setup: {
+          setup_id: "candidate-" + id, symbol: "BTCUSDT", direction: "LONG",
+          origin: "ROBOT", pattern, timeframe: "5", strategy_version: "v1",
+          created_at_ms: 1_793_000_000_000,
+        },
+      },
+    });
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => new Response(JSON.stringify({
+      ...finrezResponse,
+      period: new URL(url, "http://localhost").searchParams.get("period") ?? "DAY",
+      closed_episodes: [
+        linked("a", "Falling Wedge", "-8"),
+        linked("b", "Falling Wedge", "2"),
+        linked("c", "Double Bottom", "-3"),
+        linked("d", "IKIGAI_BOX", "7"),
+      ],
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<DiaryOverlay accountKey="paper:worst-pattern-handoff" initialSection="PATTERNS"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "Всё время" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=ALL",
+    ));
+    const region = await screen.findByRole("region", { name: "Паттерны по подтверждённым сделкам" });
+    const cards = () => Array.from(region.querySelectorAll(".diary-pattern-card"));
+    expect(cards().map((card) => card.querySelector(".diary-pattern-label strong")?.textContent))
+      .toEqual(["IKIGAI_BOX", "Double Bottom", "Falling Wedge"]);
+    const bar = screen.getByRole("group", { name: "Распределение результатов паттернов" });
+    expect(bar).toHaveTextContent("Убыточных: 2");
+    fireEvent.click(screen.getByRole("button", { name: "Убыточные паттерны" }));
+    expect(cards().map((card) => card.querySelector(".diary-pattern-label strong")?.textContent))
+      .toEqual(["Falling Wedge", "Double Bottom"]);
+    expect(bar).toHaveTextContent("Всего: 3");
+    fireEvent.click(screen.getByRole("button", { name: "Показать все сделки по паттерну Falling Wedge" }));
+    expect(await screen.findByRole("combobox", { name: "Выбор паттерна" }))
+      .toHaveValue("Falling Wedge");
+    const dealBar = screen.getByRole("group", { name: "Распределение результатов сделок" });
+    expect(dealBar).toHaveTextContent("Всего: 2");
+    expect(dealBar).toHaveTextContent("Прибыльных: 1");
+    expect(dealBar).toHaveTextContent("Убыточных: 1");
+    expect(screen.getByRole("button", { name: "Убыточные" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getAllByRole("button", { name: "Подробности сделки" })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Подробности сделки" }));
+    expect(await screen.findByRole("button", { name: "Открыть в Симуляторе" }))
+      .toBeInTheDocument();
   });
 
   it("never shows an unknown pattern as a zero result and respects ticker filtering", async () => {
