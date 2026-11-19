@@ -19,6 +19,8 @@ from typing import Callable, Mapping
 from robot_entry_flow_evidence import (
     CandidateBoundFlowEvidence, FlowTransition, TakerPrint,
     aggregate_taker_prints, compare_flow_windows, existing_pattern_entry_scope,
+    canonical_host_breakout_known_at_ms, observe_post_breakout_impulse_timing,
+    PatternImpulseTimingResearch,
 )
 from terminal.domain.models import TradingAccountId
 from terminal.market_data.impulse_observation import ObservedPrint
@@ -428,6 +430,21 @@ class PatternFlowObserver:
             return None
         return evidence
 
+    def research_timing(self, record) -> PatternImpulseTimingResearch | None:
+        """Read already-certified early flow only; no trading/REST/DB authority.
+
+        The original approved host must itself establish the post-breakout
+        time. A missing certified source yields WAIT_SOURCE, not a market entry.
+        """
+        breakout = canonical_host_breakout_known_at_ms(record)
+        if breakout is None:
+            return None
+        now_ms = self._clock()
+        return observe_post_breakout_impulse_timing(
+            record, self.get(record),
+            breakout_known_at_ms=breakout, decision_ms=now_ms,
+        )
+
     def _json(self, endpoint: str, *, params: dict) -> dict:
         if getattr(self._rest, "verify", True) is False:
             raise ValueError("unverified REST TLS")
@@ -477,11 +494,15 @@ class PatternFlowObserver:
         contexts = {context.symbol: context for context in list_contexts()}
         eligible = []
         for record in candidates:
-            # Exact approved-entry scope, including frozen direction. Sources
-            # without an executable linked Robot ID (Box plan) are excluded.
-            if (existing_pattern_entry_scope(record) is not None
-                    and record.symbol.value in contexts):
-                eligible.append(record)
+            # Also observe a PROVEN host breakout before the old retest
+            # entry phase, without changing its Robot order authorization.
+            # No guessed Box/foreign breakout timestamps are admitted.
+            entry_scope = existing_pattern_entry_scope(record)
+            breakout_ms = canonical_host_breakout_known_at_ms(record)
+            if (entry_scope is not None or (
+                    breakout_ms is not None and breakout_ms <= closed)):
+                if record.symbol.value in contexts:
+                    eligible.append(record)
 
         attempts = 0
         for record in eligible:
