@@ -96,7 +96,7 @@ def test_preflight_rejects_unproven_or_nonterminal_incident(proven_fusdt, tmp_pa
     if bad == "open":
         incident["candidate_status"] = "OPEN"
     elif bad == "entry":
-        incident["active"] = (object(),)
+        incident["active"] = (SimpleNamespace(status="OPEN"),)
     elif bad == "stop":
         incident["exit_reason"] = "TAKE"
     elif bad == "owner":
