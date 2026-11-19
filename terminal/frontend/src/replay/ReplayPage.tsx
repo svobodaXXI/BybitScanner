@@ -80,6 +80,13 @@ function PlayerIcon({ name }: { name: keyof typeof PLAYER_PATHS }) {
     <path d={PLAYER_PATHS[name]} />
   </svg>;
 }
+function displayPaperPnl(value: string): string {
+  const amount = Number(value);
+  return Number.isFinite(amount)
+    ? amount.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 4 })
+    : "—";
+}
+
 function ReplayChart({ document, cursor, paperOverlay, paperFacts, showTrendGeometry, showDebug, timeframe, drawings, selectedId,
   drawingTool, onDrawingsChange, onSelectDrawing, onDrawingGesture }: {
   document: ReplayDocument; cursor: number; paperOverlay: PaperOverlay;
@@ -578,6 +585,8 @@ export function ReplayPage() {
   const [sourceComplete, setSourceComplete] = useState(false);
   const [cancelNativeId, setCancelNativeId] = useState(0);
   const historyRequest = useRef<AbortController | null>(null);
+  // New owner-selected episode wins even if an older local read resolves later.
+  const episodeLookupSequence = useRef(0);
   const bundledRequest = useRef<AbortController | null>(null);
   const [cursor, setCursor] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -968,7 +977,7 @@ export function ReplayPage() {
           (receipt as Record<string, unknown>).stored_locally !== true ||
           (receipt as Record<string, unknown>).trade_episode_id !== imported.trade_episode_id)
         throw new Error("Не совпало подтверждение локального импорта");
-      setLocalEpisodeMessage("Факты сделки сохранены локально: " + imported.trade_episode_id);
+      setLocalEpisodeMessage("Сделка сохранена локально.");
       setPaperFacts(imported);
       setError(null);
       // Instant inspection only when the selected, independently verified
@@ -980,9 +989,8 @@ export function ReplayPage() {
         // A single closed episode may be only one entry in a longer Robot
         // signal campaign with STOP/reentries. Never auto-load a truncated
         // single-episode window as the complete trade replay.
-        setError("Для полного графика необходима подтверждённая цепочка исходного сигнала, " +
-          "включая все STOP и повторные входы. Факты одного эпизода импортированы; " +
-          "полный интервал кампании ещё не подтверждён.");
+        setLocalEpisodeMessage("Сделка сохранена. Для свечей вставьте её ID и нажмите «Применить». " +
+          "Полная цепочка повторных входов ещё не подтверждена.");
 
       }
     } catch (e) {
@@ -993,6 +1001,11 @@ export function ReplayPage() {
   }
 
   async function lookupLocalEpisode(episodeId: string): Promise<void> {
+    const lookup = ++episodeLookupSequence.current;
+    // A new exact ID supersedes the old local market request, not its stored facts.
+    historyRequest.current?.abort();
+    historyRequest.current = null;
+    setHistoryLoading(false);
     setPlaying(false);
     setPaperFacts(null);
     setLocalEpisodeMessage("");
@@ -1000,6 +1013,7 @@ export function ReplayPage() {
     try {
       const response = await fetch("/local-replay/paper-episode?trade_episode_id=" +
         encodeURIComponent(episodeId), { method: "GET", cache: "no-store" });
+      if (lookup !== episodeLookupSequence.current) return;
       if (response.status === 404) {
         setError("Сделка " + episodeId + " отсутствует в локальной базе Симулятора. " +
           "Нужна синхронизация фактов сделок с VPS (либо импорт проверенного JSON).");
@@ -1007,10 +1021,11 @@ export function ReplayPage() {
       }
       if (!response.ok) throw new Error("Локальная база не смогла подтвердить эту сделку");
       const parsed = parsePaperEpisodeFacts(await response.json() as unknown);
+      if (lookup !== episodeLookupSequence.current) return;
       if (parsed.trade_episode_id !== episodeId)
         throw new Error("ID локальной записи не совпадает с запросом");
       setPaperFacts(parsed);
-      setLocalEpisodeMessage("Найдены локальные факты сделки: " + episodeId);
+      setLocalEpisodeMessage("Сделка найдена локально.");
       // PUBLIC market history is fetched locally, never embedded in the PAPER
       // payload or loaded from a VPS candle archive. No Scanner/Robot runs.
       const m5 = 300_000;
@@ -1024,15 +1039,25 @@ export function ReplayPage() {
       const utc = (ms: number) => new Date(ms).toISOString().slice(0, 16);
       await loadLocalHistory(parsed.symbol, utc(startMs), utc(endExclusive - 60_000), []);
     } catch (error) {
-      setError(error instanceof Error ? error.message : "Не удалось найти локальную сделку");
+      if (lookup === episodeLookupSequence.current)
+        setError(error instanceof Error ? error.message : "Не удалось найти локальную сделку");
     }
   }
 
-  // Only the fixed local Windows protocol supplies this typed locator.
-  // Never parse financial facts, filesystem paths or arbitrary URLs from it.
+  // Windows can reuse an existing browser tab: changing only #locator does
+  // not remount React. Honor each exact ID without polling, reload or new transport.
+  // No PAPER payload or arbitrary URL is ever accepted in the fragment.
   useEffect(() => {
-    const match = /^#locator=(te_[a-f0-9]{24})$/.exec(window.location.hash);
-    if (match) void lookupLocalEpisode(match[1]);
+    const onLocator = () => {
+      const match = /^#locator=(te_[a-f0-9]{24})$/.exec(window.location.hash);
+      if (match) void lookupLocalEpisode(match[1]);
+    };
+    window.addEventListener("hashchange", onLocator);
+    onLocator();
+    return () => {
+      window.removeEventListener("hashchange", onLocator);
+      episodeLookupSequence.current++;
+    };
   }, []);
 
   async function loadLocalHistory(selectedSymbol: string, selectedStart: string, selectedEnd: string,
@@ -1246,7 +1271,15 @@ export function ReplayPage() {
 
       {localEpisodeMessage && <p role="status" className="replay-note">{localEpisodeMessage}</p>}
       {error && <p role="alert" className="replay-error">{error}</p>}
-      {paperFacts && <p className="replay-note" role="status" aria-label="PAPER факты сделки">
+      {paperFacts && <div className="replay-note" role="status" aria-label="PAPER факты сделки">
+        <strong>{paperFacts.symbol} · {paperFacts.side}</strong>
+        {" · "}{paperFacts.execution_allocations.length} исполнения
+        {" · "}PnL: <strong>{displayPaperPnl(paperFacts.pnl_usdt)} USDT</strong>
+        {" · "}{paperOverlay.status === "MATCHED" ? "Свечи M5 сопоставлены"
+          : historyLoading ? "Загрузка свечей M5…" : "Нужны свечи M5"}
+        <details>
+          <summary>Подробности и ограничения</summary>
+          <p>
         PAPER · {paperFacts.symbol} · {paperFacts.trade_episode_id}
         {" · "}{paperFacts.execution_allocations.length} фактических исполнений
         {" · "}{paperOverlay.status === "MATCHED"
@@ -1274,7 +1307,9 @@ export function ReplayPage() {
                     : " · архивная геометрия появится после времени исходного сигнала")
               : " · D2: исходный setup появится после его подтверждённого времени на графике"
         )}
-      </p>}
+      </p>
+        </details>
+      </div>}
       <section className="replay-meta" aria-label="Состояние симулятора">
         <div><span>Источник</span><strong>{fileLabel}</strong></div>
         <div><span>Время рынка</span><strong>{simulationGraphPending ? "До начала прогона" :

@@ -49,11 +49,15 @@
 .replay-chart-shell { width: 100%; }
 .replay-events { min-width: 0; max-height: 770px; display: flex; flex-direction: column; background: #121923; border: 1px solid #273649; border-radius: 9px; overflow: hidden; }
 .replay-events h2 { margin: 0; padding: 14px; font-size: 15px; border-bottom: 1px solid #2b3e55; }
-.replay-events-list { overflow-y: auto; min-height: 0; padding: 10px; }
+.replay-events-list { overflow-y: auto; overflow-x: hidden; min-height: 0; min-width: 0; padding: 10px; }
 .replay-events-list p { color: #8b9cb4; }
-.replay-events-item { display: grid; gap: 5px; padding: 10px 4px; border-bottom: 1px solid #273649; font-size: 12px; line-height: 1.5; }
+.replay-d2-observations { min-width: 0; max-width: 100%; }
+.replay-events-item { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; max-width: 100%; gap: 5px; padding: 10px 4px; border-bottom: 1px solid #273649; font-size: 12px; line-height: 1.5; }
 .replay-events-item time { color: #91a8c5; font-size: 11px; }
 .replay-events-item span { color: #e0e8f5; }
+/* Long exact execution/order IDs wrap in the journal; no sideways scrolling or clipped evidence. */
+.replay-events-item > span, .replay-events-item > strong, .replay-events-item > time,
+.replay-d2-observations > strong { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
 .replay-chart-symbol { margin-right: 6px; font-size: 15px; color: #eaf1fc; }
 .replay-timeframe-switch button:disabled { opacity: .4; cursor: not-allowed; }
 .replay-chart-frame { position: relative; width: 100%; }
