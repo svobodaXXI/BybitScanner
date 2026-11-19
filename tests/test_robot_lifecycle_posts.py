@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from robot_lifecycle_posts import (
     EVENT_CLOSED, EVENT_OPENED, REMEMBERED_TRADE_IDS, LifecycleEvent, LifecycleState,
     collect_new_lifecycle_events, format_lifecycle_caption, load_lifecycle_state,
-    mark_notified, save_lifecycle_state,
+    mark_notified, recover_legacy_lifecycle_cursor, save_lifecycle_state,
 )
 from robot_position_view import PositionView
 from terminal.domain.models import Symbol, TradingAccountId
@@ -67,6 +67,78 @@ class LifecycleStateTests(unittest.TestCase):
         self.assertEqual(len(state.closed), REMEMBERED_TRADE_IDS)
         self.assertEqual(state.closed[0], "t5")
         self.assertEqual(state.opened, [])
+
+
+    def test_250_closures_do_not_replay_after_200_id_eviction_or_restart(self):
+        trades = [_trade(f"t{i:03d}", INIT_MS + 1, INIT_MS + 100 + i,
+                         exit_reason="EMERGENCY_CLOSE") for i in range(250)]
+        store = _store(*trades)
+        state = LifecycleState(INIT_MS)
+        for event in collect_new_lifecycle_events(store, state):
+            mark_notified(state, event)
+        self.assertEqual(len(state.closed), REMEMBERED_TRADE_IDS)
+        self.assertEqual(collect_new_lifecycle_events(store, state), [])
+        save_lifecycle_state(self.path, state)
+        restored = load_lifecycle_state(self.path, INIT_MS + 500)
+        self.assertEqual(collect_new_lifecycle_events(store, restored), [])
+        self.assertEqual(restored.last_notified_key, state.last_notified_key)
+
+    def test_more_than_200_closures_with_identical_exit_ms_are_not_replayed(self):
+        trades = [_trade(f"same-{i:03d}", INIT_MS + 1, INIT_MS + 100,
+                         exit_reason="EMERGENCY_CLOSE") for i in range(250)]
+        store = _store(*trades)
+        state = LifecycleState(INIT_MS)
+        for event in collect_new_lifecycle_events(store, state):
+            mark_notified(state, event)
+        save_lifecycle_state(self.path, state)
+        self.assertEqual(collect_new_lifecycle_events(
+            store, load_lifecycle_state(self.path, INIT_MS + 500)), [])
+
+    def test_partial_batch_failure_retains_unsent_closures_after_restart(self):
+        trades = [_trade(f"t{i:03d}", INIT_MS + 1, INIT_MS + 100 + i,
+                         exit_reason="STOP") for i in range(205)]
+        store = _store(*trades)
+        state = LifecycleState(INIT_MS)
+        events = collect_new_lifecycle_events(store, state)
+        for event in events[:201]:  # Last four sends failed or were never attempted.
+            mark_notified(state, event)
+        save_lifecycle_state(self.path, state)
+        restored = load_lifecycle_state(self.path, INIT_MS + 500)
+        self.assertEqual([e.trade_id for e in collect_new_lifecycle_events(store, restored)],
+                         [f"t{i:03d}" for i in range(201, 205)])
+
+    def test_legacy_full_cache_migration_fences_old_history_but_keeps_new_close(self):
+        trades = [_trade(f"t{i:03d}", INIT_MS + 1, INIT_MS + 100 + i,
+                         exit_reason="EMERGENCY_CLOSE") for i in range(251)]
+        store = _store(*trades)
+        state = LifecycleState(
+            INIT_MS, closed=[f"t{i:03d}" for i in range(50, 250)])
+        self.assertTrue(recover_legacy_lifecycle_cursor(store, state, INIT_MS + 500))
+        self.assertEqual(
+            [(e.kind, e.trade_id) for e in collect_new_lifecycle_events(store, state)],
+            [(EVENT_CLOSED, "t250")])
+        save_lifecycle_state(self.path, state)
+        restored = load_lifecycle_state(self.path, INIT_MS + 600)
+        self.assertFalse(recover_legacy_lifecycle_cursor(store, restored, INIT_MS + 600))
+        self.assertEqual(
+            [(e.kind, e.trade_id) for e in collect_new_lifecycle_events(store, restored)],
+            [(EVENT_CLOSED, "t250")])
+
+    def test_legacy_full_cache_without_resolvable_ids_quarantines_history(self):
+        state = LifecycleState(
+            INIT_MS, closed=[f"missing-{i:03d}" for i in range(REMEMBERED_TRADE_IDS)])
+        store = _store(_trade("old", INIT_MS, INIT_MS + 100),
+                       _trade("new", INIT_MS, INIT_MS + 500))
+        self.assertTrue(recover_legacy_lifecycle_cursor(store, state, INIT_MS + 300))
+        self.assertEqual([e.trade_id for e in collect_new_lifecycle_events(store, state)],
+                         ["new"])
+
+    def test_new_close_after_delivered_open_remains_eligible(self):
+        state = LifecycleState(INIT_MS)
+        mark_notified(state, LifecycleEvent(EVENT_OPENED, "one", "SAGAUSDT", INIT_MS + 1))
+        store = _store(_trade("one", INIT_MS + 1, INIT_MS + 100))
+        self.assertEqual(_kinds(collect_new_lifecycle_events(store, state)),
+                         [(EVENT_CLOSED, "one")])
 
 
 class CollectLifecycleEventsTests(unittest.TestCase):

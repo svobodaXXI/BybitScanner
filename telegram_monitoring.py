@@ -40,7 +40,8 @@ from telegram_labels import SCANNER_EMOJI, ROBOT_EMOJI
 from tools import stop_robot_runtime
 from robot_lifecycle_posts import (
     EVENT_OPENED, build_lifecycle_keyboard, collect_new_lifecycle_events,
-    format_lifecycle_caption, load_lifecycle_state, mark_notified, save_lifecycle_state,
+    format_lifecycle_caption, load_lifecycle_state, mark_notified,
+    recover_legacy_lifecycle_cursor, save_lifecycle_state,
 )
 from robot_position_chart import render_position_chart
 from robot_position_view import (
@@ -435,6 +436,9 @@ def poll_lifecycle_once(now_ms: int | None = None) -> None:
     if now_ms < state.retry_after_ms:
         return  # Durable suppression after restart; no replay during cooldown.
     with _robot_store() as store:
+        if recover_legacy_lifecycle_cursor(store, state, now_ms):
+            # Durably fence the historical backlog before any outbound request.
+            save_lifecycle_state(LIFECYCLE_STATE_FILE, state)
         events = collect_new_lifecycle_events(store, state)
         pending = [
             (event, load_position_view(store, event.symbol, trade_id=event.trade_id))
