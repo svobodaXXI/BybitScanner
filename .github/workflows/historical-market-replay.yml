@@ -85,6 +85,8 @@ jobs:
           cp ../../research/local_replay_viewer/paper_episode_local_store.py "$RUNNER_TEMP/machine-time/research/local_replay_viewer/paper_episode_local_store.py"
           cp ../../research/local_replay_viewer/START_LOCAL.cmd "$RUNNER_TEMP/machine-time/START_LOCAL.cmd"
           cp ../../research/local_replay_viewer/README.txt "$RUNNER_TEMP/machine-time/README.txt"
+          # Non-secret reviewed owner HTTPS trust anchor, no device token.
+          cp ../../research/local_replay_viewer/trusted-statistics-origin.txt "$RUNNER_TEMP/machine-time/trusted-statistics-origin.txt"
           cp ../../research/local_replay_viewer/smoke_package.py "$RUNNER_TEMP/machine-time/smoke_package.py"
           cp ../../research/local_replay_viewer/box_lifecycle_smoke.py "$RUNNER_TEMP/machine-time/box_lifecycle_smoke.py"
           cp -r ../../research/local_replay_viewer/dist "$RUNNER_TEMP/machine-time/dist"
