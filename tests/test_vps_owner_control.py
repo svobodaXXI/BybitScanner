@@ -14,6 +14,23 @@ def completed(cmd, code=0, out=""):
 
 
 class OwnerControlTests(unittest.TestCase):
+    def test_pinned_reconcile_uses_existing_detached_owner_action(self):
+        from unittest.mock import patch
+        calls = []
+        def run(cmd, **_kw):
+            calls.append(cmd)
+            return completed(cmd, out="LoadState=not-found\n" if cmd[0] == "systemctl"
+                             else "Running as unit")
+        with patch("tools.vps_release_identity.verify_release", return_value="b" * 40):
+            result = control.submit("reconcile", "installed", R, "win-laptop",
+                                    run=run, uid=0)
+        self.assertEqual(result, 0)
+        self.assertEqual(calls[-1][-5:],
+                         ["-m", "tools.paper_maintenance", "b" * 40,
+                          "--action", "reconcile"])
+        self.assertFalse(any("stop" in " ".join(c).lower()
+                             for c in calls if c[0] == "systemd-run"))
+
     def test_submit_detaches_exact_action_without_shell_or_runtime_bypass(self):
         calls = []
 
