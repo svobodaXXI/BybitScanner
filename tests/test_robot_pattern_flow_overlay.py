@@ -377,3 +377,140 @@ class UnifiedPatternEntryArgumentsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PostBreakoutImpulsePriorityResearchTests(unittest.TestCase):
+    """Earlier-than-retest hypothesis only; ZERO order permissions."""
+
+    @staticmethod
+    def _host(pattern="Falling Wedge", phase="WAITING_RETEST", direction="LONG"):
+        from types import SimpleNamespace
+
+        snapshot = {"pattern": pattern}
+        state = {"phase": phase, "direction": direction}
+        term = {"L-shape": "l_shape", "MIRROR": "mirror_entry",
+                "IKIGAI_BOX": "identity"}.get(pattern)
+        if term:
+            snapshot[term] = {"direction": direction}
+        if pattern == "IKIGAI_BOX":
+            snapshot["source_box_candidate_id"] = "box-parent-1"
+            state["source_box_candidate_id"] = "box-parent-1"
+        return SimpleNamespace(
+            candidate_id="wedge-verified-123", state_revision=9,
+            symbol=SimpleNamespace(value="BTCUSDT"),
+            status="APPROVED", signal_snapshot=snapshot, robot_state=state,
+        )
+
+    @staticmethod
+    def _observe(host, receipt=None, *, breakout=179_000, now=180_100):
+        from robot_entry_flow_evidence import observe_post_breakout_impulse_timing
+
+        return observe_post_breakout_impulse_timing(
+            host, certificate() if receipt is None else receipt,
+            breakout_known_at_ms=breakout, decision_ms=now,
+        )
+
+    def test_wedge_prefers_verified_impulse_before_old_retest_gate(self):
+        from robot_entry_flow_evidence import existing_pattern_entry_scope
+
+        host = self._host()
+        self.assertIsNone(existing_pattern_entry_scope(host))
+        decision = self._observe(host)
+        self.assertEqual(decision.outcome, "IMPULSE_ENTRY_RESEARCH")
+        self.assertEqual(decision.candidate_id, host.candidate_id)
+        self.assertFalse(decision.trading_authorized)
+
+    def test_supported_hosts_preserve_frozen_direction(self):
+        cases = (
+            ("Rising Wedge", "WAITING_RETEST", "SHORT"),
+            ("L-shape", "L_SHAPE_WAITING_RETEST", "LONG"),
+            ("MIRROR", "RETEST_DETECTED", "LONG"),
+            ("IKIGAI_BOX", "BOX_ENTRY_READY", "LONG"),
+        )
+        for pattern, phase, direction in cases:
+            with self.subTest(pattern=pattern):
+                host = self._host(pattern, phase, direction)
+                proof = replace(
+                    certificate(), direction=direction,
+                    transition=transition(
+                        buy=(direction == "LONG"),
+                        sell=(direction == "SHORT"),
+                    ),
+                )
+                decision = self._observe(host, proof)
+                self.assertEqual(decision.outcome, "IMPULSE_ENTRY_RESEARCH")
+                self.assertFalse(decision.trading_authorized)
+
+    def test_missing_and_unproven_source_are_not_early_entries(self):
+        from robot_entry_flow_evidence import observe_post_breakout_impulse_timing
+
+        host = self._host()
+        missing = observe_post_breakout_impulse_timing(
+            host, None, breakout_known_at_ms=179_000, decision_ms=180_100,
+        )
+        self.assertEqual(missing.outcome, "WAIT_SOURCE")
+        self.assertFalse(missing.trading_authorized)
+        for change in (
+            {"candidate_id": "foreign"},
+            {"state_revision": 8},
+            {"symbol": "ETHUSDT"},
+            {"direction": "SHORT"},
+            {"source_complete": False},
+            {"receipt_cutoff_proven": False},
+            {"transport_generation_proven": False},
+            {"source_kind": "WS_ONLY"},
+            {"print_facts_sha256": "invalid"},
+            {"decision_ms": 180_101},
+        ):
+            with self.subTest(change=change):
+                proof = replace(certificate(), **change)
+                self.assertEqual(self._observe(host, proof).outcome, "WAIT_SOURCE")
+
+    def test_opposite_or_not_accelerating_wave_does_not_promote(self):
+        host = self._host()
+        proof = replace(
+            certificate(),
+            transition=transition(buy=False, sell=True),
+        )
+        result = self._observe(host, proof)
+        self.assertEqual(result.outcome, "WAIT_DIRECTION")
+        self.assertFalse(result.trading_authorized)
+
+    def test_rejects_stale_future_or_prebreakout_receipts(self):
+        host = self._host()
+        self.assertIsNone(self._observe(host, breakout=180_101))
+        self.assertEqual(self._observe(host, breakout=180_001).outcome, "WAIT_SOURCE")
+        self.assertEqual(self._observe(host, now=301_000).outcome, "WAIT_SOURCE")
+        self.assertEqual(
+            self._observe(host, replace(certificate(), closed_at_ms=180_001)).outcome,
+            "WAIT_SOURCE",
+        )
+
+    def test_no_unapproved_or_independent_impulse_pattern(self):
+        for pattern, phase, direction in (
+            ("IMPULSE_FLOW", "RETEST_DETECTED", "LONG"),
+            ("Double Top", "RETEST_DETECTED", "SHORT"),
+            ("Double Bottom", "RETEST_DETECTED", "LONG"),
+            ("Falling Wedge", "WAITING_BREAKOUT", "LONG"),
+        ):
+            with self.subTest(pattern=pattern):
+                self.assertIsNone(self._observe(self._host(pattern, phase, direction)))
+        host = self._host()
+        host.status = "AVAILABLE"
+        self.assertIsNone(self._observe(host))
+
+    def test_rejects_forged_host_terms_and_box_parent(self):
+        for pattern, phase in (
+            ("L-shape", "L_SHAPE_WAITING_RETEST"),
+            ("MIRROR", "RETEST_DETECTED"),
+            ("IKIGAI_BOX", "BOX_ENTRY_READY"),
+        ):
+            with self.subTest(pattern=pattern):
+                host = self._host(pattern, phase)
+                term = {"L-shape": "l_shape", "MIRROR": "mirror_entry",
+                        "IKIGAI_BOX": "identity"}[pattern]
+                host.signal_snapshot[term]["direction"] = "SHORT"
+                self.assertIsNone(self._observe(host))
+        box = self._host("IKIGAI_BOX", "BOX_ENTRY_READY")
+        box.robot_state["source_box_candidate_id"] = "foreign-box"
+        self.assertIsNone(self._observe(box))
