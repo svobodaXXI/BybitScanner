@@ -472,12 +472,49 @@ def test_terminal_route_projects_mirror_levels_read_only(root, fixed_levels):
         server.server_close()
         thread.join(timeout=2)
     assert payload["ok"] is True and payload["paper_admission"] == "NOT_AUTHORIZED"
+    assert payload["paper_admission_scope"] == "MIRROR_LEVEL_OBSERVATION"
     assert payload["counts"] == {STATUS_UNTESTED: 1, STATUS_WAITING: 1}
     (row,) = payload["levels"]
     assert row["candidate"] is True and row["breakout"]["direction"] == "UP"
     assert row["level_geometry_text"] == "горизонталь 101" and row["parent_patterns"] == []
     assert row["first_retest_text"].startswith("ещё не было")
     assert len(everything["levels"]) == 2
+    assert ms.state_path("TESTUSDT", "1", root).read_bytes() == before
+
+
+
+
+def test_mirror_level_observation_does_not_mask_separate_entry_handoff(root, fixed_levels):
+    """Historical observation remains non-executable; exact handoff is visible separately."""
+    fixed_levels["levels"] = [level_at(101.0, 5 * M), level_at(130.0, 5 * M)]
+    observe(frame(breakout_bars()), root)
+    state = ms.load_state("TESTUSDT", "1", root)
+    (source_id,) = [level_id for level_id, record in state["records"].items()
+                    if record["candidate"] is True]
+    state["standalone_entries"] = [{
+        "entry_id": "mirror-source@1@123",
+        "terms": {"level_id": source_id, "source_timeframe": "1"},
+        "handoff": "HANDED", "candidate_id": "original-mirror-robot-candidate",
+    }, {
+        "entry_id": "unknown-source@1@123",
+        "terms": {"level_id": "unrelated-level", "source_timeframe": "1"},
+        "handoff": "HANDED", "candidate_id": "other-candidate",
+    }]
+    ms.save_state(state, root)
+    before = ms.state_path("TESTUSDT", "1", root).read_bytes()
+    projected = ms.project_mirror_levels(root, include_waiting=True)
+    assert projected["paper_admission"] == "NOT_AUTHORIZED"
+    assert projected["paper_admission_scope"] == "MIRROR_LEVEL_OBSERVATION"
+    rows = {row["level_id"]: row for row in projected["levels"]}
+    source = rows[source_id]
+    assert source["robot"]["executable"] is False
+    assert source["robot"]["admission_allowed"] is False
+    assert source["standalone_entry_handoffs"] == [{
+        "entry_id": "mirror-source@1@123",
+        "handoff": "HANDED", "candidate_id": "original-mirror-robot-candidate",
+    }]
+    assert all(row["standalone_entry_handoffs"] == [] for key, row in rows.items()
+               if key != source_id)
     assert ms.state_path("TESTUSDT", "1", root).read_bytes() == before
 
 
