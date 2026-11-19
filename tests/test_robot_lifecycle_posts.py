@@ -60,6 +60,17 @@ class LifecycleStateTests(unittest.TestCase):
         self.path.write_text("{broken", encoding="utf-8")
         self.assertEqual(load_lifecycle_state(self.path, INIT_MS + 5).initialized_at_ms, INIT_MS + 5)
 
+    def test_legacy_file_without_watermark_remains_readable(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(json.dumps({
+            "initialized_at_ms": INIT_MS, "opened": [], "closed": ["old"],
+            "retry_after_ms": INIT_MS + 300_000,
+        }), encoding="utf-8")
+        state = load_lifecycle_state(self.path, INIT_MS + 1)
+        self.assertEqual(state.closed, ["old"])
+        self.assertIsNone(state.closed_floor)
+        self.assertEqual(state.retry_after_ms, INIT_MS + 300_000)
+
     def test_mark_notified_keeps_last_200_per_kind(self):
         state = LifecycleState(INIT_MS)
         for index in range(REMEMBERED_TRADE_IDS + 5):
@@ -99,6 +110,51 @@ class CollectLifecycleEventsTests(unittest.TestCase):
         events = collect_new_lifecycle_events(store, LifecycleState(INIT_MS))
         self.assertEqual(_kinds(events), [(EVENT_CLOSED, "t1")])
         self.assertEqual(events[0].exit_reason, "EMERGENCY_CLOSE")
+
+    def test_over_200_delivered_closes_dont_replay_after_restart(self):
+        trades = tuple(_trade(f"t{i:04d}", INIT_MS + i,
+                              INIT_MS + i + 500, exit_reason="EMERGENCY_CLOSE")
+                       for i in range(255))
+        store = _store(*trades)
+        state = LifecycleState(INIT_MS)
+        for event in collect_new_lifecycle_events(store, state):
+            mark_notified(state, event)
+        self.assertEqual(len(state.closed), REMEMBERED_TRADE_IDS)
+        save_lifecycle_state(self.path, state)
+        restarted = load_lifecycle_state(self.path, INIT_MS + 200000)
+        self.assertEqual(collect_new_lifecycle_events(store, restarted), [])
+        self.assertEqual(restarted.closed_floor, (INIT_MS + 555, "t0055"))
+        save_lifecycle_state(self.path, restarted)
+        self.assertEqual(collect_new_lifecycle_events(
+            store, load_lifecycle_state(self.path, INIT_MS + 300000)), [])
+
+    def test_same_millisecond_closes_use_exact_trade_id_tie_breaker(self):
+        trades = tuple(_trade(f"t{i:04d}", INIT_MS + 1, INIT_MS + 7,
+                              exit_reason="STOP") for i in range(225))
+        state = LifecycleState(INIT_MS)
+        store = _store(*trades)
+        for event in collect_new_lifecycle_events(store, state):
+            mark_notified(state, event)
+        self.assertEqual(collect_new_lifecycle_events(store, state), [])
+        self.assertEqual(state.closed_floor, (INIT_MS + 7, "t0025"))
+
+    def test_old_late_close_does_not_rewind_watermark(self):
+        trades = [_trade(f"t{i:04d}", INIT_MS + i, INIT_MS + i + 500,
+                         exit_reason="TAKE") for i in range(255)]
+        state = LifecycleState(INIT_MS)
+        for event in collect_new_lifecycle_events(_store(*trades), state):
+            mark_notified(state, event)
+        collect_new_lifecycle_events(_store(*trades), state)
+        floor = state.closed_floor
+        trades.append(_trade("late", INIT_MS, INIT_MS + 1, exit_reason="STOP"))
+        self.assertEqual(collect_new_lifecycle_events(_store(*trades), state), [])
+        self.assertEqual(state.closed_floor, floor)
+
+    def test_missing_retained_trade_id_blocks_unsafe_watermark(self):
+        state = LifecycleState(
+            INIT_MS, closed=[f"t{i:04d}" for i in range(REMEMBERED_TRADE_IDS)])
+        with self.assertRaisesRegex(ValueError, "watermark cannot be verified"):
+            collect_new_lifecycle_events(_store(), state)
 
     def test_restart_skips_sent_and_resends_unsent(self):
         store = _store(_trade("t1", INIT_MS + 1, INIT_MS + 20, exit_reason="STOP"), _trade("t2", INIT_MS + 2))
