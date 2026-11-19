@@ -10,8 +10,9 @@ from decimal import Decimal
 from robot_entry_flow_evidence import (
     CandidateBoundFlowEvidence,
     ExistingPatternEntryScope,
-    FlowTransition,
+    FlowTransition, PatternEntryArgument,
     match_existing_pattern_flow, existing_pattern_entry_scope,
+    summarize_pattern_entry_arguments,
 )
 
 
@@ -229,6 +230,149 @@ class PatternEntryFlowOverlayTests(unittest.TestCase):
         self.assertTrue(match_existing_pattern_flow(
             short_scope, short_receipt, now_ms=181_000,
         ))
+
+
+
+class UnifiedPatternEntryArgumentsTests(unittest.TestCase):
+    """All auxiliary evidence stays on one canonical host; no new orders."""
+
+    @staticmethod
+    def _host(pattern="Falling Wedge", direction="LONG"):
+        from types import SimpleNamespace
+        phases = {
+            "Falling Wedge": "RETEST_DETECTED",
+            "Rising Wedge": "RETEST_DETECTED",
+            "L-shape": "RETEST_DETECTED",
+            "MIRROR": "RETEST_DETECTED",
+            "IKIGAI_BOX": "BOX_ENTRY_READY",
+        }
+        snap = {"pattern": pattern}
+        state = {"direction": direction, "phase": phases.get(pattern, "RETEST_DETECTED")}
+        terms = {"L-shape": "l_shape", "MIRROR": "mirror_entry",
+                 "IKIGAI_BOX": "identity"}.get(pattern)
+        if terms:
+            snap[terms] = {"direction": direction}
+        if pattern == "IKIGAI_BOX":
+            snap["source_box_candidate_id"] = "box-original-1"
+            state["source_box_candidate_id"] = "box-original-1"
+        return SimpleNamespace(
+            candidate_id="host-1",
+            symbol=SimpleNamespace(value="BTCUSDT"),
+            state_revision=7, status="APPROVED",
+            signal_snapshot=snap, robot_state=state,
+        )
+
+    @staticmethod
+    def _factor(kind="TAKER_PRESSURE", outcome="SUPPORT", **overrides):
+        values = dict(
+            kind=kind, candidate_id="host-1", state_revision=7,
+            symbol="BTCUSDT", direction="LONG", outcome=outcome,
+            source_id="verified-example-1", event_at_ms=180_000,
+            available_at_ms=180_009,
+        )
+        values.update(overrides)
+        return PatternEntryArgument(**values)
+
+    def test_each_optional_factor_can_support_same_approved_pattern(self):
+        host = self._host()
+        kinds = (
+            "TAKER_PRESSURE", "OPPOSING_PRESSURE_FADE", "LIQUIDATION",
+            "OPEN_INTEREST", "DMI_CROSS", "DMI_PRECURSOR",
+            "REVERSAL_CANDLE", "DOUBLE_EXTREMUM",
+        )
+        for kind in kinds:
+            with self.subTest(kind=kind):
+                result = summarize_pattern_entry_arguments(
+                    host, (self._factor(kind),), decision_ms=180_010,
+                )
+                self.assertEqual(result.candidate_id, "host-1")
+                self.assertEqual(len(result.supporting_groups), 1)
+                self.assertFalse(result.trading_authorized)
+                self.assertIn("UNKNOWN", dict(result.group_outcomes).values())
+
+    def test_correlated_factors_do_not_create_extra_votes(self):
+        result = summarize_pattern_entry_arguments(self._host(), (
+            self._factor("TAKER_PRESSURE"),
+            self._factor("OPPOSING_PRESSURE_FADE"),
+            self._factor("DMI_CROSS"),
+            self._factor("DMI_PRECURSOR"),
+            self._factor("OPEN_INTEREST", outcome="CONTRADICT"),
+            self._factor("REVERSAL_CANDLE", outcome="SUPPORT"),
+            self._factor("DOUBLE_EXTREMUM", outcome="CONTRADICT"),
+        ), decision_ms=180_010)
+        votes = dict(result.group_outcomes)
+        self.assertEqual(votes["EXECUTED_FLOW"], "SUPPORT")
+        self.assertEqual(votes["DMI"], "SUPPORT")
+        self.assertEqual(votes["OPEN_INTEREST"], "CONTRADICT")
+        self.assertEqual(votes["PRICE_REVERSAL"], "CONFLICT")
+        self.assertEqual(votes["LIQUIDATIONS"], "UNKNOWN")
+        self.assertEqual(len(result.supporting_groups), 2)
+        self.assertFalse(result.trading_authorized)
+
+    def test_wrong_host_stale_future_and_unsupported_kind_do_not_count(self):
+        result = summarize_pattern_entry_arguments(self._host(), (
+            self._factor(candidate_id="other"),
+            self._factor(state_revision=8),
+            self._factor(symbol="ETHUSDT"),
+            self._factor(direction="SHORT"),
+            self._factor(available_at_ms=180_011),
+            self._factor(event_at_ms=180_012),
+            self._factor(source_id=""),
+            self._factor(kind="IMPULSE_FLOW"),
+            self._factor(outcome="ALLOW_ORDER"),
+        ), decision_ms=180_010)
+        self.assertTrue(all(v == "UNKNOWN" for _, v in result.group_outcomes))
+        self.assertEqual(result.supporting_groups, ())
+        self.assertFalse(result.trading_authorized)
+
+    def test_no_standalone_auxiliary_or_unapproved_signal(self):
+        from types import SimpleNamespace
+        for pattern in ("IMPULSE_FLOW", "Double Top", "Double Bottom"):
+            host = self._host()
+            host.signal_snapshot = {"pattern": pattern}
+            self.assertIsNone(summarize_pattern_entry_arguments(
+                host, (self._factor(),), decision_ms=180_010,
+            ))
+        not_approved = self._host()
+        not_approved.status = "AVAILABLE"
+        self.assertIsNone(summarize_pattern_entry_arguments(
+            not_approved, (self._factor(),), decision_ms=180_010,
+        ))
+        early = self._host()
+        early.robot_state["phase"] = "WAITING_BREAKOUT"
+        self.assertIsNone(summarize_pattern_entry_arguments(
+            early, (self._factor(),), decision_ms=180_010,
+        ))
+        box_plan = self._host("IKIGAI_BOX")
+        box_plan.status = "BOX_PLAN_ONLY"
+        self.assertIsNone(summarize_pattern_entry_arguments(
+            box_plan, (self._factor(),), decision_ms=180_010,
+        ))
+
+    def test_every_existing_host_family_keeps_its_own_candidate_and_direction(self):
+        for pattern, direction in (
+            ("Falling Wedge", "LONG"), ("Rising Wedge", "SHORT"),
+            ("L-shape", "LONG"), ("MIRROR", "SHORT"),
+            ("IKIGAI_BOX", "LONG"),
+        ):
+            with self.subTest(pattern=pattern):
+                host = self._host(pattern, direction)
+                factor = self._factor(direction=direction)
+                result = summarize_pattern_entry_arguments(
+                    host, (factor,), decision_ms=180_010,
+                )
+                self.assertEqual((result.pattern, result.candidate_id,
+                                  result.direction), (pattern, "host-1", direction))
+                self.assertEqual(result.supporting_groups, ("EXECUTED_FLOW",))
+                self.assertFalse(result.trading_authorized)
+                mismatched = self._factor(
+                    direction=("SHORT" if direction == "LONG" else "LONG")
+                )
+                result = summarize_pattern_entry_arguments(
+                    host, (mismatched,), decision_ms=180_010,
+                )
+                self.assertEqual(result.supporting_groups, ())
+
 
 
 if __name__ == "__main__":
