@@ -184,6 +184,10 @@ class ObserverTests(unittest.TestCase):
             ("L-shape", "WAITING_RETEST"),
             ("Falling Wedge", "EXPIRED_AT_APEX"),
             ("IKIGAI_BOX", "BOX_PLAN_ONLY"),
+            # Legacy APPROVED standalone DT/DB cannot consume a flow topic
+            # after #1153 made both reversal patterns auxiliary-only.
+            ("Double Top", "RETEST_DETECTED"),
+            ("Double Bottom", "RETEST_DETECTED"),
         ):
             with self.subTest(pattern=pattern, phase=phase):
                 hub = MarketDataHub(_Registry(), _context,
