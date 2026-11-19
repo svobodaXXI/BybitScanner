@@ -8,6 +8,8 @@ never submits, retries, amends, cancels, or closes an exchange order.
 from __future__ import annotations
 
 import robot_l_shape
+from robot_state_machine import RobotStateMachineError
+from scanner_geometry_cursor import ScannerGeometryCursorError
 
 from dataclasses import dataclass
 from typing import Callable, Mapping
@@ -19,6 +21,7 @@ from robot_restart_recovery import (
     ROBOT_RUNNING,
     ROBOT_STOPPED,
     RestartDecision,
+    RobotRestartError,
     reconcile_restart,
 )
 from scanner_geometry_cursor import default_scanner_geometry_cursor_provider
@@ -33,6 +36,7 @@ from terminal.persistence.sqlite_store import (
 RECONCILING = "RECONCILING"
 READY = "READY"
 PAUSED = "PAUSED"
+PAPER_CANDIDATE_QUARANTINED = "PAPER_CANDIDATE_QUARANTINED"
 
 
 class RobotRecoveryError(RuntimeError):
@@ -192,18 +196,62 @@ class RobotRecoveryCoordinator:
         try:
             if not hold_reconciling:
                 self._validate_open_trade_integrity()
-            geometry_indices = self._latest_geometry_indices(approved)
-            status, decisions = reconcile_restart(
+            # OPEN positions remain account-level authority. Candidate-only
+            # replay failures are evaluated independently in PAPER; a broken
+            # pre-execution candidate must not discard unrelated opportunities.
+            status, position_decisions = reconcile_restart(
                 durable_mode=ROBOT_RUNNING,
                 open_robot_positions=open_positions,
-                approved_candidates=tuple(self._candidate_payload(item) for item in approved),
-                latest_geometry_index_by_candidate=geometry_indices,
+                approved_candidates=(),
+                latest_geometry_index_by_candidate={},
             )
             if status != ROBOT_RUNNING:
                 raise RobotRecoveryError(f"unexpected restart status: {status}")
+            decisions = list(position_decisions)
+            for candidate in approved:
+                try:
+                    indices = self._latest_geometry_indices((candidate,))
+                    candidate_status, candidate_decisions = reconcile_restart(
+                        durable_mode=ROBOT_RUNNING,
+                        open_robot_positions=(),
+                        approved_candidates=(self._candidate_payload(candidate),),
+                        latest_geometry_index_by_candidate=indices,
+                    )
+                    if candidate_status != ROBOT_RUNNING:
+                        raise RobotRecoveryError("unexpected candidate restart status")
+                    decisions.extend(candidate_decisions)
+                except (
+                    RobotRestartError, RobotStateMachineError,
+                    robot_l_shape.RobotLShapeError, ScannerGeometryCursorError,
+                    RobotRecoveryError,
+                ) as exc:
+                    # Missing market-data evidence is not proof of an invalid
+                    # candidate. Do not terminalize a valid setup on a transient
+                    # closed-candle outage.
+                    if isinstance(exc, ScannerGeometryCursorError) and (
+                        "evidence is unavailable" in str(exc)
+                        or "latest closed candle" in str(exc)
+                    ):
+                        raise
+                    if not self._candidate_is_inert(candidate):
+                        raise
+                    quarantined_state = dict(candidate.robot_state or {})
+                    quarantined_state["paper_quarantine"] = {
+                        "reason": "CANDIDATE_RECOVERY_INVALID",
+                        "error_type": type(exc).__name__,
+                        "at_ms": self._now_ms(),
+                    }
+                    decisions.append(RestartDecision(
+                        PAPER_CANDIDATE_QUARANTINED,
+                        candidate_id=candidate.candidate_id,
+                        reason="isolated pre-execution PAPER candidate",
+                        state=quarantined_state,
+                    ))
             by_candidate = {item.candidate_id: item for item in approved}
             for decision in decisions:
-                if decision.status not in {RESUME_WAITING, EXPIRED_AT_APEX}:
+                if decision.status not in {
+                    RESUME_WAITING, EXPIRED_AT_APEX, PAPER_CANDIDATE_QUARANTINED,
+                }:
                     continue
                 if decision.candidate_id not in by_candidate or decision.state is None:
                     raise RobotRecoveryError("restart decision lacks durable candidate state")
@@ -222,7 +270,11 @@ class RobotRecoveryCoordinator:
                     continue
                 self._store.save_robot_candidate_state(
                     candidate.candidate_id,
-                    status="EXPIRED" if decision.status == EXPIRED_AT_APEX else "APPROVED",
+                    status=(
+                        "INVALIDATED" if decision.status == PAPER_CANDIDATE_QUARANTINED
+                        else "EXPIRED" if decision.status == EXPIRED_AT_APEX
+                        else "APPROVED"
+                    ),
                     robot_state=dict(decision.state),
                     expected_revision=candidate.state_revision,
                     updated_at_ms=self._now_ms(),
@@ -243,7 +295,7 @@ class RobotRecoveryCoordinator:
                     if hold_reconciling else None
                 ),
             )
-            return RobotRecoveryResult(runtime, decisions)
+            return RobotRecoveryResult(runtime, tuple(decisions))
         except Exception as exc:
             runtime = self._mark_reconciliation_required(runtime, exc)
             return RobotRecoveryResult(runtime, ())
@@ -255,6 +307,49 @@ class RobotRecoveryCoordinator:
             and runtime.mode == ROBOT_RUNNING
             and runtime.recovery_status == READY
         )
+
+    def _candidate_is_inert(self, candidate) -> bool:
+        """Prove a failing PAPER candidate has no execution or exposure lineage.
+
+        A candidate label alone is never evidence of zero risk. Existing
+        canonical store reads decide whether the candidate can be locally
+        invalidated; missing evidence raises and retains the global fence.
+        """
+        if self._account_id.value != "paper" or candidate.status != "APPROVED":
+            return False
+        # A persisted command intent can exist before an active limit or
+        # position projection. Never quarantine a candidate that may still
+        # have execution lineage just because the current account is FLAT.
+        execution = (candidate.robot_state or {}).get("execution") or {}
+        if not isinstance(execution, Mapping) or set(execution) - {
+            "last_execution_error", "last_attempt_at_ms",
+            "attempt_count", "paper_candidate_error",
+        }:
+            return False
+        if self._store.get_robot_trade(f"robot-trade-{candidate.candidate_id}") is not None:
+            return False
+        symbol = candidate.symbol
+        if self._store.get_open_robot_trade_for_symbol(self._account_id, symbol):
+            return False
+        if self._store.load_active_robot_entry_orders(self._account_id, symbol):
+            return False
+        if self._store.load_active_paper_limits(self._account_id, symbol):
+            return False
+        if any(
+            command.trading_account_id == self._account_id and command.symbol == symbol
+            for command in self._store.load_unfinished_commands()
+        ):
+            return False
+        position = self._store.get_position_projection(
+            PositionKey(self._account_id, Category.LINEAR, symbol, 0)
+        )
+        if position is not None and (
+            position.side is not PositionSide.FLAT or position.quantity.value != 0
+        ):
+            return False
+        if self._store.load_unresolved_paper_protection_obligations(self._account_id):
+            return False
+        return True
 
     def _validate_open_trade_integrity(self) -> None:
         """Prove durable OPEN Robot lifecycle state before reopening admission.

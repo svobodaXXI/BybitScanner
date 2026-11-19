@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
- [ValidateSet("EDITOR","TERMINAL")][string]$Mode,
+ [ValidateSet("EDITOR","TERMINAL","AUTOPILOT")][string]$Mode,
  [ValidatePattern('^[A-Z0-9]{2,32}USDT$')][string]$Symbol,
  [ValidateSet("15s","1m","5m","15m","1h","1d")][string]$Timeframe,
  [ValidatePattern('^source-original:[0-9a-f]{24}$')][string]$SignalId

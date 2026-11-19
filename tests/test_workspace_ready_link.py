@@ -26,10 +26,17 @@ class WorkspaceReadyLinkTests(unittest.TestCase):
             with self.subTest(origin=origin), self.assertRaises(ValueError):
                 workspace_link(origin, "EDITOR", "BTCUSDT", "5m")
         for mode, symbol, tf, sid in [
-            ("AUTOPILOT", "BTCUSDT", "5m", None), ("EDITOR", "btcUSDT", "5m", None),
+            ("SCANNER", "BTCUSDT", "5m", None), ("EDITOR", "btcUSDT", "5m", None),
             ("EDITOR", "BTCUSDT", "8h", None), ("EDITOR", "BTCUSDT", "5m", "bad/segment")]:
             with self.assertRaises(ValueError):
                 workspace_link("https://terminal.example.com", mode, symbol, tf, sid)
+
+    def test_autopilot_link_is_owner_view_navigation_without_candidate(self):
+        link = workspace_link("https://terminal.example.com/login", "AUTOPILOT", "XDPUSDT", "5m")
+        self.assertEqual(parse_qs(urlsplit(link).query), {
+            "mode": ["AUTOPILOT"], "symbol": ["XDPUSDT"], "timeframe": ["5m"],
+        })
+        self.assertNotIn("signal_id", link)
 
     def test_local_qr_png_contains_link_if_dependency_available(self):
         try:

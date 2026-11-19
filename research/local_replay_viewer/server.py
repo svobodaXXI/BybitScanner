@@ -48,6 +48,8 @@ SIM_DATA = HERE / "simulator-v2-data"
 # Local owner-imported facts; never shared with VPS or trading runtime.
 PAPER_EPISODES = HERE / "paper-episode-facts"
 SIM_LOCK = threading.Lock()
+UPDATE_LOCK = threading.Lock()
+UPDATE_STATE = {"status": "idle", "detail": ""}
 MAX_SIM_REQUEST_BYTES = 4_096
 MAX_SIM_CONFIG_BYTES = 12_000
 
@@ -412,6 +414,17 @@ def handler_factory(static_dir: Path = STATIC_DIR,
                     return
                 self._send(200, raw, "application/json; charset=utf-8")
                 return
+            if url.path == "/local-replay/desktop-update/status":
+                if (url.query or self.headers.get("Sec-Fetch-Site") == "cross-site"
+                        or self.headers.get("Origin") not in (
+                            None, "", f"http://127.0.0.1:{self.server.server_address[1]}",
+                            f"http://localhost:{self.server.server_address[1]}",
+                        )):
+                    self._error(403, "Same-origin update status only")
+                    return
+                self._send(200, json.dumps(UPDATE_STATE).encode("utf-8"),
+                           "application/json; charset=utf-8")
+                return
             if url.path == "/local-replay/simulation/status":
                 if url.query or self.headers.get("Sec-Fetch-Site") == "cross-site":
                     self._error(403, "Local SIMULATION only")
@@ -568,6 +581,54 @@ def handler_factory(static_dir: Path = STATIC_DIR,
                 self._error(403, "Local Wedge SIMULATION only")
                 return
             path = urlsplit(self.path).path
+            if path == "/local-replay/desktop-update":
+                origin = self.headers.get("Origin")
+                allowed = (f"http://127.0.0.1:{self.server.server_address[1]}",
+                           f"http://localhost:{self.server.server_address[1]}")
+                if (urlsplit(self.path).query or origin not in allowed
+                        or self.headers.get("Sec-Fetch-Site") == "cross-site"
+                        or self.headers.get("X-Local-Desktop-Update") != "explicit-click"
+                        or self.headers.get("Content-Type") != "application/json"
+                        or self.headers.get("Content-Length") != "2"):
+                    self._error(403, "Explicit same-origin desktop update only")
+                    return
+                if self.rfile.read(2) != b"{}":
+                    self._error(422, "Invalid update request")
+                    return
+                if not UPDATE_LOCK.acquire(blocking=False):
+                    self._error(409, "Desktop update already in progress")
+                    return
+                if not SIM_LOCK.acquire(blocking=False):
+                    UPDATE_LOCK.release()
+                    self._error(409, "SIMULATION running; update not started")
+                    return
+                UPDATE_STATE.update(status="checking", detail="")
+                server = self.server
+                def owner_update_worker() -> None:
+                    from research.local_replay_viewer.simulator_self_update import (
+                        prepare_simulator_update, schedule_relaunch,
+                    )
+                    from research.local_replay_viewer.desktop_update import UpdateBlocked
+                    try:
+                        launcher, _sha = prepare_simulator_update(HERE)
+                        # The new helper must start successfully BEFORE the old
+                        # loopback is shut down. It waits for this port to close.
+                        schedule_relaunch(launcher, server.server_address[1])
+                        UPDATE_STATE.update(status="restarting", detail="verified_release_staged")
+                        server.shutdown()
+                        server.server_close()
+                    except Exception as exc:
+                        # A malformed but hash-matched ZIP or failed local
+                        # relaunch must not strand the owner in "checking".
+                        detail = str(exc) if isinstance(exc, UpdateBlocked) else type(exc).__name__
+                        UPDATE_STATE.update(status="blocked", detail=detail)
+                    finally:
+                        SIM_LOCK.release()
+                        UPDATE_LOCK.release()
+                threading.Thread(target=owner_update_worker, daemon=True).start()
+                self._send(202, b'{"status":"checking"}',
+                           "application/json; charset=utf-8")
+                return
             if path == "/local-replay/paper-episode/import":
                 from research.local_replay_viewer.paper_episode_local_store import (
                     MAX_BYTES, LocalEpisodeConflict, store_episode,
@@ -581,22 +642,30 @@ def handler_factory(static_dir: Path = STATIC_DIR,
                     or urlsplit(self.path).query):
                     self._error(403, "Explicit same-origin PAPER import only")
                     return
+                # The same local state fence is held during a desktop
+                # update. An imported episode cannot race the verified copy.
+                if not SIM_LOCK.acquire(blocking=False):
+                    self._error(409, "Local state busy; import not started")
+                    return
                 try:
-                    size = int(self.headers.get("Content-Length", "0"))
-                    if not 2 <= size <= MAX_BYTES:
-                        self._error(413, "PAPER facts exceed local import limit")
+                    try:
+                        size = int(self.headers.get("Content-Length", "0"))
+                        if not 2 <= size <= MAX_BYTES:
+                            self._error(413, "PAPER facts exceed local import limit")
+                            return
+                        episode_id = store_episode(PAPER_EPISODES, self.rfile.read(size))
+                    except LocalEpisodeConflict:
+                        self._error(409, "Existing local episode conflicts with import")
                         return
-                    episode_id = store_episode(PAPER_EPISODES, self.rfile.read(size))
-                except LocalEpisodeConflict:
-                    self._error(409, "Existing local episode conflicts with import")
+                    except (OSError, ValueError):
+                        self._error(422, "Invalid PAPER episode import")
+                        return
+                    self._send(200, json.dumps({
+                        "ok": True, "trade_episode_id": episode_id, "stored_locally": True,
+                    }).encode("utf-8"), "application/json")
                     return
-                except (OSError, ValueError):
-                    self._error(422, "Invalid PAPER episode import")
-                    return
-                self._send(200, json.dumps({
-                    "ok": True, "trade_episode_id": episode_id, "stored_locally": True,
-                }).encode("utf-8"), "application/json")
-                return
+                finally:
+                    SIM_LOCK.release()
             if path not in (
                 "/local-replay/simulation/wedge",
                 "/local-replay/simulation/wedge-stream",

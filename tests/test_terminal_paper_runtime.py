@@ -2539,6 +2539,52 @@ def _set_admission(runtime, *, mode, recovery_status):
     )
 
 
+def test_entry_limit_admission_ignores_terminal_history_without_weakening_fence():
+    """Every protected LIMIT event reads only active Robot candidate ownership."""
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime(Path(temp) / "paper.sqlite3")
+        account, symbol = TradingAccountId("paper"), Symbol("BTCUSDT")
+        try:
+            _seed_pending_candidate_with_resting_limit(
+                runtime, candidate_id="candidate-live", order_id="entry-live",
+            )
+            for i in range(20):
+                cid = f"candidate-history-{i}"
+                runtime.store.create_robot_candidate(
+                    candidate_id=cid, trading_account_id=account,
+                    symbol=symbol, status="APPROVED",
+                    signal_snapshot={"symbol": symbol.value, "history_id": i},
+                    approved_at_ms=1000 + i, updated_at_ms=1000 + i,
+                )
+                runtime.store.save_robot_candidate_state(
+                    cid, status="INVALIDATED",
+                    robot_state={"phase": "RETEST_DETECTED",
+                                 "execution": {"limit_order_id": f"terminal-{i}"}},
+                    expected_revision=0, updated_at_ms=2000 + i,
+                )
+            assert len(runtime.store.load_robot_candidates_for_symbol(account, symbol)) == 21
+            with patch.object(
+                runtime.store, "load_robot_candidates_for_symbol",
+                side_effect=AssertionError("historical candidates scanned in entry LIMIT path"),
+            ):
+                assert runtime._robot_linked_entry_limits(symbol) == {"entry-live": None}
+                # Entry is not authorized while Robot remains STOPPED.
+                fenced = runtime._robot_entry_limit_ids_fenced_by_admission(
+                    symbol, runtime.store.load_active_paper_limits(account, symbol),
+                )
+                assert fenced == frozenset({"entry-live"})
+                book = StaticBookProvider().get_book(symbol)
+                assert runtime._match_limits_only(
+                    symbol, book, "entry-history-proof",
+                    allowed_order_ids={"entry-live"},
+                ) == 0
+            order = runtime.store.get_paper_limit("entry-live", account)
+            assert order.status == "open"
+            assert order.filled_quantity == 0
+        finally:
+            runtime.close()
+
+
 def test_robot_synchronize_pending_entries_cancels_zero_fill_resting_limit_when_paused():
     with tempfile.TemporaryDirectory() as temp:
         runtime = _runtime(Path(temp) / "paper.sqlite3")

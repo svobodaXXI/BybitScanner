@@ -2513,6 +2513,78 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         current = self.store.get_robot_candidate(record.candidate_id)
         self.assertEqual(current.state_revision, 1)
 
+    def test_repeated_inert_candidate_fault_is_quarantined_without_stopping_peers(self):
+        self._create_candidate("candidate-a", symbol=SYMBOL)
+        self._create_candidate("candidate-b", symbol="OTHERUSDT")
+        self.monitor.tick()  # Initialize both candidates without execution.
+        original_advance = self.monitor._advance_one
+
+        def failing_one(record):
+            if record.candidate_id == "candidate-a":
+                raise robot_state_machine.RobotStateMachineError("invalid frozen candidate state")
+            return original_advance(record)
+
+        with patch.object(self.monitor, "_advance_one", side_effect=failing_one):
+            for _ in range(3):
+                self.monitor.tick()
+
+        quarantined = self.store.get_robot_candidate("candidate-a")
+        healthy = self.store.get_robot_candidate("candidate-b")
+        self.assertEqual(quarantined.status, "INVALIDATED")
+        self.assertEqual(
+            quarantined.robot_state["paper_quarantine"]["reason"],
+            "REPEATED_CANDIDATE_ERROR",
+        )
+        self.assertEqual(healthy.status, "APPROVED")
+        self.assertEqual(
+            self.store.get_robot_runtime_state(ACCOUNT_ID).recovery_status, "READY",
+        )
+
+    def test_repeated_error_with_resting_limit_does_not_quarantine(self):
+        self._create_candidate()
+        self.monitor.tick()
+        self.store.create_paper_limit(
+            client_action_id="paper-candidate-test-limit",
+            request_fingerprint="paper-candidate-test-limit",
+            order_id=OrderId("paper-candidate-test-limit"),
+            order_link_id="paper-candidate-test-link",
+            trading_account_id=ACCOUNT_ID,
+            symbol=Symbol(SYMBOL),
+            side=OrderSide.BUY,
+            price=Decimal("80"),
+            quantity=Decimal("1"),
+            created_at_ms=self.clock(),
+        )
+        with patch.object(
+            self.monitor, "_advance_one",
+            side_effect=robot_state_machine.RobotStateMachineError("stuck"),
+        ):
+            for _ in range(3):
+                self.monitor.tick()
+        candidate = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(candidate.status, "APPROVED")
+        self.assertNotIn("paper_quarantine", candidate.robot_state)
+
+    def test_repeated_error_with_execution_intent_does_not_quarantine(self):
+        self._create_candidate()
+        self.monitor.tick()
+        record = self.store.get_robot_candidate("candidate-1")
+        state = dict(record.robot_state)
+        state["execution"] = {"late_market_intent": {"command_id": "pending"}}
+        self.store.save_robot_candidate_state(
+            record.candidate_id, status="APPROVED", robot_state=state,
+            expected_revision=record.state_revision, updated_at_ms=self.clock(),
+        )
+        with patch.object(
+            self.monitor, "_advance_one",
+            side_effect=robot_state_machine.RobotStateMachineError("stuck"),
+        ):
+            for _ in range(3):
+                self.monitor.tick()
+        candidate = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(candidate.status, "APPROVED")
+        self.assertNotIn("paper_quarantine", candidate.robot_state)
+
     def test_two_candidates_on_different_symbols_are_independent(self):
         self._create_candidate("candidate-a", symbol=SYMBOL)
         self._create_candidate("candidate-b", symbol="OTHERUSDT")

@@ -2172,10 +2172,10 @@ class PaperRuntime:
         re-evaluated the candidate's resting ENTRY (``entry_admission_version``).
         """
         linked: dict[str, object] = {}
-        for candidate in self.store.load_robot_candidates_for_symbol(
+        for candidate in self.store.load_active_robot_candidates_for_symbol(
             self._paper_account_id, symbol,
         ):
-            if candidate.status not in {"APPROVED", "OPEN"} or candidate.robot_state is None:
+            if candidate.robot_state is None:
                 continue
             phase = candidate.robot_state.get("phase")
             execution = candidate.robot_state.get("execution") or {}
@@ -2299,7 +2299,7 @@ class PaperRuntime:
             raise ValueError("Robot market event symbol does not match book")
         with protection_span("state"):
             owned_limit_ids: set[str] = set()
-            for candidate in self.store.load_robot_candidates_for_symbol(
+            for candidate in self.store.load_active_robot_candidates_for_symbol(
                 self._paper_account_id, normalized,
             ):
                 if candidate.symbol != normalized or candidate.robot_state is None:

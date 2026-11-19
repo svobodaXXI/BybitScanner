@@ -212,7 +212,7 @@ class TelegramRobotControlDispatchTests(unittest.TestCase):
                 send_mock.assert_called_once()
                 self.assertEqual(send_mock.call_args.args[2], text)
 
-    def test_candidate_approval_stays_on_admission_not_runtime_intent(self):
+    def test_legacy_candidate_button_no_longer_admits_or_starts_runtime(self):
         callback_query = {
             "id": "cb-approve",
             "data": "robot:approve:cand-1",
@@ -236,8 +236,7 @@ class TelegramRobotControlDispatchTests(unittest.TestCase):
         ):
             telegram_review._process_callback(callback_query)
 
-        admit_mock.assert_called_once()
-        self.assertEqual(admit_mock.call_args.args[0], "cand-1")
+        admit_mock.assert_not_called()
         intent_mock.assert_not_called()
 
     def test_owner_stop_callback_hands_off_to_shared_full_runtime_shutdown(self):

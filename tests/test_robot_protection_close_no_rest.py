@@ -23,6 +23,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
 from terminal.domain.models import (
     ExecutionId, OrderId, OrderSide, Quantity, Symbol, TradingAccountId,
@@ -191,6 +192,76 @@ class _NoopEngine:
 
 
 class OwnerThreadProtectionCloseTests(unittest.TestCase):
+    def test_protection_event_skips_immutable_candidate_history(self):
+        """Historical candidates cost no JSON/hash decoding on each market event."""
+        from terminal.persistence import sqlite_store
+
+        with tempfile.TemporaryDirectory() as temp:
+            fixture = _Fixture(temp)
+            try:
+                for index in range(24):
+                    record, created = fixture.runtime.store.create_robot_candidate(
+                        candidate_id=f"old-candidate-{index}",
+                        trading_account_id=ACCOUNT, symbol=Symbol(SYMBOL),
+                        status="APPROVED",
+                        signal_snapshot={"symbol": SYMBOL, "pattern": "Falling Wedge",
+                                         "historic": index},
+                        approved_at_ms=1000 + index,
+                        updated_at_ms=1000 + index,
+                    )
+                    self.assertTrue(created)
+                    fixture.runtime.store.save_robot_candidate_state(
+                        record.candidate_id, status="INVALIDATED",
+                        robot_state={"phase": "INVALIDATED"},
+                        expected_revision=record.state_revision,
+                        updated_at_ms=2000 + index,
+                    )
+
+                # History stays queryable for Diary and for reconciliation.
+                historical = fixture.runtime.store.load_robot_candidates_for_symbol(
+                    ACCOUNT, Symbol(SYMBOL),
+                )
+                self.assertEqual(len(historical), 25)
+                # The hot SQL must use its partial active-status index, not
+                # scan terminal history or sort all rows per market event.
+                plan = [
+                    row[3] for row in fixture.runtime.store._connection.execute(
+                        """EXPLAIN QUERY PLAN
+                           SELECT * FROM robot_candidates
+                           WHERE trading_account_id=? AND symbol=?
+                             AND status IN ('APPROVED', 'OPEN')
+                           ORDER BY approved_at_ms, candidate_id""",
+                        (ACCOUNT.value, SYMBOL),
+                    )
+                ]
+                self.assertTrue(any("robot_candidates_active_symbol" in step for step in plan), plan)
+                self.assertFalse(any("TEMP B-TREE" in step for step in plan), plan)
+
+                with patch.object(
+                    sqlite_store, "_robot_candidate_from_row",
+                    wraps=sqlite_store._robot_candidate_from_row,
+                ) as decode:
+                    active = fixture.runtime.store.load_active_robot_candidates_for_symbol(
+                        ACCOUNT, Symbol(SYMBOL),
+                    )
+                self.assertEqual([(c.candidate_id, c.status) for c in active],
+                                 [("candidate-no-rest", "OPEN")])
+                self.assertEqual(decode.call_count, 1)  # not 25 snapshots per event
+
+                # A normal protected event must not call the unbounded history loader.
+                with patch.object(
+                    fixture.runtime.store, "load_robot_candidates_for_symbol",
+                    side_effect=AssertionError("protection read historical candidates"),
+                ):
+                    (finalized, obligation), _ = fixture.event(
+                        bid="64249.5", ask="64250.5",
+                    )
+                self.assertEqual(finalized, ())
+                self.assertIsNone(obligation)
+                self.assertEqual(fixture.session.calls, [])
+            finally:
+                fixture.runtime.close()
+
     def test_stop_close_uses_streamed_coverage_book_with_zero_network_calls(self):
         with tempfile.TemporaryDirectory() as temp:
             fixture = _Fixture(temp, rest_delay_s=2.0)

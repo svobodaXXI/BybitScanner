@@ -83,7 +83,7 @@ class CollectLifecycleEventsTests(unittest.TestCase):
         self.assertEqual(_kinds(events), [(EVENT_CLOSED, "t1")])
         self.assertEqual(events[0].exit_reason, "TAKE")
 
-    def test_open_precedes_close_and_events_are_time_ordered(self):
+    def test_closed_between_polls_only_emits_close_and_events_are_time_ordered(self):
         store = _store(
             _trade("t1", INIT_MS + 10, INIT_MS + 10, exit_reason="STOP"),  # same-ms open/close
             _trade("t2", INIT_MS + 5),
@@ -91,9 +91,14 @@ class CollectLifecycleEventsTests(unittest.TestCase):
         )
         events = collect_new_lifecycle_events(store, LifecycleState(INIT_MS))
         self.assertEqual(_kinds(events), [
-            (EVENT_OPENED, "t3"), (EVENT_OPENED, "t2"), (EVENT_OPENED, "t1"),
-            (EVENT_CLOSED, "t1"), (EVENT_CLOSED, "t3"),
+            (EVENT_OPENED, "t2"), (EVENT_CLOSED, "t1"), (EVENT_CLOSED, "t3"),
         ])
+
+    def test_no_stale_open_post_for_closed_trade(self):
+        store = _store(_trade("t1", INIT_MS + 5, INIT_MS + 10, exit_reason="EMERGENCY_CLOSE"))
+        events = collect_new_lifecycle_events(store, LifecycleState(INIT_MS))
+        self.assertEqual(_kinds(events), [(EVENT_CLOSED, "t1")])
+        self.assertEqual(events[0].exit_reason, "EMERGENCY_CLOSE")
 
     def test_restart_skips_sent_and_resends_unsent(self):
         store = _store(_trade("t1", INIT_MS + 1, INIT_MS + 20, exit_reason="STOP"), _trade("t2", INIT_MS + 2))
@@ -130,7 +135,7 @@ class LifecycleCaptionTests(unittest.TestCase):
         )
         caption = format_lifecycle_caption(LifecycleEvent(EVENT_OPENED, "t1", "SAGAUSDT", 1), view)
         self.assertTrue(caption.startswith("🤖 Сделка открыта\n\nSAGAUSDT · LONG"))
-        for text in ("Размер: 100", "Средний вход: 0.0254", "STOP: 0.0249", "TAKE: 0.0284",
+        for text in ("Объём: 100", "Средний вход: 0.0254", "SL: 0.0249", "TP: 0.0284",
                      "Паттерн: Falling Wedge"):
             self.assertIn(text, caption)
 
@@ -162,7 +167,23 @@ class LifecycleCaptionTests(unittest.TestCase):
         self.assertEqual(format_lifecycle_caption(opened, view),
             "🪞 MIRROR · SAGAUSDT · 5m\nГоризонтальный уровень · смена роли не подтверждена\nПовторный перезаход №1")
         closed = LifecycleEvent(EVENT_CLOSED, "t1", "SAGAUSDT", 2, "STOP")
-        self.assertIn("Сделка закрыта · по стопу", format_lifecycle_caption(closed, view))
+        closed_view = replace(
+            view, is_open=False, fees_usdt=Decimal("0.0277"),
+            trade=SimpleNamespace(
+                realized_pnl_usdt=Decimal("-0.5"),
+                entry_quantity=Decimal("100"),
+                average_entry=Decimal("0.0254"),
+            ),
+        )
+        closed_caption = format_lifecycle_caption(closed, closed_view)
+        self.assertIn("Сделка закрыта · по стопу", closed_caption)
+        self.assertIn(
+            "SAGAUSDT · SHORT\nЗеркало\n"
+            "Итог: -0.5277 USDT (-20.78%) (комиссия: 0.0277 USDT)",
+            closed_caption,
+        )
+        self.assertNotIn("Статус: закрыта", closed_caption)
+        self.assertIn("Горизонтальный уровень", closed_caption)
         self.assertIn("Зеркальный уровень", format_lifecycle_caption(opened,
             replace(view, mirror_retest_confirmed=True)))
         pattern = replace(view, mirror_level_source="pattern_boundary",
@@ -178,11 +199,10 @@ class LifecycleCaptionTests(unittest.TestCase):
                 event = LifecycleEvent(EVENT_CLOSED, "t1", "SAGAUSDT", 1, reason)
                 caption = format_lifecycle_caption(event, self._view(exit_reason=reason))
                 self.assertTrue(caption.startswith(f"🤖 Сделка закрыта · {label}\n\n"))
-                self.assertIn(f"Выход: 0.0249 ({label})", caption)
+                self.assertNotIn("Выход:", caption)
                 # (-0.5 - 0.0277) / (1000 * 0.0254) * 100 = -2.08
                 self.assertIn(
-                    "Итог: -0.5 USDT (до комиссий), комиссии 0.0277 USDT (вход + выход), "
-                    "-2.08% (после комиссий)",
+                    "Итог: -0.5277 USDT (-2.08%) (комиссия: 0.0277 USDT)",
                     caption,
                 )
                 self.assertNotIn("PnL:", caption)
@@ -191,7 +211,45 @@ class LifecycleCaptionTests(unittest.TestCase):
     def test_closed_caption_without_fees(self):
         event = LifecycleEvent(EVENT_CLOSED, "t1", "SAGAUSDT", 1, "TAKE")
         caption = format_lifecycle_caption(event, self._view(fees_usdt=None))
-        self.assertIn("комиссии — (вход + выход), — (после комиссий)", caption)
+        self.assertIn("Итог: — (комиссия: —)", caption)
+        self.assertNotIn("до комиссий", caption)
+
+
+class LifecycleDeliveryRaceTests(unittest.TestCase):
+    def test_closed_after_collection_is_not_sent_as_opened(self):
+        from contextlib import nullcontext
+        from unittest.mock import patch
+        import telegram_monitoring as monitoring
+
+        trade = _trade("t1", INIT_MS + 5)
+        store = _store(trade)
+        state = LifecycleState(INIT_MS)
+        view = PositionView(
+            symbol="SAGAUSDT", direction="LONG", is_open=False,
+            quantity=Decimal("1"), average_entry=Decimal("1"),
+            stop_price=Decimal("0.9"), take_price=Decimal("1.1"),
+            pattern="Falling Wedge", trade=SimpleNamespace(exit_time_ms=INIT_MS + 10),
+        )
+        with patch.object(monitoring, "_owner_id", return_value="123"), \
+             patch.object(monitoring, "_robot_store", return_value=nullcontext(store)), \
+             patch.object(monitoring, "load_lifecycle_state", return_value=state), \
+             patch.object(monitoring, "load_position_view", return_value=view), \
+             patch.object(monitoring, "save_lifecycle_state") as saved, \
+             patch.object(monitoring, "_send_lifecycle_post", return_value=True) as send:
+            # Open at selection, but closed by the time the view is read.
+            monitoring.poll_lifecycle_once(now_ms=INIT_MS + 6)
+            send.assert_not_called()
+            self.assertEqual(state.opened, ["t1"])
+            self.assertEqual(state.closed, [])
+            saved.assert_called_once()
+
+            # The next poll still sends the real close, without a duplicate open.
+            trade.exit_time_ms = INIT_MS + 10
+            trade.exit_reason = "STOP"
+            monitoring.poll_lifecycle_once(now_ms=INIT_MS + 11)
+            self.assertEqual(send.call_count, 1)
+            self.assertEqual(send.call_args.args[1].kind, EVENT_CLOSED)
+            self.assertEqual(state.closed, ["t1"])
 
 
 class MirrorChartDeliveryTests(unittest.TestCase):

@@ -711,7 +711,7 @@ try {
       ],
     },
     execution_allocations: [
-      { execution_id: "exec-1", order_id: "order-1", order_side: "Buy",
+      { execution_id: "exec-" + "b".repeat(120), order_id: "order-" + "a".repeat(120), order_side: "Buy",
         execution_price: "100.12345678", allocated_quantity: "2", allocated_fee: "0.05",
         occurred_at_ms: t + 2 * 300000 + 2123, allocation_role: "OPEN", controller: "ROBOT" },
       { execution_id: "exec-2", order_id: "order-2", order_side: "Sell",
@@ -744,6 +744,10 @@ try {
   });
   const factNote = page.getByRole("status", { name: "PAPER факты сделки" });
   await factNote.waitFor();
+  assert.match(await factNote.innerText(), /BTCUSDT · LONG · 2 исполнения · PnL: -1,00 USDT/);
+  assert.match(await factNote.innerText(), /Свечи M5 сопоставлены/);
+  assert.doesNotMatch(await factNote.innerText(), /Gross PnL/);
+  await factNote.locator("summary").click();
   assert.match(await factNote.innerText(), /Треугольники на закрытых свечах/);
   assert.match(await factNote.innerText(), /JSON без криптографической подписи/);
   assert.match(await factNote.innerText(), /Falling Wedge · 5m · версия v1/);
@@ -767,7 +771,16 @@ try {
   assert.match(await rows.nth(2).innerText(), /Открытие позиции · Buy/);
   assert.match(await rows.nth(2).innerText(), /100\.12345678/);
   assert.match(await rows.nth(2).innerText(), /количество 2 · комиссия 0\.05 USDT/);
-  assert.match(await rows.nth(2).innerText(), /order_id order-1 · execution_id exec-1/);
+  assert.match(await rows.nth(2).innerText(), /order_id order-a{120} · execution_id exec-b{120}/);
+  // The owner's fixed-width journal must wrap arbitrarily long original IDs,
+  // retain all characters and never require horizontal scrolling.
+  const journalFits = await page.locator(".replay-events-list").evaluate((list) => {
+    const width = list.clientWidth;
+    const items = Array.from(list.querySelectorAll(".replay-evidence-event > span"));
+    return width > 0 && list.scrollWidth <= width + 1 &&
+      items.every((span) => span.clientWidth > 0 && span.scrollWidth <= span.clientWidth + 1);
+  });
+  assert.equal(journalFits, true, "exact PAPER IDs must wrap inside the journal without horizontal overflow");
   assert.match(await rows.nth(3).innerText(), /Закрытие позиции · Sell · причина STOP\/TAKE не подтверждена/);
   assert.match(await rows.nth(3).innerText(), /99\.5/);
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "0",
@@ -838,6 +851,53 @@ try {
 
   await page.mouse.move(620, 660); // Crosshair must not create DMI dots.
   await page.screenshot({ path: join(screenshotDir, "machine-time-browser.png"), fullPage: true });
+
+  // Reuse the *actual loopback JSON archive* saved by the owner import above.
+  // A Windows protocol launch may reuse the same browser tab and change only
+  // #locator. The second losing episode must replace the first without reload.
+  const secondEpisodeId = "te_" + "b".repeat(24);
+  const localOrigin = new URL(localUrl).origin;
+  const storedSecond = await page.request.post(
+    localOrigin + "/local-replay/paper-episode/import", {
+      headers: {
+        "Origin": localOrigin, "Sec-Fetch-Site": "same-origin",
+        "Content-Type": "application/json", "X-Local-Paper-Import": "explicit-file",
+      },
+      data: JSON.stringify({
+        ...episodeFacts,
+        trade_episode_id: secondEpisodeId,
+        realized_price_pnl_usdt: "-1.9",
+        pnl_usdt: "-2.0",
+        execution_allocations: episodeFacts.execution_allocations.map((item, index) => ({
+          ...item, execution_id: "second-" + index, order_id: "second-order-" + index,
+        })),
+      }),
+    },
+  );
+  assert.equal(storedSecond.status(), 200, "second exact PAPER episode persists locally");
+  assert.equal((await storedSecond.json()).trade_episode_id, secondEpisodeId);
+
+  // Original M5 fixture is a separately marked public MARKET_ONLY source.
+  // Reopening local facts must never invent PAPER candles or Robot decisions.
+  await page.route("**/local-replay/history?*", async route => {
+    await route.fulfill({ status: 200, contentType: "application/json",
+      body: JSON.stringify(history) });
+  });
+  await page.goto(localUrl + "#locator=" + episodeFacts.trade_episode_id,
+    { waitUntil: "networkidle" });
+  const reopened = page.getByRole("status", { name: "PAPER факты сделки" });
+  await reopened.waitFor();
+  assert.match(await reopened.innerText(), /PnL: -1,00 USDT/);
+  await page.waitForFunction(() =>
+    document.querySelector('[aria-label="PAPER факты сделки"]')?.textContent?.includes("Свечи M5 сопоставлены"));
+  await page.evaluate(id => { window.location.hash = "#locator=" + id; }, secondEpisodeId);
+  await page.waitForFunction(() =>
+    document.querySelector('[aria-label="PAPER факты сделки"]')?.textContent?.includes("PnL: -2,00 USDT"));
+  assert.doesNotMatch(await reopened.innerText(), /PnL: -1,00 USDT/,
+    "a second losing episode must not retain the first episode's PnL");
+  await page.waitForFunction(() =>
+    document.querySelector('[aria-label="PAPER факты сделки"]')?.textContent?.includes("Свечи M5 сопоставлены"));
+  assert.equal(await page.getByRole("status", { name: "PAPER факты сделки" }).count(), 1);
 
   // Each Apply can request public history. Only the deliberately mocked
   // HTTP 502 errors are allowed; unrelated runtime failures are forbidden.

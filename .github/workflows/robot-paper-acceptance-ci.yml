@@ -54,6 +54,7 @@ on:
       - "tests/test_autopilot_telegram_markers.py"
       - "tests/test_robot_paper_acceptance.py"
       - "tests/test_robot_protection_overflow_recovery.py"
+      - "tests/test_robot_protection_close_no_rest.py"
       - "tests/test_robot_sync_pending_wedge_stop.py"
       - "tests/test_paper_flat_robot_execution_fence.py"
       - "tests/test_robot_nonrobot_close_proof.py"
@@ -101,6 +102,8 @@ on:
       - "tests/test_stop_robot_runtime.py"
       - "tests/test_runtime_launcher.py"
       - "tests/test_telegram_monitoring.py"
+      - "robot_lifecycle_posts.py"
+      - "tests/test_robot_lifecycle_posts.py"
       - "analyzer/core.py"
       - "notification.py"
       - "tests/test_robot_breakout_monitor_admission_catchup.py"
@@ -330,6 +333,7 @@ jobs:
           tests.test_stop_robot_runtime
           tests.test_runtime_launcher
           tests.test_telegram_monitoring
+          tests.test_robot_lifecycle_posts
 
       - name: Run account-and-controller scoped Diary HTTP acceptance
         run: python -m pytest -q terminal/diary/test_scoped_statistics_http_route.py tests/test_terminal_mode_account_preference.py
@@ -341,7 +345,7 @@ jobs:
         run: >-
           python -m pytest -q
           tests/test_terminal_paper_runtime.py
-          -k robot_paper_execution_is_independent_of_ui_selected_account
+          -k "robot_paper_execution_is_independent_of_ui_selected_account or entry_limit_admission_ignores_terminal_history_without_weakening_fence"
       - name: Run Robot protection schema migration acceptance
         run: >-
           python -m unittest -v

@@ -1,0 +1,44 @@
+name: Telegram original signal archive
+
+# Offline identity, durability and callback regressions; no PAPER runtime.
+on:
+  pull_request:
+    paths:
+      - "signal_archive.py"
+      - "signal_geometry_snapshot.py"
+      - "signal_geometry_producer.py"
+      - "telegram_monitoring.py"
+      - "tests/test_signal_archive.py"
+      - "tests/test_signal_geometry_producer.py"
+      - "tests/test_telegram_signal_repost.py"
+      - ".github/workflows/telegram-signal-archive-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  exact-source-archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install existing Telegram import dependencies
+        run: >-
+          python -m pip install
+          requests==2.34.2
+          PySocks==1.7.1
+          websocket-client==1.9.0
+          pandas==3.0.5
+          numpy==2.5.1
+          matplotlib==3.11.1
+          mplfinance==0.12.10b0
+          six==1.17.0
+      - name: Exact archive and Telegram navigation regressions
+        run: >-
+          python -m unittest -v
+          tests.test_signal_archive
+          tests.test_signal_geometry_producer
+          tests.test_telegram_signal_repost

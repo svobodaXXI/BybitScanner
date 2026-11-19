@@ -36,16 +36,6 @@ def _site(tmp_path: Path, *, content: str | None = None):
     return root, ng, site, baseline
 
 
-def _successor_facts_source(root: Path) -> None:
-    """Fixture for phase B: the exact reviewed facts-only addition."""
-    source = root / "deploy/terminal_ingress/nginx-authenticated.conf"
-    current = source.read_text()
-    assert current.count(gateway.ROUTE_START) == 1
-    source.write_text(current.replace(
-        gateway.ROUTE_START, "    # Exact owner-queued PAPER facts for the paired device ONLY. Unlike the\n    # owner-authenticated general /api/ route, this read-only GET is scoped by\n    # the independent device token plus an already DELIVERED 35-second request.\n    # No direct episode/symbol/account selector is accepted by the backend.\n    location = /api/diary/simulator-bridge/facts {\n        limit_except GET { deny all; }\n        client_max_body_size 1k;\n        proxy_pass http://127.0.0.1:8765;\n        proxy_set_header Host $host;\n        proxy_set_header X-Forwarded-Proto https;\n        proxy_set_header Cookie \"\";\n        proxy_set_header Authorization \"\";\n        proxy_set_header X-BybitScanner-Simulator-Device-Token $http_x_bybitscanner_simulator_device_token;\n        proxy_read_timeout 15s;\n        proxy_cache off;\n        proxy_buffering off;\n    }\n\n" + gateway.ROUTE_START, 1,
-    ))
-
-
 def _runner(site: Path, calls: list, *, fail=()):
     def run(args, **kwargs):
         calls.append(tuple(args))
@@ -137,7 +127,6 @@ def test_installed_exact_main_route_adopts_bridge_without_replacing_main(tmp_pat
 
 def test_preflight_upgrades_only_exact_previous_bridge_to_scoped_facts(tmp_path):
     root, ng, site, baseline = _site(tmp_path)
-    _successor_facts_source(root)
     reviewed = gateway._simulator_bridge_from_source(root)
     legacy = gateway._legacy_simulator_bridge_from_reviewed(reviewed)
     self_installed = baseline.replace(
@@ -170,35 +159,7 @@ def test_preflight_upgrades_only_exact_previous_bridge_to_scoped_facts(tmp_path)
     assert site.read_text() == tampered
 
 
-def test_migration_source_matches_old_installed_validator_contract(tmp_path):
-    root, ng, site, baseline = _site(tmp_path)
-    bridge = gateway._simulator_bridge_from_source(root)
-    # The Gitless f88bbbf monolith requires precisely these counts.
-    for exact, count in (
-        ("location = /api/diary/simulator-bridge/poll {", 1),
-        ("location = /api/diary/simulator-bridge/ack {", 1),
-        ("limit_except GET { deny all; }", 1),
-        ("limit_except POST { deny all; }", 1),
-        ("proxy_pass http://127.0.0.1:8765;", 2),
-        ('proxy_set_header Cookie "";', 2),
-        ('proxy_set_header Authorization "";', 2),
-        ("client_max_body_size 1k;", 2),
-    ):
-        assert bridge.count(exact) == count
-    assert gateway.BRIDGE_FACTS_ROUTE not in bridge
-    main = gateway._route_from_source(root)
-    legacy = baseline.replace(gateway.BACKEND_BLOCK,
-                              bridge + main + gateway.BACKEND_BLOCK, 1)
-    site.write_text(legacy)
-    _, before, after = gateway.inspect_authenticated_site(
-        root=root, run=_runner(site, []), nginx_dir=ng, uid=os.geteuid(),
-    )
-    # No Nginx change during the compatibility stage.
-    assert before == after
-    assert site.read_text() == legacy
-
-
-def test_migration_release_rejects_premature_or_foreign_facts_route(tmp_path):
+def test_successor_rejects_foreign_facts_route(tmp_path):
     root, ng, site, baseline = _site(tmp_path)
     site.write_text(baseline.replace(
         gateway.BACKEND_BLOCK,
@@ -215,7 +176,6 @@ def test_migration_release_rejects_premature_or_foreign_facts_route(tmp_path):
 
 def test_successor_rejects_malformed_facts_source(tmp_path):
     root, ng, site, _ = _site(tmp_path)
-    _successor_facts_source(root)
     source = root / "deploy/terminal_ingress/nginx-authenticated.conf"
     source.write_text(source.read_text().replace(
         "limit_except GET { deny all; }",

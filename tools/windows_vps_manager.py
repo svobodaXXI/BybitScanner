@@ -44,9 +44,11 @@ USER_PATTERN = re.compile(r"^[a-z_][a-z0-9_-]*[$]?$")
 # Known operator Windows profiles only; never silently reuse a laptop key on PC.
 # This is a routing hint, not cryptographic device attestation.
 KNOWN_ROUTES = {
-    "pc": ("212.193.14.116", "root", "bybitscanner_vdsina_gateway_20261030"),
+    "pc": ("83.217.213.181", "root", "bybitscanner_vdsina_gateway_20261030"),
     "laptop": ("83.217.213.181", "root", "bybitscanner_laptop"),
 }
+# Owner-confirmed with Happ "Основной 1" ON; never use the laptop identity.
+PC_HAPP_ROUTE = ("212.193.14.116", "root", "bybitscanner_vdsina_gateway_20261030")
 
 # Fixed, audited commands: no free-form shell and no trading mutations.
 ACTIONS = {
@@ -120,6 +122,32 @@ EXACT_SHA = re.compile(r"[0-9a-f]{40}\Z")
 REQUEST_ID = re.compile(r"[0-9a-f]{32}\Z")
 
 
+def manager_version() -> str:
+    """Show the version of this EXE, not the potentially different VPS release."""
+    if not getattr(sys, "frozen", False):
+        return "DEV"
+    bundle_dir = getattr(sys, "_MEIPASS", None)
+    if not bundle_dir:
+        return "UNKNOWN"
+    try:
+        root = Path(bundle_dir)
+        sha = (root / "desktop-build-sha.txt").read_text(
+            encoding="ascii").strip()
+        run_number = (root / "desktop-build-number.txt").read_text(
+            encoding="ascii").strip()
+    except (OSError, UnicodeError):
+        return "UNKNOWN"
+    if (EXACT_SHA.fullmatch(sha) is None
+            or re.fullmatch(r"[1-9][0-9]{0,11}", run_number) is None):
+        return "UNKNOWN"
+    # GITHUB_RUN_NUMBER is monotonically increasing for this release workflow.
+    return "v" + run_number + " (" + sha[:12] + ")"
+
+
+def manager_title() -> str:
+    return "BybitScanner VPS Manager — " + manager_version() + " — PAPER"
+
+
 def request_id_store() -> Path:
     """Local, non-secret recovery pointer; never stores SSH credentials."""
     local_app_data = os.environ.get("LOCALAPPDATA")
@@ -152,6 +180,7 @@ CONTROL_ACTIONS = {
     "Запустить PAPER-ядро": "start",
     "Остановить PAPER-ядро": "stop",
     "Обновить и запустить PAPER": "update-and-start",
+    "Сопрячь один ПК (EDITOR_ONLY)": "provision-owner-pc",
 }
 CONTROL_MODULE = "cd /opt/BybitScanner && /opt/BybitScanner/venv/bin/python -m tools.vps_owner_control"
 
@@ -175,6 +204,17 @@ def gui_owner_status(stdout: str, returncode: int, request: str) -> str:
 OWNER_POLL_LIMIT = 180  # up to 15 minutes of ordinary five-second polling
 OWNER_POLL_SECONDS = 5
 OWNER_POLL_UNKNOWN_LIMIT = 3
+OWNER_POLL_TRANSPORT_LIMIT = 12  # bounded read-only reconnects; never resend submit
+
+
+def transient_ssh_failure(result: subprocess.CompletedProcess) -> bool:
+    """Retry only a transport failure, not authentication or server refusal."""
+    return (result.returncode == 255 and
+            preflight_failure_class(result.stderr or "", result.returncode) in {
+                "SSH_CONNECT_TIMEOUT", "SSH_BANNER_FAILURE",
+                "SSH_CONNECTION_RESET", "SSH_NETWORK_UNREACHABLE",
+                "SSH_CONNECTION_REFUSED",
+            })
 
 
 def watch_owner_request(
@@ -189,6 +229,7 @@ def watch_owner_request(
     state = "submitted" if initially_submitted else "unproven"
     latest = ""
     unknown = 0
+    transport_unknown = 0
     for attempt in range(attempts):
         if attempt:
             sleep(OWNER_POLL_SECONDS)
@@ -198,18 +239,30 @@ def watch_owner_request(
                 timeout=20, stdin=subprocess.DEVNULL, creationflags=NO_WINDOW,
                 check=False,
             )
-        except (OSError, subprocess.TimeoutExpired):
-            unknown += 1
+        except subprocess.TimeoutExpired:
+            transient = True
+        except OSError:
+            return state, latest + "\nSTATUS_UNPROVEN; SSH client unavailable; operation not resubmitted"
         else:
             observed = gui_owner_status(reply.stdout, reply.returncode, request)
             if observed in ("success", "failed"):
                 return observed, reply.stdout.strip()
+            transient = transient_ssh_failure(reply)
             if observed == "submitted":
                 state = "submitted"
                 latest = reply.stdout.strip()
                 unknown = 0
-            else:
+            elif not transient:
+                if reply.returncode == 255:
+                    # Auth/host-key/identity failure cannot be fixed by reconnect.
+                    return state, latest + "\nSTATUS_UNPROVEN; SSH rejected; operation not resubmitted"
                 unknown += 1
+        if transient:
+            transport_unknown += 1
+            if transport_unknown >= OWNER_POLL_TRANSPORT_LIMIT:
+                return state, latest + "\nSTATUS_UNPROVEN; SSH reconnect limit; operation not resubmitted"
+            continue
+        transport_unknown = 0
         if unknown >= OWNER_POLL_UNKNOWN_LIMIT:
             return state, latest + "\nSTATUS_UNPROVEN; operation not resubmitted"
     return state, latest + "\nSTATUS_POLL_LIMIT; use the same request ID"
@@ -255,17 +308,47 @@ def known_windows_device(profile: str | None = None) -> str:
 
 def preferred_key(host: str, user: str) -> str:
     """Only offer a pinned identity for a known device's exact VPS target."""
-    route = KNOWN_ROUTES.get(known_windows_device())
-    if route and (host, user) == route[:2]:
-        return str(Path.home() / ".ssh" / route[2])
+    device = known_windows_device()
+    routes = [KNOWN_ROUTES[device]] if device in KNOWN_ROUTES else []
+    if device == "pc":
+        routes.append(PC_HAPP_ROUTE)
+    for route in routes:
+        if (host, user) == route[:2]:
+            return str(Path.home() / ".ssh" / route[2])
     return ""
 
 
+def happ_tun_active() -> bool:
+    """Read-only Windows check; failure retains the previously pinned route."""
+    if os.name != "nt":
+        return False
+    try:
+        result = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+             "$a=Get-NetAdapter -Name 'happ-default-tun' -ErrorAction SilentlyContinue; "
+             "if ($a -and $a.Status -eq 'Up') { 'HAPP_TUN_UP' }"],
+            capture_output=True, text=True, errors="replace", timeout=4,
+            stdin=subprocess.DEVNULL, creationflags=NO_WINDOW, check=False,
+        )
+        return result.returncode == 0 and result.stdout.strip() == "HAPP_TUN_UP"
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
 def preferred_route() -> tuple[str, str]:
-    # The laptop has no confirmed PC alias: use its separate proven profile.
-    if known_windows_device() == "laptop":
-        return KNOWN_ROUTES["laptop"][:2]
-    # Existing OpenSSH alias owns the key, verified host and network route.
+    """Use the latest owner-verified direct route for each known Windows device.
+
+    PC: owner-confirmed 212.193.14.116 via Happ "Основной 1" when TUN is up;
+    otherwise 83.217.213.181 (VPN off). Never rewrite SSH configuration.
+    Laptop: independently confirmed route with its own laptop key.
+    Unknown profiles retain their explicit, preconfigured target.
+    """
+    device = known_windows_device()
+    if device == "pc" and happ_tun_active():
+        return PC_HAPP_ROUTE[:2]
+    if device in KNOWN_ROUTES:
+        return KNOWN_ROUTES[device][:2]
+    # Preserve unknown-profile explicit alias behavior; never pin a PC key.
     config = Path.home() / ".ssh" / "config"
     try:
         if any("bybitscanner-vps" in line.split()[1:]
@@ -274,10 +357,6 @@ def preferred_route() -> tuple[str, str]:
             return "bybitscanner-vps", ""
     except (OSError, UnicodeError):
         pass
-    # On the known PC, the direct-key target is an observed safe fallback if
-    # its native alias is absent. Unknown devices retain explicit configuration.
-    if known_windows_device() == "pc":
-        return KNOWN_ROUTES["pc"][:2]
     remote = os.environ.get("BYBITSCANNER_VPS_SSH_TARGET", "")
     if re.fullmatch(r"[A-Za-z_][A-Za-z_0-9-]*@[A-Za-z0-9._-]+", remote):
         user, host = remote.split("@", 1)
@@ -554,7 +633,7 @@ def run_cli(options: argparse.Namespace) -> int:
 class VPSManager(tk.Tk):
     def __init__(self, host: str = "", user: str = "bybitscanner", key: str | None = None) -> None:
         super().__init__()
-        self.title("BybitScanner VPS Manager — PAPER")
+        self.title(manager_title())
         self.geometry("880x510")
         self.minsize(780, 380)
         automatic = preferred_route() if not host else (host, user)
@@ -626,6 +705,12 @@ class VPSManager(tk.Tk):
                                 command=lambda selected=mode: self.run_control(selected))
             button.grid(row=index // 3, column=index % 3, padx=(0, 7), pady=3, sticky="ew")
             self.buttons.append(button)
+        update_button = ttk.Button(buttons, text="Обновление",
+                                   command=self.update_desktop)
+        update_index = len(ACTIONS) + len(CONTROL_ACTIONS) + 3
+        update_button.grid(row=update_index // 3, column=update_index % 3,
+                           padx=(0, 7), pady=3, sticky="ew")
+        self.buttons.append(update_button)
         for column in range(3):
             buttons.columnconfigure(column, weight=1)
         ttk.Label(self, text="Журнал (только чтение)", padding=(12, 3)).pack(anchor="w")
@@ -637,6 +722,29 @@ class VPSManager(tk.Tk):
         self.log.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
         self.after(100, self.drain)
+
+    def update_desktop(self) -> None:
+        """Update ONLY this local manager, never call owner VPS monolith."""
+        if self.busy:
+            return
+        if not messagebox.askyesno("Обновление VPS Manager",
+                                  "Проверить и установить опубликованный релиз VPS Manager?"):
+            return
+        self.busy = True
+        self.status.set("Обновление локального VPS Manager")
+        for button in self.buttons:
+            button.state(["disabled"])
+        threading.Thread(target=self._update_worker, daemon=True).start()
+
+    def _update_worker(self) -> None:
+        from tools.manager_self_update import stage_manager
+        from research.local_replay_viewer.desktop_update import UpdateBlocked
+        try:
+            self.events.put(("desktop-update-handoff", stage_manager()))
+        except (UpdateBlocked, OSError, ValueError) as exc:
+            # Never reveal arbitrary remote URLs or exception details.
+            reason = str(exc) if isinstance(exc, UpdateBlocked) else type(exc).__name__
+            self.events.put(("failure", "LOCAL_UPDATE_BLOCKED=" + reason))
 
     def write(self, text: str) -> None:
         self.log.configure(state="normal")
@@ -803,10 +911,20 @@ class VPSManager(tk.Tk):
                                       + "\n" + precheck_receipt)))
                     return
             if mode not in CONTROL_ACTIONS.values():
-                result, recovery = run_readonly_ssh_with_laptop_agent_recovery(
-                    command, capture_output=True, text=True, errors="replace",
-                    timeout=35, stdin=subprocess.DEVNULL, creationflags=NO_WINDOW,
-                    check=False)
+                try:
+                    result, recovery = run_readonly_ssh_with_laptop_agent_recovery(
+                        command, capture_output=True, text=True, errors="replace",
+                        timeout=35, stdin=subprocess.DEVNULL, creationflags=NO_WINDOW,
+                        check=False)
+                except subprocess.TimeoutExpired:
+                    if mode != "status":
+                        raise
+                    # A timed-out status query has no side effect. Continue
+                    # with the original UUID on the same SSH route only.
+                    state, details = watch_owner_request(
+                        command, request, initially_submitted=False)
+                    self.events.put((state, details + "\nREQUEST_ID=" + request))
+                    return
             else:
                 try:
                     result = subprocess.run(
@@ -823,6 +941,10 @@ class VPSManager(tk.Tk):
             if mode not in CONTROL_ACTIONS.values():
                 if mode == "status":
                     state = gui_owner_status(output, result.returncode, request)
+                    if transient_ssh_failure(result):
+                        # Only retry the same read-only UUID status query.
+                        state, output = watch_owner_request(
+                            command, request, initially_submitted=False)
                 elif mode == "preflight":
                     state = ("observed" if result.returncode == 0 and
                              "PREFLIGHT_READ_ONLY_DATA_COLLECTED_NOT_ACCEPTED" in output
@@ -854,9 +976,9 @@ class VPSManager(tk.Tk):
                 self.events.put((state, output or "Статус не доказан"))
                 return
             # Lost submit reply => only query the same request; never replay it.
-            status_command = control_ssh_command(
-                self.host.get(), self.user.get(), self.key.get(), "status",
-                request_id=request)
+            # Pin status to the exact authorized submit route and UUID even
+            # if GUI fields are edited while the detached action is running.
+            status_command = [*command[:-1], CONTROL_MODULE + " status " + request]
             state = ("submitted" if result.returncode == 0
                      and "REQUEST_ID=" + request in output.splitlines()
                      and any(line.startswith("SUBMISSION=ACCEPTED")
@@ -896,6 +1018,10 @@ class VPSManager(tk.Tk):
         try:
             while True:
                 kind, result = self.events.get_nowait()
+                if kind == "desktop-update-handoff":
+                    self.write("Обновление проверено; передаю запуск новой версии.")
+                    self.destroy()
+                    return
                 self.write_result(result)
                 self.busy = False
                 labels = {

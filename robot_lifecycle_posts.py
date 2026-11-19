@@ -88,7 +88,12 @@ def collect_new_lifecycle_events(store, state: LifecycleState) -> list[Lifecycle
     events = []
     for trade in store.load_robot_trades_with_events_since(PAPER_ACCOUNT_ID, since):
         symbol = trade.symbol.value
-        if trade.entry_time_ms >= since and trade.trade_id not in state.opened:
+        # An OPENED event is only meaningful while the trade is still open.
+        # A trade that entered and exited between polls needs only its CLOSED
+        # notification; otherwise a closed snapshot appears under "Сделка открыта".
+        if (trade.exit_time_ms is None
+                and trade.entry_time_ms >= since
+                and trade.trade_id not in state.opened):
             events.append(LifecycleEvent(EVENT_OPENED, trade.trade_id, symbol, trade.entry_time_ms))
         if (
             trade.exit_time_ms is not None
@@ -124,6 +129,10 @@ def format_lifecycle_caption(event: LifecycleEvent, view: PositionView) -> str:
             view.mirror_level_source, view.mirror_pattern, "first_retest",
             retest_confirmed=view.mirror_retest_confirmed,
         )
-        timeframe = view.mirror_timeframe or str(view.chart_candle_minutes)
-        return f"🪞 MIRROR · {view.symbol} · {timeframe}m\n{subtype}\n{phase}"[:CAPTION_LIMIT]
+        if event.kind == EVENT_OPENED:
+            timeframe = view.mirror_timeframe or str(view.chart_candle_minutes)
+            return f"🪞 MIRROR · {view.symbol} · {timeframe}m\n{subtype}\n{phase}"[:CAPTION_LIMIT]
+        # A closed MIRROR trade has the same exact host pattern / net economics
+        # layout as other closed trades; preserve subtype as ancillary context.
+        return f"🪞 {phase}\n\n{format_position_card(view)}\n{subtype}"[:CAPTION_LIMIT]
     return f"{ROBOT_EMOJI} {phase}\n\n{format_position_card(view)}"[:CAPTION_LIMIT]

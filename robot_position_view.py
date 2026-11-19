@@ -42,6 +42,32 @@ EXIT_REASON_LABELS = {
     "EMERGENCY_CLOSE": "аварийное закрытие",
 }
 
+# Read-only closed-trade captions use the executed host pattern, never a
+# guessed pattern from the ticker. Wedge names agree with chart_clean.py.
+CLOSED_PATTERN_LABELS_RU = {
+    "Falling Wedge": "Нисходящий клин",
+    "Rising Wedge": "Восходящий клин",
+    "Triangle Compression": "Треугольник",
+    "IKIGAI_BOX": "Коробка Икигаи",
+    "Ikigai Box": "Коробка Икигаи",
+    "L-shape": "Г-образная",
+    "Double Top": "Двойная вершина",
+    "Double Bottom": "Двойное дно",
+    "MIRROR": "Зеркало",
+}
+
+
+def _closed_pattern_ru(pattern: Any) -> str:
+    original = str(pattern or "").strip()
+    if not original:
+        return "Паттерн не указан"
+    if original in CLOSED_PATTERN_LABELS_RU:
+        return CLOSED_PATTERN_LABELS_RU[original]
+    # A pre-localized source may already provide the proper Russian label.
+    if all(char.isascii() for char in original):
+        return "Неизвестный паттерн"
+    return original
+
 
 def exit_reason_label(reason: Any) -> str:
     text = str(reason or "").strip()
@@ -372,24 +398,23 @@ def _signed_usdt(value: Decimal) -> str:
 
 
 def format_trade_result(view: PositionView) -> str:
-    # realized_pnl_usdt excludes fees. The stored fees_costs_usdt / realized_pnl_pct
-    # cover only the closing execution, so fees here are summed over the trade's
-    # executions (entry + exit) and the net percentage is recomputed from them.
+    """Show only proven net PnL and separately the whole entry+exit commission.
+
+    realized_pnl_usdt is gross. The view fee aggregation covers all executions;
+    an unknown fee must never silently be treated as zero.
+    """
     trade = view.trade
     gross = trade.realized_pnl_usdt
     fees = view.fees_usdt
+    if gross is None or fees is None:
+        return "Итог: — (комиссия: —)"
+    net = gross - fees
     notional = (
         trade.entry_quantity * trade.average_entry
         if trade.entry_quantity is not None and trade.average_entry is not None else None
     )
-    fees_text = f"{format_price(fees)} USDT" if fees is not None else "—"
-    net_text = (
-        f"{(gross - fees) / notional * 100:+.2f}%" if fees is not None and notional else "—"
-    )
-    return (
-        f"Итог: {_signed_usdt(gross)} (до комиссий), "
-        f"комиссии {fees_text} (вход + выход), {net_text} (после комиссий)"
-    )
+    net_percent = f"{net / notional * 100:+.2f}%" if notional else "—"
+    return f"Итог: {_signed_usdt(net)} ({net_percent}) (комиссия: {format_price(fees)} USDT)"
 
 
 def _signed_2dp(value: Decimal, suffix: str) -> str:
@@ -416,30 +441,37 @@ def format_position_card(view: PositionView) -> str:
         if notional is not None
         else _format_quantity(view.quantity)
     )
-    lines = [
-        f"{view.symbol} · {view.direction}",
-        "",
-        f"Статус: {'открыта' if view.is_open else 'закрыта'}",
-        f"Объём: {volume_text}",
-        f"Средний вход: {format_price(view.average_entry)}",
-    ]
     if view.is_open:
+        # Preserve the open-position presentation and its live PnL semantics.
+        lines = [
+            f"{view.symbol} · {view.direction}",
+            "",
+            "Статус: открыта",
+            f"Объём: {volume_text}",
+            f"Средний вход: {format_price(view.average_entry)}",
+        ]
         pnl = _unrealized_pnl(view)
         lines.append(
             f"PnL: ≈ {_signed_2dp(pnl[0], ' USDT')} ({_signed_2dp(pnl[1], '%')})"
             if pnl is not None else "PnL: —"
         )
     else:
-        trade = view.trade
-        reason = f" ({exit_reason_label(trade.exit_reason)})" if trade.exit_reason else ""
-        lines.append(f"Выход: {format_price(trade.exit_price)}{reason}")
-        if trade.realized_pnl_usdt is not None:
-            lines.append(format_trade_result(view))
+        # The next two lines after the ticker must be the Russian host
+        # pattern and proven net outcome; no redundant "закрыта" status.
+        lines = [
+            f"{view.symbol} · {view.direction}",
+            _closed_pattern_ru(view.pattern),
+            format_trade_result(view) if view.trade is not None else "Итог: — (комиссия: —)",
+            f"Объём: {volume_text}",
+            f"Средний вход: {format_price(view.average_entry)}",
+        ]
     lines += [
         f"SL: {format_price(view.stop_price)}",
         f"TP: {format_price(view.take_price)}",
-        f"Паттерн: {view.pattern or '—'}",
     ]
+    if view.is_open:
+        lines.append(f"Паттерн: {view.pattern or '—'}")
+
     if view.entry_before_chart:
         lines.append(ENTRY_BEFORE_CHART_LINE)
     if not view.is_robot:

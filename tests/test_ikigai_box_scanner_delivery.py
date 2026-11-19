@@ -32,6 +32,43 @@ def _candles():
 
 
 class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
+    def test_double_reversal_is_box_caption_argument_not_frozen_plan_mutation(self):
+        source = _candles()
+        closed = source.iloc[:-1]
+        formation = detect_ikigai_box(closed)
+        self.assertIsNotNone(formation)
+        frozen_before = box.box_robot_formation(closed, formation)
+        reversal = {
+            "version": 1, "kind": "DOUBLE_REVERSAL_AUXILIARY",
+            "source_id": "double-reversal:" + "a" * 64,
+            "symbol": "TESTUSDT", "source_timeframe": "5",
+            "pattern": "Double Top", "direction": "SHORT",
+            "confirmed_at_ms": 100, "expires_at_ms": 700,
+        }
+        with patch.object(box, "build_auxiliary_reversal_evidence", return_value=reversal):
+            note = box._box_auxiliary_note(
+                "TESTUSDT", "5", closed, "SHORT", now_ms=200,
+            )
+            self.assertIn("Двойная вершина", note)
+            self.assertEqual(
+                box._box_auxiliary_note(
+                    "TESTUSDT", "5", closed, "LONG", now_ms=200,
+                ), "",
+            )
+            self.assertEqual(
+                box._box_auxiliary_note(
+                    "OTHERUSDT", "5", closed, "SHORT", now_ms=200,
+                ), "",
+            )
+            self.assertEqual(
+                box._box_auxiliary_note(
+                    "TESTUSDT", "5", closed, "SHORT", now_ms=700,
+                ), "",
+            )
+        self.assertEqual(box.box_robot_formation(closed, formation), frozen_before)
+        self.assertNotIn("auxiliary_reversal", frozen_before)
+        self.assertNotIn("robot_handoff_ready", reversal)
+
     def test_actual_scanner_without_wedge_sends_confirmed_box_without_robot_affordance(self):
         source = _candles()
         original = source.copy(deep=True)
@@ -112,7 +149,7 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
             for row in photo.call_args.kwargs["reply_markup"]["inline_keyboard"]
             for button in row
         ]
-        self.assertNotIn("🤖 Робот", buttons)
+        self.assertIn("🤖 Робот", buttons)  # Navigation only; no Robot candidate action
         callbacks = [
             button.get("callback_data")
             for row in photo.call_args.kwargs["reply_markup"]["inline_keyboard"]
@@ -250,7 +287,8 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
                     callbacks = [b["callback_data"] for b in buttons if "callback_data" in b]
                     # Owner-only controls: MetaScalp plus the PC workspace launcher that
                     # replaced the review:* buttons (#589, shared build_tradingview_keyboard).
-                    self.assertEqual(callbacks, ["ms:open:TESTUSDT", "workspace:EDITOR:TESTUSDT:5m",
+                    self.assertEqual(callbacks, ["ms:open:TESTUSDT", "workspace:AUTOPILOT:TESTUSDT:5m",
+                                                 "workspace:EDITOR:TESTUSDT:5m",
                                                  "workspace:TERMINAL:TESTUSDT:5m"] if index == 0 else [])
                     self.assertTrue(any("url" in b for b in buttons))
                 saved.assert_not_called()
@@ -388,8 +426,8 @@ class IkigaiBoxOwnerRobotAdmissionTests(unittest.TestCase):
         self.assertEqual(formation["direction"], expected.direction)
         owner, guest = photo.call_args_list
         handle = "bp-" + SOURCE_ID.removeprefix("box-plan-")[:40]
-        self.assertIn(("🤖 Робот", f"robot:approve:{handle}"), _markup_callbacks(owner))
-        self.assertLessEqual(len(f"robot:approve:{handle}".encode("utf-8")), 64)
+        self.assertIn(("🤖 Робот", "workspace:AUTOPILOT:TESTUSDT:5m"), _markup_callbacks(owner))
+        self.assertLessEqual(len("workspace:AUTOPILOT:TESTUSDT:5m".encode("utf-8")), 64)
         self.assertFalse(any(
             (data or "").startswith("robot:") for _text, data in _markup_callbacks(guest)
         ))
@@ -503,7 +541,7 @@ class IkigaiBoxOwnerRobotAdmissionTests(unittest.TestCase):
         self.assertEqual(photo.call_count, 2)
         owner = photo.call_args_list[0]
         handle = "bp-" + SOURCE_ID.removeprefix("box-plan-")[:40]
-        self.assertIn(("🤖 Робот", f"robot:approve:{handle}"), _markup_callbacks(owner))
+        self.assertIn(("🤖 Робот", "workspace:AUTOPILOT:TESTUSDT:5m"), _markup_callbacks(owner))
         record, = history.values()
         self.assertNotIn("robot_plan", record)
         warn.assert_not_called()
@@ -570,7 +608,7 @@ class IkigaiBoxOwnerRobotAdmissionTests(unittest.TestCase):
         handoff.assert_not_called()
         photo.assert_called_once()
         self.assertIn(
-            ("🤖 Робот", "robot:approve:bp-" + SOURCE_ID.removeprefix("box-plan-")[:40]),
+            ("🤖 Робот", "workspace:AUTOPILOT:TESTUSDT:5m"),
             _markup_callbacks(photo.call_args),
         )
 

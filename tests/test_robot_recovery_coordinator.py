@@ -4,8 +4,10 @@ import tempfile
 import unittest
 
 from robot_state_machine import initialize_state
+from scanner_geometry_cursor import ScannerGeometryCursorError
 from terminal.application.robot_recovery import (
     PAUSED,
+    PAPER_CANDIDATE_QUARANTINED,
     READY,
     RECONCILING,
     RobotRecoveryCoordinator,
@@ -79,13 +81,13 @@ class RobotRecoveryCoordinatorTests(unittest.TestCase):
             updated_at_ms=self.clock(),
         )
 
-    def _create_waiting_candidate(self):
+    def _create_waiting_candidate(self, *, snapshot=None):
         candidate, created = self.store.create_robot_candidate(
             candidate_id="candidate-1",
             trading_account_id=ACCOUNT_ID,
             symbol=Symbol("TESTUSDT"),
             status="APPROVED",
-            signal_snapshot=_snapshot(),
+            signal_snapshot=snapshot or _snapshot(),
             approved_at_ms=self.clock(),
             updated_at_ms=self.clock(),
         )
@@ -263,17 +265,92 @@ class RobotRecoveryCoordinatorTests(unittest.TestCase):
         self.assertEqual(recovered.robot_state["geometry_cursor"], 105)
         self.assertEqual(recovered.robot_state["phase"], "WAITING_BREAKOUT")
 
-    def test_legacy_waiting_candidate_without_cursor_anchor_fails_closed_before_network(self):
-        self._create_waiting_candidate()
+    def test_inert_candidate_missing_cursor_is_quarantined_without_global_fence(self):
+        original = self._create_waiting_candidate()
         self._initialize_running()
         coordinator = RobotRecoveryCoordinator(
             self.store, ACCOUNT_ID, clock_ms=self.clock,
         )
         result = coordinator.recover()
-        self.assertEqual(result.runtime_state.mode, "ROBOT_RUNNING")
+        self.assertEqual(result.runtime_state.recovery_status, READY)
+        self.assertTrue(result.admission_ready)
+        self.assertEqual(result.decisions[0].status, PAPER_CANDIDATE_QUARANTINED)
+        quarantined = self.store.get_robot_candidate(original.candidate_id)
+        self.assertEqual(quarantined.status, "INVALIDATED")
+        self.assertEqual(quarantined.state_revision, original.state_revision + 1)
+        self.assertEqual(
+            quarantined.robot_state["paper_quarantine"]["reason"],
+            "CANDIDATE_RECOVERY_INVALID",
+        )
+
+    def test_inert_candidate_isolation_preserves_independent_box_candidate(self):
+        self._create_waiting_candidate()
+        box = self._create_box_waiting_candidate()
+        self._initialize_running()
+        coordinator = RobotRecoveryCoordinator(self.store, ACCOUNT_ID, clock_ms=self.clock)
+        result = coordinator.recover()
+        self.assertEqual(result.runtime_state.recovery_status, READY)
+        self.assertEqual(
+            [decision.status for decision in result.decisions],
+            [PAPER_CANDIDATE_QUARANTINED, "RESUME_WAITING"],
+        )
+        self.assertEqual(self.store.get_robot_candidate("candidate-1").status, "INVALIDATED")
+        still_active = self.store.get_robot_candidate(box.candidate_id)
+        self.assertEqual(still_active.status, "APPROVED")
+        self.assertEqual(still_active.state_revision, box.state_revision)
+
+    def test_candidate_cannot_be_quarantined_when_same_symbol_has_open_trade(self):
+        self._create_open_candidate()
+        # Distinct source snapshots are a durable identity invariant.
+        self._create_waiting_candidate(snapshot={**_snapshot(), "test_source": "independent"})
+        self._initialize_running()
+        coordinator = RobotRecoveryCoordinator(self.store, ACCOUNT_ID, clock_ms=self.clock)
+        result = coordinator.recover()
         self.assertEqual(result.runtime_state.recovery_status, "RECONCILIATION_REQUIRED")
         self.assertFalse(result.admission_ready)
-        self.assertIn("Scanner geometry cursor anchor", result.runtime_state.reason)
+        self.assertEqual(self.store.get_robot_candidate("candidate-1").status, "APPROVED")
+
+    def test_unconfirmed_candidate_execution_intent_cannot_be_quarantined(self):
+        candidate = self._create_waiting_candidate()
+        state = dict(candidate.robot_state)
+        state["execution"] = {"late_market_intent": {"command_id": "pending"}}
+        self.store.save_robot_candidate_state(
+            candidate.candidate_id, status="APPROVED", robot_state=state,
+            expected_revision=candidate.state_revision, updated_at_ms=self.clock(),
+        )
+        self._initialize_running()
+        result = RobotRecoveryCoordinator(self.store, ACCOUNT_ID, clock_ms=self.clock).recover()
+        self.assertEqual(result.runtime_state.recovery_status, "RECONCILIATION_REQUIRED")
+        retained = self.store.get_robot_candidate(candidate.candidate_id)
+        self.assertEqual(retained.status, "APPROVED")
+        self.assertNotIn("paper_quarantine", retained.robot_state)
+
+    def test_prior_durable_trade_blocks_candidate_only_quarantine(self):
+        from unittest.mock import patch
+
+        candidate = self._create_waiting_candidate()
+        self._initialize_running()
+        coordinator = RobotRecoveryCoordinator(self.store, ACCOUNT_ID, clock_ms=self.clock)
+        # A trade record may exist even if no currently OPEN trade or
+        # active entry LIMIT remains on the symbol.
+        with patch.object(self.store, "get_robot_trade", return_value=object()):
+            result = coordinator.recover()
+        self.assertEqual(result.runtime_state.recovery_status, "RECONCILIATION_REQUIRED")
+        retained = self.store.get_robot_candidate(candidate.candidate_id)
+        self.assertEqual(retained.status, "APPROVED")
+        self.assertNotIn("paper_quarantine", retained.robot_state)
+
+    def test_transient_market_data_gap_does_not_invalidate_candidate(self):
+        self._create_waiting_candidate()
+        self._initialize_running()
+        def unavailable(symbol, snapshot):
+            raise ScannerGeometryCursorError("Scanner closed 1m candle evidence is unavailable")
+        coordinator = RobotRecoveryCoordinator(
+            self.store, ACCOUNT_ID, latest_geometry_index_provider=unavailable, clock_ms=self.clock,
+        )
+        result = coordinator.recover()
+        self.assertEqual(result.runtime_state.recovery_status, "RECONCILIATION_REQUIRED")
+        self.assertEqual(self.store.get_robot_candidate("candidate-1").status, "APPROVED")
 
     def test_running_open_trade_can_recover_without_geometry_read(self):
         self._create_open_candidate()

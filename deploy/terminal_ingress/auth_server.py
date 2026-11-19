@@ -91,7 +91,7 @@ LOGIN_HTML = """<!doctype html><html lang="ru"><meta charset="utf-8">
   const view=params.get("view");
   const mode=params.get("mode"), symbol=params.get("symbol"), timeframe=params.get("timeframe");
   if(view==="positions" && !mode){location.replace("/?view=positions");return;}
-  if(!["EDITOR","TERMINAL"].includes(mode) ||
+  if(!["EDITOR","TERMINAL","AUTOPILOT"].includes(mode) ||
      !/^[A-Z0-9]{2,32}USDT$/.test(symbol||"") ||
      !["15s","1m","5m","15m","1h","1d"].includes(timeframe)){
     location.replace("/");return;

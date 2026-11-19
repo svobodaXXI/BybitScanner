@@ -59,63 +59,15 @@ blocker, explaining the single needed decision. Never suppress safety gates,
 assume authorization, or claim success without observed evidence. After the
 blocker is resolved, return directly to the original end result.
 
-## VPS access priority — owner confirmed 2026-11-05
+## VPS access priority — single canonical SSH authority (owner updated 2026-11-18)
 
-**Minimize owner manual work.** For VPS needs, use the existing GitHub connector
-first for repository evidence, CI, PRs and *only the remote diagnostics it actually
-supports*; GitHub repository access alone is not SSH or proof of VPS runtime.
-If an approved VPS operation needs host access, delegate its full bounded outcome
-to the existing Codex/VPS mechanism. Only after a **specific verified blocker**
-to both assistant tools and Codex, use the owner's **primary desktop-PC** Windows
-PowerShell route `ssh bybitscanner-vps` (alias `212.193.14.116` with the existing
-PC identity). The historical `bybitscanner_laptop` key and old-IP commands are
-**laptop-specific / fallback**, not the default for this PC. VNC is last resort
-if SSH remains unusable.
-Do not ask the owner to run routine read-only commands one by one, repeat
-investigations, reconfigure working keys, or manually carry intermediate outputs
-when a usable authorized agent route exists. The owner supplies only
-indispensable credentials, approvals or actions that tooling cannot perform.
+**FIRST READ for any VPS SSH, Windows PowerShell, VPN, Codex or VPS Manager access:** [canonical VPS connection register](DOCUMENTS/WINDOWS_PC_VPS_ACCESS_RECOVERY_20261108.md) (top section, **18.11.2026**). That document is the **only operative SSH route authority**; older sections 0/1 and other runbooks describe historical contexts, not a higher priority. Do not copy SSH commands, IPs, or a conflicting default into AGENTS or other docs.
 
-For exact proven PowerShell login, optional Windows ssh-agent and safety caveats,
-see `DOCUMENTS/VPS_PAPER_TELEGRAM_ONE_BUTTON_LESSONS_20261027.md` §6.
-This priority is **routing, not permission**: GitHub merge, deployment,
-PAPER DB/position, STOP/START, reconcile and trading authority remain unchanged.
+**Critical verified recovery:** repeated `banner exchange timeout`/exit 255 did **not** mean SSH was permanently unavailable. Owner's main PC then authenticated as root with the documented standard PowerShell SSH invocation **without `-F none`**, and confirmed Happ/VPN was **ON**. Receipt: `SSH_OK`, expected VPS hostname, exit 0, followed by successful read-only Robot/Scanner/protection API calls. This supersedes the 17.11 assumption that VPN must be OFF for the old IP or that the new IP with `-F none` is always preferred. The exact VPN node and root cause remain unproven. Consult the register before any new retry; stop after failed evidence instead of broad alias/IP/key/VPN exploration.
 
-## Codex Desktop SSH — CANONICAL PRIMARY ROUTE FOR THE MAIN PC (owner-confirmed 2026-11-15)
+**Documentation link graph:** AGENTS → [single SSH register](DOCUMENTS/WINDOWS_PC_VPS_ACCESS_RECOVERY_20261108.md) ↔ [VPS Manager interface/monolith guide](tools/WINDOWS_VPS_MANAGER.md). The register owns working Windows routes and incident chronology; the Manager guide owns GUI/CLI controls; [ASSISTANT_PROTOCOL](DOCUMENTS/ASSISTANT_PROTOCOL.md) owns operational authority. Source code or installed client behavior may differ from the successful manual PowerShell route; prove it before claiming equivalence.
 
-**USE THIS FIRST for every Codex Desktop → VPS connection from the desktop PC** (`C:\Users\svobo`). This exact command was successfully executed from the owner's already-open Codex Desktop: `SSH_OK`, `root`, `v3286418.hosted-by-vdsina.ru`, exit `0`.
-
-```powershell
-& 'C:\Windows\System32\OpenSSH\ssh.exe' -F none -i 'C:\Users\svobo\.ssh\bybitscanner_vdsina_gateway_20261030' -o IdentitiesOnly=yes -o BatchMode=yes -o PasswordAuthentication=no -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 root@212.193.14.116 'echo SSH_OK; whoami; hostname'
-"SSH_EXIT_CODE=$LASTEXITCODE"
-```
-
-**Agent rule: do not search for another path.** Run the command directly; do not probe the key with `Test-Path`, `Get-Acl`, file reads or ACL checks first. `-F none` deliberately bypasses the user SSH config/alias; `-i` selects the existing PC key. If the sandbox blocks key access, request owner-approved trusted/out-of-sandbox execution of this same command. Never change key ACLs, print/copy the private key, change VPN/config, disable host-key checking, or substitute the laptop key `bybitscanner_laptop` / old IP `83.217.213.181`. Do not run retries in a loop.
-
-**Scope separation:** this is the Codex Desktop route for the desktop PC only. The native Windows PowerShell route `ssh bybitscanner-vps` remains separate. The laptop has its own route and identity. A successful SSH receipt proves transport only; it does not authorize VPS deployment, STOP/START, PAPER/DB or LIVE actions.
-
-Canonical details and the owner's full 2026-11-15 receipt: `DOCUMENTS/WINDOWS_PC_VPS_ACCESS_RECOVERY_20261108.md` → `PRIMARY PC CODEX DESKTOP SSH ROUTE`.
-
-## VPS SSH — native PowerShell PC route and blocked-release fast path (2026-11-14)
-
-**Current canonical PC transport:** Windows PowerShell `ssh bybitscanner-vps`,
-resolved to `root@212.193.14.116` and the existing key
-`C:\Users\svobo\.ssh\bybitscanner_vdsina_gateway_20261030`. On 2026-11-14,
-the owner confirmed **Happ/VPN was ON** when this alias returned `SSH_OK`,
-the expected VPS hostname and exit 0. **Do not instruct the owner to disable
-VPN as the default access step.** This is an observed successful connection,
-not a guarantee that every future handshake or Codex environment works.
-For the exact command, scope and evidence, first read
-`DOCUMENTS/WINDOWS_PC_VPS_ACCESS_RECOVERY_20261108.md` →
-`CURRENT PRIMARY PC SSH ROUTE`.
-
-When SSH banner timeout occurs, first prefer this PC alias without changing
-VPN settings; avoid repeated failed probes or switching keys/IPs speculatively.
-The 2026-11-11 VPN-off/old-IP route is **historical contingency evidence only**,
-not an equal-priority default. Codex Desktop must use the canonical direct-key route in the immediately preceding `Codex Desktop SSH — CANONICAL PRIMARY ROUTE FOR THE MAIN PC` section; do not try the alias/config from Codex Desktop or repeat the historical path/access diagnostics. For a blocked
-release or `PAPER_unit_not_stopped`, still follow the documented protected
-receipt, four-unit, listener and fail-closed checks. A working SSH connection
-does not grant STOP/deploy/PAPER/LIVE authorization.
+Minimize owner time: GitHub evidence is not host access. If Windows host execution is unavailable, report the exact missing boundary, not another unproven SSH command. SSH_OK proves transport only, never deploy, STOP/START, PAPER/DB, admission, or LIVE authority; all fail-closed gates remain unchanged.
 
 ## Outcome-owned delegation — proven lesson (2026-10-28)
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 import io
 import queue
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,12 +15,55 @@ from tools.windows_vps_manager import (ACTIONS, VPSManager, control_ssh_command,
                                        preferred_route, parse_args, ssh_command,
                                        remember_request_id, recover_last_request_id, run_cli,
                                        known_windows_device, preferred_key, PREFLIGHT,
-                                       watch_owner_request,
+                                       manager_version, manager_title, watch_owner_request,
                                        run_readonly_ssh_with_laptop_agent_recovery,
                                        LAPTOP_AGENT_FINGERPRINT)
 
 
 class TestWindowsVpsManager(unittest.TestCase):
+    def test_manager_title_displays_newer_build_number_and_exact_short_sha(self):
+        sha = "600d472d3221441b89fadc7e0ea5552d931beae5"
+        with tempfile.TemporaryDirectory() as folder:
+            (Path(folder) / "desktop-build-sha.txt").write_text(
+                sha + "\n", encoding="ascii")
+            (Path(folder) / "desktop-build-number.txt").write_text(
+                "126\n", encoding="ascii")
+            with (patch.object(sys, "frozen", True, create=True),
+                  patch.object(sys, "_MEIPASS", folder, create=True)):
+                self.assertEqual(manager_version(), "v126 (" + sha[:12] + ")")
+                self.assertEqual(
+                    manager_title(), "BybitScanner VPS Manager — v126 (" +
+                    sha[:12] + ") — PAPER")
+                (Path(folder) / "desktop-build-number.txt").write_text(
+                    "127\n", encoding="ascii")
+                self.assertEqual(manager_version(), "v127 (" + sha[:12] + ")")
+
+    def test_manager_version_unknown_for_missing_or_invalid_build_markers(self):
+        sha = "600d472d3221441b89fadc7e0ea5552d931beae5"
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            with (patch.object(sys, "frozen", True, create=True),
+                  patch.object(sys, "_MEIPASS", folder, create=True)):
+                self.assertEqual(manager_version(), "UNKNOWN")
+                (root / "desktop-build-sha.txt").write_text(
+                    sha, encoding="ascii")
+                self.assertEqual(manager_version(), "UNKNOWN")
+                for bad in ("", "0", "-5", "1.2", "01", "abc", "9" * 13):
+                    (root / "desktop-build-number.txt").write_text(
+                        bad, encoding="ascii")
+                    self.assertEqual(manager_version(), "UNKNOWN")
+                (root / "desktop-build-number.txt").write_text(
+                    "128", encoding="ascii")
+                for bad in ("", "f" * 39, "f" * 40 + " injected", "G" * 40):
+                    (root / "desktop-build-sha.txt").write_text(
+                        bad, encoding="ascii")
+                    self.assertEqual(manager_version(), "UNKNOWN")
+
+    def test_source_launch_identifies_development_build(self):
+        with patch.object(sys, "frozen", False, create=True):
+            self.assertEqual(manager_version(), "DEV")
+            self.assertIn("— DEV — PAPER", manager_title())
+
     def test_all_actions_use_strict_ssh_and_no_interactive_passwords(self) -> None:
         for action in ACTIONS:
             with self.subTest(action=action):
@@ -575,8 +619,9 @@ class TestWindowsVpsManager(unittest.TestCase):
             sleep=lambda *_: None)
         self.assertEqual(state, "submitted")  # known accepted, terminal result unknown
         self.assertIn("STATUS_UNPROVEN", details)
-        self.assertEqual(run.call_count, 3)
+        self.assertEqual(run.call_count, 12)  # bounded reconnect; no submit
         self.assertTrue(all(call.args[0] == command for call in run.call_args_list))
+        self.assertNotIn(" submit ", " ".join(map(str, run.call_args_list)))
 
     def test_gui_watcher_unknown_submission_not_upgraded_to_success(self):
         req = "b" * 32
@@ -591,6 +636,96 @@ class TestWindowsVpsManager(unittest.TestCase):
         self.assertEqual(state, "unproven")
         self.assertIn("STATUS_UNPROVEN", details)
         self.assertEqual(run.call_count, 3)
+
+    def test_owner_watcher_recovers_after_transient_banner_timeouts_same_uuid(self):
+        req = "d" * 32
+        command = ["ssh", "root@212.193.14.116",
+                   "cd /opt/BybitScanner && /opt/BybitScanner/venv/bin/python "
+                   "-m tools.vps_owner_control status " + req]
+        errors = [subprocess.CompletedProcess(command, 255, "",
+                  "Connection timed out during banner exchange") for _ in range(3)]
+        success = subprocess.CompletedProcess(
+            command, 0, "REQUEST_ID=" + req + "\nSTATUS=FINISHED_OK\n", "")
+        calls = Mock(side_effect=[*errors, success])
+        state, details = watch_owner_request(
+            command, req, initially_submitted=True, run=calls, sleep=lambda _: None)
+        self.assertEqual(state, "success")
+        self.assertEqual(details, success.stdout.strip())
+        self.assertEqual(calls.call_count, 4)
+        self.assertTrue(all(call.args[0] == command for call in calls.call_args_list))
+
+    def test_owner_watcher_stops_on_ssh_auth_error_without_retry(self):
+        req = "d" * 32
+        command = ["ssh", "status-only"]
+        call = Mock(return_value=subprocess.CompletedProcess(
+            command, 255, "", "Permission denied (publickey)."))
+        state, details = watch_owner_request(
+            command, req, initially_submitted=False, run=call, sleep=lambda _: None)
+        self.assertEqual(state, "unproven")
+        self.assertIn("SSH rejected", details)
+        call.assert_called_once()
+
+    def test_gui_status_reconnects_after_subprocess_timeout_without_resubmit(self):
+        req = "b" * 32
+        command = ["ssh", "root@212.193.14.116",
+                   "cd /opt/BybitScanner && /opt/BybitScanner/venv/bin/python "
+                   "-m tools.vps_owner_control status " + req]
+        done = subprocess.CompletedProcess(
+            command, 0, "REQUEST_ID=" + req + "\nSTATUS=FINISHED_OK\n", "")
+        fake = SimpleNamespace(events=queue.Queue())
+        with (patch("tools.windows_vps_manager.subprocess.run",
+                    side_effect=[subprocess.TimeoutExpired(command, 35), done]) as runner,
+              patch("tools.windows_vps_manager.time.sleep")):
+            VPSManager.worker_control(fake, command, "status", req)
+        kind, result = fake.events.get_nowait()
+        self.assertEqual(kind, "success")
+        self.assertIn("STATUS=FINISHED_OK", result)
+        self.assertEqual(runner.call_count, 2)
+        self.assertTrue(all(call.args[0] == command for call in runner.call_args_list))
+
+    def test_gui_status_reconnects_readonly_after_banner_timeout(self):
+        req = "a" * 32
+        command = ["ssh", "root@212.193.14.116",
+                   "cd /opt/BybitScanner && /opt/BybitScanner/venv/bin/python "
+                   "-m tools.vps_owner_control status " + req]
+        first = subprocess.CompletedProcess(
+            command, 255, "", "Connection timed out during banner exchange")
+        second = subprocess.CompletedProcess(
+            command, 0, "REQUEST_ID=" + req + "\nSTATUS=FINISHED_OK\n", "")
+        fake = SimpleNamespace(events=queue.Queue())
+        with (patch("tools.windows_vps_manager.subprocess.run",
+                    side_effect=[first, second]) as runner,
+              patch("tools.windows_vps_manager.time.sleep")):
+            VPSManager.worker_control(fake, command, "status", req)
+        kind, details = fake.events.get_nowait()
+        self.assertEqual(kind, "success")
+        self.assertIn("STATUS=FINISHED_OK", details)
+        self.assertEqual(runner.call_count, 2)
+        self.assertTrue(all(call.args[0] == command for call in runner.call_args_list))
+
+    def test_happ_tun_selects_confirmed_pc_target_with_pinned_identity(self):
+        with tempfile.TemporaryDirectory() as home:
+            root = Path(home)
+            key = root / ".ssh" / "bybitscanner_vdsina_gateway_20261030"
+            key.parent.mkdir()
+            key.write_text("test placeholder", encoding="ascii")
+            with (patch.dict("tools.windows_vps_manager.os.environ",
+                             {"USERPROFILE": r"C:\Users\svobo"}),
+                  patch("tools.windows_vps_manager.Path.home", return_value=root),
+                  patch("tools.windows_vps_manager.happ_tun_active", return_value=True)):
+                self.assertEqual(preferred_route(), ("212.193.14.116", "root"))
+                self.assertEqual(preferred_key("212.193.14.116", "root"), str(key))
+                cmd = control_ssh_command(*preferred_route(), str(key), "list")
+            self.assertEqual(cmd[:3], ["ssh", "-F", "none"])
+            self.assertIn("IdentitiesOnly=yes", cmd)
+            self.assertIn("StrictHostKeyChecking=yes", cmd)
+            self.assertEqual(cmd[-2], "root@212.193.14.116")
+            self.assertNotIn(" submit ", cmd[-1])
+
+    def test_happ_detection_failure_preserves_existing_pc_route(self):
+        with (patch("tools.windows_vps_manager.known_windows_device", return_value="pc"),
+              patch("tools.windows_vps_manager.happ_tun_active", return_value=False)):
+            self.assertEqual(preferred_route(), ("83.217.213.181", "root"))
 
     def test_readonly_recovery_refuses_submit_before_any_ssh(self):
         command = ["ssh", "tools.vps_owner_control submit stop installed"]
@@ -841,27 +976,35 @@ class TestWindowsVpsManager(unittest.TestCase):
             self.assertEqual(cmd[-2], "root@83.217.213.181")
             self.assertNotIn(" submit ", cmd[-1])
 
-    def test_pc_autoroutes_alias_without_laptop_identity(self):
+    def test_pc_uses_verified_direct_route_even_with_stale_alias(self):
         with tempfile.TemporaryDirectory() as home:
             root = Path(home)
             (root / ".ssh").mkdir()
             (root / ".ssh" / "config").write_text(
-                "Host bybitscanner-vps\n  HostName 212.193.14.116\n", encoding="ascii")
+                "Host bybitscanner-vps\n  HostName 212.193.14.116\n",
+                encoding="ascii")
+            key = root / ".ssh" / "bybitscanner_vdsina_gateway_20261030"
+            key.write_text("test placeholder", encoding="ascii")
             with (patch.dict("tools.windows_vps_manager.os.environ",
                              {"USERPROFILE": r"C:\Users\svobo"}),
                   patch("tools.windows_vps_manager.Path.home", return_value=root)):
-                self.assertEqual(preferred_route(), ("bybitscanner-vps", ""))
-                self.assertEqual(preferred_key("bybitscanner-vps", ""), "")
-            # Direct fallback is used only when the alias is genuinely absent.
-            (root / ".ssh" / "config").unlink()
-            with (patch.dict("tools.windows_vps_manager.os.environ",
-                             {"USERPROFILE": r"C:\Users\svobo"}),
-                  patch("tools.windows_vps_manager.Path.home", return_value=root)):
-                self.assertEqual(preferred_route(), ("212.193.14.116", "root"))
-                self.assertEqual(
-                    preferred_key("212.193.14.116", "root"),
-                    str(root / ".ssh" / "bybitscanner_vdsina_gateway_20261030"),
-                )
+                self.assertEqual(preferred_route(), ("83.217.213.181", "root"))
+                self.assertEqual(preferred_key("83.217.213.181", "root"),
+                                 str(key))
+                # Both owner-confirmed PC addresses use the same existing PC key;
+                # the active TUN selects which becomes the default.
+                self.assertEqual(preferred_key("212.193.14.116", "root"), str(key))
+                cmd = control_ssh_command(
+                    *preferred_route(), str(key), "list")
+                self.assertEqual(cmd[:3], ["ssh", "-F", "none"])
+                self.assertEqual(cmd[-2], "root@83.217.213.181")
+                self.assertEqual(cmd[cmd.index("-i") + 1], str(key))
+                self.assertIn("StrictHostKeyChecking=yes", cmd)
+                self.assertIn("BatchMode=yes", cmd)
+                self.assertNotIn("bybitscanner-vps", cmd)
+            # No edit/delete of existing user SSH config.
+            self.assertIn("HostName 212.193.14.116",
+                          (root / ".ssh" / "config").read_text())
 
     def test_preflight_is_single_read_only_command_not_runtime_acceptance(self):
         cmd = control_ssh_command("bybitscanner-vps", "", "", "preflight")
@@ -952,15 +1095,23 @@ class TestWindowsVpsManager(unittest.TestCase):
         self.assertIn("PREFLIGHT_FAILURE_CLASS=SSH_AUTH_REJECTED", output)
         self.assertNotIn("secret", output)
 
-    def test_existing_alias_detected_without_rewriting_ssh_config(self):
-        with tempfile.TemporaryDirectory() as temp:
-            config = Path(temp) / ".ssh"
-            config.mkdir()
-            (config / "config").write_text(
-                "Host bybitscanner-vps\n    HostName 212.193.14.116\n"
-                "    User root\n", encoding="utf-8")
-            with patch("tools.windows_vps_manager.Path.home", return_value=Path(temp)):
+    def test_unknown_profile_does_not_inherit_pc_or_laptop_key(self):
+        with tempfile.TemporaryDirectory() as home:
+            root = Path(home)
+            (root / ".ssh").mkdir()
+            (root / ".ssh" / "config").write_text(
+                "Host bybitscanner-vps\n  HostName 212.193.14.116\n",
+                encoding="ascii")
+            with (patch.dict("tools.windows_vps_manager.os.environ",
+                             {"USERPROFILE": r"C:\Users\unknown"},
+                             clear=True),
+                  patch("tools.windows_vps_manager.Path.home",
+                        return_value=root)):
                 self.assertEqual(preferred_route(), ("bybitscanner-vps", ""))
+                self.assertEqual(preferred_key("83.217.213.181", "root"), "")
+                self.assertEqual(preferred_key("212.193.14.116", "root"), "")
+
+
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from decimal import Decimal, InvalidOperation
 
 from terminal.diary.models import AllocationRole
 from terminal.diary.scoped_statistics_reporter import PaperSourceSnapshot
@@ -48,6 +49,54 @@ def _order_ids(candidate: dict) -> frozenset[str]:
         _deny("wedge_candidate_entry_identity_unproven")
 
 
+def _verified_wedge_entry_risk(
+    trade: dict[str, object], opening_rows: list[tuple[object, object]],
+    *, direction: str,
+) -> dict[str, object]:
+    """Attest persisted Wedge entry STOP/TAKE against actual opening fills.
+
+    The source snapshot already holds the exact trade/candidate/order/episode
+    proof. Legacy missing terms and conflicting quantities do not erase that
+    independent lineage; only this optional risk projection is UNPROVEN.
+    """
+    try:
+        expected_average = Decimal(str(trade["average_entry"]))
+        stop = Decimal(str(trade["stop_price"]))
+        take = Decimal(str(trade["take_price"]))
+        expected_quantity = Decimal(str(trade["entry_quantity"]))
+        quantity = sum((a.quantity for a, _ in opening_rows), Decimal(0))
+        notional = sum(
+            (e.price.value * a.quantity for a, e in opening_rows), Decimal(0)
+        )
+        prices = (expected_average, stop, take, expected_quantity, quantity, notional)
+        if any(not x.is_finite() or x <= 0 for x in prices):
+            return {"status": "UNPROVEN", "reason": "invalid_persisted_entry_terms"}
+        if quantity != expected_quantity or notional / quantity != expected_average:
+            return {"status": "UNPROVEN", "reason": "entry_fills_terms_mismatch"}
+        if direction == "LONG":
+            if not stop < expected_average < take:
+                return {"status": "UNPROVEN", "reason": "entry_protection_order_invalid"}
+            risk = expected_average - stop
+        elif direction == "SHORT":
+            if not take < expected_average < stop:
+                return {"status": "UNPROVEN", "reason": "entry_protection_order_invalid"}
+            risk = stop - expected_average
+        else:
+            return {"status": "UNPROVEN", "reason": "direction_unproven"}
+    except (KeyError, TypeError, ValueError, InvalidOperation, ArithmeticError):
+        return {"status": "UNPROVEN", "reason": "entry_terms_missing_or_invalid"}
+
+    return {
+        "status": "PROVEN_PERSISTED_ENTRY_TERMS",
+        "provenance": "EXACT_WEDGE_ROBOT_TRADE_AND_OPEN_EXECUTIONS",
+        "filled_average_entry": str(expected_average),
+        "initial_stop_price": str(stop),
+        "initial_take_price": str(take),
+        "initial_risk_price": str(risk),
+        "initial_risk_pct": str(risk / expected_average * Decimal(100)),
+    }
+
+
 def project_selected_paper_wedge(
     snapshot: PaperSourceSnapshot, *, account_id: str, owner: str,
     trade_episode_id: str, source_revision: int,
@@ -62,9 +111,9 @@ def project_selected_paper_wedge(
             or source_revision != snapshot.source_revision):
         _deny("wedge_paper_robot_revision_required")
     evidence = snapshot.wedge_evidence
-    if evidence is None or set(evidence) != {
+    if evidence is None or not {
         "candidates", "trades", "robot_entries", "obligations",
-    }:
+    }.issubset(evidence):
         _deny("wedge_evidence_unavailable")
     episode = _one([
         e for e in snapshot.episodes
@@ -180,6 +229,9 @@ def project_selected_paper_wedge(
         "known_execution_fees_usdt": str(episode.execution_fees),
         "pnl_usdt": str(episode.realized_price_pnl - episode.execution_fees),
         "execution_allocations": fills,
+        "entry_risk": _verified_wedge_entry_risk(
+            trade, rows[:-1], direction=trade["direction"],
+        ),
         "decisions_coverage": "NOT_PROVIDED",
         "market_candles_coverage": "NOT_PROVIDED",
     }

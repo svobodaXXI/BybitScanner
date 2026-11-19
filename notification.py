@@ -409,8 +409,9 @@ def _owner_workspace_button(mode, symbol, timeframe, signal_id=None):
                 mode, symbol, timeframe,
                 signal_id=signal_id,
             )
-            return {"text": "✏️ Редактор" if mode == "EDITOR" else "🖥 Терминал",
-                    "web_app": {"url": url}}
+            label = {"EDITOR": "✏️ Редактор", "TERMINAL": "🖥 Терминал",
+                     "AUTOPILOT": "🤖 Робот"}[mode]
+            return {"text": label, "web_app": {"url": url}}
         except ValueError:
             # Do not expose an unsafe URL. The callback path will verify HTTPS
             # independently before offering a link.
@@ -424,7 +425,9 @@ def _owner_workspace_button(mode, symbol, timeframe, signal_id=None):
             source_kind = "S" if match.group(1) == "source-original" else "M"
             return {"text": "✏️ Редактор" if mode == "EDITOR" else "🖥 Терминал",
                     "callback_data": f"workspace:{mode}:{source_kind}:{match.group(2)}"}
-    return {"text": "✏️ Редактор" if mode == "EDITOR" else "🖥 Терминал",
+    label = {"EDITOR": "✏️ Редактор", "TERMINAL": "🖥 Терминал",
+             "AUTOPILOT": "🤖 Робот"}[mode]
+    return {"text": label,
             "callback_data": f"workspace:{mode}:{symbol}:{timeframe}"}
 
 
@@ -436,7 +439,7 @@ def build_tradingview_keyboard(
     robot_status_button=False,
     signal_id=None,
 ):
-    """Telegram inline keyboard for TradingView, review, and Robot admission."""
+    """Telegram inline keyboard for TradingView and read-only owner navigation."""
 
     tradingview_url = (
         create_tradingview_url(
@@ -476,31 +479,15 @@ def build_tradingview_keyboard(
             }
         )
 
-    if robot_candidate_id:
-        keyboard.append(
-            [
-                {
-                    "text": "🤖 Робот",
-                    "callback_data": (
-                        f"robot:approve:{robot_candidate_id}"
-                    ),
-                }
-            ]
-        )
-    elif robot_status_button:
-        keyboard.append(
-            [
-                {
-                    "text": "🤖 Робот",
-                    "callback_data": "robot:cmd:status",
-                }
-            ]
-        )
+    # The Robot automatically selects its own candidates. The owner's button
+    # is view-only navigation and must never approve or create a candidate.
+    tf = {"1": "1m", "5": "5m", "15": "15m", "60": "1h", "D": "1d"}.get(timeframe, timeframe)
+    if include_review_actions and tf in ("15s", "1m", "5m", "15m", "1h", "1d"):
+        keyboard.append([_owner_workspace_button("AUTOPILOT", symbol, tf)])
 
     # Owner callback targets the listener on the PC, not the phone browser.
     # The listener prepares the local UI; HTTPS/QR are delivered separately.
     if include_review_actions:
-        tf = {"1": "1m", "5": "5m", "15": "15m", "60": "1h", "D": "1d"}.get(timeframe, timeframe)
         if tf in ("15s", "1m", "5m", "15m", "1h", "1d"):
             keyboard.append([
                 _owner_workspace_button("EDITOR", symbol, tf, signal_id=signal_id),
@@ -661,6 +648,12 @@ def send_signal(
             pattern=result.get("pattern", ""), text=message,
             image_bytes=archived_image, photo_response=owner_photo_response,
             geometry_snapshot=candidate_geometry,
+            # Keep the original Editor identity alongside the candidate copy.
+            # A duplicate must reopen the same reviewed frozen source, not
+            # create an independent per-candidate correction history.
+            source_formation_ids=(
+                [f"source-original:{source_token}"] if frozen_source is not None else None
+            ),
         )
 
     # After the ordinary card/photo delivery, tell the owner (only) why the

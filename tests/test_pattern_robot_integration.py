@@ -46,6 +46,28 @@ class PatternRobotIntegrationTests(unittest.TestCase):
             integration.is_robot_executable_signal(snapshot, timeframe="15")
         )
 
+    def test_double_extrema_are_auxiliary_not_independent_robot_candidates(self):
+        for pattern in ("Double Top", "Double Bottom"):
+            for timeframe in ("1", "5", "15"):
+                with self.subTest(pattern=pattern, timeframe=timeframe):
+                    snapshot = {
+                        "pattern": pattern,
+                        "symbol": "TESTUSDT",
+                        "robot_handoff_ready": True,
+                    }
+                    self.assertFalse(
+                        integration.is_robot_executable_signal(
+                            snapshot, timeframe=timeframe,
+                        )
+                    )
+                    with patch.object(integration, "create_signal_snapshot") as persist:
+                        result = integration.prepare_robot_handoff(
+                            snapshot, timeframe=timeframe, enabled=True,
+                        )
+                    self.assertFalse(result.executable)
+                    self.assertIsNone(result.candidate_id)
+                    persist.assert_not_called()
+
     def test_unsupported_pattern_never_persists_candidate(self):
         snapshot = {
             "pattern": "Ikigai Box",

@@ -1213,6 +1213,10 @@ class SQLiteStore:
     _ROBOT_CANDIDATE_READ_INDEXES = (
         ("robot_candidates_account_symbol", "robot_candidates(trading_account_id, symbol)"),
         ("robot_candidates_account_status", "robot_candidates(trading_account_id, status)"),
+        # Hot protection path: skip terminal signal history and an ORDER BY sort.
+        ("robot_candidates_active_symbol",
+         "robot_candidates(trading_account_id, symbol, approved_at_ms, candidate_id) "
+         "WHERE status IN ('APPROVED', 'OPEN')"),
     )
 
     @staticmethod
@@ -5820,6 +5824,25 @@ class SQLiteStore:
         rows = self._connection.execute(
             """SELECT * FROM robot_candidates
                WHERE trading_account_id=? AND symbol=?
+               ORDER BY approved_at_ms, candidate_id""",
+            (trading_account_id.value, symbol.value),
+        )
+        return tuple(_robot_candidate_from_row(row) for row in rows)
+
+    def load_active_robot_candidates_for_symbol(
+        self, trading_account_id: TradingAccountId, symbol: Symbol,
+    ) -> tuple[RobotCandidateRecord, ...]:
+        """Hot protection ingress: only candidates with executable lifecycle.
+
+        Terminal history remains available through load_robot_candidates_for_symbol;
+        closed/invalidated/expired snapshots must not be parsed on every quote.
+        Same order and strict snapshot integrity validation for active rows.
+        """
+        self._assert_owner()
+        rows = self._connection.execute(
+            """SELECT * FROM robot_candidates
+               WHERE trading_account_id=? AND symbol=?
+                 AND status IN ('APPROVED', 'OPEN')
                ORDER BY approved_at_ms, candidate_id""",
             (trading_account_id.value, symbol.value),
         )

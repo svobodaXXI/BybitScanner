@@ -23,7 +23,7 @@ def workspace_link(base_url: str, mode: str, symbol: str, timeframe: str, signal
     except ValueError as exc:
         if str(exc) == "Private or reserved HTTPS IP address":
             raise
-    if mode not in ("EDITOR", "TERMINAL"):
+    if mode not in ("EDITOR", "TERMINAL", "AUTOPILOT"):
         raise ValueError("Unsupported workspace mode")
     if not re.fullmatch(r"[A-Z0-9]{2,32}USDT", symbol):
         raise ValueError("Invalid trading symbol")
