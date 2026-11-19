@@ -40,6 +40,27 @@ def period_start_ms(*, period: str, now_ms: int) -> int:
     return int((start.astimezone(timezone.utc) - _EPOCH).total_seconds() * 1000)
 
 
+def _add_exact_pnl(left: Decimal, right: Decimal) -> Decimal:
+    """Add two already computed episode net amounts without Decimal(28) rounding.
+
+    The source ledger can have more than 28 fractional/significant digits.
+    For long periods, repeated context-rounded ticker sums can differ from
+    the individually serialized closed episodes and falsely block Finrez.
+    Build an exact decimal coefficient rather than relaxing reconciliation.
+    """
+    a, b = left.as_tuple(), right.as_tuple()
+    exponent = min(a.exponent, b.exponent)
+
+    def units(parts) -> int:
+        value = int("".join(map(str, parts.digits)))
+        if parts.sign:
+            value = -value
+        return value * 10 ** (parts.exponent - exponent)
+
+    total = units(a) + units(b)
+    return Decimal((int(total < 0), tuple(map(int, str(abs(total)))), exponent))
+
+
 def aggregate_ticker_pnl(
     episodes: Iterable[TradeEpisode], *, period: str, now_ms: int,
 ) -> tuple[int, list[dict[str, object]]]:
@@ -56,7 +77,7 @@ def aggregate_ticker_pnl(
             raise ValueError("invalid_finrez_pnl")
         symbol = episode.position_key.symbol.value
         total, count = totals.get(symbol, (Decimal("0"), 0))
-        totals[symbol] = (total + pnl, count + 1)
+        totals[symbol] = (_add_exact_pnl(total, pnl), count + 1)
     ranked = sorted(totals.items(), key=lambda item: (-item[1][0], item[0]))
     return start_ms, [
         {"symbol": symbol, "pnl_usdt": str(total), "trade_count": count}
