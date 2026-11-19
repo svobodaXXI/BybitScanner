@@ -1469,6 +1469,11 @@ def run() -> int:
 
     while not _SHUTDOWN_REQUESTED.is_set():
         try:
+            if owned:
+                # Local scanner state may change outside Telegram. The menu
+                # button probe is throttled, and commands publish only on change.
+                refresh_command_menu()
+                _ensure_commands_menu_button()
             offset = poll_updates_once(offset)
             if not owned and _POLLING_READY.is_set():
                 # Menu and lifecycle posts only after getUpdates proved stream ownership.
