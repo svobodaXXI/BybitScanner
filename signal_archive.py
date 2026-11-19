@@ -199,3 +199,77 @@ def load_frozen_signal_geometry(candidate_id: str, *, directory=None) -> dict | 
         return snapshot
     except (OSError, ValueError, TypeError, KeyError):
         return None
+
+
+LEGACY_SOURCE_MAX_DELAY_MS = 60_000
+LEGACY_SOURCE_MAX_RECORDS = 20_000
+
+
+def find_unique_legacy_frozen_source_id(original: Mapping) -> str | None:
+    """Resolve a pre-lineage duplicate only from one exact, verified frozen source.
+
+    This is a read-only compatibility lookup, not an archive repair. Neither
+    ticker alone nor the current market supplies original Editor geometry.
+    Unknown, excessive, or ambiguous archive contents fail closed.
+    """
+    fields = ("symbol", "timeframe", "pattern", "text", "image_sha256")
+    if any(not isinstance(original.get(field), str) or not original[field]
+           for field in fields):
+        return None
+    digest = original["image_sha256"]
+    if (len(digest) != 64 or any(ch not in "0123456789abcdef" for ch in digest)):
+        return None
+    timestamp = original.get("sent_at_ms")
+    if type(timestamp) is not int or timestamp <= 0:
+        return None
+
+    match = None
+    scanned = 0
+    for root in _read_roots():
+        if not root.exists():
+            continue
+        if root.is_symlink() or not root.is_dir():
+            return None
+        try:
+            for path in root.glob("*.json"):
+                if path.name.endswith(".geometry.json"):
+                    continue
+                scanned += 1
+                if scanned > LEGACY_SOURCE_MAX_RECORDS:
+                    return None
+                if path.is_symlink() or path.stat().st_size > 65_536:
+                    continue
+                try:
+                    candidate = json.loads(path.read_text(encoding="utf-8"))
+                except (ValueError, TypeError):
+                    continue
+                if not isinstance(candidate, dict):
+                    continue
+                source_id = candidate.get("candidate_id")
+                if not (isinstance(source_id, str)
+                        and source_id.startswith("source-original:")
+                        and len(source_id) == len("source-original:") + 24
+                        and all(ch in "0123456789abcdef" for ch in source_id[16:])
+                        and path.name == _key(source_id) + ".json"):
+                    continue
+                source_at = candidate.get("sent_at_ms")
+                if (type(source_at) is not int or source_at <= 0
+                        or not 0 <= timestamp - source_at <= LEGACY_SOURCE_MAX_DELAY_MS
+                        or any(candidate.get(field) != original[field] for field in fields)):
+                    continue
+                # Both the immutable image bytes and geometry have to validate
+                # in this SAME root. No metadata-only or cross-root pairing.
+                intact = load_original_signal([source_id], directory=root)
+                if intact is None:
+                    continue
+                frozen = load_frozen_signal_geometry(source_id, directory=root)
+                if (frozen is None or frozen.get("signal_id") != source_id
+                        or frozen.get("symbol") != original["symbol"]
+                        or str(frozen.get("timeframe")) != original["timeframe"]):
+                    continue
+                if match is not None:
+                    return None  # Multiple candidates: never guess.
+                match = source_id
+        except OSError:
+            return None
+    return match
