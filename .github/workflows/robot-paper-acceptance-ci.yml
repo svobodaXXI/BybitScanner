@@ -22,6 +22,8 @@ on:
       - "pattern_robot_integration.py"
       - "robot_l_shape.py"
       - "l_shape_scanner.py"
+      - "geometry/double_extremum.py"
+      - "tests/test_double_extremum.py"
       - "robot_state_machine.py"
       - "robot_entry_limit.py"
       - "robot_partial_fill.py"
