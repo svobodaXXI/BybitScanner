@@ -98,6 +98,7 @@ class ObserverTests(unittest.TestCase):
             self.assertEqual(preview.transition.known_at_ms, now)
             self.assertTrue(preview.transition.buy_wave_accelerating)
             self.assertTrue(preview.gap_or_truncation)
+            self.assertEqual(len(preview.window_sha256), 64)
             self.assertFalse(preview.source_complete)
             self.assertFalse(preview.trading_authorized)
             self.assertEqual(rest.requests, [])
