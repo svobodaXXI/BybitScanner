@@ -236,8 +236,6 @@ class RobotRecoveryCoordinator:
                             "Scanner closed 1m candle ",
                             "latest closed candle ",
                             "closed candle time ",
-                            "Scanner catch-up candle ",
-                            "catch-up candle ",
                         ))
                     ):
                         raise
