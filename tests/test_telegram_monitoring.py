@@ -607,6 +607,36 @@ class TelegramMonitoringTests(unittest.TestCase):
         polled.assert_called_once()
         release.assert_called_once_with(server)
 
+    def test_owned_poll_loop_keeps_dynamic_commands_but_no_menu_request_storm(self):
+        monitoring._SHUTDOWN_REQUESTED.clear()
+        self.addCleanup(monitoring._SHUTDOWN_REQUESTED.clear)
+        monitoring._POLLING_READY.clear()
+        self.addCleanup(monitoring._POLLING_READY.clear)
+        server = SimpleNamespace(server_address=("127.0.0.1", 8766))
+        polls = []
+
+        def poll(offset):
+            polls.append(offset)
+            monitoring._POLLING_READY.set()
+            if len(polls) == 3:
+                monitoring._SHUTDOWN_REQUESTED.set()
+            return offset
+
+        with patch.object(monitoring, "database_identity", return_value="a" * 64), \
+                patch.object(monitoring, "acquire_worker_singleton", return_value=server), \
+                patch.object(monitoring, "_load_offset", return_value=None), \
+                patch.object(monitoring, "poll_updates_once", side_effect=poll), \
+                patch.object(monitoring, "start_lifecycle_thread"), \
+                patch.object(monitoring, "configure_monitoring_menu") as startup, \
+                patch.object(monitoring, "refresh_command_menu") as refresh, \
+                patch.object(monitoring, "_ensure_commands_menu_button") as ensure, \
+                patch.object(monitoring, "_release_worker_singleton"):
+            self.assertEqual(monitoring.run(), 0)
+        startup.assert_called_once()
+        self.assertEqual(refresh.call_count, 2)
+        self.assertEqual(ensure.call_count, 2)
+        self.assertEqual(len(polls), 3)
+
     @patch("telegram_monitoring._send_text")
     def test_positions_preserves_workspace_context(self, send):
         from urllib.parse import parse_qs, urlsplit
