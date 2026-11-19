@@ -16,12 +16,64 @@ def configured() -> bool:
     return bool(os.getenv("BYBITSCANNER_TELEGRAM_GATEWAY_URL", "").strip())
 
 
-def send_text(chat_id, text, *, reply_markup=None):
-    """Preserve Telegram send_message response shape for plain text only.
+def _send_outbound(post):
+    """Bounded notice retry, sanitized classification, no trading side effects."""
+    import time
 
-    Gateway has a fixed authorized destination; interactive keyboards and photos
-    are deliberately unsupported until their complete transport contract exists.
-    """
+    for attempt in range(2):
+        try:
+            response = post()
+        except requests.RequestException as exc:
+            if attempt == 0:
+                time.sleep(0.25)
+                continue
+            raise TelegramGatewayError(
+                "Gateway delivery not confirmed: class=TRANSIENT_TRANSPORT, "
+                "status=unavailable, exception=" + type(exc).__name__
+            ) from None
+
+        status = response.status_code
+        if status == 200:
+            return response
+        if status in (401, 403):
+            code = "PERMANENT_AUTH"
+        elif status in (400, 404, 405, 413, 422):
+            code = "PERMANENT_CONFIG"
+        elif status == 429:
+            code = "RATE_LIMIT"
+            value = response.headers.get("Retry-After") if isinstance(response.headers, dict) else None
+            delay = int(value) if isinstance(value, str) and value.isascii() and value.isdecimal() and len(value) <= 4 else None
+            if attempt == 0 and delay is not None and delay <= 2:
+                time.sleep(delay)
+                continue
+        elif isinstance(status, int) and status >= 500:
+            code = "TRANSIENT_HTTP"
+            if attempt == 0:
+                time.sleep(0.25)
+                continue
+        else:
+            code = "PERMANENT_REJECTION"
+        raise TelegramGatewayError(
+            f"Gateway delivery not confirmed: class={code}, status={status}"
+            + (f", retry_after={delay}s" if code == "RATE_LIMIT" and delay is not None else "")
+        )
+    raise TelegramGatewayError("Gateway delivery not confirmed: class=UNKNOWN_DELIVERY")
+
+
+def _gateway_json(response):
+    try:
+        value = response.json()
+    except ValueError:
+        value = None
+    if not isinstance(value, dict):
+        raise TelegramGatewayError(
+            "Gateway delivery not confirmed: class=UNKNOWN_DELIVERY, status=200"
+        )
+    return value
+
+
+def send_text(chat_id, text, *, reply_markup=None):
+    """Preserve the Telegram response shape; no direct fallback."""
     url = os.getenv("BYBITSCANNER_TELEGRAM_GATEWAY_URL", "").strip()
     key = os.getenv("BYBITSCANNER_TELEGRAM_GATEWAY_SECRET", "").strip()
     owner = os.getenv("TELEGRAM_CHAT_ID", "").strip()
@@ -35,30 +87,27 @@ def send_text(chat_id, text, *, reply_markup=None):
     if reply_markup is not None and not isinstance(reply_markup, dict):
         raise TelegramGatewayError("Invalid Gateway keyboard")
     event_id = secrets.token_urlsafe(24)
-    last_error = None
-    for attempt in range(2):
-        try:
-            session = requests.Session()
-            session.trust_env = False
-            response = session.post(
-                url.rstrip("/") if parsed.path.rstrip("/") == "/v1/send" else url.rstrip("/") + "/v1/send",
-                json={"event_id": event_id, "text": text, **({"reply_markup": reply_markup} if reply_markup is not None else {})},
-                headers={"Authorization": "Bearer " + key},
-                timeout=12, allow_redirects=False,
-            )
-            result = response.json()
-            if (isinstance(result, dict) and response.status_code == 200 and
-                    result.get("ok") is True and result.get("event_id") == event_id and
-                    result.get("stage") == "accepted_by_telegram_api"):
-                return {"ok": True, "result": {"message_id": result.get("telegram_message_id")},
-                        "delivery_stage": "accepted_by_telegram_api"}
-            last_error = "gateway_rejected"
-            # Never retry a definite validation/authentication failure.
-            if response.status_code < 500:
-                break
-        except (requests.RequestException, ValueError):
-            last_error = "transport_unavailable"
-    raise TelegramGatewayError("Gateway delivery not confirmed: " + str(last_error))
+    endpoint = url.rstrip("/") if parsed.path.rstrip("/") == "/v1/send" else url.rstrip("/") + "/v1/send"
+
+    def post():
+        session = requests.Session()
+        session.trust_env = False
+        return session.post(
+            endpoint,
+            json={"event_id": event_id, "text": text,
+                  **({"reply_markup": reply_markup} if reply_markup is not None else {})},
+            headers={"Authorization": "Bearer " + key},
+            timeout=12, allow_redirects=False,
+        )
+
+    result = _gateway_json(_send_outbound(post))
+    if (result.get("ok") is not True or result.get("event_id") != event_id
+            or result.get("stage") != "accepted_by_telegram_api"):
+        raise TelegramGatewayError(
+            "Gateway delivery not confirmed: class=UNKNOWN_DELIVERY, status=200"
+        )
+    return {"ok": True, "result": {"message_id": result.get("telegram_message_id")},
+            "delivery_stage": "accepted_by_telegram_api"}
 
 def get_updates(**params):
     """Relay polling through Gateway; VPS remains sole update consumer."""
@@ -160,21 +209,22 @@ def send_photo_file_id(chat_id, file_id, caption="", reply_markup=None):
     endpoint = url.rstrip("/")
     if endpoint.endswith("/v1/send"):
         endpoint = endpoint[:-len("/v1/send")]
-    try:
+    def post():
         session = requests.Session()
         session.trust_env = False
-        response = session.post(
+        return session.post(
             endpoint + "/v1/photo-card",
             json={"file_id": file_id, "caption": caption,
                   **({"reply_markup": reply_markup} if reply_markup is not None else {})},
             headers={"Authorization": "Bearer " + secret},
             timeout=25, allow_redirects=False,
         )
-        result = response.json()
-    except (requests.RequestException, ValueError) as exc:
-        raise TelegramGatewayError("Gateway photo transport unavailable") from exc
-    if response.status_code != 200 or not isinstance(result, dict) or result.get("ok") is not True:
-        raise TelegramGatewayError("Gateway photo rejected")
+
+    result = _gateway_json(_send_outbound(post))
+    if result.get("ok") is not True:
+        raise TelegramGatewayError(
+            "Gateway delivery not confirmed: class=UNKNOWN_DELIVERY, status=200"
+        )
     return result
 
 
@@ -213,21 +263,27 @@ def send_photo_upload(chat_id, photo_path, caption="", reply_markup=None):
         photo = path.read_bytes()
         if not photo or len(photo) > 2000000:
             raise TelegramGatewayError("invalid photo size")
-        media_type = "image/png" if suffix == ".png" else "image/jpeg"
+    except OSError:
+        raise TelegramGatewayError("Gateway photo: class=CHART_NOT_READY") from None
+    media_type = "image/png" if suffix == ".png" else "image/jpeg"
+    data = {"caption": caption,
+            **({"reply_markup": json.dumps(reply_markup, ensure_ascii=False)}
+               if reply_markup is not None else {})}
+
+    def post():
         session = requests.Session()
         session.trust_env = False
-        response = session.post(
+        return session.post(
             endpoint + "/v1/photo-card",
             files={"photo": ("chart.png", photo, media_type)},
-            data={"caption": caption,
-                  **({"reply_markup": json.dumps(reply_markup, ensure_ascii=False)}
-                     if reply_markup is not None else {})},
+            data=data,
             headers={"Authorization": "Bearer " + key},
             timeout=25, allow_redirects=False,
         )
-        result = response.json()
-    except (OSError, requests.RequestException, ValueError) as exc:
-        raise TelegramGatewayError("Gateway photo upload unavailable") from exc
-    if response.status_code != 200 or not isinstance(result, dict) or result.get("ok") is not True:
-        raise TelegramGatewayError("Gateway photo upload rejected")
+
+    result = _gateway_json(_send_outbound(post))
+    if result.get("ok") is not True:
+        raise TelegramGatewayError(
+            "Gateway delivery not confirmed: class=UNKNOWN_DELIVERY, status=200"
+        )
     return result
