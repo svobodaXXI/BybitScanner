@@ -434,12 +434,16 @@ def poll_lifecycle_once(now_ms: int | None = None) -> None:
     state = load_lifecycle_state(LIFECYCLE_STATE_FILE, now_ms)
     if now_ms < state.retry_after_ms:
         return  # Durable suppression after restart; no replay during cooldown.
+    before_floors = (state.opened_floor, state.closed_floor)
     with _robot_store() as store:
         events = collect_new_lifecycle_events(store, state)
         pending = [
             (event, load_position_view(store, event.symbol, trade_id=event.trade_id))
             for event in events
         ]
+    if before_floors != (state.opened_floor, state.closed_floor):
+        # Persist the validated cursor before any further notifications.
+        save_lifecycle_state(LIFECYCLE_STATE_FILE, state)
     blocked = set()
     for event, view in pending:
         # The trade may close between event selection and this read. Never
