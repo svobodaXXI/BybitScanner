@@ -175,7 +175,7 @@ class PatternFlowObserver:
             return
         allowed = {
             "Falling Wedge", "Rising Wedge", "L-shape", "MIRROR",
-            "Double Top", "Double Bottom", "IKIGAI_BOX",
+            "IKIGAI_BOX",
         }
         # Prefer the exact canonical entry phase over earlier warm-up.
         chosen = None
@@ -198,9 +198,7 @@ class PatternFlowObserver:
                 "Rising Wedge": ("WAITING_BREAKOUT", "WAITING_RETEST", "RETEST_DETECTED"),
                 "L-shape": ("L_SHAPE_WAITING_RETEST", "RETEST_DETECTED"),
                 "MIRROR": ("RETEST_DETECTED",),
-                "Double Top": ("RETEST_DETECTED",),
-                "Double Bottom": ("RETEST_DETECTED",),
-                "IKIGAI_BOX": ("BOX_ENTRY_READY",),
+                "IKIGAI_BOX": ("BOX_ENTRY_READY",)
             }
             if phase not in warmable[pattern]:
                 continue
