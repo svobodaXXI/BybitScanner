@@ -142,7 +142,8 @@ class PairedAdapterTests(unittest.TestCase):
             folder.mkdir()
             config_path = folder / "launch-bridge.json"
             pinned = folder / "trusted-statistics-origin.txt"
-            with patch.object(agent, "CONFIG_PATH", config_path), \
+            with patch.object(agent, "HERE", Path(root)), \
+                 patch.object(agent, "CONFIG_PATH", config_path), \
                  patch.object(agent, "install_if_configured") as install:
                 with self.assertRaises(agent.AgentConfigError):
                     agent.pair_device("owner-pc", "A" * 64)
