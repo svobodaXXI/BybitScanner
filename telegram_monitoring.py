@@ -496,15 +496,56 @@ PHASE_LABELS = {
 }
 
 
+_TELEGRAM_METHOD_ERROR_COUNTS: dict[tuple[str, str], int] = {}
+_TELEGRAM_METHOD_NEXT_REPORT = 0.0
+
+
+def _record_telegram_method_error(method: str, code) -> None:
+    """Bounded per-method status counters; never log payloads or identities."""
+    global _TELEGRAM_METHOD_NEXT_REPORT
+    status = str(code) if type(code) is int and 400 <= code <= 599 else "unknown"
+    key = (method, status)
+    _TELEGRAM_METHOD_ERROR_COUNTS[key] = _TELEGRAM_METHOD_ERROR_COUNTS.get(key, 0) + 1
+    now = time.monotonic()
+    if now >= _TELEGRAM_METHOD_NEXT_REPORT:
+        summary = ", ".join(
+            f"{name}:{status}={count}"
+            for (name, status), count in sorted(_TELEGRAM_METHOD_ERROR_COUNTS.items())
+        )
+        print("[TELEGRAM METHOD ERRORS]", summary)
+        _TELEGRAM_METHOD_ERROR_COUNTS.clear()
+        _TELEGRAM_METHOD_NEXT_REPORT = now + 60
+
+
 def _telegram_request(method: str, **params):
     import telegram_gateway_client
-    if telegram_gateway_client.configured():
-        if method == "getUpdates":
-            return telegram_gateway_client.get_updates(**params)
-        return telegram_gateway_client.bot_method(method, **params)
-    url = f"https://api.telegram.org/bot{config.TELEGRAM_TOKEN}/{method}"
-    response = requests.get(url, params=params, timeout=40)
-    return response.json()
+    try:
+        if telegram_gateway_client.configured():
+            if method == "getUpdates":
+                result = telegram_gateway_client.get_updates(**params)
+            else:
+                result = telegram_gateway_client.bot_method(method, **params)
+        else:
+            url = f"https://api.telegram.org/bot{config.TELEGRAM_TOKEN}/{method}"
+            response = requests.get(url, params=params, timeout=40)
+            result = response.json()
+    except Exception:
+        _record_telegram_method_error(method, None)
+        raise
+    if isinstance(result, dict) and result.get("ok") is False:
+        _record_telegram_method_error(method, result.get("error_code"))
+    return result
+
+
+def _telegram_backoff_seconds(result, *, default=3) -> int:
+    """Bound an API retry_after; no request/data retry of any trading command."""
+    if not isinstance(result, dict) or result.get("error_code") != 429:
+        return default
+    params = result.get("parameters")
+    retry = params.get("retry_after") if isinstance(params, dict) else None
+    if type(retry) is int and retry > 0:
+        return min(max(default, retry), 300)
+    return default
 
 
 def _owner_id() -> str:
@@ -1141,10 +1182,15 @@ def _process_positions_callback(callback_query) -> bool:
 
 
 _published_commands = None
+_menu_commands_retry_after = 0.0
+_menu_button_check_after = 0.0
+MENU_BUTTON_CHECK_INTERVAL_SECONDS = 300
 
 
 def refresh_command_menu() -> None:
-    global _published_commands
+    global _published_commands, _menu_commands_retry_after
+    if time.monotonic() < _menu_commands_retry_after:
+        return
     try:
         state = _scanner_request()
         scanner_label = SCANNER_ACTIONS[state["mode"]][0]
@@ -1163,35 +1209,63 @@ def refresh_command_menu() -> None:
         ],
         ensure_ascii=False,
     )
-    # Cache only successful Telegram publication, never runtime truth.
+    # Cache only successful publication; a failed menu must not starve polling.
     if commands != _published_commands:
-        response = _telegram_request("setMyCommands", commands=commands)
+        try:
+            response = _telegram_request("setMyCommands", commands=commands)
+        except Exception:
+            _menu_commands_retry_after = time.monotonic() + 60
+            return
         if not response.get("ok"):
-            raise RuntimeError("setMyCommands failed")
+            _menu_commands_retry_after = time.monotonic() + _telegram_backoff_seconds(
+                response, default=60
+            )
+            return
         _published_commands = commands
 
 
 def _ensure_commands_menu_button(*, force: bool = False) -> None:
+    global _menu_button_check_after
     owner = _owner_id()
     if not owner:
         return
+    now = time.monotonic()
+    if not force and now < _menu_button_check_after:
+        return
+    # Schedule the next check before a call that might fail or return 429.
+    _menu_button_check_after = now + MENU_BUTTON_CHECK_INTERVAL_SECONDS
     if not force:
-        current = _telegram_request("getChatMenuButton", chat_id=owner)
-        if current.get("ok") and (current.get("result") or {}).get("type") == "commands":
+        try:
+            current = _telegram_request("getChatMenuButton", chat_id=owner)
+        except Exception:
             return
-    response = _telegram_request(
-        "setChatMenuButton",
-        chat_id=owner,
-        menu_button=json.dumps({"type": "commands"}),
-    )
+        if not current.get("ok"):
+            _menu_button_check_after = max(
+                _menu_button_check_after,
+                now + _telegram_backoff_seconds(current, default=60),
+            )
+            return
+        if (current.get("result") or {}).get("type") == "commands":
+            return
+    try:
+        response = _telegram_request(
+            "setChatMenuButton",
+            chat_id=owner,
+            menu_button=json.dumps({"type": "commands"}),
+        )
+    except Exception:
+        return
     if not response.get("ok"):
-        raise RuntimeError(f"setChatMenuButton failed: {response}")
+        _menu_button_check_after = max(
+            _menu_button_check_after,
+            now + _telegram_backoff_seconds(response, default=60),
+        )
 
 
 def _refresh_owner_menu_surface() -> None:
-    """Republish dynamic commands and reassert the visible owner Menu button."""
+    """Republish changed commands; verify button only on the throttled cadence."""
     refresh_command_menu()
-    _ensure_commands_menu_button(force=True)
+    _ensure_commands_menu_button()
 
 
 def configure_monitoring_menu() -> None:
@@ -1311,8 +1385,11 @@ def poll_updates_once(offset):
         _POLLING_READY.clear()
         if result.get("error_code") == 409:
             raise TelegramUpdateConflict(result.get("description") or "getUpdates conflict")
-        print("[MONITORING TELEGRAM ERROR]", result)
-        time.sleep(3)
+        delay = _telegram_backoff_seconds(result)
+        print("[MONITORING TELEGRAM POLL] status=",
+              result.get("error_code") if type(result.get("error_code")) is int else "unknown",
+              "retry_seconds=", delay)
+        time.sleep(delay)
         return offset
     _POLLING_READY.set()
 
@@ -1393,6 +1470,8 @@ def run() -> int:
     while not _SHUTDOWN_REQUESTED.is_set():
         try:
             if owned:
+                # Local scanner state may change outside Telegram. The menu
+                # button probe is throttled, and commands publish only on change.
                 refresh_command_menu()
                 _ensure_commands_menu_button()
             offset = poll_updates_once(offset)
