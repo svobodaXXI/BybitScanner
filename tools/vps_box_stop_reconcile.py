@@ -39,9 +39,13 @@ def _attest(sha: str, root: Path, env_file: Path | None, *, after: bool = False)
         conn.row_factory = sqlite3.Row
         store = SQLiteStore(conn, db, 2000)
         candidate = store.get_robot_candidate(CANDIDATE)
+        # The canonical flat proof above accepts only APPROVED candidates
+        # independently shown to lack trades, fills, limits and obligations.
+        # Reject OPEN, but do not reject safe pre-entry APPROVED candidates.
+        active = store.load_active_robot_candidate_states(TradingAccountId("paper"))
         if (candidate is None or candidate.status != "CLOSED"
                 or candidate.symbol.value != "FUSDT"
-                or store.load_active_robot_candidate_states(TradingAccountId("paper"))):
+                or any(item.status != "APPROVED" for item in active)):
             return None
     completed = tuple(
         t for t in RobotStatisticsReader(db).load_completed_trades(
