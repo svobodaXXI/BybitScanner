@@ -106,3 +106,69 @@ test("photo-card denies unauthenticated photo", async () => {
   }),env);
   assert.equal(response.status,401);
 });
+
+const authenticated = {authorization:"Bearer "+"x".repeat(48),"content-type":"application/json"};
+const textRequest = () => req("/v1/send", {method:"POST",headers:authenticated,
+  body:JSON.stringify({event_id:"diagnostic_12345",text:"test"})});
+const photoRequest = () => req("/v1/photo-card", {method:"POST",headers:authenticated,
+  body:JSON.stringify({file_id:"existing-file-id",caption:"test"})});
+
+test("Telegram 429 is preserved for text and photo without leaking API descriptions", async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    return new Response(JSON.stringify({ok:false,error_code:429,
+      description:"sensitive token/chat data",parameters:{retry_after:42}}),{status:429});
+  };
+  try {
+    for (const makeRequest of [textRequest,photoRequest]) {
+      const response = await worker.fetch(makeRequest(),env);
+      assert.equal(response.status,429);
+      assert.equal(response.headers.get("retry-after"),"42");
+      const result = await response.json();
+      assert.equal(result.upstream_status,429);
+      assert.equal(result.upstream_error_code,429);
+      assert.equal(result.retry_after,42);
+      assert.doesNotMatch(JSON.stringify(result),/sensitive|token\/chat/);
+    }
+    assert.equal(calls,2); // Worker never retries upstream on rejection.
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("Telegram permanent 4xx stays non-retryable and sanitized", async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    return new Response(JSON.stringify({ok:false,error_code:403,
+      description:"secret private chat identity"}),{status:403});
+  };
+  try {
+    for (const makeRequest of [textRequest,photoRequest]) {
+      const response = await worker.fetch(makeRequest(),env);
+      assert.equal(response.status,403);
+      assert.deepEqual(
+        Object.keys(await response.json()).sort().filter(k=>k.startsWith("upstream_")),
+        ["upstream_error_code","upstream_status"]);
+    }
+    assert.equal(calls,2);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("Telegram 5xx remains a sanitized Gateway 502", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ok:false,error_code:500,
+    description:"private upstream response"}),{status:500});
+  try {
+    for (const makeRequest of [textRequest,photoRequest]) {
+      const response = await worker.fetch(makeRequest(),env);
+      assert.equal(response.status,502);
+      const result = await response.json();
+      assert.equal(result.upstream_status,500);
+      assert.equal(result.upstream_error_code,500);
+      assert.equal(response.headers.get("retry-after"),null);
+      assert.doesNotMatch(JSON.stringify(result),/private upstream response/);
+    }
+  } finally { globalThis.fetch = originalFetch; }
+});

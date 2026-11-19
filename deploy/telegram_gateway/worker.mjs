@@ -4,6 +4,23 @@
 const reply = (status, body) => new Response(JSON.stringify(body), {
   status, headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
 });
+// Preserve only safe Telegram rejection metadata; never forward raw API bodies.
+function telegramRejection(upstream, payload, error, extra = {}) {
+  const apiCode = Number.isInteger(payload?.error_code) &&
+    payload.error_code >= 400 && payload.error_code <= 599 ? payload.error_code : null;
+  const statusCode = apiCode ?? upstream.status;
+  const status = statusCode >= 400 && statusCode < 500 ? statusCode : 502;
+  const retry = payload?.parameters?.retry_after;
+  const retryAfter = status === 429 && Number.isSafeInteger(retry) && retry > 0
+    ? Math.min(retry, 86400) : null;
+  return new Response(JSON.stringify({ok:false,error,...extra,
+    upstream_status:upstream.status,upstream_error_code:apiCode,
+    ...(retryAfter === null ? {} : {retry_after:retryAfter})}), {
+    status,headers:{"content-type":"application/json; charset=utf-8",
+      "cache-control":"no-store",
+      ...(retryAfter === null ? {} : {"retry-after":String(retryAfter)})}
+  });
+}
 function matches(a, b) {
   const enc = new TextEncoder();
   const x = enc.encode(a), y = enc.encode(b);
@@ -187,7 +204,7 @@ export default {
         });
         const payload = await tg.json();
         if (!tg.ok || payload.ok !== true)
-          return reply(502,{ok:false,error:"telegram_photo_rejected"});
+          return telegramRejection(tg,payload,"telegram_photo_rejected");
         return reply(200,{ok:true,result:payload.result});
       } catch (_) { return reply(503,{ok:false,error:"telegram_photo_unavailable"}); }
     }
@@ -306,7 +323,7 @@ export default {
       });
       const payload = await tg.json();
       if (!tg.ok || payload.ok !== true)
-        return reply(502,{ok:false,error:"telegram_rejected",event_id:input.event_id});
+        return telegramRejection(tg,payload,"telegram_rejected",{event_id:input.event_id});
       return reply(200,{ok:true,event_id:input.event_id,
         stage:"accepted_by_telegram_api",
         telegram_message_id:payload.result?.message_id ?? null});
