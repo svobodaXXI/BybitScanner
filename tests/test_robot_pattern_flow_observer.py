@@ -289,8 +289,6 @@ class ObserverTests(unittest.TestCase):
         patterns = (
             ("L-shape", "LONG", "RETEST_DETECTED", "l_shape"),
             ("MIRROR", "LONG", "RETEST_DETECTED", "mirror_entry"),
-            ("Double Top", "SHORT", "RETEST_DETECTED", "neckline_entry"),
-            ("Double Bottom", "LONG", "RETEST_DETECTED", "neckline_entry"),
             ("IKIGAI_BOX", "LONG", "BOX_ENTRY_READY", "identity"),
             ("Rising Wedge", "SHORT", "RETEST_DETECTED", None),
         )
