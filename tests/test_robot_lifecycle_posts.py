@@ -179,7 +179,7 @@ class LifecycleCaptionTests(unittest.TestCase):
         self.assertIn("Сделка закрыта · по стопу", closed_caption)
         self.assertIn(
             "SAGAUSDT · SHORT\nЗеркало\n"
-            "Итог: -0.5277 USDT (-20.78%) (комиссия: 0.0277 USDT)",
+            "Итог: -0.53 USDT (-20.78%) (комиссия: 0.03 USDT)",
             closed_caption,
         )
         self.assertNotIn("Статус: закрыта", closed_caption)
@@ -202,7 +202,7 @@ class LifecycleCaptionTests(unittest.TestCase):
                 self.assertNotIn("Выход:", caption)
                 # (-0.5 - 0.0277) / (1000 * 0.0254) * 100 = -2.08
                 self.assertIn(
-                    "Итог: -0.5277 USDT (-2.08%) (комиссия: 0.0277 USDT)",
+                    "Итог: -0.53 USDT (-2.08%) (комиссия: 0.03 USDT)",
                     caption,
                 )
                 self.assertNotIn("PnL:", caption)
