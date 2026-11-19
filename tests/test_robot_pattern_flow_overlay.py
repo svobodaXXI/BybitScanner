@@ -105,8 +105,6 @@ class PatternEntryFlowOverlayTests(unittest.TestCase):
             ("Rising Wedge", "SHORT", "RETEST_DETECTED", None),
             ("L-shape", "LONG", "RETEST_DETECTED", "l_shape"),
             ("MIRROR", "SHORT", "RETEST_DETECTED", "mirror_entry"),
-            ("Double Top", "SHORT", "RETEST_DETECTED", "neckline_entry"),
-            ("Double Bottom", "LONG", "RETEST_DETECTED", "neckline_entry"),
             ("IKIGAI_BOX", "LONG", "BOX_ENTRY_READY", "identity"),
         )
         for pattern, direction, phase, terms_key in families:
@@ -152,6 +150,40 @@ class PatternEntryFlowOverlayTests(unittest.TestCase):
                     self.assertIsNone(existing_pattern_entry_scope(SimpleNamespace(
                         **{**vars(record), "robot_state": {**state, "phase": "WAITING_RETEST"}}
                     )))
+
+    def test_auxiliary_double_extrema_never_authorize_flow_or_standalone_scope(self):
+        from types import SimpleNamespace
+
+        for pattern, direction in (("Double Top", "SHORT"), ("Double Bottom", "LONG")):
+            with self.subTest(pattern=pattern):
+                candidate = SimpleNamespace(
+                    candidate_id="legacy-double",
+                    symbol=SimpleNamespace(value="BTCUSDT"),
+                    status="APPROVED",
+                    state_revision=7,
+                    signal_snapshot={
+                        "pattern": pattern,
+                        "robot_handoff_ready": True,
+                        "neckline_entry": {"direction": direction},
+                        "auxiliary_reversal": {"kind": "DOUBLE_REVERSAL_AUXILIARY"},
+                    },
+                    robot_state={"phase": "RETEST_DETECTED", "direction": direction},
+                )
+                self.assertIsNone(existing_pattern_entry_scope(candidate))
+                forged_scope = ExistingPatternEntryScope(
+                    "legacy-double", "BTCUSDT", pattern, direction,
+                    7, "APPROVED", "RETEST_DETECTED",
+                )
+                receipt = replace(
+                    certificate(), candidate_id="legacy-double",
+                    state_revision=7, direction=direction,
+                    transition=transition(
+                        buy=(direction == "LONG"), sell=(direction == "SHORT"),
+                    ),
+                )
+                self.assertFalse(match_existing_pattern_flow(
+                    forged_scope, receipt, now_ms=181_000,
+                ))
 
     def test_missing_or_forged_source_proof_rejected(self):
         original = certificate()
