@@ -375,10 +375,6 @@ class UnifiedPatternEntryArgumentsTests(unittest.TestCase):
 
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class PostBreakoutImpulsePriorityResearchTests(unittest.TestCase):
     """Earlier-than-retest hypothesis only; ZERO order permissions."""
 
@@ -387,12 +383,51 @@ class PostBreakoutImpulsePriorityResearchTests(unittest.TestCase):
         from types import SimpleNamespace
 
         snapshot = {"pattern": pattern}
-        state = {"phase": phase, "direction": direction}
-        term = {"L-shape": "l_shape", "MIRROR": "mirror_entry",
-                "IKIGAI_BOX": "identity"}.get(pattern)
-        if term:
-            snapshot[term] = {"direction": direction}
-        if pattern == "IKIGAI_BOX":
+        state = {"phase": phase, "direction": direction,
+                 "pattern": pattern, "state_version": "1.0"}
+        if pattern in ("Falling Wedge", "Rising Wedge"):
+            snapshot["geometry"] = {
+                "upper_line": {"slope": -1.0, "intercept": 200.0},
+                "lower_line": {"slope": -0.5, "intercept": 145.0},
+                "apex": {"index": 110, "price": 90.0,
+                         "valid_intersection": True},
+                "current_index": 100,
+            }
+            snapshot["scanner_geometry_cursor"] = {
+                "version": "1.0", "timeframe": "1",
+                "geometry_index": 100, "source_candle_time_ms": 60_000,
+            }
+            state.update({
+                "geometry_cursor": 102 if phase == "RETEST_DETECTED" else 101,
+                "breakout_index": 101,
+                "retest_index": 102 if phase == "RETEST_DETECTED" else None,
+            })
+        elif pattern in ("L-shape", "MIRROR"):
+            term = "l_shape" if pattern == "L-shape" else "mirror_entry"
+            stop, target = ("96", "110") if direction == "LONG" else ("104", "90")
+            snapshot[term] = {
+                "direction": direction, "source_timeframe": "1",
+                "breakout_time_ms": 120_000,
+                "reference": "100", "target": target, "stop": stop,
+                "structural_stop": stop, "stop_kind": "STRUCTURAL",
+                "potential_percent": "10", "reward_risk": "2.5",
+            }
+            if pattern == "MIRROR":
+                snapshot[term]["confirmation"] = {
+                    "close_time_ms": 180_000, "timeframe": "1",
+                    "kind": "ENGULFING",
+                }
+            state.update({
+                "last_candle_time_ms": (
+                    180_000 if phase == "RETEST_DETECTED" else 120_000
+                ),
+                "breakout_time_ms": 120_000,
+                "retest_time_ms": (
+                    180_000 if phase == "RETEST_DETECTED" else None
+                ),
+            })
+        elif pattern == "IKIGAI_BOX":
+            snapshot["identity"] = {"direction": direction}
             snapshot["source_box_candidate_id"] = "box-parent-1"
             state["source_box_candidate_id"] = "box-parent-1"
         return SimpleNamespace(
@@ -402,7 +437,7 @@ class PostBreakoutImpulsePriorityResearchTests(unittest.TestCase):
         )
 
     @staticmethod
-    def _observe(host, receipt=None, *, breakout=179_000, now=180_100):
+    def _observe(host, receipt=None, *, breakout=180_000, now=180_100):
         from robot_entry_flow_evidence import observe_post_breakout_impulse_timing
 
         return observe_post_breakout_impulse_timing(
@@ -425,7 +460,6 @@ class PostBreakoutImpulsePriorityResearchTests(unittest.TestCase):
             ("Rising Wedge", "WAITING_RETEST", "SHORT"),
             ("L-shape", "L_SHAPE_WAITING_RETEST", "LONG"),
             ("MIRROR", "RETEST_DETECTED", "LONG"),
-            ("IKIGAI_BOX", "BOX_ENTRY_READY", "LONG"),
         )
         for pattern, phase, direction in cases:
             with self.subTest(pattern=pattern):
@@ -454,7 +488,7 @@ class PostBreakoutImpulsePriorityResearchTests(unittest.TestCase):
 
         host = self._host()
         missing = observe_post_breakout_impulse_timing(
-            host, None, breakout_known_at_ms=179_000, decision_ms=180_100,
+            host, None, breakout_known_at_ms=180_000, decision_ms=180_100,
         )
         self.assertEqual(missing.outcome, "WAIT_SOURCE")
         self.assertFalse(missing.trading_authorized)
@@ -487,7 +521,7 @@ class PostBreakoutImpulsePriorityResearchTests(unittest.TestCase):
     def test_rejects_stale_future_or_prebreakout_receipts(self):
         host = self._host()
         self.assertIsNone(self._observe(host, breakout=180_101))
-        self.assertEqual(self._observe(host, breakout=180_001).outcome, "WAIT_SOURCE")
+        self.assertIsNone(self._observe(host, breakout=180_001))
         self.assertEqual(self._observe(host, now=301_000).outcome, "WAIT_SOURCE")
         self.assertEqual(
             self._observe(host, replace(certificate(), closed_at_ms=180_001)).outcome,
@@ -522,3 +556,62 @@ class PostBreakoutImpulsePriorityResearchTests(unittest.TestCase):
         box = self._host("IKIGAI_BOX", "BOX_ENTRY_READY")
         box.robot_state["source_box_candidate_id"] = "foreign-box"
         self.assertIsNone(self._observe(box))
+
+
+    def test_breakout_time_must_match_durable_wedge_index(self):
+        from robot_entry_flow_evidence import canonical_host_breakout_known_at_ms
+
+        host = self._host()
+        self.assertEqual(canonical_host_breakout_known_at_ms(host), 180_000)
+        for bad in (0, 119_999, 180_001):
+            self.assertIsNone(self._observe(host, breakout=bad))
+        host.robot_state["breakout_index"] = 100
+        self.assertIsNone(canonical_host_breakout_known_at_ms(host))
+        self.assertIsNone(self._observe(host))
+
+    def test_wedge_anchor_apex_and_retest_integrity_fail_closed(self):
+        for mutation in (
+            lambda h: h.signal_snapshot["scanner_geometry_cursor"].update(
+                source_candle_time_ms=60_001),
+            lambda h: h.robot_state.update(breakout_index=109),
+            lambda h: h.robot_state.update(geometry_cursor=100),
+            lambda h: h.robot_state.update(state_version="forged"),
+            lambda h: h.signal_snapshot["geometry"]["apex"].update(index=101),
+            lambda h: h.signal_snapshot["geometry"].pop("upper_line"),
+        ):
+            with self.subTest(mutation=mutation):
+                host = self._host()
+                mutation(host)
+                self.assertIsNone(self._observe(host))
+        retested = self._host(phase="RETEST_DETECTED")
+        retested.robot_state["retest_index"] = 101
+        self.assertIsNone(self._observe(retested))
+
+    def test_lshape_and_mirror_frozen_breakout_consistency(self):
+        from robot_entry_flow_evidence import canonical_host_breakout_known_at_ms
+
+        for pattern, phase in (
+            ("L-shape", "L_SHAPE_WAITING_RETEST"),
+            ("MIRROR", "RETEST_DETECTED"),
+        ):
+            with self.subTest(pattern=pattern):
+                host = self._host(pattern, phase)
+                self.assertEqual(canonical_host_breakout_known_at_ms(host), 180_000)
+                host.robot_state["breakout_time_ms"] = 60_000
+                self.assertIsNone(canonical_host_breakout_known_at_ms(host))
+        mirror = self._host("MIRROR", "RETEST_DETECTED")
+        mirror.signal_snapshot["mirror_entry"]["confirmation"]["kind"] = "UNKNOWN"
+        self.assertIsNone(self._observe(mirror))
+
+    def test_box_has_no_proven_frozen_breakout_adapter_yet(self):
+        from robot_entry_flow_evidence import canonical_host_breakout_known_at_ms
+
+        box = self._host("IKIGAI_BOX", "BOX_ENTRY_READY")
+        self.assertIsNone(canonical_host_breakout_known_at_ms(box))
+        self.assertIsNone(self._observe(box))
+        # No fallback to a guessed breakout time or a different host family.
+        self.assertIsNone(self._observe(box, breakout=180_000))
+
+
+if __name__ == "__main__":
+    unittest.main()
