@@ -817,3 +817,129 @@ def match_existing_pattern_flow(
         if candidate.direction == "LONG"
         else transition.sell_wave_accelerating is True
     )
+
+
+# Research-only early entry candidate: the authoritative Robot entry phases
+# above deliberately stay unchanged until the protected owner path is proven.
+# WAITING_RETEST is after a pattern breakout, not a permission to send an order.
+_POST_BREAKOUT_RESEARCH_PHASES = {
+    "Falling Wedge": frozenset(("WAITING_RETEST", "RETEST_DETECTED")),
+    "Rising Wedge": frozenset(("WAITING_RETEST", "RETEST_DETECTED")),
+    "L-shape": frozenset(("L_SHAPE_WAITING_RETEST", "RETEST_DETECTED")),
+    "MIRROR": frozenset(("RETEST_DETECTED",)),
+    "IKIGAI_BOX": frozenset(("BOX_ENTRY_READY",)),
+}
+
+
+@dataclass(frozen=True, slots=True)
+class PatternImpulseTimingResearch:
+    """A pattern-bound timing hypothesis, NEVER an order/admission permit."""
+
+    candidate_id: str
+    state_revision: int
+    symbol: str
+    pattern: str
+    direction: str
+    decision_ms: int
+    outcome: str
+    reason: str
+
+    @property
+    def trading_authorized(self) -> bool:
+        return False
+
+
+def observe_post_breakout_impulse_timing(
+    record,
+    evidence: CandidateBoundFlowEvidence | None,
+    *,
+    breakout_known_at_ms: int,
+    decision_ms: int,
+) -> PatternImpulseTimingResearch | None:
+    """Prefer causal taker momentum after the host breakout, without a retest gate.
+
+    The caller must independently prove the ORIGINAL pattern's realization
+    boundary and its breakout timestamp: this function cannot validate
+    geometry from a caller-supplied timestamp. Only a frozen APPROVED host
+    and a complete, bound two-closed-M1 flow may suggest research timing.
+    A suggestion NEVER creates an order, changes a Robot phase or implies
+    that earlier execution or the replay's hypothetical fill is possible.
+    """
+    if (type(breakout_known_at_ms) is not int or breakout_known_at_ms < 0
+            or type(decision_ms) is not int
+            or decision_ms < breakout_known_at_ms):
+        return None
+    try:
+        snapshot, state = record.signal_snapshot, record.robot_state
+        if (record.status != "APPROVED"
+                or not isinstance(snapshot, Mapping)
+                or not isinstance(state, Mapping)):
+            return None
+        pattern = snapshot.get("pattern")
+        direction = state.get("direction")
+        phase = state.get("phase")
+        if (pattern not in _POST_BREAKOUT_RESEARCH_PHASES
+                or phase not in _POST_BREAKOUT_RESEARCH_PHASES[pattern]
+                or direction not in ("LONG", "SHORT")):
+            return None
+        frozen = _FIXED_PATTERN_DIRECTIONS.get(pattern)
+        if frozen is None:
+            terms = snapshot.get(_FROZEN_DIRECTION_TERMS[pattern])
+            if not isinstance(terms, Mapping):
+                return None
+            frozen = terms.get("direction")
+        candidate_id, revision, symbol = (
+            record.candidate_id, record.state_revision, record.symbol.value,
+        )
+        if (frozen != direction
+                or not isinstance(candidate_id, str) or not candidate_id
+                or type(revision) is not int or revision < 0
+                or not isinstance(symbol, str) or not symbol.isalnum()
+                or not symbol.endswith("USDT")):
+            return None
+        if pattern == "IKIGAI_BOX":
+            source_id = snapshot.get("source_box_candidate_id")
+            if (not isinstance(source_id, str) or not source_id
+                    or state.get("source_box_candidate_id") != source_id):
+                return None
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return None
+
+    def result(outcome: str, reason: str) -> PatternImpulseTimingResearch:
+        return PatternImpulseTimingResearch(
+            candidate_id, revision, symbol, pattern, direction,
+            decision_ms, outcome, reason,
+        )
+
+    # Unlike the OLD Robot's existing_pattern_entry_scope(), this research
+    # path may describe a post-breakout candidate before RETEST_DETECTED.
+    # An uncertified preview or missing receipt is explicitly UNKNOWN.
+    if not isinstance(evidence, CandidateBoundFlowEvidence):
+        return result("WAIT_SOURCE", "NO_CERTIFIED_CANDIDATE_FLOW")
+    digest = evidence.print_facts_sha256
+    if (evidence.candidate_id != candidate_id
+            or evidence.state_revision != revision
+            or evidence.symbol != symbol or evidence.direction != direction
+            or evidence.source_kind != "BYBIT_TRIPLE_CLOSED_M1_CERTIFIED"
+            or evidence.source_complete is not True
+            or evidence.receipt_cutoff_proven is not True
+            or evidence.transport_generation_proven is not True
+            or not isinstance(digest, str) or len(digest) != 64
+            or any(ch not in "0123456789abcdef" for ch in digest.lower())
+            or type(evidence.closed_at_ms) is not int
+            or evidence.closed_at_ms % 60_000
+            or evidence.closed_at_ms < breakout_known_at_ms
+            or type(evidence.decision_ms) is not int
+            or evidence.decision_ms < evidence.closed_at_ms
+            or evidence.decision_ms > decision_ms
+            or decision_ms - evidence.closed_at_ms > 120_000
+            or not isinstance(evidence.transition, FlowTransition)
+            or evidence.transition.known_at_ms != evidence.decision_ms):
+        return result("WAIT_SOURCE", "FLOW_PROVENANCE_UNPROVEN")
+    supportive = (
+        evidence.transition.buy_wave_accelerating
+        if direction == "LONG" else evidence.transition.sell_wave_accelerating
+    )
+    if not supportive:
+        return result("WAIT_DIRECTION", "DIRECTIONAL_TAKER_WAVE_NOT_PROVEN")
+    return result("IMPULSE_ENTRY_RESEARCH", "HOST_BOUND_DIRECTIONAL_TAKER_WAVE")
