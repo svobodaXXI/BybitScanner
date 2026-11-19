@@ -13,11 +13,21 @@ import subprocess
 import sys
 from threading import Thread
 from urllib.error import HTTPError
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parent
 assert (ROOT / "START_LOCAL.cmd").is_file(), "Windows launcher missing"
 assert (ROOT / "dist" / "replay.html").is_file(), "Standalone build missing"
+# The reviewed public HTTPS trust anchor ships with the same exact desktop
+# release. Pairing must never accept an origin from a protocol link or token.
+trusted = ROOT / "trusted-statistics-origin.txt"
+assert trusted.is_file() and not trusted.is_symlink(), "Reviewed Statistics origin pin missing"
+origin = trusted.read_text(encoding="ascii").removesuffix("\n")
+url = urlsplit(origin)
+assert (url.scheme == "https" and url.hostname and url.username is None
+        and url.password is None and not url.path and not url.query
+        and not url.fragment and origin == f"https://{url.netloc}"), "Invalid origin pin"
 
 # Local H-017 risk module must ship in the extracted Windows archive.
 from research.h017_local_risk import H017LocalRiskPolicy

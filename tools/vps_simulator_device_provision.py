@@ -1,4 +1,4 @@
-"""Protected one-device Simulator pairing through the existing PAPER owner monolith.
+"""Protected owner laptop/PC pairing through the existing PAPER monolith.
 
 Only tools.paper_maintenance may call provision_owner_pc; no separate CLI, HTTP
 endpoint, pairing authority, or runtime service. The secret is generated on the
@@ -235,8 +235,13 @@ def provision_owner_pc(target: str, *, root: Path = ROOT,
                 or _owner_bytes(owner_env, uid=uid) != prior):
             return "BLOCKED: post_stop_editor_freeze_unproven; no_env_change_or_retry"
 
-        token = secrets.token_urlsafe(48)
-        devices = {"owner-pc": token}
+        # One protected provisioning creates both owner slots in a single
+        # STOP/EDITOR_ONLY lifecycle. Tokens are independent; laptop is first
+        # for owner acceptance, PC may be paired later without another STOP.
+        devices = {
+            "owner-laptop": secrets.token_urlsafe(48),
+            "owner-pc": secrets.token_urlsafe(48),
+        }
         SimulatorLaunchRelay(origin=ORIGIN, devices=devices)
         line = (KEY_ORIGIN + "=" + ORIGIN + "\n"
                 + KEY_DEVICES + "='" + json.dumps(devices, separators=(",", ":")) + "'\n")
@@ -257,7 +262,7 @@ def provision_owner_pc(target: str, *, root: Path = ROOT,
                 or not _robot_stopped(root=root, env_file=env_file)
                 or not m._paper_start_quiescent(root, env_file)):
             return "BLOCKED: owner_pc_relay_postconditions_unproven; no_retry"
-        return "READY: owner-pc relay provisioned; exact EDITOR_ONLY restored; token withheld"
+        return "READY: owner laptop/PC relay provisioned; exact EDITOR_ONLY restored; tokens withheld"
     except ProvisionBlocked as exc:
         return "BLOCKED: simulator_owner_pc_preflight:" + str(exc)
     except (OSError, ValueError, TypeError, sqlite3.Error, subprocess.TimeoutExpired):

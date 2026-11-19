@@ -72,7 +72,7 @@ def package(output: Path, sha: str) -> int:
             entries[rel.as_posix()] = (ROOT / rel).read_bytes()
     for rel in tracked:
         if rel.parts[:2] == ("research", "local_replay_viewer") and rel.name in (
-            "START_LOCAL.cmd", "README.txt",
+            "START_LOCAL.cmd", "README.txt", "trusted-statistics-origin.txt",
         ):
             entries[rel.name] = (ROOT / rel).read_bytes()
     for name in ("server.py", "public_m5_cache.py", "protocol_launcher.py",
@@ -91,6 +91,12 @@ def package(output: Path, sha: str) -> int:
         if file.is_file():
             rel = file.relative_to(VIEWER).as_posix()
             entries[rel] = file.read_bytes()
+    # Non-secret trusted endpoint is shipped from this exact reviewed source,
+    # never inferred from an incoming protocol URI or copied from a web page.
+    # The distinct owner-device tokens are NOT bundled.
+    pinned = entries.get("trusted-statistics-origin.txt")
+    if pinned is None or len(pinned) > 128 or not pinned.startswith(b"https://"):
+        raise ValueError("reviewed_statistics_origin_not_bundled")
     entries["desktop-build-sha.txt"] = (sha + "\n").encode("ascii")
     if any(p.startswith(("simulator-v2-data/", "paper-episode-facts/",
                          "public-m5-cache/", ".wedge-python/"))
