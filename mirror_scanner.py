@@ -1166,6 +1166,21 @@ def _imbalance_text(record: Mapping[str, Any]) -> str:
 
 def project_state(state: Mapping[str, Any]) -> list[dict[str, Any]]:
     registry = LevelRegistry.from_dict(state["registry"])
+    # An observed MIRROR level is NOT a Robot entry handoff. Project
+    # independently persisted attempts, never infer orders or admission.
+    handoffs_by_level: dict[str, list[dict[str, Any]]] = {}
+    for entry in state.get("standalone_entries") or ():
+        if not isinstance(entry, Mapping):
+            continue
+        terms = entry.get("terms")
+        level_id = terms.get("level_id") if isinstance(terms, Mapping) else None
+        if not isinstance(level_id, str) or level_id not in registry.levels:
+            continue
+        handoffs_by_level.setdefault(level_id, []).append({
+            "entry_id": entry.get("entry_id"),
+            "handoff": entry.get("handoff"),
+            "candidate_id": entry.get("candidate_id"),
+        })
     rows = []
     for level_id, record in state["records"].items():
         level = registry.levels.get(level_id)
@@ -1189,6 +1204,7 @@ def project_state(state: Mapping[str, Any]) -> list[dict[str, Any]]:
                                 for s in parents],
             "aliases": registry.aliases.get(level_id, []),
             "robot": record.get("robot"),
+            "standalone_entry_handoffs": handoffs_by_level.get(level_id, []),
             "registered_at_ms": record.get("registered_at_ms"),
             "last_event_ms": record.get("last_event_ms"),
             "notified": record.get("notified", []),
@@ -1217,4 +1233,7 @@ def project_mirror_levels(root=None, *, limit: int = 200, include_waiting: bool 
                 rows.append(row)
     rows.sort(key=lambda r: (bool(r["candidate"]), int(r["last_event_ms"] or 0)), reverse=True)
     return {"levels": rows[:limit], "counts": counts, "total": len(rows), "unreadable": unreadable,
-            "paper_admission": "NOT_AUTHORIZED", "paper_blockers": list(PAPER_BLOCKERS)}
+            # Legacy field scopes ONLY this read-only level observation,
+            # not any independently handed-off Robot entry candidate.
+            "paper_admission": "NOT_AUTHORIZED", "paper_admission_scope": "MIRROR_LEVEL_OBSERVATION",
+            "paper_blockers": list(PAPER_BLOCKERS)}
