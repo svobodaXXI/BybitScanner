@@ -203,8 +203,15 @@ def _trusted_statistics_origin() -> str:
     """Reuse the local owner's existing handoff trust anchor, never the URI."""
     data_dir = CONFIG_PATH.parent
     pinned = data_dir / "trusted-statistics-origin.txt"
-    if data_dir.is_symlink() or pinned.is_symlink() or not pinned.is_file():
+    if data_dir.is_symlink() or pinned.is_symlink():
         raise AgentConfigError("trusted_statistics_origin_not_installed")
+    if not pinned.is_file():
+        # A verified Machine Time release carries a *separate, non-secret*
+        # reviewed HTTPS trust anchor. Never take the origin from a browser,
+        # device token, redirect or protocol URI. Existing owner pin wins.
+        pinned = HERE / "trusted-statistics-origin.txt"
+        if pinned.is_symlink() or not pinned.is_file():
+            raise AgentConfigError("trusted_statistics_origin_not_installed")
     try:
         with pinned.open("rb") as stream:
             raw = stream.read(258)
