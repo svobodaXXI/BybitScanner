@@ -60,6 +60,108 @@ def _candidate(direction="LONG", phase="RETEST_DETECTED"):
 
 
 class ObserverTests(unittest.TestCase):
+    def test_early_preview_observes_subminute_wave_without_entry_authority(self):
+        from terminal.market_data.impulse_observation import PublicTradeObservation
+        now = 1_800_030
+        source = PublicTradeObservation("BTCUSDT")
+        for i, (age, side, price, size) in enumerate((
+            (27_000, "Sell", "100", "1"),
+            (23_000, "Sell", "99", "1"),
+            (14_000, "Buy", "99", "1"),
+            (1_000, "Buy", "102", "3"),
+        )):
+            event_ms = now - age
+            self.assertTrue(source.observe({
+                "topic": "publicTrade.BTCUSDT",
+                "data": [{
+                    "i": f"early-{i}", "s": "BTCUSDT", "T": event_ms,
+                    "seq": i + 1, "S": side, "p": price, "v": size,
+                }],
+            }, received_at_ms=event_ms + 25))
+        context = _Context({})
+        context.impulse_observation = source
+        rest = _REST(None, None, None)
+        observer = PatternFlowObserver(
+            SimpleNamespace(list_contexts=lambda: (context,)), rest, "unused",
+            clock_ms=lambda: now, get_candidates=lambda: (_candidate(),),
+        )
+        try:
+            preview = observer.early_preview(_candidate())
+            self.assertIsNotNone(preview)
+            self.assertEqual(preview.candidate_id, "pattern-1")
+            self.assertEqual(preview.state_revision, 4)
+            self.assertEqual(preview.known_at_ms, now)
+            self.assertEqual(preview.transport_generation, 0)
+            self.assertEqual(preview.transition.known_at_ms, now)
+            self.assertTrue(preview.transition.buy_wave_accelerating)
+            self.assertTrue(preview.gap_or_truncation)
+            self.assertFalse(preview.source_complete)
+            self.assertFalse(preview.trading_authorized)
+            self.assertEqual(rest.requests, [])
+            self.assertFalse(match_existing_pattern_flow(
+                ExistingPatternEntryScope(
+                    "pattern-1", "BTCUSDT", "Falling Wedge", "LONG", 4,
+                    "APPROVED", "RETEST_DETECTED",
+                ), preview, now_ms=now,
+            ))
+            # No modification of the closed-M1 certified cache or entry gate.
+            self.assertIsNone(observer.get(_candidate()))
+            source.mark_gap()
+            self.assertIsNone(observer.early_preview(_candidate()))
+        finally:
+            observer.close()
+
+    def test_early_preview_rejects_missing_receipts_stale_source_and_nonhost(self):
+        from terminal.market_data.impulse_observation import PublicTradeObservation
+        now = 1_800_030
+        source = PublicTradeObservation("BTCUSDT")
+        context = _Context({})
+        context.impulse_observation = source
+        clock = [now]
+        observer = PatternFlowObserver(
+            SimpleNamespace(list_contexts=lambda: (context,)),
+            _REST(None, None, None), "unused",
+            clock_ms=lambda: clock[0], get_candidates=lambda: (_candidate(),),
+        )
+        try:
+            for i, age in enumerate((23_000, 1_000)):
+                self.assertTrue(source.observe({
+                    "topic": "publicTrade.BTCUSDT",
+                    "data": [{
+                        "i": f"early-{i}", "s": "BTCUSDT", "T": now - age,
+                        "seq": i + 1, "S": "Buy", "p": "100", "v": "1",
+                    }],
+                }))  # receipt missing: event timestamp is not causal proof
+            self.assertIsNone(observer.early_preview(_candidate()))
+            source.mark_gap()
+            for i, age in enumerate((23_000, 1_000)):
+                event_ms = now - age
+                self.assertTrue(source.observe({
+                    "topic": "publicTrade.BTCUSDT",
+                    "data": [{
+                        "i": f"again-{i}", "s": "BTCUSDT", "T": event_ms,
+                        "seq": i + 1, "S": "Buy", "p": "100", "v": "1",
+                    }],
+                }, received_at_ms=event_ms + 20))
+            self.assertIsNotNone(observer.early_preview(_candidate()))
+            for bad in (
+                SimpleNamespace(**{**vars(_candidate()), "status": "OPEN"}),
+                SimpleNamespace(**{**vars(_candidate()),
+                    "signal_snapshot": {"pattern": "Double Top"}}),
+                SimpleNamespace(**{**vars(_candidate()),
+                    "robot_state": {"direction": "SHORT", "phase": "RETEST_DETECTED"}}),
+                SimpleNamespace(**{**vars(_candidate()),
+                    "robot_state": {"direction": "LONG", "phase": "WAITING_BREAKOUT"}}),
+            ):
+                self.assertIsNone(observer.early_preview(bad))
+            context.trade_bootstrap_complete = False
+            self.assertIsNone(observer.early_preview(_candidate()))
+            context.trade_bootstrap_complete = True
+            clock[0] += 6_100
+            self.assertIsNone(observer.early_preview(_candidate()))
+        finally:
+            observer.close()
+
     def test_coverage_audit_proves_missing_source_without_auto_subscribing(self):
         observed, recent, previous, current = PatternFlowSourceTests.source()
         now = PatternFlowSourceTests.CLOSE + 5_000
