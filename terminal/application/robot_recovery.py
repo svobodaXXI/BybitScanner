@@ -229,8 +229,17 @@ class RobotRecoveryCoordinator:
                     # candidate. Do not terminalize a valid setup on a transient
                     # closed-candle outage.
                     if isinstance(exc, ScannerGeometryCursorError) and (
-                        "evidence is unavailable" in str(exc)
-                        or "latest closed candle" in str(exc)
+                        # A bad/absent candle timestamp is untrusted external
+                        # evidence, NOT proof that the frozen candidate is bad.
+                        # Keep recovery fenced until fresh evidence exists.
+                        (
+                            "evidence is unavailable" in str(exc)
+                            or "latest closed candle" in str(exc)
+                            or str(exc).startswith((
+                                "Scanner closed 1m candle ",
+                                "closed candle time ",
+                            ))
+                        )
                     ):
                         raise
                     if not self._candidate_is_inert(candidate):

@@ -352,6 +352,45 @@ class RobotRecoveryCoordinatorTests(unittest.TestCase):
         self.assertEqual(result.runtime_state.recovery_status, "RECONCILIATION_REQUIRED")
         self.assertEqual(self.store.get_robot_candidate("candidate-1").status, "APPROVED")
 
+    def test_malformed_external_candle_time_keeps_recovery_fenced(self):
+        # These failures originate from the restart geometry evidence provider,
+        # not from a provably broken immutable signal.
+        self._create_waiting_candidate()
+        self._initialize_running()
+        for index, reason in enumerate((
+            "Scanner closed 1m candle time is invalid",
+            "latest closed candle predates Scanner cursor anchor",
+            "closed candle time is not aligned to Scanner 1m index space",
+            "Scanner geometry evidence is unavailable for latest snapshot",
+            "provider: latest closed candle predates Scanner cursor anchor",
+        )):
+            with self.subTest(reason=reason):
+                if index:
+                    fenced = self.store.get_robot_runtime_state(ACCOUNT_ID)
+                    self.store.update_robot_runtime_state(
+                        ACCOUNT_ID,
+                        mode="ROBOT_RUNNING", recovery_status=READY,
+                        reason=None, expected_version=fenced.version,
+                        updated_at_ms=self.clock(),
+                    )
+
+                def malformed_candle(_symbol, _snapshot):
+                    raise ScannerGeometryCursorError(reason)
+
+                result = RobotRecoveryCoordinator(
+                    self.store, ACCOUNT_ID,
+                    latest_geometry_index_provider=malformed_candle,
+                    clock_ms=self.clock,
+                ).recover()
+                self.assertEqual(
+                    result.runtime_state.recovery_status,
+                    "RECONCILIATION_REQUIRED",
+                )
+                self.assertFalse(result.admission_ready)
+                retained = self.store.get_robot_candidate("candidate-1")
+                self.assertEqual(retained.status, "APPROVED")
+                self.assertNotIn("paper_quarantine", retained.robot_state)
+
     def test_running_open_trade_can_recover_without_geometry_read(self):
         self._create_open_candidate()
         self._initialize_running()
