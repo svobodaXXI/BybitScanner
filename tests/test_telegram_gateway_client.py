@@ -175,6 +175,34 @@ class TelegramGatewayTests(unittest.TestCase):
         sleep.assert_not_called()
 
     @patch("telegram_gateway_client.requests.Session")
+    def test_rate_limit_requests_headers_short_retry_is_honored(self, session_cls):
+        # requests.Response.headers is a CaseInsensitiveDict, not a plain dict.
+        from requests.structures import CaseInsensitiveDict
+
+        limited = MagicMock(
+            status_code=429,
+            headers=CaseInsensitiveDict({"retry-after": "1"}),
+        )
+        accepted = MagicMock(
+            status_code=200,
+            headers=CaseInsensitiveDict(),
+        )
+        def accepted_result():
+            args = session_cls.return_value.post.call_args
+            return {"ok": True, "event_id": args.kwargs["json"]["event_id"],
+                    "stage": "accepted_by_telegram_api", "telegram_message_id": 22}
+        accepted.json.side_effect = accepted_result
+        session_cls.return_value.post.side_effect = [limited, accepted]
+        with patch("time.sleep") as sleep:
+            result = gateway.send_text("12345", "recovered")
+        self.assertTrue(result["ok"])
+        self.assertEqual(session_cls.return_value.post.call_count, 2)
+        sleep.assert_called_once_with(1)
+        sent = [call.kwargs["json"]["event_id"]
+                for call in session_cls.return_value.post.call_args_list]
+        self.assertEqual(sent[0], sent[1])
+
+    @patch("telegram_gateway_client.requests.Session")
     def test_photo_transient_http_retries_same_frozen_image_once(self, session_cls):
         from tempfile import TemporaryDirectory
         from pathlib import Path
