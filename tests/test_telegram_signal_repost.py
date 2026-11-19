@@ -119,6 +119,135 @@ class SignalRepostTests(unittest.TestCase):
         text.assert_not_called()
 
     @patch("telegram_monitoring.telegram_bot.send_photo_by_file_id")
+    def test_legacy_mana_duplicate_resolves_unique_verified_frozen_source(self, send):
+        from urllib.parse import parse_qs, urlsplit
+        from signal_geometry_producer import build_wedge_geometry_snapshot
+        from tests.test_signal_geometry_producer import Candles, GEOMETRY
+
+        source_id = "source-original:" + "a" * 24
+        frozen = build_wedge_geometry_snapshot(
+            source_id, "ENAUSDT", "5", GEOMETRY, Candles(), now_ms=602000,
+        )
+        self.assertIsNotNone(frozen)
+        origin = "origin:ENAUSDT:5:1793539500000:1793535300000"
+        source_at = SENT_AT_MS
+        self._archive(source_id, geometry_snapshot=frozen, sent_at_ms=source_at)
+        self._archive(origin, sent_at_ms=source_at)
+        self._archive("cand-ena", sent_at_ms=source_at + 1457)
+        before = sorted((p.name, p.read_bytes()) for p in self.dir.iterdir())
+
+        send.return_value = {"ok": True}
+        with patch.dict("os.environ", {
+            "BYBITSCANNER_TERMINAL_HTTPS_URL": "https://terminal.example.com",
+        }):
+            self._press([_record()])
+
+        markup = send.call_args.kwargs["reply_markup"]["inline_keyboard"]
+        editor = next(b for row in markup for b in row if b["text"] == "✏️ Редактор")
+        self.assertEqual(
+            parse_qs(urlsplit(editor["web_app"]["url"]).query)["signal_id"],
+            [source_id],
+        )
+        self.assertEqual(
+            monitoring._repost_editor_source_id(
+                signal_archive.load_original_signal(["cand-ena"])
+            ), source_id,
+        )
+        self.assertEqual(sorted((p.name, p.read_bytes()) for p in self.dir.iterdir()), before)
+
+    def test_legacy_duplicate_ambiguous_frozen_sources_fails_closed(self):
+        from signal_geometry_producer import build_wedge_geometry_snapshot
+        from tests.test_signal_geometry_producer import Candles, GEOMETRY
+
+        for token in ("b", "c"):
+            source_id = "source-original:" + token * 24
+            frozen = build_wedge_geometry_snapshot(
+                source_id, "ENAUSDT", "5", GEOMETRY, Candles(), now_ms=602000,
+            )
+            self.assertIsNotNone(frozen)
+            self._archive(source_id, geometry_snapshot=frozen)
+        self._archive("cand-ena")
+        self.assertEqual(
+            monitoring._repost_editor_source_id(
+                signal_archive.load_original_signal(["cand-ena"])
+            ), "cand-ena",
+        )
+
+    def test_legacy_candidate_rejects_wrong_content_and_late_source(self):
+        from signal_geometry_producer import build_wedge_geometry_snapshot
+        from tests.test_signal_geometry_producer import Candles, GEOMETRY
+
+        source_id = "source-original:" + "d" * 24
+        frozen = build_wedge_geometry_snapshot(
+            source_id, "ENAUSDT", "5", GEOMETRY, Candles(), now_ms=602000,
+        )
+        self.assertIsNotNone(frozen)
+        self._archive(source_id, geometry_snapshot=frozen,
+                      text="different text", sent_at_ms=SENT_AT_MS)
+        self._archive("cand-ena", sent_at_ms=SENT_AT_MS + 1457)
+        self.assertEqual(
+            monitoring._repost_editor_source_id(
+                signal_archive.load_original_signal(["cand-ena"])
+            ), "cand-ena",
+        )
+
+        # Same text and PNG but source is too old for this candidate.
+        with tempfile.TemporaryDirectory() as other:
+            with patch.dict("os.environ", {signal_archive.ARCHIVE_ENV: other}):
+                self._archive(source_id, geometry_snapshot=frozen,
+                              sent_at_ms=SENT_AT_MS - 60_001)
+                self._archive("cand-ena", sent_at_ms=SENT_AT_MS)
+                self.assertEqual(
+                    monitoring._repost_editor_source_id(
+                        signal_archive.load_original_signal(["cand-ena"])
+                    ), "cand-ena",
+                )
+
+    def test_legacy_duplicate_requires_frozen_geometry_and_no_explicit_lineage(self):
+        from signal_geometry_producer import build_wedge_geometry_snapshot
+        from tests.test_signal_geometry_producer import Candles, GEOMETRY
+
+        source_id = "source-original:" + "e" * 24
+        self._archive(source_id)
+        self._archive("cand-ena")
+        self.assertEqual(
+            monitoring._repost_editor_source_id(
+                signal_archive.load_original_signal(["cand-ena"])
+            ), "cand-ena",
+        )
+        with tempfile.TemporaryDirectory() as other:
+            with patch.dict("os.environ", {signal_archive.ARCHIVE_ENV: other}):
+                frozen = build_wedge_geometry_snapshot(
+                    source_id, "ENAUSDT", "5", GEOMETRY, Candles(), now_ms=602000,
+                )
+                self._archive(source_id, geometry_snapshot=frozen)
+                self._archive("cand-ena", source_formation_ids=["not-a-source"])
+                self.assertEqual(
+                    monitoring._repost_editor_source_id(
+                        signal_archive.load_original_signal(["cand-ena"])
+                    ), "cand-ena",
+                )
+
+    def test_legacy_prefer_valid_own_geometry_over_unlinked_source(self):
+        from signal_geometry_producer import build_wedge_geometry_snapshot
+        from tests.test_signal_geometry_producer import Candles, GEOMETRY
+
+        source_id = "source-original:" + "f" * 24
+        source_frozen = build_wedge_geometry_snapshot(
+            source_id, "ENAUSDT", "5", GEOMETRY, Candles(), now_ms=602000,
+        )
+        own_frozen = build_wedge_geometry_snapshot(
+            "cand-ena", "ENAUSDT", "5", GEOMETRY, Candles(), now_ms=602000,
+        )
+        self._archive(source_id, geometry_snapshot=source_frozen)
+        self._archive("cand-ena", geometry_snapshot=own_frozen)
+        self.assertEqual(
+            monitoring._repost_editor_source_id(
+                signal_archive.load_original_signal(["cand-ena"])
+            ), "cand-ena",
+        )
+
+    @patch("telegram_monitoring.telegram_bot.send_photo_by_file_id")
     def test_duplicate_editor_callback_preserves_source_token_without_https(self, by_id):
         from signal_geometry_producer import build_wedge_geometry_snapshot
         from tests.test_signal_geometry_producer import Candles, GEOMETRY
