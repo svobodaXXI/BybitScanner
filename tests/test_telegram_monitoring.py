@@ -1118,7 +1118,8 @@ class RobotLifecyclePollTests(unittest.TestCase):
     def test_first_run_does_not_backfill_history(self):
         self.trades = [self._trade("old", self.INIT_MS - 100, self.INIT_MS - 10)]
         self.assertEqual(self._poll(now_ms=self.INIT_MS), [])
-        self.assertEqual(self._state(), {"initialized_at_ms": self.INIT_MS, "opened": [], "closed": [], "retry_after_ms": 0})
+        self.assertEqual(self._state(), {"initialized_at_ms": self.INIT_MS, "opened": [], "closed": [], "retry_after_ms": 0,
+                                         "opened_floor": None, "closed_floor": None})
 
     def test_open_then_close_are_sent_once_across_restart(self):
         self._poll()  # initializes the dedup file
@@ -1171,6 +1172,26 @@ class RobotLifecyclePollTests(unittest.TestCase):
                          [("CLOSED", "a"), ("CLOSED", "b")])
         self.assertEqual(self._state()["closed"], ["a", "b"])
         self.assertEqual(self._state()["retry_after_ms"], 0)
+
+    def test_bounded_closed_history_does_not_repeat_and_preserves_unsent(self):
+        from robot_lifecycle_posts import REMEMBERED_TRADE_IDS
+        self._poll()  # initialization
+        amount = REMEMBERED_TRADE_IDS + 10
+        self.trades = [self._trade(f"t{i:04d}", self.INIT_MS + i + 1,
+                                  self.INIT_MS + i + 2) for i in range(amount)]
+        with patch("builtins.print"):
+            initial = self._poll(results=[True] * (REMEMBERED_TRADE_IDS + 5) + [False])
+            self.assertEqual(len(initial), REMEMBERED_TRADE_IDS + 6)
+            self.assertEqual(initial[-1], ("CLOSED", "t0205"))
+            self.assertEqual(self._state()["closed"][-1], "t0204")
+            self.assertEqual(self._poll(now_ms=self.INIT_MS + 299_999), [])
+            pending = self._poll(now_ms=self.INIT_MS + 300_001)
+            self.assertEqual(pending, [
+                ("CLOSED", f"t{i:04d}") for i in range(205, amount)
+            ])
+            self.assertEqual(self._poll(now_ms=self.INIT_MS + 600_000), [])
+        self.assertEqual(len(self._state()["closed"]), REMEMBERED_TRADE_IDS)
+        self.assertIsNotNone(self._state()["closed_floor"])
 
     @patch("telegram_monitoring.render_position_chart", return_value="chart.png")
     @patch("telegram_monitoring.telegram_bot.send_photo",
