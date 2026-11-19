@@ -585,6 +585,8 @@ export function ReplayPage() {
   const [sourceComplete, setSourceComplete] = useState(false);
   const [cancelNativeId, setCancelNativeId] = useState(0);
   const historyRequest = useRef<AbortController | null>(null);
+  // New owner-selected episode wins even if an older local read resolves later.
+  const episodeLookupSequence = useRef(0);
   const bundledRequest = useRef<AbortController | null>(null);
   const [cursor, setCursor] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -999,6 +1001,11 @@ export function ReplayPage() {
   }
 
   async function lookupLocalEpisode(episodeId: string): Promise<void> {
+    const lookup = ++episodeLookupSequence.current;
+    // A new exact ID supersedes the old local market request, not its stored facts.
+    historyRequest.current?.abort();
+    historyRequest.current = null;
+    setHistoryLoading(false);
     setPlaying(false);
     setPaperFacts(null);
     setLocalEpisodeMessage("");
@@ -1006,6 +1013,7 @@ export function ReplayPage() {
     try {
       const response = await fetch("/local-replay/paper-episode?trade_episode_id=" +
         encodeURIComponent(episodeId), { method: "GET", cache: "no-store" });
+      if (lookup !== episodeLookupSequence.current) return;
       if (response.status === 404) {
         setError("Сделка " + episodeId + " отсутствует в локальной базе Симулятора. " +
           "Нужна синхронизация фактов сделок с VPS (либо импорт проверенного JSON).");
@@ -1013,6 +1021,7 @@ export function ReplayPage() {
       }
       if (!response.ok) throw new Error("Локальная база не смогла подтвердить эту сделку");
       const parsed = parsePaperEpisodeFacts(await response.json() as unknown);
+      if (lookup !== episodeLookupSequence.current) return;
       if (parsed.trade_episode_id !== episodeId)
         throw new Error("ID локальной записи не совпадает с запросом");
       setPaperFacts(parsed);
@@ -1030,15 +1039,25 @@ export function ReplayPage() {
       const utc = (ms: number) => new Date(ms).toISOString().slice(0, 16);
       await loadLocalHistory(parsed.symbol, utc(startMs), utc(endExclusive - 60_000), []);
     } catch (error) {
-      setError(error instanceof Error ? error.message : "Не удалось найти локальную сделку");
+      if (lookup === episodeLookupSequence.current)
+        setError(error instanceof Error ? error.message : "Не удалось найти локальную сделку");
     }
   }
 
-  // Only the fixed local Windows protocol supplies this typed locator.
-  // Never parse financial facts, filesystem paths or arbitrary URLs from it.
+  // Windows can reuse an existing browser tab: changing only #locator does
+  // not remount React. Honor each exact ID without polling, reload or new transport.
+  // No PAPER payload or arbitrary URL is ever accepted in the fragment.
   useEffect(() => {
-    const match = /^#locator=(te_[a-f0-9]{24})$/.exec(window.location.hash);
-    if (match) void lookupLocalEpisode(match[1]);
+    const onLocator = () => {
+      const match = /^#locator=(te_[a-f0-9]{24})$/.exec(window.location.hash);
+      if (match) void lookupLocalEpisode(match[1]);
+    };
+    window.addEventListener("hashchange", onLocator);
+    onLocator();
+    return () => {
+      window.removeEventListener("hashchange", onLocator);
+      episodeLookupSequence.current++;
+    };
   }, []);
 
   async function loadLocalHistory(selectedSymbol: string, selectedStart: string, selectedEnd: string,
