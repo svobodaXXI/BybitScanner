@@ -1519,7 +1519,8 @@ function compareExactPnlDescending(left: string | null, right: string | null): n
 }
 
 function PatternsView({ report, symbolFilter, onSelectPattern }: {
-  report: FinrezResponse; symbolFilter: string; onSelectPattern: (pattern: string) => void;
+  report: FinrezResponse; symbolFilter: string;
+  onSelectPattern: (pattern: string, result: FinrezPnlFilter) => void;
 }) {
   const tickerQuery = symbolFilter.trim().toUpperCase();
   const [resultFilter, setResultFilter] = useState<FinrezPnlFilter>("ALL");
@@ -1558,7 +1559,9 @@ function PatternsView({ report, symbolFilter, onSelectPattern }: {
   const rows = ranked.filter((row) => row.pnl !== null && (
     resultFilter === "ALL" || (resultFilter === "PROFIT"
       ? verifiedPnlSign(row.pnl) > 0 : verifiedPnlSign(row.pnl) < 0)
-  ));
+  )).sort((a, b) => resultFilter === "LOSS"
+    ? compareExactPnlDescending(b.pnl, a.pnl) : 0);
+  // All: most profitable first. Red: worst proven net PnL first.
   return (
     <section className="diary-finrez" aria-label="Паттерны по подтверждённым сделкам">
       <OutcomeSplitBar kind="patterns" wins={wins} losses={losses} breakeven={breakeven}
@@ -1592,7 +1595,7 @@ function PatternsView({ report, symbolFilter, onSelectPattern }: {
                 key={JSON.stringify([row.pattern, row.cohort])}
                 aria-label={`Показать все сделки по паттерну ${row.pattern}`}
                 title="Перейти к сделкам с подтверждённым паттерном"
-                onClick={() => onSelectPattern(row.pattern)}>
+                onClick={() => onSelectPattern(row.pattern, resultFilter)}>
                 <span className="diary-pattern-label">
                   <strong title={row.pattern}>{row.pattern}</strong>
                   <small>{dealLabels[row.cohort]} · сделок: {row.deals.length} · прибыльных: {wins} · убыточных: {losses} · D2: {row.d2Count} · Wedge: {row.wedgeCount} · Robot ID: {row.robotEntryCount}</small>
@@ -2065,9 +2068,9 @@ export function DiaryOverlay({
             }} /> : null}
           {!loading && !loadError && !selectedTrade && section === "PATTERNS" && finrez ? (
             <PatternsView report={finrez} symbolFilter={finrezSymbolFilter}
-              onSelectPattern={(pattern) => {
+              onSelectPattern={(pattern, result) => {
                 setFinrezPatternFilter(pattern);
-                setFinrezPnlFilter("ALL");
+                setFinrezPnlFilter(result);
                 setFinrezSideFilter("ALL");
                 setSection("DEALS");
               }} />
