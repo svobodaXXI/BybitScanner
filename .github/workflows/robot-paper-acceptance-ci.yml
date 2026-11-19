@@ -34,6 +34,8 @@ on:
       - "terminal/market_data/impulse_producer.py"
       - "tests/test_robot_pattern_flow_overlay.py"
       - "terminal/market_data/pattern_flow_observer.py"
+      - "terminal/market_data/pattern_flow_shadow_evidence.py"
+      - "tests/test_robot_pattern_flow_shadow_evidence.py"
       - "tests/test_robot_pattern_flow_observer.py"
       - "tests/test_public_trade_impulse_observation.py"
       - "robot_flat_closure.py"
@@ -152,7 +154,7 @@ jobs:
       - name: Verify shared causal Impulse Flow rules without order runtime
         run: python -m unittest tests.test_robot_entry_flow_evidence tests.test_robot_pattern_flow_overlay -v
       - name: Verify no autonomous Impulse candidate and verified read-only flow source
-        run: python -m unittest tests.test_robot_pattern_flow_source tests.test_robot_pattern_flow_observer -v
+        run: python -m unittest tests.test_robot_pattern_flow_source tests.test_robot_pattern_flow_observer tests.test_robot_pattern_flow_shadow_evidence -v
       - name: Verify publicTrade observation without order runtime
         run: python -m unittest tests.test_public_trade_impulse_observation -v
       - name: Verify subscribed-only Scanner source diagnostics
@@ -208,6 +210,8 @@ jobs:
           tests/test_robot_pattern_flow_source.py
           tests/test_robot_pattern_flow_overlay.py
           terminal/market_data/pattern_flow_observer.py
+          terminal/market_data/pattern_flow_shadow_evidence.py
+          tests/test_robot_pattern_flow_shadow_evidence.py
           tests/test_robot_pattern_flow_observer.py
           robot_l_shape.py
           l_shape_scanner.py
