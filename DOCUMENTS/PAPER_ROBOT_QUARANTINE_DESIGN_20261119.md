@@ -53,3 +53,24 @@
 ## 6. Итоговая приёмка
 
 Карантин не парализует независимую PAPER-торговлю; законная защита и risk guard имеют приоритет даже при crash/quarantine backlog; неизвестная shared exposure не маскируется; все переходы durable и воспроизводимы; аварийные CLOSE из `INGRESS_OVERFLOW` устранены лишь после причинного профиля и реальной PAPER-проверки. До доказательства этих условий — `NOT ACCEPTED`.
+
+## 7. Минималистичный апгрейд монолита — без ещё одного оркестратора (19.11)
+
+**Проверенный code audit на stable:** `tools.vps_owner_control` уже создаёт detached systemd one-shot с UUID, `--remain-after-exit`, read-only `status` и запретом повторной submission с тем же UUID; `tools.paper_maintenance` уже сериализует owner actions, имеет exact release/DB/readiness proofs, sealed receipts, one-shot STOP и может продолжить точные доказанные стадии после сбоя связи. `update-and-start` уже собирает UPDATE → EDITOR_ONLY → полный PAPER start в одной явной операции. **Не дублировать это новым scheduler/job engine/retry framework.** Из зрелых решений берём ровно недостатующие свойства, а не их инфраструктуру.
+
+**Два независимых контура:**
+- `PaperRuntime / RobotRecoveryCoordinator` — локальная автоматическая изоляция, фоновая budgeted сверка и разрешение quarantine, работающие **без** `tools.paper_maintenance`, SSH, VPS Manager, выпуска версии, systemd restart, ожидания UI или дополнительных разрешений на каждое безопасное чтение. Нет отдельного writer; backend protection живёт независимо от owner-management.
+- `tools.vps_owner_control -> tools.paper_maintenance` — **только явно авторизованные** release/STOP/START/maintenance и наблюдение их UUID. Он не получает ни торговых кандидатов на обработку, ни control tick для обычного карантина, ни права автоматически включить PAPER_AUTO или закрыть позиции. Повторный UI status использует уже сохранённый UUID, не новую команду.
+
+**Точки минимального дальнейшего улучшения (только по доказанному случаю):**
+1. Reuse существующего durable operation journal и status, чтобы клиент сам показывал терминальный outcome и конкретный blocker после потери SSH; не просить владельца повторно нажимать STOP/UPDATE и не создавать новый UUID ради чтения результата. Если UI уже делает это (PR #1090/#1129), не переписывать.
+2. Карантин не должен вызывать глобальный maintenance или restart. Один bounded read-only reconcile task per affected lineage с дедупликацией и backoff; только доказанная короткая запись через canonical PAPER owner. Это реализация в Robot, а **не монолитном CLI**.
+3. Перед каждым `update-and-start` оставить обязательные exact SHA, protected source/auth, DB/protection/flat/ledger и installed-state проверки; после них автоматически выполнять оставшиеся **уже разрешённые** шаги. Optional diagnostics/observer/reporting не должны быть release gates или увеличивать время исполнения; при их сбое возвращать `DEGRADED` для этих функций, сохраняя торговую безопасность и доказанный отдельно runtime state.
+4. **Не снимать существующий MAIN gateway auth barrier по предположению об optional-модуле.** На stable `deploy_staged_editor_only` проверяет Nginx auth/site перед STOP; `prepare_gateway` при ошибке блокирует дальнейший релиз/START по действующему контракту. Любое разделение этой зависимости допустимо лишь после точного доказательства, что protected auth ingress и конфигурация nginx остаются неизменными/безопасными и MAIN действительно не является prerequisite для данного вида операции; адресный тест должен проверить отсутствие обхода аутентификации, гонки nginx и replay STOP. Пока это **не разрешённая кодовая правка**.
+
+**Источники заимствованных идей:**
+- systemd transient service `systemd-run`, no-block и сохранение unit state: https://www.freedesktop.org/software/systemd/man/latest/systemd-run.html — уже используется; дополнительный daemon не нужен.
+- Kubernetes keyed rate-limited workqueue: https://github.com/kubernetes/client-go/blob/master/ARCHITECTURE.md — применять к quarantine внутри backend, не к owner SSH.
+- Temporal activity idempotency: https://docs.temporal.io/activity-definition — stable incident/command identity из имеющегося ledger, не запускать Temporal server.
+
+**Definition of Done:** в штатном PAPER owner управляет разрешённой операцией одной кнопкой и получает состояние того же UUID без повторного управляющего запроса; quarantine работает автономно при недоступном VPS Manager/SSH; вспомогательный сбой не изменяет защиту, admission или установленную версию; фактический unsafe/shared ledger blocker остаётся явным, а не маскируется как READY. Никаких новых standalone сервисов, таблиц/DB, новых торговых permissions, LIVE либо автоматических релизов. Реальная приёмка отдельно.
