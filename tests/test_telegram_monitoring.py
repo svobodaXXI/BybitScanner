@@ -32,6 +32,10 @@ def _intent_result(intent, outcome, blocked_by=(), final=None):
 class TelegramMonitoringTests(unittest.TestCase):
     def setUp(self):
         monitoring._published_commands = None
+        monitoring._menu_commands_retry_after = 0.0
+        monitoring._menu_button_check_after = 0.0
+        monitoring._TELEGRAM_METHOD_ERROR_COUNTS.clear()
+        monitoring._TELEGRAM_METHOD_NEXT_REPORT = 0.0
         for key, value in (("TELEGRAM_CHAT_ID", "123"), ("TELEGRAM_TOKEN", "test")):
             fixture = patch.object(monitoring.config, key, value, create=True)
             fixture.start()
@@ -374,6 +378,79 @@ class TelegramMonitoringTests(unittest.TestCase):
             json.loads(telegram.call_args.kwargs["menu_button"]),
             {"type": "commands"},
         )
+
+    @patch("telegram_monitoring._telegram_request")
+    def test_menu_polling_is_throttled_after_429(self, telegram):
+        telegram.return_value = {
+            "ok": False, "error_code": 429,
+            "parameters": {"retry_after": 120},
+            "description": "never-log-this-private-response",
+        }
+        with patch("telegram_monitoring.time.monotonic", side_effect=[10, 10, 311]):
+            monitoring._ensure_commands_menu_button()
+            monitoring._ensure_commands_menu_button()
+            monitoring._ensure_commands_menu_button()
+        self.assertEqual([c.args[0] for c in telegram.call_args_list],
+                         ["getChatMenuButton", "getChatMenuButton"])
+
+    @patch("telegram_monitoring._telegram_request")
+    def test_owner_menu_after_success_is_checked_at_most_once_per_cadence(self, telegram):
+        telegram.return_value = {"ok": True, "result": {"type": "commands"}}
+        with patch("telegram_monitoring.time.monotonic", side_effect=[10, 11, 309, 310]):
+            for _ in range(4):
+                monitoring._ensure_commands_menu_button()
+        self.assertEqual([c.args[0] for c in telegram.call_args_list],
+                         ["getChatMenuButton", "getChatMenuButton"])
+
+    @patch("telegram_monitoring._telegram_request")
+    def test_poll_429_respects_retry_after_and_never_logs_payload(self, telegram):
+        telegram.return_value = {
+            "ok": False, "error_code": 429,
+            "parameters": {"retry_after": 47},
+            "description": "secret-never-in-logs",
+        }
+        with patch("telegram_monitoring.time.sleep") as sleep, \
+                patch("builtins.print") as output:
+            self.assertIsNone(monitoring.poll_updates_once(None))
+        sleep.assert_called_once_with(47)
+        logged = " ".join(str(v) for c in output.call_args_list for v in c.args)
+        self.assertNotIn("secret-never-in-logs", logged)
+
+    @patch("telegram_monitoring._telegram_request")
+    def test_poll_429_invalid_retry_after_has_bounded_default(self, telegram):
+        telegram.return_value = {
+            "ok": False, "error_code": 429,
+            "parameters": {"retry_after": "private-bad-value"},
+        }
+        with patch("telegram_monitoring.time.sleep") as sleep:
+            monitoring.poll_updates_once(123)
+        sleep.assert_called_once_with(3)
+
+    @patch("telegram_monitoring._telegram_request")
+    def test_failed_command_publication_is_cooled_down(self, telegram):
+        telegram.return_value = {
+            "ok": False, "error_code": 429,
+            "parameters": {"retry_after": 65},
+        }
+        with patch("telegram_monitoring._scanner_request", return_value={"mode": "SCANNER_RUNNING"}), \
+                patch("telegram_monitoring.time.monotonic", return_value=50):
+            monitoring.refresh_command_menu()
+            monitoring.refresh_command_menu()
+        self.assertEqual(telegram.call_count, 1)
+        self.assertEqual(monitoring._menu_commands_retry_after, 115)
+        self.assertIsNone(monitoring._published_commands)
+
+    @patch("telegram_monitoring._record_telegram_method_error")
+    @patch("telegram_monitoring.telegram_gateway_client", create=True)
+    def test_method_status_counter_wont_log_response_payload(self, gw, record):
+        # _telegram_request dynamically imports the configured Gateway module.
+        import telegram_gateway_client
+        with patch.object(telegram_gateway_client, "configured", return_value=True), \
+                patch.object(telegram_gateway_client, "bot_method",
+                             return_value={"ok": False, "error_code": 429,
+                                           "description": "token-is-private"}):
+            monitoring._telegram_request("getChatMenuButton", chat_id="123")
+        record.assert_called_once_with("getChatMenuButton", 429)
 
     @patch("telegram_monitoring._refresh_owner_menu_surface")
     @patch("telegram_monitoring._process_message")
