@@ -90,6 +90,14 @@ def test_preflight_proves_exact_stop_and_frozen_runtime(proven_fusdt, tmp_path):
     assert reconcile._attest(reconcile.OLD_SHA, tmp_path, None, after=True) == "original"
 
 
+def test_inert_approved_candidate_is_not_a_global_reconcile_blocker(proven_fusdt, tmp_path):
+    _, incident = proven_fusdt
+    incident["active"] = (SimpleNamespace(status="APPROVED"),)
+    # _active_required_flat_proof already attested that APPROVED has no
+    # trade, fill, working limit, pending command or obligation.
+    assert reconcile._attest(reconcile.OLD_SHA, tmp_path, None) == "original"
+
+
 @pytest.mark.parametrize("bad", ["open", "entry", "stop", "owner", "wrong-reason"])
 def test_preflight_rejects_unproven_or_nonterminal_incident(proven_fusdt, tmp_path, bad):
     _, incident = proven_fusdt
