@@ -21,6 +21,20 @@ from tools.windows_vps_manager import (ACTIONS, VPSManager, control_ssh_command,
 
 
 class TestWindowsVpsManager(unittest.TestCase):
+    def test_incident_reconcile_is_canonical_one_shot_owner_submit(self):
+        from tools.windows_vps_manager import CONTROL_ACTIONS
+        self.assertEqual(CONTROL_ACTIONS["Сверить FUSDT STOP (однократно)"], "reconcile")
+        request = "a" * 32
+        command = control_ssh_command(
+            "bybitscanner-vps", "root", "", "reconcile",
+            sha="installed", request_id=request, origin="win-laptop",
+        )
+        self.assertIn("tools.vps_owner_control submit reconcile installed", command[-1])
+        self.assertIn("--request-id " + request, command[-1])
+        with self.assertRaises(ValueError):
+            control_ssh_command("bybitscanner-vps", "root", "", "reconcile",
+                                sha="bad", request_id=request)
+
     def test_manager_title_displays_newer_build_number_and_exact_short_sha(self):
         sha = "600d472d3221441b89fadc7e0ea5552d931beae5"
         with tempfile.TemporaryDirectory() as folder:
