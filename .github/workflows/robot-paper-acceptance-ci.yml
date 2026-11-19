@@ -330,7 +330,7 @@ jobs:
         run: >-
           python -m pytest -q
           tests/test_terminal_paper_runtime.py
-          -k robot_paper_execution_is_independent_of_ui_selected_account
+          -k "robot_paper_execution_is_independent_of_ui_selected_account or entry_limit_admission_ignores_terminal_history_without_weakening_fence"
       - name: Run Robot protection schema migration acceptance
         run: >-
           python -m unittest -v
