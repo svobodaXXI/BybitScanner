@@ -18,7 +18,7 @@ PYTHON = REPO + "/venv/bin/python"
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 REQUEST = re.compile(r"[0-9a-f]{32}\Z")
 ORIGIN = re.compile(r"[A-Za-z0-9_.-]{1,64}\Z")
-ACTIONS = ("update", "start", "stop", "update-and-start", "provision-owner-pc")
+ACTIONS = ("update", "start", "stop", "update-and-start", "provision-owner-pc", "reconcile")
 UNIT_PREFIX = "bybitscanner-owner-"
 
 
@@ -71,7 +71,7 @@ def submit(action: str, sha: str, request: str, origin: str,
            *, run=subprocess.run, uid: int | None = None) -> int:
     if action not in ACTIONS:
         raise ValueError("invalid_action")
-    if sha == "installed" and action in ("start", "stop"):
+    if sha == "installed" and action in ("start", "stop", "reconcile"):
         from pathlib import Path
         from tools.vps_release_identity import verify_release
         sha = verify_release(Path(REPO))
