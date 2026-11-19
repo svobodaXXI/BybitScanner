@@ -20,6 +20,9 @@ VIEWER = ROOT / "research/local_replay_viewer"
 ROOT_DIRS = ("research", "geometry", "wedge", "signals", "mirror_levels", "terminal")
 ROOT_FILES = ("robot_protection.py", "mirror_scanner.py", "mirror_retest_robot.py")
 SHA = re.compile(r"[0-9a-f]{40}\Z")
+# Owner-reviewed existing HTTPS entrypoint, independent of pairing URI/token.
+# Kept in sync with vps_simulator_device_provision.ORIGIN by the package test.
+PINNED_STATISTICS_ORIGIN = "https://83.217.213.181"
 
 
 def package(output: Path, sha: str) -> int:
@@ -91,6 +94,10 @@ def package(output: Path, sha: str) -> int:
         if file.is_file():
             rel = file.relative_to(VIEWER).as_posix()
             entries[rel] = file.read_bytes()
+    # Non-secret trusted endpoint is shipped from this exact reviewed source,
+    # never inferred from an incoming protocol URI or copied from a web page.
+    # The distinct owner-device tokens are NOT bundled.
+    entries["trusted-statistics-origin.txt"] = (PINNED_STATISTICS_ORIGIN + "\n").encode("ascii")
     entries["desktop-build-sha.txt"] = (sha + "\n").encode("ascii")
     if any(p.startswith(("simulator-v2-data/", "paper-episode-facts/",
                          "public-m5-cache/", ".wedge-python/"))
