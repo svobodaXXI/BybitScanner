@@ -29,6 +29,7 @@ class LifecycleState:
     initialized_at_ms: int
     opened: list[str] = field(default_factory=list)
     closed: list[str] = field(default_factory=list)
+    retry_after_ms: int = 0
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,7 @@ def save_lifecycle_state(path: Path, state: LifecycleState) -> None:
             "initialized_at_ms": state.initialized_at_ms,
             "opened": state.opened,
             "closed": state.closed,
+            "retry_after_ms": state.retry_after_ms,
         }),
         encoding="utf-8",
     )
@@ -63,6 +65,7 @@ def load_lifecycle_state(path: Path, now_ms: int) -> LifecycleState:
             initialized_at_ms=int(raw["initialized_at_ms"]),
             opened=[str(item) for item in raw.get("opened", [])],
             closed=[str(item) for item in raw.get("closed", [])],
+            retry_after_ms=max(0, int(raw.get("retry_after_ms", 0))),
         )
     except FileNotFoundError:
         pass

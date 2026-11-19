@@ -34,6 +34,7 @@ import config
 import metascalp_bridge
 import signal_archive
 import telegram_bot
+from telegram_gateway_client import TelegramGatewayError
 import telegram_runtime_intent
 from telegram_labels import SCANNER_EMOJI, ROBOT_EMOJI
 from tools import stop_robot_runtime
@@ -63,6 +64,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 OFFSET_FILE = PROJECT_ROOT / "review_queue" / ".telegram_offset"
 LIFECYCLE_STATE_FILE = PROJECT_ROOT / "review_queue" / ".robot_lifecycle_notified"
 LIFECYCLE_POLL_SECONDS = 10
+LIFECYCLE_RETRY_COOLDOWN_MS = 300_000  # Durable five-minute backoff.
 _CHART_LOCK = threading.Lock()
 PAPER_ACCOUNT_ID = TradingAccountId("paper")
 DB_PATH = Path(os.environ.get("BYBITSCANNER_PAPER_DB", "paper_runtime.sqlite3"))
@@ -402,8 +404,13 @@ def _send_chart_card(chat_id, view, candles, caption, reply_markup, *, require_c
             if _delivered(response):
                 return True
             raise RuntimeError(f"sendPhoto failed: {response}")
+        except TelegramGatewayError:
+            # An unknown delivery or rejection is not grounds for a second
+            # immediate text send. The lifecycle cooldown owns retries.
+            print("[POSITION CARD PHOTO GATEWAY ERROR]")
+            return False
         except Exception as exc:
-            print("[POSITION CARD PHOTO ERROR]", view.symbol, exc)
+            print("[POSITION CARD PHOTO ERROR]", view.symbol, type(exc).__name__)
     if require_chart:
         return False
     return _delivered(_send_text(chat_id, caption, reply_markup=reply_markup))
@@ -425,6 +432,8 @@ def poll_lifecycle_once(now_ms: int | None = None) -> None:
         return
     now_ms = int(time.time() * 1000) if now_ms is None else now_ms
     state = load_lifecycle_state(LIFECYCLE_STATE_FILE, now_ms)
+    if now_ms < state.retry_after_ms:
+        return  # Durable suppression after restart; no replay during cooldown.
     with _robot_store() as store:
         events = collect_new_lifecycle_events(store, state)
         pending = [
@@ -450,9 +459,11 @@ def poll_lifecycle_once(now_ms: int | None = None) -> None:
             print("[LIFECYCLE SEND ERROR]", event.kind, event.trade_id, exc)
             sent = False
         if not sent:
-            print("[LIFECYCLE] not delivered, will retry:", event.kind, event.trade_id)
-            blocked.add(event.trade_id)
-            continue
+            state.retry_after_ms = now_ms + LIFECYCLE_RETRY_COOLDOWN_MS
+            save_lifecycle_state(LIFECYCLE_STATE_FILE, state)
+            print("[LIFECYCLE] delivery deferred; cooldown_seconds=300")
+            return  # Stop the batch on first failure; preserve pending IDs.
+        state.retry_after_ms = 0
         mark_notified(state, event)
         save_lifecycle_state(LIFECYCLE_STATE_FILE, state)
         print("[LIFECYCLE]", event.kind, event.symbol, event.trade_id)
