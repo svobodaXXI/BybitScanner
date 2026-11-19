@@ -238,7 +238,7 @@ def find_unique_legacy_frozen_source_id(original: Mapping) -> str | None:
                 if scanned > LEGACY_SOURCE_MAX_RECORDS:
                     return None
                 if path.is_symlink() or path.stat().st_size > 65_536:
-                    continue
+                    return None  # Uninspected metadata could hide a second source.
                 try:
                     candidate = json.loads(path.read_text(encoding="utf-8"))
                 except (ValueError, TypeError):
