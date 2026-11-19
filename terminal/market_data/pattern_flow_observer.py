@@ -159,6 +159,55 @@ class EarlyPatternFlowPreview:
     trading_authorized: bool = False
 
 
+
+# Previewing a warming candidate is NOT canonical entry eligibility. Only
+# wedges and the L-shape have established passive pre-retest states.
+_PRE_RETEST_PREVIEW_PHASES = {
+    "Falling Wedge": ("WAITING_BREAKOUT", "WAITING_RETEST"),
+    "Rising Wedge": ("WAITING_BREAKOUT", "WAITING_RETEST"),
+    "L-shape": ("L_SHAPE_WAITING_RETEST",),
+}
+
+
+def _early_preview_identity(record) -> tuple[str, int, str, str] | None:
+    """Verify existing frozen host identity without extending entry scope."""
+    scope = existing_pattern_entry_scope(record)
+    if scope is not None:
+        return (scope.candidate_id, scope.state_revision,
+                scope.symbol, scope.direction)
+    try:
+        snapshot, state = record.signal_snapshot, record.robot_state
+        if (record.status != "APPROVED"
+                or not isinstance(snapshot, Mapping)
+                or not isinstance(state, Mapping)):
+            return None
+        pattern = snapshot.get("pattern")
+        if state.get("phase") not in _PRE_RETEST_PREVIEW_PHASES.get(pattern, ()):
+            return None
+        direction = state.get("direction")
+        expected = {
+            "Falling Wedge": "LONG",
+            "Rising Wedge": "SHORT",
+        }.get(pattern)
+        if pattern == "L-shape":
+            terms = snapshot.get("l_shape")
+            if not isinstance(terms, Mapping):
+                return None
+            expected = terms.get("direction")
+        candidate_id, revision = record.candidate_id, record.state_revision
+        symbol = record.symbol.value
+        if (direction not in ("LONG", "SHORT")
+                or direction != expected
+                or not isinstance(candidate_id, str) or not candidate_id
+                or type(revision) is not int or revision < 0
+                or not isinstance(symbol, str) or not symbol.isalnum()
+                or not symbol.endswith("USDT")):
+            return None
+        return (candidate_id, revision, symbol, direction)
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
 class PatternFlowObserver:
     """Source-complete two-minute evidence cache bound to existing pattern IDs."""
 
@@ -264,23 +313,24 @@ class PatternFlowObserver:
         trade authority. A bounded observed tape is not source-complete;
         missing prints are not silently reconstructed.
         """
-        scope = existing_pattern_entry_scope(record)
+        identity = _early_preview_identity(record)
         now_ms = self._clock()
-        if scope is None or type(now_ms) is not int or now_ms < 2 * EARLY_PREVIEW_WINDOW_MS:
+        if identity is None or type(now_ms) is not int or now_ms < 2 * EARLY_PREVIEW_WINDOW_MS:
             return None
+        candidate_id, revision, symbol, direction = identity
         list_contexts = getattr(self._hub, "list_flow_contexts", None)
         if list_contexts is None:
             list_contexts = getattr(self._hub, "list_contexts", None)
         if not callable(list_contexts):
             return None
         context = next((ctx for ctx in list_contexts()
-                        if ctx.symbol == scope.symbol), None)
+                        if ctx.symbol == symbol), None)
         if (context is None or context.trades_subscription_state != "SUBSCRIBED"
                 or context.trade_bootstrap_complete is not True):
             return None
         snapshot = context.impulse_observation.snapshot()
         if (not isinstance(snapshot, dict)
-                or snapshot.get("symbol") != scope.symbol
+                or snapshot.get("symbol") != symbol
                 or type(snapshot.get("generation")) is not int
                 or type(snapshot.get("invalid_frames")) is not int
                 or snapshot["invalid_frames"] != 0
@@ -309,7 +359,7 @@ class PatternFlowObserver:
             seen.add(item.trade_id)
             last_event_ms = item.timestamp_ms
             trade = TakerPrint(
-                scope.symbol, item.trade_id, item.timestamp_ms,
+                symbol, item.trade_id, item.timestamp_ms,
                 item.side, item.price, item.quantity,
             )
             if item.timestamp_ms < middle:
@@ -322,10 +372,10 @@ class PatternFlowObserver:
             return None
 
         previous_window = aggregate_taker_prints(
-            tuple(prior), symbol=scope.symbol, start_ms=start, end_ms=middle,
+            tuple(prior), symbol=symbol, start_ms=start, end_ms=middle,
         )
         current_window = aggregate_taker_prints(
-            tuple(current), symbol=scope.symbol, start_ms=middle, end_ms=now_ms,
+            tuple(current), symbol=symbol, start_ms=middle, end_ms=now_ms,
         )
         if previous_window is None or current_window is None:
             return None
@@ -333,9 +383,9 @@ class PatternFlowObserver:
             previous_window, current_window, decision_ms=now_ms,
         )
         return EarlyPatternFlowPreview(
-            candidate_id=scope.candidate_id,
-            state_revision=scope.state_revision,
-            symbol=scope.symbol, direction=scope.direction,
+            candidate_id=candidate_id,
+            state_revision=revision,
+            symbol=symbol, direction=direction,
             known_at_ms=now_ms, transport_generation=snapshot["generation"],
             transition=transition,
             gap_or_truncation=snapshot.get("gap_or_truncation") is not False,
