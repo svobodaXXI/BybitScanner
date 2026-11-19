@@ -20,9 +20,6 @@ from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 import tempfile
-import json
-import statistics
-import warnings
 import threading
 import time
 import unittest
@@ -40,7 +37,6 @@ from tests.test_terminal_paper_runtime import (
     _set_admission,
 )
 from terminal.runtime.paper_runtime import PaperRuntime
-from terminal.protection_timing import capture_callback
 from dataclasses import replace
 
 
@@ -226,6 +222,20 @@ class OwnerThreadProtectionCloseTests(unittest.TestCase):
                     ACCOUNT, Symbol(SYMBOL),
                 )
                 self.assertEqual(len(historical), 25)
+                # The hot SQL must use its partial active-status index, not
+                # scan terminal history or sort all rows per market event.
+                plan = [
+                    row[3] for row in fixture.runtime.store._connection.execute(
+                        """EXPLAIN QUERY PLAN
+                           SELECT * FROM robot_candidates
+                           WHERE trading_account_id=? AND symbol=?
+                             AND status IN ('APPROVED', 'OPEN')
+                           ORDER BY approved_at_ms, candidate_id""",
+                        (ACCOUNT.value, SYMBOL),
+                    )
+                ]
+                self.assertTrue(any("robot_candidates_active_symbol" in step for step in plan), plan)
+                self.assertFalse(any("TEMP B-TREE" in step for step in plan), plan)
 
                 with patch.object(
                     sqlite_store, "_robot_candidate_from_row",
@@ -248,97 +258,6 @@ class OwnerThreadProtectionCloseTests(unittest.TestCase):
                     )
                 self.assertEqual(finalized, ())
                 self.assertIsNone(obligation)
-                self.assertEqual(fixture.session.calls, [])
-            finally:
-                fixture.runtime.close()
-
-    def test_offline_protection_owner_stage_profile(self):
-        """Non-gating diagnostic: real owner code, scratch DB, disjoint stage timing.
-
-        No production market rate or VPS evidence is inferred from this
-        synthetic workload. Pytest warning exposes medians in existing CI.
-        """
-        with tempfile.TemporaryDirectory() as temp:
-            fixture = _Fixture(temp)
-            try:
-                def sample():
-                    series = []
-                    for _ in range(70):
-                        with capture_callback() as trace:
-                            (_, obligation), elapsed_ms = fixture.event(
-                                bid="64249.5", ask="64250.5",
-                            )
-                        self.assertIsNone(obligation)
-                        series.append(trace.report("no-cross", elapsed_ms))
-                    values = sorted(x["callback_elapsed_ms"] for x in series)
-                    return {
-                        "p50_ms": round(statistics.median(values), 3),
-                        "p95_ms": round(values[int(len(values) * 0.95) - 1], 3),
-                        "cpu_p50_ms": round(statistics.median(
-                            x["callback_cpu_ms"] for x in series
-                            if x["callback_cpu_ms"] is not None), 3),
-                        "stages_p50_ms": {
-                            stage: round(statistics.median(
-                                x["stages_ms"][stage] for x in series), 3)
-                            for stage in ("state", "limit", "fill", "protection")
-                        },
-                    }
-
-                baseline = sample()
-                for index in range(300):
-                    candidate, _ = fixture.runtime.store.create_robot_candidate(
-                        candidate_id=f"profile-historical-{index}",
-                        trading_account_id=ACCOUNT, symbol=Symbol(SYMBOL),
-                        status="APPROVED",
-                        signal_snapshot={"symbol": SYMBOL, "historical": index},
-                        approved_at_ms=1000 + index,
-                        updated_at_ms=1000 + index,
-                    )
-                    fixture.runtime.store.save_robot_candidate_state(
-                        candidate.candidate_id, status="INVALIDATED",
-                        robot_state={"phase": "INVALIDATED"},
-                        expected_revision=candidate.state_revision,
-                        updated_at_ms=2000 + index,
-                    )
-                history = sample()
-                # Deterministic proof that SQL skips terminal history, rather
-                # than filtering statuses after traversing the symbol index.
-                plan = [
-                    row[3] for row in fixture.runtime.store._connection.execute(
-                        """EXPLAIN QUERY PLAN
-                           SELECT * FROM robot_candidates
-                           WHERE trading_account_id=? AND symbol=?
-                             AND status IN ('APPROVED', 'OPEN')
-                           ORDER BY approved_at_ms, candidate_id""",
-                        (ACCOUNT.value, SYMBOL),
-                    )
-                ]
-                self.assertTrue(any("robot_candidates_active_symbol" in step for step in plan), plan)
-                self.assertFalse(any("TEMP B-TREE" in step for step in plan), plan)
-                for index in range(12):
-                    fixture.runtime.store.create_robot_candidate(
-                        candidate_id=f"profile-live-{index}",
-                        trading_account_id=ACCOUNT, symbol=Symbol(SYMBOL),
-                        status="APPROVED",
-                        signal_snapshot={"symbol": SYMBOL, "active": index},
-                        approved_at_ms=3000 + index,
-                        updated_at_ms=3000 + index,
-                    )
-                active = sample()
-                self.assertEqual(len(fixture.runtime.store.load_robot_candidates_for_symbol(
-                    ACCOUNT, Symbol(SYMBOL))), 313)
-                self.assertEqual(len(fixture.runtime.store.load_active_robot_candidates_for_symbol(
-                    ACCOUNT, Symbol(SYMBOL))), 13)
-                warnings.warn(
-                    "PAPER_OFFLINE_STAGE_PROFILE " + json.dumps({
-                        "baseline_one_open": baseline,
-                        "after_300_terminal": history,
-                        "after_12_approved": active,
-                        "samples_each": 70,
-                        "data": "scratch-SQLite-offline-no-cross-synthetic",
-                    }, sort_keys=True), RuntimeWarning,
-                    stacklevel=1,
-                )
                 self.assertEqual(fixture.session.calls, [])
             finally:
                 fixture.runtime.close()
