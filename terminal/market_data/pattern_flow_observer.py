@@ -22,6 +22,7 @@ from robot_entry_flow_evidence import (
 )
 from terminal.domain.models import TradingAccountId
 from terminal.market_data.impulse_observation import ObservedPrint
+from terminal.market_data.pattern_flow_shadow_evidence import window_digest
 from terminal.market_data.impulse_producer import certified_snapshot
 from terminal.persistence.sqlite_store import SQLiteStore
 
@@ -157,6 +158,7 @@ class EarlyPatternFlowPreview:
     gap_or_truncation: bool
     source_complete: bool = False
     trading_authorized: bool = False
+    window_sha256: str = ""  # raw-tape binding, not source-completeness proof
 
 
 
@@ -382,6 +384,10 @@ class PatternFlowObserver:
         transition = compare_flow_windows(
             previous_window, current_window, decision_ms=now_ms,
         )
+        try:
+            tape_digest = window_digest(snapshot["prints"], now_ms)
+        except ValueError:
+            tape_digest = ""  # descriptive preview remains non-authoritative
         return EarlyPatternFlowPreview(
             candidate_id=candidate_id,
             state_revision=revision,
@@ -389,6 +395,7 @@ class PatternFlowObserver:
             known_at_ms=now_ms, transport_generation=snapshot["generation"],
             transition=transition,
             gap_or_truncation=snapshot.get("gap_or_truncation") is not False,
+            window_sha256=tape_digest,
         )
 
     def get(self, record) -> CandidateBoundFlowEvidence | None:
