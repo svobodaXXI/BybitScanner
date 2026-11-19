@@ -5,7 +5,10 @@ from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from robot_entry_flow_evidence import ExistingPatternEntryScope, match_existing_pattern_flow
+from robot_entry_flow_evidence import (
+    ExistingPatternEntryScope, existing_pattern_entry_scope,
+    match_existing_pattern_flow,
+)
 from terminal.market_data.pattern_flow_observer import (
     PatternFlowObserver, pattern_flow_enabled, PATTERN_FLOW_PAPER_OPT_IN,
     source_coverage_audit,
@@ -106,6 +109,40 @@ class ObserverTests(unittest.TestCase):
             ))
             # No modification of the closed-M1 certified cache or entry gate.
             self.assertIsNone(observer.get(_candidate()))
+            # Sub-minute flow is observable while an approved Wedge or
+            # L-shape is still waiting; this never upgrades entry eligibility.
+            for pattern, phase, direction, frozen in (
+                ("Falling Wedge", "WAITING_BREAKOUT", "LONG",
+                 {"pattern": "Falling Wedge"}),
+                ("Falling Wedge", "WAITING_RETEST", "LONG",
+                 {"pattern": "Falling Wedge"}),
+                ("Rising Wedge", "WAITING_BREAKOUT", "SHORT",
+                 {"pattern": "Rising Wedge"}),
+                ("Rising Wedge", "WAITING_RETEST", "SHORT",
+                 {"pattern": "Rising Wedge"}),
+                ("L-shape", "L_SHAPE_WAITING_RETEST", "LONG",
+                 {"pattern": "L-shape", "l_shape": {"direction": "LONG"}}),
+            ):
+                with self.subTest(pattern=pattern, phase=phase):
+                    host = _candidate(direction=direction, phase=phase)
+                    host.signal_snapshot = frozen
+                    self.assertIsNone(existing_pattern_entry_scope(host))
+                    early = observer.early_preview(host)
+                    self.assertIsNotNone(early)
+                    self.assertEqual((early.candidate_id, early.state_revision),
+                                     ("pattern-1", 4))
+                    self.assertEqual(early.direction, direction)
+                    self.assertEqual(early.known_at_ms, now)
+                    self.assertFalse(early.source_complete)
+                    self.assertFalse(early.trading_authorized)
+                    self.assertIsNone(observer.get(host))
+                    self.assertFalse(match_existing_pattern_flow(
+                        ExistingPatternEntryScope(
+                            host.candidate_id, "BTCUSDT", pattern, direction,
+                            host.state_revision, "APPROVED", phase,
+                        ), early, now_ms=now,
+                    ))
+            self.assertEqual(rest.requests, [])
             source.mark_gap()
             self.assertIsNone(observer.early_preview(_candidate()))
         finally:
@@ -151,7 +188,20 @@ class ObserverTests(unittest.TestCase):
                 SimpleNamespace(**{**vars(_candidate()),
                     "robot_state": {"direction": "SHORT", "phase": "RETEST_DETECTED"}}),
                 SimpleNamespace(**{**vars(_candidate()),
-                    "robot_state": {"direction": "LONG", "phase": "WAITING_BREAKOUT"}}),
+                    "robot_state": {"direction": "LONG", "phase": "EXPIRED_AT_APEX"}}),
+                # Valid warm-up phase is still not enough without frozen
+                # direction and exact supported host-pattern identity.
+                _candidate(direction="SHORT", phase="WAITING_BREAKOUT"),
+                SimpleNamespace(**{**vars(_candidate(phase="WAITING_RETEST")),
+                    "signal_snapshot": {"pattern": "Rising Wedge"}}),
+                SimpleNamespace(**{**vars(_candidate(phase="L_SHAPE_WAITING_RETEST")),
+                    "signal_snapshot": {"pattern": "L-shape"}}),
+                SimpleNamespace(**{**vars(_candidate(phase="L_SHAPE_WAITING_RETEST")),
+                    "signal_snapshot": {"pattern": "L-shape",
+                                        "l_shape": {"direction": "SHORT"}}}),
+                SimpleNamespace(**{**vars(_candidate(phase="WAITING_RETEST")),
+                    "signal_snapshot": {"pattern": "MIRROR",
+                                        "mirror_entry": {"direction": "LONG"}}}),
             ):
                 self.assertIsNone(observer.early_preview(bad))
             context.trade_bootstrap_complete = False
