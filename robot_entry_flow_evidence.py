@@ -936,9 +936,15 @@ def observe_post_breakout_impulse_timing(
             or not isinstance(evidence.transition, FlowTransition)
             or evidence.transition.known_at_ms != evidence.decision_ms):
         return result("WAIT_SOURCE", "FLOW_PROVENANCE_UNPROVEN")
+    trans = evidence.transition
+    delta, movement = trans.current_delta_fraction, trans.current_price_change_bps
+    if (not isinstance(delta, Decimal) or not delta.is_finite()
+            or not isinstance(movement, Decimal) or not movement.is_finite()):
+        return result("WAIT_DIRECTION", "DIRECTIONAL_TAKER_WAVE_NOT_PROVEN")
     supportive = (
-        evidence.transition.buy_wave_accelerating
-        if direction == "LONG" else evidence.transition.sell_wave_accelerating
+        trans.buy_wave_accelerating and delta > ZERO and movement > ZERO
+        if direction == "LONG"
+        else trans.sell_wave_accelerating and delta < ZERO and movement < ZERO
     )
     if not supportive:
         return result("WAIT_DIRECTION", "DIRECTIONAL_TAKER_WAVE_NOT_PROVEN")
