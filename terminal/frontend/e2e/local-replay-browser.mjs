@@ -852,6 +852,53 @@ try {
   await page.mouse.move(620, 660); // Crosshair must not create DMI dots.
   await page.screenshot({ path: join(screenshotDir, "machine-time-browser.png"), fullPage: true });
 
+  // Reuse the *actual loopback JSON archive* saved by the owner import above.
+  // A Windows protocol launch may reuse the same browser tab and change only
+  // #locator. The second losing episode must replace the first without reload.
+  const secondEpisodeId = "te_" + "b".repeat(24);
+  const localOrigin = new URL(localUrl).origin;
+  const storedSecond = await page.request.post(
+    localOrigin + "/local-replay/paper-episode/import", {
+      headers: {
+        "Origin": localOrigin, "Sec-Fetch-Site": "same-origin",
+        "Content-Type": "application/json", "X-Local-Paper-Import": "explicit-file",
+      },
+      data: JSON.stringify({
+        ...episodeFacts,
+        trade_episode_id: secondEpisodeId,
+        realized_price_pnl_usdt: "-1.9",
+        pnl_usdt: "-2.0",
+        execution_allocations: episodeFacts.execution_allocations.map((item, index) => ({
+          ...item, execution_id: "second-" + index, order_id: "second-order-" + index,
+        })),
+      }),
+    },
+  );
+  assert.equal(storedSecond.status(), 200, "second exact PAPER episode persists locally");
+  assert.equal((await storedSecond.json()).trade_episode_id, secondEpisodeId);
+
+  // Original M5 fixture is a separately marked public MARKET_ONLY source.
+  // Reopening local facts must never invent PAPER candles or Robot decisions.
+  await page.route("**/local-replay/history?*", async route => {
+    await route.fulfill({ status: 200, contentType: "application/json",
+      body: JSON.stringify(history) });
+  });
+  await page.goto(localUrl + "#locator=" + episodeFacts.trade_episode_id,
+    { waitUntil: "networkidle" });
+  const reopened = page.getByRole("status", { name: "PAPER факты сделки" });
+  await reopened.waitFor();
+  assert.match(await reopened.innerText(), /PnL: -1,00 USDT/);
+  await page.waitForFunction(() =>
+    document.querySelector('[aria-label="PAPER факты сделки"]')?.textContent?.includes("Свечи M5 сопоставлены"));
+  await page.evaluate(id => { window.location.hash = "#locator=" + id; }, secondEpisodeId);
+  await page.waitForFunction(() =>
+    document.querySelector('[aria-label="PAPER факты сделки"]')?.textContent?.includes("PnL: -2,00 USDT"));
+  assert.doesNotMatch(await reopened.innerText(), /PnL: -1,00 USDT/,
+    "a second losing episode must not retain the first episode's PnL");
+  await page.waitForFunction(() =>
+    document.querySelector('[aria-label="PAPER факты сделки"]')?.textContent?.includes("Свечи M5 сопоставлены"));
+  assert.equal(await page.getByRole("status", { name: "PAPER факты сделки" }).count(), 1);
+
   // Each Apply can request public history. Only the deliberately mocked
   // HTTP 502 errors are allowed; unrelated runtime failures are forbidden.
   const public502 = "Failed to load resource: the server responded with a status of 502 (Bad Gateway)";
