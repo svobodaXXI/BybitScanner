@@ -126,6 +126,14 @@ def collect_new_lifecycle_events(store, state: LifecycleState) -> list[Lifecycle
                 raise ValueError("lifecycle watermark cannot be verified")
             known.append((ms, trade_id))
         candidate = min(known)
+        if known != sorted(known):
+            # Legacy 200-ID rollover could replay evicted CLOSED posts and
+            # append older IDs after newer ones. A minimum-based floor then
+            # traps that rotating cache in another replay cycle. Fence the
+            # highest *confirmed sent* event instead; only strictly newer
+            # events remain eligible. This also repairs an already persisted
+            # too-low floor without replaying the legacy backlog.
+            candidate = max(known)
         prior = getattr(state, floor_field)
         if prior is None or candidate > prior:
             setattr(state, floor_field, candidate)
