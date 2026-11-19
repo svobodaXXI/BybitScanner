@@ -93,6 +93,49 @@ class PairedAdapterTests(unittest.TestCase):
                     agent.pair_device("owner-laptop", "B" * 64)
                 self.assertEqual(config_path.read_bytes(), content)
 
+    def test_packaged_origin_is_the_reviewed_monolith_origin(self):
+        from tools.vps_simulator_device_provision import ORIGIN
+        from tools.build_machine_time_package import VIEWER
+        pinned = (VIEWER / "trusted-statistics-origin.txt").read_text(encoding="ascii")
+        self.assertEqual(pinned, ORIGIN + "\n")
+
+    def test_laptop_pins_reviewed_package_origin_without_manual_file_copy(self):
+        with tempfile.TemporaryDirectory() as root:
+            base = Path(root)
+            (base / "trusted-statistics-origin.txt").write_text(
+                "https://example.test\n", encoding="ascii",
+            )
+            path = base / "simulator-v2-data" / "launch-bridge.json"
+            with patch.object(agent, "HERE", base), \
+                 patch.object(agent, "CONFIG_PATH", path), \
+                 patch.object(agent, "_send", return_value={"ok": True, "state": "IDLE"}) as probe, \
+                 patch.object(agent, "install_if_configured", return_value=True) as install:
+                agent.pair_device("owner-laptop", "B" * 64)
+                self.assertEqual(agent.read_config(), {
+                    "origin": "https://example.test",
+                    "device_id": "owner-laptop", "token": "B" * 64,
+                })
+                self.assertEqual(probe.call_count, 1)
+                self.assertIn("device_id=owner-laptop", probe.call_args.kwargs["path"])
+                install.assert_called_once()
+                self.assertFalse((path.parent / "trusted-statistics-origin.txt").exists())
+
+    def test_package_pin_missing_or_invalid_never_creates_device_token(self):
+        with tempfile.TemporaryDirectory() as root:
+            base = Path(root)
+            path = base / "simulator-v2-data" / "launch-bridge.json"
+            packaged = base / "trusted-statistics-origin.txt"
+            with patch.object(agent, "HERE", base), \
+                 patch.object(agent, "CONFIG_PATH", path), \
+                 patch.object(agent, "_send") as send:
+                with self.assertRaisesRegex(agent.AgentConfigError, "not_installed"):
+                    agent.pair_device("owner-laptop", "B" * 64)
+                packaged.write_text("http://evil.test\n", encoding="ascii")
+                with self.assertRaisesRegex(agent.AgentConfigError, "invalid_trusted"):
+                    agent.pair_device("owner-laptop", "B" * 64)
+                self.assertFalse(path.exists())
+                send.assert_not_called()
+
     def test_pairing_rejects_missing_origin_or_unverified_token_without_side_effects(self):
         with tempfile.TemporaryDirectory() as root:
             folder = Path(root) / "simulator-v2-data"
