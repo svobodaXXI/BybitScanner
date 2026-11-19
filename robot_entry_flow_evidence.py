@@ -819,6 +819,127 @@ def match_existing_pattern_flow(
     )
 
 
+def canonical_host_breakout_known_at_ms(record) -> int | None:
+    """Derive post-breakout availability from the EXISTING frozen Robot state.
+
+    Wedge uses the durable breakout candle index + immutable Scanner cursor;
+    L-shape/MIRROR use their validated frozen family-specific terms. Never
+    trust a caller-supplied breakout time or infer a Box breakout from its
+    entry-ready phase. This is research provenance, NOT entry authority.
+    """
+    try:
+        snapshot, state = record.signal_snapshot, record.robot_state
+        if (record.status != "APPROVED"
+                or not isinstance(snapshot, Mapping)
+                or not isinstance(state, Mapping)):
+            return None
+        pattern = snapshot.get("pattern")
+        phase = state.get("phase")
+        direction = state.get("direction")
+        if (state.get("pattern") != pattern
+                or direction not in ("LONG", "SHORT")):
+            return None
+
+        if pattern in ("Falling Wedge", "Rising Wedge"):
+            import robot_state_machine
+            from scanner_geometry_cursor import project_latest_geometry_index
+
+            if (state.get("state_version") != robot_state_machine.STATE_VERSION
+                    or direction != _FIXED_PATTERN_DIRECTIONS[pattern]
+                    or phase not in ("WAITING_RETEST", "RETEST_DETECTED")):
+                return None
+            anchor = snapshot.get("scanner_geometry_cursor")
+            if (not isinstance(anchor, Mapping)
+                    or anchor.get("version") != "1.0"
+                    or str(anchor.get("timeframe")) != "1"):
+                return None
+            first_index = anchor.get("geometry_index")
+            source_time = anchor.get("source_candle_time_ms")
+            breakout_index = state.get("breakout_index")
+            cursor = state.get("geometry_cursor")
+            if (type(first_index) is not int or first_index < 0
+                    or type(source_time) is not int or source_time <= 0
+                    or source_time % 60_000
+                    or type(breakout_index) is not int
+                    or breakout_index <= first_index
+                    or type(cursor) is not int or cursor < breakout_index):
+                return None
+            geometry = snapshot.get("robot_geometry", snapshot.get("geometry"))
+            apex = geometry.get("apex") if isinstance(geometry, Mapping) else None
+            apex_index = apex.get("index") if isinstance(apex, Mapping) else None
+            if (apex_index is None
+                    or Decimal(str(apex_index)) <= breakout_index):
+                return None
+            if phase == "WAITING_RETEST" and state.get("retest_index") is not None:
+                return None
+            if phase == "RETEST_DETECTED":
+                retest = state.get("retest_index")
+                if (type(retest) is not int
+                        or not breakout_index < retest <= cursor):
+                    return None
+            # Existing geometry-state validator owns pattern/direction/lines.
+            robot_state_machine.boundary_price(
+                snapshot,
+                side="upper" if direction == "LONG" else "lower",
+                geometry_index=breakout_index,
+            )
+            breakout_start = source_time + (
+                breakout_index - first_index
+            ) * 60_000
+            if project_latest_geometry_index(
+                snapshot, latest_closed_candle_time_ms=breakout_start,
+            ) != breakout_index:
+                return None
+            return breakout_start + 60_000  # available only after M1 close
+
+        if pattern in ("L-shape", "MIRROR"):
+            import robot_l_shape
+
+            if (state.get("state_version") != robot_l_shape.STATE_VERSION
+                    or phase not in _POST_BREAKOUT_RESEARCH_PHASES[pattern]):
+                return None
+            terms = robot_l_shape.frozen_terms(snapshot)
+            if (terms.direction != direction
+                    or state.get("breakout_time_ms") != terms.breakout_time_ms):
+                return None
+            # MIRROR's confirmation must pass its existing family contract.
+            initial, _event = robot_l_shape.initialize_state({
+                "status": "APPROVED", "signal_snapshot": snapshot,
+            })
+            if initial.get("phase") not in _POST_BREAKOUT_RESEARCH_PHASES[pattern]:
+                return None
+            interval = int(terms.source_timeframe) * 60_000
+            if terms.breakout_time_ms <= 0 or terms.breakout_time_ms % interval:
+                return None
+            last = state.get("last_candle_time_ms")
+            if type(last) is not int or last < terms.breakout_time_ms:
+                return None
+            if phase == "RETEST_DETECTED":
+                retest = state.get("retest_time_ms")
+                if (type(retest) is not int or retest < terms.breakout_time_ms + interval
+                        or last < retest):
+                    return None
+            elif state.get("retest_time_ms") is not None:
+                return None
+            return terms.breakout_time_ms + interval
+
+        # Box source-plan and linked grid do not yet persist an equivalent
+        # certified realization-side breakout time: UNKNOWN, never fabricated.
+        return None
+    except (AttributeError, KeyError, TypeError, ValueError,
+            ArithmeticError, OverflowError):
+        return None
+    except Exception as error:
+        # Only known pure contract failures from existing adapters are
+        # expected; other exceptions are not promoted to research entries.
+        if type(error).__name__ in (
+            "RobotStateMachineError", "ScannerGeometryCursorError",
+            "RobotLShapeError",
+        ):
+            return None
+        raise
+
+
 # Research-only early entry candidate: the authoritative Robot entry phases
 # above deliberately stay unchanged until the protected owner path is proven.
 # WAITING_RETEST is after a pattern breakout, not a permission to send an order.
@@ -858,16 +979,18 @@ def observe_post_breakout_impulse_timing(
 ) -> PatternImpulseTimingResearch | None:
     """Prefer causal taker momentum after the host breakout, without a retest gate.
 
-    The caller must independently prove the ORIGINAL pattern's realization
-    boundary and its breakout timestamp: this function cannot validate
-    geometry from a caller-supplied timestamp. Only a frozen APPROVED host
+    The ORIGINAL pattern's frozen lifecycle must independently attest
+    its breakout and match the supplied timestamp. Only a frozen APPROVED host
     and a complete, bound two-closed-M1 flow may suggest research timing.
     A suggestion NEVER creates an order, changes a Robot phase or implies
     that earlier execution or the replay's hypothetical fill is possible.
     """
-    if (type(breakout_known_at_ms) is not int or breakout_known_at_ms < 0
+    canonical_breakout_ms = canonical_host_breakout_known_at_ms(record)
+    if (canonical_breakout_ms is None
+            or type(breakout_known_at_ms) is not int
+            or breakout_known_at_ms != canonical_breakout_ms
             or type(decision_ms) is not int
-            or decision_ms < breakout_known_at_ms):
+            or decision_ms < canonical_breakout_ms):
         return None
     try:
         snapshot, state = record.signal_snapshot, record.robot_state
