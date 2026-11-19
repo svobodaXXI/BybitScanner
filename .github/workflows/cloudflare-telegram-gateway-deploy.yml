@@ -1,0 +1,19 @@
+name: Cloudflare Telegram Gateway deploy
+
+# GitHub exposes manual workflow dispatch only when this file exists on the
+# default branch. Production implementation lives on stable/adfb50b-forward.
+# This default-branch stub MUST NOT deploy; select the reviewed stable ref.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  wrong-branch-guard:
+    if: github.ref != 'refs/heads/stable/adfb50b-forward'
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "::error::Select stable/adfb50b-forward for the reviewed Gateway workflow."
+          exit 1
