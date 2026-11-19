@@ -301,6 +301,20 @@ class OwnerThreadProtectionCloseTests(unittest.TestCase):
                         updated_at_ms=2000 + index,
                     )
                 history = sample()
+                # Deterministic proof that SQL skips terminal history, rather
+                # than filtering statuses after traversing the symbol index.
+                plan = [
+                    row[3] for row in fixture.runtime.store._connection.execute(
+                        """EXPLAIN QUERY PLAN
+                           SELECT * FROM robot_candidates
+                           WHERE trading_account_id=? AND symbol=?
+                             AND status IN ('APPROVED', 'OPEN')
+                           ORDER BY approved_at_ms, candidate_id""",
+                        (ACCOUNT.value, SYMBOL),
+                    )
+                ]
+                self.assertTrue(any("robot_candidates_active_symbol" in step for step in plan), plan)
+                self.assertFalse(any("TEMP B-TREE" in step for step in plan), plan)
                 for index in range(12):
                     fixture.runtime.store.create_robot_candidate(
                         candidate_id=f"profile-live-{index}",
