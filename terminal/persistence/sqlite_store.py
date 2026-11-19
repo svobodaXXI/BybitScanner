@@ -1213,6 +1213,10 @@ class SQLiteStore:
     _ROBOT_CANDIDATE_READ_INDEXES = (
         ("robot_candidates_account_symbol", "robot_candidates(trading_account_id, symbol)"),
         ("robot_candidates_account_status", "robot_candidates(trading_account_id, status)"),
+        # Hot protection path: skip terminal signal history and an ORDER BY sort.
+        ("robot_candidates_active_symbol",
+         "robot_candidates(trading_account_id, symbol, approved_at_ms, candidate_id) "
+         "WHERE status IN ('APPROVED', 'OPEN')"),
     )
 
     @staticmethod
