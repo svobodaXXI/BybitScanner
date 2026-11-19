@@ -41,7 +41,7 @@ def _send_outbound(post):
             code = "PERMANENT_CONFIG"
         elif status == 429:
             code = "RATE_LIMIT"
-            value = response.headers.get("Retry-After") if isinstance(response.headers, dict) else None
+            value = response.headers.get("Retry-After") if hasattr(response.headers, "get") else None
             delay = int(value) if isinstance(value, str) and value.isascii() and value.isdecimal() and len(value) <= 4 else None
             if attempt == 0 and delay is not None and delay <= 2:
                 time.sleep(delay)
