@@ -142,6 +142,52 @@ class CollectLifecycleEventsTests(unittest.TestCase):
         self.assertEqual(collect_new_lifecycle_events(store, state), [])
         self.assertEqual(state.closed_floor, (INIT_MS + 7, "t0025"))
 
+
+    def test_rotated_legacy_cache_fences_historical_closes_and_keeps_future(self):
+        # Legacy 200-ID bug sends t0..t42 again after sending 243 closes.
+        # The newest 200 entries are therefore NOT ordered by close time:
+        # [t86..t242, t0..t42]. The old min-floor algorithm replays t43..t85.
+        trades = tuple(
+            _trade(f"t{i:04d}", INIT_MS, INIT_MS + 100 + i,
+                   exit_reason="EMERGENCY_CLOSE") for i in range(243))
+        cache = ([f"t{i:04d}" for i in range(86, 243)]
+                 + [f"t{i:04d}" for i in range(43)])
+        self.assertEqual(len(cache), REMEMBERED_TRADE_IDS)
+        store = _store(*trades)
+        state = LifecycleState(INIT_MS, closed=cache)
+        self.assertEqual(collect_new_lifecycle_events(store, state), [])
+        self.assertEqual(state.closed_floor, (INIT_MS + 342, "t0242"))
+
+        # A prior rollout could already have persisted the wrong low floor.
+        state.closed_floor = (INIT_MS + 100, "t0000")
+        self.assertEqual(collect_new_lifecycle_events(store, state), [])
+        self.assertEqual(state.closed_floor, (INIT_MS + 342, "t0242"))
+
+        future = _trade("t0243", INIT_MS, INIT_MS + 343,
+                        exit_reason="TAKE")
+        self.assertEqual(_kinds(collect_new_lifecycle_events(
+            _store(*trades, future), state)), [(EVENT_CLOSED, "t0243")])
+
+    def test_rotated_same_millisecond_cache_suppresses_replay_after_restart(self):
+        trades = tuple(
+            _trade(f"t{i:04d}", INIT_MS, INIT_MS + 500,
+                   exit_reason="STOP") for i in range(243))
+        cache = ([f"t{i:04d}" for i in range(86, 243)]
+                 + [f"t{i:04d}" for i in range(43)])
+        state = LifecycleState(INIT_MS, closed=cache)
+        store = _store(*trades)
+        self.assertEqual(collect_new_lifecycle_events(store, state), [])
+        self.assertEqual(state.closed_floor, (INIT_MS + 500, "t0242"))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "lifecycle.json"
+            save_lifecycle_state(path, state)
+            restarted = load_lifecycle_state(path, INIT_MS + 1000)
+        self.assertEqual(collect_new_lifecycle_events(store, restarted), [])
+        future = _trade("t0243", INIT_MS, INIT_MS + 500, exit_reason="STOP")
+        self.assertEqual(_kinds(collect_new_lifecycle_events(
+            _store(*trades, future), restarted)), [(EVENT_CLOSED, "t0243")])
+
     def test_old_late_close_does_not_rewind_watermark(self):
         trades = [_trade(f"t{i:04d}", INIT_MS + i, INIT_MS + i + 500,
                          exit_reason="TAKE") for i in range(255)]
