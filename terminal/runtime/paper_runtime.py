@@ -2166,10 +2166,10 @@ class PaperRuntime:
         re-evaluated the candidate's resting ENTRY (``entry_admission_version``).
         """
         linked: dict[str, object] = {}
-        for candidate in self.store.load_robot_candidates_for_symbol(
+        for candidate in self.store.load_active_robot_candidates_for_symbol(
             self._paper_account_id, symbol,
         ):
-            if candidate.status not in {"APPROVED", "OPEN"} or candidate.robot_state is None:
+            if candidate.robot_state is None:
                 continue
             phase = candidate.robot_state.get("phase")
             execution = candidate.robot_state.get("execution") or {}
