@@ -581,24 +581,21 @@ class CandidateBoundFlowEvidence:
 
 # Only established canonical Robot order-entry families. Do not equate a
 # visual Scanner signal or a BOX_PLAN_ONLY source with approved Robot ownership.
-# In particular, Double Top/Bottom and MIRROR share L-shape's LIMIT executor;
-# Ikigai Box enters through its protected mixed/grid owner, not that executor.
+# MIRROR uses L-shape's existing LIMIT executor; Ikigai Box uses its
+# protected grid owner. Double Top/Bottom are auxiliary-only after #1153
+# and cannot become a stand-alone impulse timing scope.
 _PATTERN_FLOW_PHASES = {
     "Falling Wedge": "RETEST_DETECTED",
     "Rising Wedge": "RETEST_DETECTED",
     "L-shape": "RETEST_DETECTED",
     "MIRROR": "RETEST_DETECTED",
-    "Double Top": "RETEST_DETECTED",
-    "Double Bottom": "RETEST_DETECTED",
     "IKIGAI_BOX": "BOX_ENTRY_READY",
 }
 _FIXED_PATTERN_DIRECTIONS = {
     "Falling Wedge": "LONG", "Rising Wedge": "SHORT",
-    "Double Top": "SHORT", "Double Bottom": "LONG",
 }
 _FROZEN_DIRECTION_TERMS = {
     "L-shape": "l_shape", "MIRROR": "mirror_entry",
-    "Double Top": "neckline_entry", "Double Bottom": "neckline_entry",
     "IKIGAI_BOX": "identity",
 }
 
@@ -618,7 +615,8 @@ def existing_pattern_entry_scope(record) -> ExistingPatternEntryScope | None:
         pattern = snapshot.get("pattern")
         phase = state.get("phase")
         direction = state.get("direction")
-        if (_PATTERN_FLOW_PHASES.get(pattern) != phase
+        if (pattern not in _PATTERN_FLOW_PHASES
+                or _PATTERN_FLOW_PHASES[pattern] != phase
                 or direction not in ("LONG", "SHORT")):
             return None
         expected_direction = _FIXED_PATTERN_DIRECTIONS.get(pattern)
@@ -668,7 +666,8 @@ def match_existing_pattern_flow(
             or not isinstance(evidence, CandidateBoundFlowEvidence)
             or type(now_ms) is not int):
         return False
-    if (_PATTERN_FLOW_PHASES.get(candidate.pattern) != candidate.phase
+    if (candidate.pattern not in _PATTERN_FLOW_PHASES
+            or _PATTERN_FLOW_PHASES[candidate.pattern] != candidate.phase
             or candidate.status != "APPROVED"
             or (_FIXED_PATTERN_DIRECTIONS.get(candidate.pattern)
                 not in (None, candidate.direction))
