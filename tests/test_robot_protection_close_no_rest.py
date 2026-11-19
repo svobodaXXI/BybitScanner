@@ -222,6 +222,20 @@ class OwnerThreadProtectionCloseTests(unittest.TestCase):
                     ACCOUNT, Symbol(SYMBOL),
                 )
                 self.assertEqual(len(historical), 25)
+                # The hot SQL must use its partial active-status index, not
+                # scan terminal history or sort all rows per market event.
+                plan = [
+                    row[3] for row in fixture.runtime.store._connection.execute(
+                        """EXPLAIN QUERY PLAN
+                           SELECT * FROM robot_candidates
+                           WHERE trading_account_id=? AND symbol=?
+                             AND status IN ('APPROVED', 'OPEN')
+                           ORDER BY approved_at_ms, candidate_id""",
+                        (ACCOUNT.value, SYMBOL),
+                    )
+                ]
+                self.assertTrue(any("robot_candidates_active_symbol" in step for step in plan), plan)
+                self.assertFalse(any("TEMP B-TREE" in step for step in plan), plan)
 
                 with patch.object(
                     sqlite_store, "_robot_candidate_from_row",
