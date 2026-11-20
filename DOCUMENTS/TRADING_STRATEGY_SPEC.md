@@ -127,10 +127,16 @@ arguments, not jointly mandatory gates):**
   same-bar/near-bar clusters, and *observed* convergence before a future cross
   as a testable precursor. Do not use a future crossing before it occurs; DI
   crossing numerical 20 differs from ADX itself exceeding 20.
-* **Reversal structures and candles:** Double Top/Bottom, hammer, hanging man,
-  engulfing, Morning/Evening Star and other **versioned, context-matched**
-  reversal evidence. They enhance existing host entries only and never become
-  independent trading signal families or orders.
+* **Reversal structures and candles:** Double Top/Bottom (auxiliary structures),
+  bullish/bearish engulfing, hammer, hanging man, Morning/Evening Star and
+  other **versioned, context-matched** reversal evidence. Doji is an added
+  **indecision-only** candle observation, never directional confirmation alone.
+  These observations enhance existing host entries only and never become
+  independent trading signal families or orders. The current Geometry exception
+  implements only bullish engulfing, Morning Star and smooth arc for a Falling
+  Wedge lower-edge case; the full initial catalog remains unresolved under
+  CR-TRADING-INTELLIGENCE-001. Reuse existing recognition before extending the
+  catalog; one underlying OHLC event has one PRICE_REVERSAL evidence group.
 
 **`ACCEPTED DESIGN` — pattern first, entry second.** Keep frozen host
 `candidate_id`, symbol, direction, geometry/realization-side breakout
