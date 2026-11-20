@@ -81,8 +81,9 @@ class FrozenWedgeArcCandlesTests(unittest.TestCase):
     def evaluate(cls, *, host=None, bars=None, flow=None, **kw):
         host = cls.host() if host is None else host
         direction = host.robot_state["direction"]
-        rows = (cls.bearish() if direction == "SHORT" else cls.bullish()
-                if bars is None else bars)
+        rows = bars if bars is not None else (
+            cls.bearish() if direction == "SHORT" else cls.bullish()
+        )
         arguments = dict(
             decision_ms=360_020, atr=Decimal("2"),
             max_boundary_distance_atr=Decimal("0.25"),
@@ -151,9 +152,8 @@ class FrozenWedgeArcCandlesTests(unittest.TestCase):
 
     def test_non_rounding_prices_do_not_attach_candles(self):
         rows = list(deepcopy(self.bullish()))
-        rows[2]["low"] = 99.0
-        rows[3]["low"] = 99.2
-        rows[4]["low"] = 99.3
+        # Down -> up -> down invalidates every 4-6-candle rounded arc.
+        rows[3]["low"] = 99.6
         result = self.evaluate(bars=tuple(rows))
         self.assertEqual(result.outcome, "ARC_NOT_OBSERVED")
         self.assertIsNone(result.confluence)
