@@ -31,6 +31,7 @@ from typing import Callable, Mapping, Protocol
 
 import mirror_retest_robot as mirror
 import robot_entry_limit
+from robot_entry_limit import IMPULSE_ENTRY_LIMIT_MAX_AGE_MS
 from robot_entry_flow_evidence import (
     CandidateBoundFlowEvidence, existing_pattern_entry_scope,
     match_existing_pattern_flow,
@@ -2042,6 +2043,34 @@ class RobotBreakoutMonitor:
         order = self._store().get_paper_limit(execution["limit_order_id"], self._account_id)
         if order is None or order.quantity <= 0:
             return False
+
+        if execution.get("entry_mode") == IMPULSE_EARLY_LIMIT_ENTRY_MODE:
+            intent = execution.get("impulse_entry_intent")
+            decision_ms = intent.get("decision_ms") if isinstance(intent, Mapping) else None
+            if type(decision_ms) is not int:
+                self._escalate_reconciliation(
+                    f"ROBOT_IMPULSE_ENTRY_CLOCK_UNPROVEN candidate_id={record.candidate_id}"
+                )
+                return False
+            if self._now_ms() - decision_ms > IMPULSE_ENTRY_LIMIT_MAX_AGE_MS:
+                if order.status not in INACTIVE_LIMIT_STATUSES:
+                    digest = hashlib.sha256(
+                        f"{record.candidate_id}\0impulse-expired-entry".encode("utf-8")
+                    ).hexdigest()[:32]
+                    result = self._action_executor.cancel_limit(
+                        PaperLimitCancelRequest(
+                            ClientActionId(f"robot-impulse-expiry-{digest}"),
+                            record.symbol.value, order.order_id.value,
+                        )
+                    )
+                    if getattr(result, "status", None) != CommandResultStatus.COMPLETED:
+                        return False
+                    refreshed = self._store().get_paper_limit(
+                        order.order_id.value, self._account_id,
+                    )
+                    if refreshed is None or refreshed.status not in INACTIVE_LIMIT_STATUSES:
+                        return False
+                    order = refreshed
 
         filled_fraction = min(order.filled_quantity / order.quantity, Decimal("1"))
         inactive = order.status in INACTIVE_LIMIT_STATUSES
