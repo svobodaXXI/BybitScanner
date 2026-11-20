@@ -20,7 +20,9 @@ from typing import Callable, Mapping
 
 from terminal.api.rest import TerminalCommandApi
 import robot_protection
-from terminal.application.command_identity import CommandIdentityCandidate
+from terminal.application.command_identity import (
+    CommandIdentityCandidate, robot_emergency_close_identity,
+)
 from terminal.application.robot_trade_ledger import prove_robot_open_trade_ledger
 from terminal.api.models import (
     ClientActionId, CloseAllCommandRequest, CloseAllCommandResponse, CommandResult, CommandResultStatus,
@@ -314,9 +316,16 @@ class RobotPaperActionExecutor:
         return self._runtime._dispatch_robot_command(lambda runtime: runtime._robot_amend_take(request))
 
     def full_close(self, request):
+        # A stable API ClientActionId does NOT deduplicate TradingApplication
+        # Market commands. Bind the monitor's precommitted command identity.
+        identity = robot_emergency_close_identity(
+            request.client_action_id.value, request.symbol,
+        )
         evidence = self._runtime._dispatch_robot_market_book(request.symbol)
         return self._runtime._dispatch_robot_command(
-            lambda runtime: runtime._robot_full_close(request, evidence=evidence)
+            lambda runtime: runtime._robot_full_close(
+                request, evidence=evidence, identity=identity,
+            )
         )
 
     def wedge_be_step(self, candidate_id: str, symbol: str, candle):
@@ -380,7 +389,10 @@ class _DirectRobotActionExecutor:
         return self._runtime._robot_amend_take(request)
 
     def full_close(self, request):
-        return self._runtime._robot_full_close(request)
+        identity = robot_emergency_close_identity(
+            request.client_action_id.value, request.symbol,
+        )
+        return self._runtime._robot_full_close(request, identity=identity)
 
 
 SCANNER_STOPPED = "SCANNER_STOPPED"
