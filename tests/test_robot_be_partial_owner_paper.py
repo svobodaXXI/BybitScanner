@@ -303,6 +303,117 @@ class RobotBePartialOwnerPaperTests(unittest.TestCase):
         )
 
 
+    def test_partial_then_native_stop_closes_full_trade_with_all_fills_and_fees(self):
+        """Authoritative STOP after a reduce-only partial must close only remaining lot.
+
+        Campaign risk/Diary must receive the sum of BOTH exits, not just the
+        last STOP event. Repeat event/restart must not double-book economics.
+        """
+        from tests.test_robot_paper_acceptance import _event_book
+
+        before = len(self.runtime.store.load_executions())
+        self.assertEqual(self.run_partial().status, CommandResultStatus.COMPLETED)
+        reconcile = self.runtime._robot_wedge_be_reconcile_partial(
+            self.candidate_id,
+            book=_crossing_book(self.symbol.value, bid="64800", ask="64800.5"),
+            worst_case_slippage_ticks=2,
+        )
+        self.assertEqual(reconcile.status, CommandResultStatus.COMPLETED)
+        protection = self.runtime.store.get_protection_projection(self.key)
+        self.assertGreater(protection.stop_loss, Decimal("64000"))
+        stop_bid = protection.stop_loss - Decimal("0.5")
+        crossing = _event_book(
+            self.symbol.value, bid=stop_bid, ask=protection.stop_loss,
+        )
+        result = self.runtime.evaluate_robot_protection_crossing(
+            self.symbol.value, crossing,
+            event_id="partial-then-native-stop",
+            received_at_ms=crossing.received_at_ms,
+        )
+        self.assertIsNotNone(result)
+        self.assertEqual(result.status, "RESOLVED")
+        trade = self.runtime.store.get_robot_trade(self.trade_id)
+        self.assertEqual(trade.exit_reason, "STOP")
+        self.assertIsNotNone(trade.exit_time_ms)
+        position = self.runtime.store.get_position_projection(self.key)
+        self.assertEqual(position.quantity.value, Decimal("0"))
+        self.assertEqual(position.side.value, "Flat")
+        fills = self.runtime.store.load_executions_for_symbol(
+            self.account, self.symbol,
+        )
+        self.assertEqual(len(fills), before + 2)
+        self.assertEqual(
+            sum((f.quantity.value for f in fills[1:]), Decimal("0")),
+            self.initial,
+        )
+        expected_gross = sum(
+            (fill.quantity.value * (fill.price.value - trade.average_entry)
+             for fill in fills[1:]), Decimal("0"),
+        )
+        expected_fees = sum((fill.fee for fill in fills), Decimal("0"))
+        self.assertEqual(trade.realized_pnl_usdt, expected_gross)
+        self.assertEqual(trade.fees_costs_usdt, expected_fees)
+        self.assertEqual(
+            trade.realized_pnl_pct,
+            (expected_gross - expected_fees)
+            / (trade.entry_quantity * trade.average_entry) * Decimal("100"),
+        )
+        repeated = self.runtime.evaluate_robot_protection_crossing(
+            self.symbol.value, crossing,
+            event_id="partial-then-native-stop",
+            received_at_ms=crossing.received_at_ms,
+        )
+        self.assertIsNone(repeated)
+        self.assertEqual(
+            len(self.runtime.store.load_executions_for_symbol(
+                self.account, self.symbol,
+            )),
+            before + 2,
+        )
+
+    def test_partial_unproven_stops_at_existing_protection_obligation(self):
+        """An unknown/foreign partial cannot authorize remainder STOP dispatch."""
+        from unittest.mock import patch
+        from tests.test_robot_paper_acceptance import _event_book
+
+        self.assertEqual(self.run_partial().status, CommandResultStatus.COMPLETED)
+        protection = self.runtime.store.get_protection_projection(self.key)
+        crossing = _event_book(
+            self.symbol.value, bid=protection.stop_loss - Decimal("0.5"),
+            ask=protection.stop_loss,
+        )
+        actual = self.runtime.store.get_command
+        def contradict(command_id):
+            command = actual(command_id)
+            if command is not None and command.command_kind == "create_market":
+                return None
+            return command
+        before = len(self.runtime.store.load_executions())
+        with patch.object(self.runtime.store, "get_command", side_effect=contradict):
+            result = self.runtime.evaluate_robot_protection_crossing(
+                self.symbol.value, crossing,
+                event_id="unproven-partial-stop",
+                received_at_ms=crossing.received_at_ms,
+            )
+        self.assertIsNotNone(result)
+        self.assertNotEqual(result.status, "RESOLVED")
+        self.assertEqual(len(self.runtime.store.load_executions()), before)
+        self.assertIsNone(self.runtime.store.get_robot_trade(self.trade_id).exit_time_ms)
+        self.assertGreater(
+            self.runtime.store.get_position_projection(self.key).quantity.value,
+            Decimal("0"),
+        )
+        # Restoring the original command proves that SAME durable STOP may
+        # dispatch exactly once; no fresh trading intent is introduced.
+        retry = self.runtime.evaluate_robot_protection_crossing(
+            self.symbol.value, crossing,
+            event_id="unproven-partial-stop",
+            received_at_ms=crossing.received_at_ms,
+        )
+        self.assertIsNotNone(retry)
+        self.assertEqual(retry.status, "RESOLVED")
+        self.assertEqual(len(self.runtime.store.load_executions()), before + 1)
+
     def test_verified_partial_tightens_stop_once_using_actual_execution_fees(self):
         initial_executions = len(self.runtime.store.load_executions())
         self.assertEqual(self.run_partial().status, CommandResultStatus.COMPLETED)
