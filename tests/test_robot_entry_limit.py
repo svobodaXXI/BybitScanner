@@ -571,12 +571,12 @@ class PostBreakoutLShapeImpulseTests(unittest.TestCase):
         )
 
     @classmethod
-    def plan(cls, direction="LONG", *, host=None, receipt=None, book=None):
+    def plan(cls, direction="LONG", *, host=None, receipt=Ellipsis, book=None):
         from robot_entry_limit import build_post_breakout_l_shape_impulse_limit_research
 
         return build_post_breakout_l_shape_impulse_limit_research(
             cls.host(direction) if host is None else host,
-            cls.receipt(direction) if receipt is None else receipt,
+            cls.receipt(direction) if receipt is Ellipsis else receipt,
             cls.book(direction) if book is None else book,
             tick_size=Decimal("0.1"), now_ms=2_340_100,
         )
