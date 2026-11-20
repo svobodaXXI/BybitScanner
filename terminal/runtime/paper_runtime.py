@@ -3442,8 +3442,7 @@ class PaperRuntime:
                 if (trade.entry_position_version is None
                         or trade.entry_quantity is None
                         or trade.entry_quantity <= 0
-                        or position is None or position.side is not expected_side
-                        or position.sync_state not in ("synced", "synchronized")):
+                        or position is None or position.side is not expected_side):
                     return obligation
                 candidate = self.store.get_robot_candidate(trade.candidate_id)
                 execution_state = (
@@ -3456,6 +3455,8 @@ class PaperRuntime:
                     and "wedge_be_partial_intent" in execution_state
                 )
                 if has_partial:
+                    if position.sync_state not in ("synced", "synchronized"):
+                        return obligation
                     try:
                         self._attested_wedge_partial_for_protection(
                             trade, remaining_quantity=position.quantity.value,
