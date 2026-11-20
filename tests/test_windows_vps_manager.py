@@ -957,7 +957,7 @@ class TestWindowsVpsManager(unittest.TestCase):
             with self.assertRaises(ValueError):
                 remember_request_id("invalid", path)
 
-    def test_cli_unknown_ssh_reply_recovers_status_without_resubmission(self):
+    def test_cli_timeout_automatically_recovers_uuid_without_resubmission(self):
         with tempfile.TemporaryDirectory() as folder:
             cached = Path(folder) / "last_request_id"
             request = "f" * 32
@@ -965,24 +965,39 @@ class TestWindowsVpsManager(unittest.TestCase):
                   patch("tools.windows_vps_manager.preferred_route",
                         return_value=("bybitscanner-vps", "")),
                   patch("tools.windows_vps_manager.subprocess.run",
-                        side_effect=[
-                            subprocess.TimeoutExpired("ssh", 35),
-                            subprocess.CompletedProcess(["ssh"], 0,
-                                                        stdout="REQUEST_ID=" + request
-                                                        + "\nSTATUS=FINISHED_OK\n", stderr=""),
-                        ]) as remote,
+                        side_effect=subprocess.TimeoutExpired("ssh", 35)) as remote,
+                  patch("tools.windows_vps_manager.watch_owner_request",
+                        return_value=("success", "STATUS=FINISHED_OK")) as watcher,
                   patch("sys.stdout", new_callable=io.StringIO) as stdout):
                 self.assertEqual(run_cli(parse_args([
-                    "--operation", "stop", "--request-id", request])), 2)
+                    "--operation", "stop", "--request-id", request])), 0)
                 self.assertEqual(recover_last_request_id(cached), request)
-                self.assertIn("REQUEST_ID=" + request, stdout.getvalue())
-                self.assertEqual(run_cli(parse_args(["--operation", "status"])), 0)
-                self.assertEqual(remote.call_count, 2)
-                self.assertIn("tools.vps_owner_control submit stop installed",
-                              remote.call_args_list[0].args[0][-1])
-                self.assertIn("tools.vps_owner_control status " + request,
-                              remote.call_args_list[1].args[0][-1])
-                self.assertNotIn(" submit ", remote.call_args_list[1].args[0][-1])
+                self.assertIn("OWNER_RESULT=SUCCESS", stdout.getvalue())
+            remote.assert_called_once()
+            watcher.assert_called_once()
+            self.assertIn("tools.vps_owner_control submit stop installed",
+                          remote.call_args.args[0][-1])
+            self.assertIn("tools.vps_owner_control status " + request,
+                          watcher.call_args.args[0][-1])
+            self.assertNotIn(" submit ", watcher.call_args.args[0][-1])
+            self.assertFalse(watcher.call_args.kwargs["initially_submitted"])
+
+    def test_cli_auth_refusal_does_not_poll_or_resubmit(self):
+        request = "e" * 32
+        refused = subprocess.CompletedProcess(
+            ["ssh"], 255, stdout="", stderr="Permission denied (publickey)")
+        with (patch("tools.windows_vps_manager.preferred_route",
+                    return_value=("bybitscanner-vps", "")),
+              patch("tools.windows_vps_manager.subprocess.run",
+                    return_value=refused) as remote,
+              patch("tools.windows_vps_manager.watch_owner_request") as watcher,
+              patch("tools.windows_vps_manager.remember_request_id"),
+              patch("sys.stdout", new_callable=io.StringIO)):
+            self.assertEqual(run_cli(parse_args([
+                "--operation", "update", "--sha", "a" * 40,
+                "--request-id", request])), 2)
+        remote.assert_called_once()
+        watcher.assert_not_called()
 
     def test_cli_status_distinguishes_known_states_from_unknown_ssh(self):
         request = "e" * 32
