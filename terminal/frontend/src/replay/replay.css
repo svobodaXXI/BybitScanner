@@ -2,6 +2,8 @@
 .replay-shell * { box-sizing: border-box; }
 .replay-header { display: flex; justify-content: space-between; gap: 18px; align-items: center; margin-bottom: 18px; }
 .replay-header h1 { font-size: 26px; font-weight: 650; margin: 0 0 4px; letter-spacing: -.03em; }
+.replay-title { display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px; }
+.replay-build-version { color: #9eb2cb; font-size: 12px; font-weight: 550; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .replay-header p { margin: 0; color: #a8b7cb; }
 .replay-badge { color: #d9b774; background: #30271b; border: 1px solid #665036; padding: 7px 10px; border-radius: 5px; font-size: 11px; letter-spacing: .12em; white-space: nowrap; }
 .replay-history-controls { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; padding: 13px; background: #141d28; border: 1px solid #273649; border-radius: 10px; margin-bottom: 12px; }
