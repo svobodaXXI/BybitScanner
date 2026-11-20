@@ -3245,5 +3245,81 @@ class RobotBreakoutMonitorRealThreadTests(unittest.TestCase):
             self.assertGreaterEqual(record.state_revision, 1)
 
 
+
+
+class ImpulseEarlyWedgeResearchOwnerTests(unittest.TestCase):
+    """Protected Robot's owner observes early timing but never places an order."""
+
+    @staticmethod
+    def harness(*, paper=True, with_flow=True, admitted=True):
+        from tests.test_robot_entry_limit import PostBreakoutWedgeImpulseQuoteTests
+
+        fixture = PostBreakoutWedgeImpulseQuoteTests
+        holder = object.__new__(RobotBreakoutMonitor)
+        holder._account_id = TradingAccountId("paper" if paper else "live")
+        holder._get_pattern_flow_evidence = (
+            (lambda _r: fixture.receipt()) if with_flow else None
+        )
+        holder._get_market_book = lambda _s: fixture.book()
+        holder._tick_size_provider = lambda _s: Decimal("0.01")
+        holder._clock_ms = lambda: 180_100
+        holder._late_market_max_book_age_ms = 1_000
+        holder._read_admission_gate = lambda: (admitted, False)
+        holder._active_other_owner_candidate_ids = lambda _r: ()
+        holder._pre_entry_block_reason = lambda _r: None
+        saved = []
+        holder._persist_state = lambda _r, state: saved.append(dict(state))
+        holder._get_closed_candle = lambda _s: None
+        holder._action_executor = None  # Unexpected order dispatch must crash.
+        return holder, fixture.host(), saved
+
+    def test_wedge_monitor_persists_one_pre_retest_proposal_without_order(self):
+        from robot_entry_limit import verify_frozen_post_breakout_impulse_quote
+
+        owner, host, saved = self.harness()
+        self.assertTrue(owner._advance_one(host))
+        self.assertEqual(len(saved), 1)
+        self.assertEqual(saved[0]["phase"], "WAITING_RETEST")
+        self.assertEqual(saved[0]["breakout_index"], host.robot_state["breakout_index"])
+        self.assertNotIn("execution", saved[0])
+        quote = saved[0]["impulse_entry_research"]
+        self.assertIs(quote["trading_authorized"], False)
+        self.assertTrue(verify_frozen_post_breakout_impulse_quote(host, quote))
+        host.robot_state = saved[0]
+        host.state_revision += 1
+        self.assertTrue(verify_frozen_post_breakout_impulse_quote(host, quote))
+        self.assertFalse(owner._advance_one(host))
+        self.assertEqual(len(saved), 1)
+
+    def test_no_paper_admission_flow_or_book_never_persists_proposal(self):
+        for opts in (
+            {"paper": False},
+            {"with_flow": False},
+            {"admitted": False},
+        ):
+            with self.subTest(opts=opts):
+                owner, host, saved = self.harness(**opts)
+                self.assertFalse(owner._advance_one(host))
+                self.assertEqual(saved, [])
+        owner, host, saved = self.harness()
+        owner._get_market_book = lambda _s: None
+        self.assertFalse(owner._advance_one(host))
+        self.assertEqual(saved, [])
+
+    def test_foreign_position_and_book_uncertainty_never_prepare(self):
+        owner, host, saved = self.harness()
+        owner._active_other_owner_candidate_ids = lambda _r: ("foreign-owner",)
+        self.assertFalse(owner._advance_one(host))
+        self.assertEqual(saved, [])
+        owner, host, saved = self.harness()
+        owner._pre_entry_block_reason = lambda _r: "FOREIGN_POSITION"
+        self.assertFalse(owner._advance_one(host))
+        self.assertEqual(saved, [])
+        owner, host, saved = self.harness()
+        owner._get_market_book = lambda _s: None
+        self.assertFalse(owner._advance_one(host))
+        self.assertEqual(saved, [])
+
+
 if __name__ == "__main__":
     unittest.main()
