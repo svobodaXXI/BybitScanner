@@ -170,8 +170,8 @@ def _open_wedge_flow_scope(record) -> bool:
             and state.get("direction") == (
                 "LONG" if snapshot["pattern"] == "Falling Wedge" else "SHORT"
             )
-            and state.get("pattern") == snapshot.get("pattern")
-            and state.get("phase") in ("WAITING_RETEST", "RETEST_DETECTED")
+            and state.get("pattern", snapshot.get("pattern")) == snapshot.get("pattern")
+            and state.get("phase") in ("OPEN", "WAITING_RETEST", "RETEST_DETECTED")
             and isinstance(record.candidate_id, str) and bool(record.candidate_id)
             and type(record.state_revision) is int and record.state_revision >= 0
             and isinstance(record.symbol.value, str)
@@ -311,8 +311,8 @@ class PatternFlowObserver:
             # These phases warm data ONLY; REST certification and entry
             # remain restricted to exact durable approved-entry scope.
             warmable = {
-                "Falling Wedge": ("WAITING_BREAKOUT", "WAITING_RETEST", "RETEST_DETECTED"),
-                "Rising Wedge": ("WAITING_BREAKOUT", "WAITING_RETEST", "RETEST_DETECTED"),
+                "Falling Wedge": ("WAITING_BREAKOUT", "WAITING_RETEST", "RETEST_DETECTED", "OPEN"),
+                "Rising Wedge": ("WAITING_BREAKOUT", "WAITING_RETEST", "RETEST_DETECTED", "OPEN"),
                 "L-shape": ("L_SHAPE_WAITING_RETEST", "RETEST_DETECTED"),
                 "MIRROR": ("RETEST_DETECTED",),
                 "IKIGAI_BOX": ("BOX_ENTRY_READY",)
