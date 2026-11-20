@@ -8,7 +8,7 @@ their source completeness nor L2 absorption is certified here.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation
 from math import isfinite
 from typing import Mapping
@@ -22,7 +22,7 @@ from robot_state_machine import (
 from scanner_geometry_cursor import (
     ScannerGeometryCursorError, project_latest_geometry_index,
 )
-from robot_entry_flow_evidence import FlowTransition
+from robot_entry_flow_evidence import CandidateBoundFlowEvidence, FlowTransition
 from .wedge_candle_exhaustion_research import (
     ClosedCandlePatternObservation, WedgeCandleExhaustionResearch,
     observe_wedge_candle_exhaustion,
@@ -47,6 +47,7 @@ class WedgeArcCandleResearch:
     # are separate prerequisites for any future trading proposal.
     source_complete: bool = False
     trading_authorized: bool = False
+    tape_receipt_metadata_matched: bool = False
 
 
 def _price(value: object) -> float:
@@ -245,3 +246,68 @@ def observe_closed_wedge_arc_candles(
         candidate_id, revision, symbol, direction, decision_ms,
         outcome, arc, near, tuple(labels), confluence,
     )
+
+
+def observe_wedge_arc_with_certified_tape_receipt(
+    record,
+    closed_m1: tuple[Mapping[str, object], ...],
+    receipt: CandidateBoundFlowEvidence | None,
+    *,
+    decision_ms: int,
+    atr: Decimal,
+    max_boundary_distance_atr: Decimal,
+    doji_body_fraction: Decimal,
+    source_id: str,
+) -> WedgeArcCandleResearch | None:
+    """Research-only join of a *producer-certified* exact M1 trade receipt.
+
+    Independently produced publicTrade WS/REST/closed-kline parity is required.
+    These metadata guards do NOT certify the underlying data themselves.
+    The OHLC source, location-specific arc and L2 history are not verified by
+    this join, so source_complete/trading_authorized remain False.
+    """
+    if (not isinstance(receipt, CandidateBoundFlowEvidence)
+            or type(decision_ms) is not int
+            or not isinstance(closed_m1, tuple) or not closed_m1
+            or not isinstance(closed_m1[-1], Mapping)):
+        return None
+    latest = closed_m1[-1].get("time")
+    if (type(latest) is not int
+            or latest + ONE_MINUTE_MS != receipt.closed_at_ms):
+        return None
+    try:
+        direction = record.robot_state.get("direction")
+        candidate_id, symbol, revision = (
+            record.candidate_id, record.symbol.value, record.state_revision,
+        )
+    except (AttributeError, TypeError):
+        return None
+    digest = receipt.print_facts_sha256
+    if (receipt.candidate_id != candidate_id
+            or receipt.symbol != symbol or receipt.direction != direction
+            or type(receipt.state_revision) is not int
+            or receipt.state_revision != revision
+            or receipt.source_kind != "BYBIT_TRIPLE_CLOSED_M1_CERTIFIED"
+            or receipt.source_complete is not True
+            or receipt.receipt_cutoff_proven is not True
+            or receipt.transport_generation_proven is not True
+            or not isinstance(digest, str) or len(digest) != 64
+            or any(char not in "0123456789abcdef" for char in digest)
+            or type(receipt.closed_at_ms) is not int
+            or receipt.closed_at_ms <= 0
+            or receipt.closed_at_ms % ONE_MINUTE_MS != 0
+            or type(receipt.decision_ms) is not int
+            or not receipt.closed_at_ms <= receipt.decision_ms <= decision_ms
+            or decision_ms - receipt.closed_at_ms > 120_000
+            or not isinstance(receipt.transition, FlowTransition)
+            or receipt.transition.known_at_ms != receipt.decision_ms):
+        return None
+    result = observe_closed_wedge_arc_candles(
+        record, closed_m1, receipt.transition,
+        decision_ms=decision_ms, atr=atr,
+        max_boundary_distance_atr=max_boundary_distance_atr,
+        doji_body_fraction=doji_body_fraction, source_id=source_id,
+    )
+    if result is None:
+        return None
+    return replace(result, tape_receipt_metadata_matched=True)
