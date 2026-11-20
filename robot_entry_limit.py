@@ -470,6 +470,9 @@ def build_post_breakout_wedge_impulse_limit_research(
 # In particular, no caller may reconstruct an order request from this record
 # and dispatch it without the dedicated protected owner/rollback lifecycle.
 IMPULSE_QUOTE_VERSION = "POST_BREAKOUT_IMPULSE_RESEARCH_V1"
+# Marketable GTC entry is valid only during the initiating taker wave.
+# A timed-out order is fenced from matching, then cancelled by Robot owner.
+IMPULSE_ENTRY_LIMIT_MAX_AGE_MS = 30_000
 
 
 def freeze_post_breakout_impulse_quote(
