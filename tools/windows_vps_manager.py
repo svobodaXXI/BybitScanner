@@ -986,6 +986,41 @@ class VPSManager(tk.Tk):
                      else "unproven")
             state, details = watch_owner_request(
                 status_command, request, initially_submitted=(state == "submitted"))
+            # After a successful UPDATE, run a separate read-only installed SHA,
+            # Backend/Telegram DB identity and PAPER quiescence proof over the
+            # SAME pinned SSH route. Never replay the submitted mutation.
+            if state == "success" and mode == "update":
+                target = command[-1].split(" submit update ", 1)
+                if len(target) != 2:
+                    state = "unproven"
+                    details += "\nPOSTCHECK=BLOCKED_UNPROVEN_TARGET"
+                else:
+                    sha = target[1].split(" ", 1)[0]
+                    if EXACT_SHA.fullmatch(sha) is None:
+                        state = "unproven"
+                        details += "\nPOSTCHECK=BLOCKED_INVALID_SHA"
+                    else:
+                        proof_command = [*command[:-1],
+                                         CONTROL_MODULE + " verify-update " + sha]
+                        try:
+                            proof, recovered = run_readonly_ssh_with_laptop_agent_recovery(
+                                proof_command, capture_output=True, text=True,
+                                errors="replace", timeout=35,
+                                stdin=subprocess.DEVNULL, creationflags=NO_WINDOW,
+                                check=False)
+                            proof_lines = proof.stdout.strip().splitlines()
+                            verified = (proof.returncode == 0
+                                        and "POSTCHECK=VERIFIED_EDITOR_ONLY" in proof_lines
+                                        and "INSTALLED_SHA=" + sha in proof_lines)
+                            details += "\n" + proof.stdout.strip()
+                            if recovered:
+                                details += "\n" + recovered
+                            if not verified:
+                                state = "unproven"
+                                details += "\nPOSTCHECK=UNVERIFIED; update not repeated"
+                        except (OSError, subprocess.TimeoutExpired):
+                            state = "unproven"
+                            details += "\nPOSTCHECK=UNPROVEN_TRANSPORT; update not repeated"
             self.events.put((state, (precheck_receipt + "\n" if precheck_receipt else "")
                              + (output or "Ответ запуска неизвестен")
                              + "\n" + details + "\nREQUEST_ID=" + request))
