@@ -3417,6 +3417,55 @@ class RobotBreakoutMonitorRealThreadTests(unittest.TestCase):
 
 
 
+class ImpulseNativeMarketMatcherAgeFenceTests(unittest.TestCase):
+    """Native owner must NEVER execute a stale GTC from a completed impulse."""
+
+    def test_ready_robot_matches_only_within_exact_quote_lifetime(self):
+        import robot_entry_limit
+        from terminal.runtime.paper_runtime import PaperRuntime
+
+        order_id = OrderId("robot-impulse-order-1")
+        candidate = SimpleNamespace(
+            status="APPROVED", robot_state={
+                "phase": "WAITING_RETEST",
+                "execution": {
+                    "entry_mode": "IMPULSE_EARLY_LIMIT",
+                    "limit_order_id": order_id.value,
+                    "impulse_entry_intent": {"decision_ms": 180_000},
+                    "entry_admission_version": 5,
+                },
+            },
+        )
+        account = TradingAccountId("paper")
+        runtime = object.__new__(PaperRuntime)
+        runtime._paper_account_id = account
+        runtime._account_id = account
+        runtime.store = SimpleNamespace(
+            load_active_robot_entry_orders=lambda _account, _symbol: {
+                order_id.value: (Symbol(SYMBOL), 5),
+            },
+            load_active_robot_candidates_for_symbol=lambda _account, _symbol: (candidate,),
+            get_robot_runtime_state=lambda _account: SimpleNamespace(
+                mode="ROBOT_RUNNING", recovery_status="READY", version=5,
+            ),
+        )
+        active = (SimpleNamespace(order_id=order_id),)
+        match = lambda at: runtime._robot_entry_limit_ids_fenced_by_admission(
+            Symbol(SYMBOL), active, event_received_at_ms=at,
+        )
+        self.assertEqual(match(179_999), frozenset({order_id.value}))
+        self.assertEqual(match(180_000), frozenset())
+        self.assertEqual(match(
+            180_000 + robot_entry_limit.IMPULSE_ENTRY_LIMIT_MAX_AGE_MS
+        ), frozenset())
+        self.assertEqual(match(
+            180_001 + robot_entry_limit.IMPULSE_ENTRY_LIMIT_MAX_AGE_MS
+        ), frozenset({order_id.value}))
+        self.assertEqual(match(None), frozenset({order_id.value}))
+        candidate.robot_state["execution"]["impulse_entry_intent"] = {}
+        self.assertEqual(match(180_001), frozenset({order_id.value}))
+
+
 class ImpulseEarlyWedgeResearchOwnerTests(unittest.TestCase):
     """Protected Robot's owner observes early timing but never places an order."""
 
