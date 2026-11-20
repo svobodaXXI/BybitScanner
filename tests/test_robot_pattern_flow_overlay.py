@@ -613,5 +613,125 @@ class PostBreakoutImpulsePriorityResearchTests(unittest.TestCase):
         self.assertIsNone(self._observe(box, breakout=180_000))
 
 
+class StopCampaignRenewalResearchTests(unittest.TestCase):
+    """Research only: a STOP campaign cannot reuse pre-STOP flow as renewal."""
+
+    @staticmethod
+    def _proposal(**overrides):
+        from terminal.application.robot_admission import RobotReentryAdmissionRequest
+
+        values = dict(
+            campaign_id="canonical-campaign-1", direction="LONG",
+            frozen_thesis_sha256="a" * 64,
+            reserved_risk_usdt=Decimal("3"),
+            previous_stop_exec_id="durable-stop-exec-1",
+            confirmed_at_ms=60_000,
+            strategy_confirmation_proven=True,
+        )
+        values.update(overrides)
+        return RobotReentryAdmissionRequest(**values)
+
+    @staticmethod
+    def _observe(proposal=None, proof=None, *, stopped=30_000, host=None):
+        from terminal.application.robot_reentry_adapter import (
+            observe_post_stop_campaign_renewal,
+        )
+
+        return observe_post_stop_campaign_renewal(
+            proposal if proposal is not None
+            else StopCampaignRenewalResearchTests._proposal(),
+            host if host is not None
+            else PostBreakoutImpulsePriorityResearchTests._host(),
+            certificate() if proof is None else proof,
+            previous_stop_at_ms=stopped,
+            breakout_known_at_ms=180_000,
+            decision_ms=180_100,
+        )
+
+    def test_fresh_long_and_short_impulse_is_only_a_nontrading_hypothesis(self):
+        long = self._observe()
+        self.assertEqual(long.outcome, "REENTRY_IMPULSE_RESEARCH")
+        self.assertFalse(long.trading_authorized)
+        self.assertEqual(long.candidate_id, "wedge-verified-123")
+
+        short_host = PostBreakoutImpulsePriorityResearchTests._host(
+            "Rising Wedge", "WAITING_RETEST", "SHORT",
+        )
+        short_flow = replace(
+            certificate(), direction="SHORT",
+            transition=replace(
+                transition(buy=False, sell=True),
+                current_delta_fraction=Decimal("-0.45"),
+                current_price_change_bps=Decimal("-11"),
+            ),
+        )
+        short = self._observe(
+            self._proposal(direction="SHORT"), short_flow, host=short_host,
+        )
+        self.assertEqual(short.outcome, "REENTRY_IMPULSE_RESEARCH")
+        self.assertFalse(short.trading_authorized)
+
+    def test_both_closed_minutes_must_follow_stop_and_new_pattern(self):
+        # A valid certificate can be fresh but still contain old pre-STOP data.
+        later_pattern = self._proposal(confirmed_at_ms=120_000)
+        decision = self._observe(later_pattern, stopped=90_000)
+        self.assertEqual(decision.outcome, "WAIT_SOURCE")
+        self.assertEqual(
+            decision.reason, "RENEWED_FLOW_WINDOWS_NOT_POST_STOP_AND_PATTERN",
+        )
+        self.assertFalse(decision.trading_authorized)
+        self.assertIsNone(self._observe(stopped=60_000))
+        self.assertIsNone(self._observe(self._proposal(confirmed_at_ms=90_000), stopped=100_000))
+
+    def test_missing_or_uncertain_tape_cannot_propose_renewal(self):
+        from terminal.application.robot_reentry_adapter import (
+            observe_post_stop_campaign_renewal,
+        )
+        host = PostBreakoutImpulsePriorityResearchTests._host()
+        absent = observe_post_stop_campaign_renewal(
+            self._proposal(), host, None, previous_stop_at_ms=30_000,
+            breakout_known_at_ms=180_000, decision_ms=180_100,
+        )
+        self.assertEqual(absent.outcome, "WAIT_SOURCE")
+        for change in (
+            {"source_complete": False},
+            {"receipt_cutoff_proven": False},
+            {"transport_generation_proven": False},
+            {"candidate_id": "unrelated-candidate"},
+            {"state_revision": 8},
+        ):
+            with self.subTest(change=change):
+                result = self._observe(proof=replace(certificate(), **change))
+                self.assertEqual(result.outcome, "WAIT_SOURCE")
+                self.assertFalse(result.trading_authorized)
+        not_accelerating = replace(
+            certificate(), transition=transition(buy=False, sell=True),
+        )
+        self.assertEqual(
+            self._observe(proof=not_accelerating).outcome, "WAIT_DIRECTION",
+        )
+
+    def test_no_stop_no_campaign_link_wrong_direction_or_old_host(self):
+        from terminal.application.robot_admission import RobotReentryAdmissionRequest
+
+        self.assertIsNone(self._observe(
+            self._proposal(previous_stop_exec_id=None, original_risk_budget_usdt=Decimal("9")),
+        ))
+        self.assertIsNone(self._observe(
+            self._proposal(strategy_confirmation_proven=False),
+        ))
+        self.assertIsNone(self._observe(self._proposal(direction="SHORT")))
+        self.assertIsNone(self._observe(
+            self._proposal(campaign_id=""),
+        ))
+        host = PostBreakoutImpulsePriorityResearchTests._host()
+        host.status = "CLOSED"
+        self.assertIsNone(self._observe(host=host))
+        host = PostBreakoutImpulsePriorityResearchTests._host(
+            "Double Bottom", "RETEST_DETECTED",
+        )
+        self.assertIsNone(self._observe(host=host))
+
+
 if __name__ == "__main__":
     unittest.main()
