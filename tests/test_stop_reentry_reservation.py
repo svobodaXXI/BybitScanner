@@ -35,6 +35,10 @@ def prepared(tmp_path):
             "robot_handoff_ready": True,
             "mirror_entry": {
                 "direction": "LONG", "source_timeframe": "1",
+                "level_id": "lvl-0123456789abcdef01234567",
+                "level_timeframe": "1", "level_source": "swing_zone",
+                "level_pattern": None, "level_side": "lower",
+                "level_breakout_direction": "DOWN", "level_breakout_close_ms": 60_000,
                 "breakout_time_ms": 60_000,
                 "reference": "100", "stop": "99", "target": "110",
                 "structural_stop": "99", "stop_kind": "STRUCTURAL",
