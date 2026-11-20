@@ -28,7 +28,7 @@ LABELS = frozenset({"CONFIRMED", "GEOMETRY_CORRECTED", "PATTERN_CORRECTED", "FAL
 # Owner annotations, NOT a list of active Robot strategies or trading signals.
 CORRECTED_PATTERNS = frozenset({
     "Rising Wedge", "Falling Wedge", "Wedge", "Ikigai Box", "Triangle",
-    "Double Top/Bottom", "Head and Shoulders", "G-Shaped",
+    "Broadening", "Double Top/Bottom", "Head and Shoulders", "G-Shaped",
 })
 SIGNAL_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 TOKEN_RE = re.compile(r"^[A-Za-z0-9_.:-]{16,128}$")
