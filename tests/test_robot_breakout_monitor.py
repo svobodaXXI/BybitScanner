@@ -2015,6 +2015,12 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
             self.assertTrue(execution["emergency_close_pending"])
             intent = execution["emergency_close_intent"]
             self.assertEqual(intent["client_action_id"], request.client_action_id.value)
+            from terminal.application.command_identity import robot_emergency_close_identity
+            identity = robot_emergency_close_identity(
+                request.client_action_id.value, request.symbol,
+            )
+            self.assertEqual(intent["command_id"], identity.command_id.value)
+            self.assertEqual(intent["order_link_id"], identity.order_link_id)
             self.assertEqual(intent["entry_order_ids"], [order_id])
             self.assertEqual(intent["entry_position_version"],
                              self.store.get_position_projection(
