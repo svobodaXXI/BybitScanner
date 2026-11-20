@@ -124,9 +124,11 @@ class PublicKlineTests(unittest.TestCase):
 
 class LoopbackServerTests(unittest.TestCase):
     @contextmanager
-    def running_server(self, history_loader=None):
+    def running_server(self, history_loader=None, *, version_sha=None):
         with TemporaryDirectory() as temp:
             dist = Path(temp)
+            if version_sha is not None:
+                (dist / "desktop-build-sha.txt").write_text(version_sha, encoding="ascii")
             (dist / "replay.html").write_text("<h1>Local simulation only</h1>", encoding="utf-8")
             (dist / "view.js").write_text("const local=true;", encoding="utf-8")
             requests = []
@@ -137,7 +139,8 @@ class LoopbackServerTests(unittest.TestCase):
                         "simulation_run_id": "fixture", "events": []}
 
             httpd = ThreadingHTTPServer(
-                ("127.0.0.1", 0), local.handler_factory(dist, history_loader or loader),
+                ("127.0.0.1", 0),
+                local.handler_factory(dist, history_loader or loader, release_root=dist),
             )
             worker = Thread(target=httpd.serve_forever, daemon=True)
             worker.start()
@@ -172,6 +175,39 @@ class LoopbackServerTests(unittest.TestCase):
             code, _, _ = self.call(port, "GET", "/replay.html", host="untrusted.example")
             self.assertEqual(code, 403)
             self.assertEqual(calls, [])
+
+    def test_desktop_version_identifies_only_verified_local_release(self):
+        sha = "7dab02c7348c11da74407a8800d6dd9770e56937"
+        with self.running_server(version_sha=sha) as (port, calls):
+            code, body, headers = self.call(port, "GET", "/local-replay/desktop-version")
+            self.assertEqual(code, 200)
+            self.assertEqual(json.loads(body), {"sha": sha})
+            self.assertEqual(headers["Cache-Control"], "no-store")
+            code, _, _ = self.call(
+                port, "GET", "/local-replay/desktop-version?untrusted=1")
+            self.assertEqual(code, 403)
+            code, _, _ = self.call(
+                port, "GET", "/local-replay/desktop-version",
+                extra_headers={"Origin": "https://other.example"})
+            self.assertEqual(code, 403)
+            self.assertEqual(calls, [])
+
+        with self.running_server(version_sha="not-a-verified-release") as (port, _):
+            code, body, _ = self.call(port, "GET", "/local-replay/desktop-version")
+            self.assertEqual(code, 200)
+            self.assertEqual(json.loads(body), {"sha": None})
+
+    def test_desktop_version_rejects_symlinked_or_unbounded_marker(self):
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            marker = root / "desktop-build-sha.txt"
+            marker.write_text("a" * 100, encoding="ascii")
+            self.assertIsNone(local.installed_desktop_sha(root))
+            marker.unlink()
+            target = root / "untrusted.txt"
+            target.write_text("a" * 40, encoding="ascii")
+            marker.symlink_to(target)
+            self.assertIsNone(local.installed_desktop_sha(root))
 
     def test_public_stream_emits_only_scanner_ready_prefix(self):
         from research.simulator_v2.public_m5_scan import scan_public_closed_m5
