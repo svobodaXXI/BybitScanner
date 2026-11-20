@@ -103,6 +103,22 @@ class HistoricalArchivePairTests(unittest.TestCase):
         with self.assertRaisesRegex(ArchiveEvidenceError, "snapshot"):
             self.inspect()
 
+    def test_u1_restart_resnapshot_rebases_book_sequence(self):
+        # Bybit may send an update with u=1 and a lower seq after restart.
+        # Even when labelled delta this resets the ordered book lineage.
+        self.book_events.append(
+            self.event("delta", self.START + 50, 1, 1)
+        )
+        self.book_events.append(
+            self.event("delta", self.START + 60, 2, 2)
+        )
+        self.write_files()
+        result = self.inspect()
+        self.assertTrue(result.scan_complete)
+        self.assertEqual(result.snapshots_seen_before_window_end, 2)
+        self.assertEqual(result.book_events_in_window, 4)
+        self.assertFalse(result.trading_authorized)
+
     def test_book_sequence_regression_is_blocked(self):
         self.book_events[-1]["data"]["seq"] = 1
         self.write_files()
