@@ -448,7 +448,7 @@ describe("Closed deals / exact episode index", () => {
     expect(loss).toHaveAttribute("aria-pressed", "true");
     expect(orderedSymbols()).toEqual(["ADAUSDT", "BTCUSDT", "XRPUSDT"]);
     expect(screen.getByRole("button", { name: /ADAUSDT/ })).toHaveTextContent("PnL: -12,30 USDT");
-    expect(screen.getByRole("button", { name: /XRPUSDT/ })).toHaveTextContent("PnL: -<0,000001 USDT");
+    expect(screen.getByRole("button", { name: /XRPUSDT/ })).toHaveTextContent("PnL: -<0,01 USDT");
 
     fireEvent.click(long);
     expect(orderedSymbols()).toEqual(["BTCUSDT"]);
@@ -515,17 +515,17 @@ describe("Closed deals / exact episode index", () => {
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
 
     const row = await screen.findByRole("button", { name: /BTCUSDT/ });
-    expect(row).toHaveTextContent("PnL: -0,002614 USDT");
+    expect(row).toHaveTextContent("PnL: -<0,01 USDT");
     expect(screen.getByTitle("-0.0026140884")).toBeInTheDocument();
     const tinyRow = screen.getByRole("button", { name: /XRPUSDT/ });
-    expect(tinyRow).toHaveTextContent("PnL: -<0,000001 USDT");
+    expect(tinyRow).toHaveTextContent("PnL: -<0,01 USDT");
     expect(screen.getByTitle("-0.0000000004")).toBeInTheDocument();
 
     fireEvent.click(row);
-    expect(screen.getByText("-0,002614 USDT")).toHaveAttribute("title", "-0.0026140884");
+    expect(screen.getByText("-<0,01 USDT")).toHaveAttribute("title", "-0.0026140884");
     fireEvent.click(screen.getByRole("button", { name: /К сделкам/ }));
     fireEvent.click(await screen.findByRole("button", { name: /XRPUSDT/ }));
-    expect(screen.getByText("-<0,000001 USDT")).toHaveAttribute("title", "-0.0000000004");
+    expect(screen.getByText("-<0,01 USDT")).toHaveAttribute("title", "-0.0000000004");
   });
 
   it("displays exact robot episode identifiers and keeps shared PnL labelled separately", async () => {
@@ -1010,11 +1010,11 @@ describe("Finrez first-screen UI", () => {
     const region = await screen.findByRole("region", { name: "Паттерны по подтверждённым сделкам" });
     expect(region).toHaveTextContent("Паттерн подтверждён для 4 из 5");
     expect(region).toHaveTextContent("Робот · сделок: 2 · прибыльных: 1 · убыточных: 1");
-    expect(screen.getByTitle("-1.4012345678 USDT")).toHaveTextContent("-1,4012 USDT");
+    expect(screen.getByTitle("-1.4012345678 USDT")).toHaveTextContent("-1,40 USDT");
     expect(screen.getByTitle("20.2 USDT")).toHaveTextContent("+20,20 USDT");
     const rankedCards = Array.from(region.querySelectorAll(".diary-pattern-card"));
     expect(rankedCards.map((card) => card.querySelector("span[title$='USDT']")?.textContent?.trim()))
-      .toEqual(["+20,20 USDT", "+3,00 USDT", "-1,4012 USDT"]);
+      .toEqual(["+20,20 USDT", "+3,00 USDT", "-1,40 USDT"]);
     const patternDistribution = screen.getByRole("group", { name: "Распределение результатов паттернов" });
     expect(patternDistribution).toHaveTextContent("Прибыльных: 2");
     expect(patternDistribution).toHaveTextContent("Убыточных: 1");
@@ -1025,7 +1025,7 @@ describe("Finrez first-screen UI", () => {
     expect(patternDistribution).toHaveTextContent("Всего: 3");
     fireEvent.click(screen.getByRole("button", { name: "Убыточные паттерны" }));
     expect(region.querySelectorAll(".diary-pattern-card")).toHaveLength(1);
-    expect(region.querySelector(".diary-pattern-card")).toHaveTextContent("-1,4012 USDT");
+    expect(region.querySelector(".diary-pattern-card")).toHaveTextContent("-1,40 USDT");
     fireEvent.click(screen.getByRole("button", { name: "Показать все паттерны" }));
     expect(region.querySelectorAll(".diary-pattern-card")).toHaveLength(3);
     expect(screen.queryByTitle("-999 USDT")).not.toBeInTheDocument();
@@ -1327,8 +1327,8 @@ describe("Finrez first-screen UI", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<DiaryOverlay accountKey="paper:finrez-filter" initialSection="FINREZ"
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
-    expect(await screen.findByText("+7,2012 USDT")).toBeInTheDocument();
-    expect(screen.getByText("-2,5012 USDT")).toBeInTheDocument();
+    expect(await screen.findByText("+7,20 USDT")).toBeInTheDocument();
+    expect(screen.getByText("-2,50 USDT")).toBeInTheDocument();
     expect(screen.queryByText(/2\.5012345678/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Показать сделки по BTCUSDT" }));
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
@@ -1446,6 +1446,37 @@ describe("Finrez first-screen UI", () => {
       .toHaveTextContent("Итог+1,00 USDT");
   });
 
+  it("shows two-decimal daily Robot PnL for totals and all ticker rows without changing source sums", async () => {
+    const entries = [
+      ["a", "SNXXUSDT", "7.0302"],
+      ["b", "MAVIUSDT", "0.3275"],
+      ["c", "ONGUSDT", "0.009951"],
+      ["d", "JUPUSDT", "-1.2918"],
+    ] as const;
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ...finrezResponse,
+      tickers: entries.map(([, symbol, pnl_usdt]) => ({ symbol, pnl_usdt, trade_count: 1 })),
+      closed_episodes: entries.map(([id, symbol, pnl_usdt]) => ({
+        trade_episode_id: "te_" + id.repeat(24), symbol, side: "LONG",
+        opened_at_ms: 1_793_001_000_000, closed_at_ms: 1_793_002_000_000,
+        pnl_usdt, execution_count: 2, cohort: "ROBOT",
+        replay_evidence: "EPISODE_INDEX_ONLY",
+      })),
+    }), { status: 200 })));
+    render(<DiaryOverlay accountKey="paper:cent-precision" initialSection="FINREZ"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    const money = await screen.findByRole("group", { name: "Финрез: прибыль и убыток в USDT" });
+    expect(money).toHaveTextContent("Прибыль: +7,37 USDT");
+    expect(money).toHaveTextContent("Убыток: -1,29 USDT");
+    expect(money).toHaveTextContent("Итог+6,08 USDT");
+    expect(screen.getByTitle("7.0302 USDT")).toHaveTextContent("+7,03 USDT");
+    expect(screen.getByTitle("0.3275 USDT")).toHaveTextContent("+0,33 USDT");
+    expect(screen.getByTitle("0.009951 USDT")).toHaveTextContent("+0,01 USDT");
+    expect(screen.getByTitle("-1.2918 USDT")).toHaveTextContent("-1,29 USDT");
+    // Full precision remains in immutable source attributes for audit.
+    expect(screen.queryByText("+7,0302 USDT")).not.toBeInTheDocument();
+  });
+
   it("withholds an unreconciled Finrez total rather than summing unverified ticker rows", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
       ...finrezResponse,
@@ -1471,6 +1502,7 @@ describe("Finrez first-screen UI", () => {
         { symbol: "GIGADEVICEUSDT", pnl_usdt: "4.3583303660000000000004", trade_count: 1 },
         { symbol: "TINYUSDT", pnl_usdt: "0.0000000004", trade_count: 1 },
         { symbol: "ZEROUSDT", pnl_usdt: "0", trade_count: 1 },
+        { symbol: "CENTUSDT", pnl_usdt: "0.009951", trade_count: 1 },
       ],
       manual_interventions: [
         { symbol: "JASMYUSDT", pnl_usdt: "-0.0026140884", trade_count: 1 },
@@ -1482,11 +1514,13 @@ describe("Finrez first-screen UI", () => {
     render(<DiaryOverlay accountKey="paper:compact" initialSection="FINREZ"
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
     expect(await screen.findByTitle("GIGADEVICEUSDT")).toHaveTextContent("GIGADEVICEUSDT");
-    expect(screen.getByTitle("4.3583303660000000000004 USDT")).toHaveTextContent("+4,3583 USDT");
-    expect(screen.getByTitle("0.0000000004 USDT")).toHaveTextContent("+<0,000001 USDT");
+    expect(screen.getByTitle("4.3583303660000000000004 USDT")).toHaveTextContent("+4,36 USDT");
+    // Rounding one-cent values never exposes four decimal places on a list.
+    expect(screen.getByTitle("0.009951 USDT")).toHaveTextContent("+0,01 USDT");
+    expect(screen.getByTitle("0.0000000004 USDT")).toHaveTextContent("+<0,01 USDT");
     expect(screen.getByTitle("0 USDT")).toHaveTextContent("0 USDT");
-    expect(screen.getByTitle("-0.0026140884 USDT")).toHaveTextContent("-0,002614 USDT");
-    expect(screen.getByTitle("-1.8162218600000000000000 USDT")).toHaveTextContent("-1,8162 USDT");
+    expect(screen.getByTitle("-0.0026140884 USDT")).toHaveTextContent("-<0,01 USDT");
+    expect(screen.getByTitle("-1.8162218600000000000000 USDT")).toHaveTextContent("-1,82 USDT");
   });
 
   it("never shows foreign-account ranking or silently falls back to manual", async () => {
@@ -1640,7 +1674,7 @@ describe("shared statistics trade action standard", () => {
     expect(longRow.querySelector(".diary-trade-heading")).toHaveTextContent("Клин ↘");
     expect(longRow.querySelector(".diary-trade-side.long")).toHaveTextContent("LONG");
     expect(longRow.querySelector(".diary-trade-meta")).toHaveTextContent(/Робот.*→/);
-    expect(longRow).toHaveTextContent("PnL: -0,2727 USDT (-0,63%)");
+    expect(longRow).toHaveTextContent("PnL: -0,27 USDT (-0,63%)");
     expect(longRow).toHaveTextContent("Исполнений: 8");
     expect(longRow).not.toHaveTextContent("Паттерн:");
 
@@ -1648,7 +1682,7 @@ describe("shared statistics trade action standard", () => {
     expect(shortRow).toHaveClass("diary-closed-deal-row", "pnl-positive");
     expect(shortRow.querySelector(".diary-trade-heading")).toHaveTextContent("Клин ↗");
     expect(shortRow.querySelector(".diary-trade-side.short")).toHaveTextContent("SHORT");
-    expect(shortRow).toHaveTextContent("PnL: +1,1684 USDT (+0,62%)");
+    expect(shortRow).toHaveTextContent("PnL: +1,17 USDT (+0,62%)");
   });
 
   it("renders source-verified entry-notional return, not guessed leveraged ROI", async () => {
@@ -1924,7 +1958,7 @@ describe("shared statistics trade action standard", () => {
       expect(filmstrip?.querySelectorAll("rect")).toHaveLength(7);
       expect(filmstrip?.querySelectorAll("path")).toHaveLength(1);
     });
-    expect(screen.getByText(/PnL: -1,8162 USDT/)).toHaveAttribute("title", "-1.81622186");
+    expect(screen.getByText(/PnL: -1,82 USDT/)).toHaveAttribute("title", "-1.81622186");
   });
 });
 
