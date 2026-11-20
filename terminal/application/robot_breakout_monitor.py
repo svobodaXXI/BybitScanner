@@ -262,6 +262,7 @@ class RobotBreakoutMonitor:
         emergency_close_path: EmergencyClosePath | None = None,
         mirror_policy: "mirror.MirrorRobotPolicy | None" = None,
         wedge_be_auto_paper_enabled: bool = False,
+        impulse_fade_paper_enabled: bool = False,
         impulse_early_paper_enabled: bool = False,
         get_pattern_flow_evidence: Callable[
             [RobotCandidateRecord], CandidateBoundFlowEvidence | None
@@ -273,6 +274,9 @@ class RobotBreakoutMonitor:
         if type(wedge_be_auto_paper_enabled) is not bool:
             raise ValueError("Wedge BE PAPER auto gate must be explicit bool")
         self._wedge_be_auto_paper_enabled = wedge_be_auto_paper_enabled
+        if type(impulse_fade_paper_enabled) is not bool:
+            raise ValueError("Impulse fade PAPER gate must be explicit bool")
+        self._impulse_fade_paper_enabled = impulse_fade_paper_enabled
         if type(impulse_early_paper_enabled) is not bool:
             raise ValueError("Impulse early PAPER gate must be explicit bool")
         self._impulse_early_paper_enabled = impulse_early_paper_enabled
@@ -451,7 +455,17 @@ class RobotBreakoutMonitor:
         if not isinstance(execution, Mapping):
             raise RobotBreakoutMonitorError("Wedge BE execution state is malformed")
         candle = None
-        if "wedge_be_partial_intent" not in execution:
+        fade_receipt = None
+        if ("wedge_be_partial_intent" not in execution
+                and self._impulse_fade_paper_enabled
+                and self._get_pattern_flow_evidence is not None):
+            # Only certified, same-candidate evidence may be evaluated by
+            # the canonical owner. A disconnected observer is never authority.
+            try:
+                fade_receipt = self._get_pattern_flow_evidence(record)
+            except Exception:
+                fade_receipt = None
+        if "wedge_be_partial_intent" not in execution and fade_receipt is None:
             source = self._get_closed_candle(record.symbol.value)
             if not isinstance(source, Mapping):
                 return False
@@ -474,7 +488,13 @@ class RobotBreakoutMonitor:
             ):
                 return False
             candle = {"time_ms": timestamp, "high": high, "low": low}
-        result = step(record.candidate_id, record.symbol.value, candle)
+        if fade_receipt is not None:
+            result = step(
+                record.candidate_id, record.symbol.value, candle,
+                fade_receipt=fade_receipt,
+            )
+        else:
+            result = step(record.candidate_id, record.symbol.value, candle)
         return getattr(result, "status", None) is CommandResultStatus.COMPLETED
 
     def process_authoritative_fill(self, symbol: str) -> tuple[str, ...]:
