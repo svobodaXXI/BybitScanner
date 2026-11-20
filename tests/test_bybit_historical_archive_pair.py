@@ -10,7 +10,7 @@ import unittest
 from zipfile import ZipFile
 
 from tools.inspect_bybit_historical_pair import (
-    ArchiveEvidenceError, inspect_archive_pair,
+    ArchiveEvidenceError, _timestamp_ms, inspect_archive_pair,
 )
 
 
@@ -90,6 +90,14 @@ class HistoricalArchivePairTests(unittest.TestCase):
                 "BTCUSDT", self.DAY, self.trades, self.book,
                 start_ms=self.START, end_ms=self.START + 60_000,
             )
+
+    def test_real_bybit_fractional_second_timestamps_are_accepted(self):
+        # Source prints include four fractional seconds: 100-us precision.
+        self.assertEqual(_timestamp_ms("1790812800.1921"), 1790812800192)
+        self.assertEqual(_timestamp_ms("1790813890.0927"), 1790813890092)
+        self.trade_rows[0]["timestamp"] = "1790812800.1921"
+        self.write_files()
+        self.assertEqual(self.inspect().trades_in_window, 2)
 
     def test_duplicate_trade_identity_is_blocked(self):
         self.trade_rows[-1]["trdMatchID"] = "id-a"
