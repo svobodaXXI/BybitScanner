@@ -63,6 +63,62 @@ def _candidate(direction="LONG", phase="RETEST_DETECTED"):
 
 
 class ObserverTests(unittest.TestCase):
+    def test_renewed_stop_campaign_reads_only_current_cached_certificate(self):
+        """One existing observer, zero network/DB queries or trading decisions."""
+        from terminal.application.robot_admission import RobotReentryAdmissionRequest
+        from tests.test_robot_pattern_flow_overlay import (
+            PostBreakoutImpulsePriorityResearchTests, certificate,
+        )
+
+        host = PostBreakoutImpulsePriorityResearchTests._host()
+        source_snapshot = {"generation": 0, "invalid_frames": 0}
+        context = _Context(source_snapshot)
+        rest = _REST(None, None, None)
+        observer = PatternFlowObserver(
+            SimpleNamespace(list_contexts=lambda: (context,)),
+            rest, "unused",
+            clock_ms=lambda: 180_100,
+            get_candidates=lambda: (host,),
+        )
+        proposal = RobotReentryAdmissionRequest(
+            campaign_id="verified-campaign-1", direction="LONG",
+            frozen_thesis_sha256="a" * 64,
+            reserved_risk_usdt=Decimal("3"),
+            previous_stop_exec_id="durable-stop-exec-1",
+            confirmed_at_ms=60_000,
+            strategy_confirmation_proven=True,
+        )
+        try:
+            # Same cache and generation that the ordinary entry observer uses.
+            observer._receipts[host.candidate_id] = (
+                certificate(), context.impulse_observation, 0,
+            )
+            decision = observer.reentry_research(
+                host, proposal, previous_stop_at_ms=30_000,
+            )
+            self.assertEqual(decision.outcome, "REENTRY_IMPULSE_RESEARCH")
+            self.assertFalse(decision.trading_authorized)
+            # The post-STOP pattern can be confirmed, yet the first of the
+            # two closed M1 flow windows can still precede that confirmation.
+            from dataclasses import replace
+
+            later = replace(proposal, confirmed_at_ms=120_000)
+            self.assertEqual(
+                observer.reentry_research(
+                    host, later, previous_stop_at_ms=90_000,
+                ).outcome, "WAIT_SOURCE",
+            )
+            # Reconnected market stream invalidates the exact cached receipt.
+            source_snapshot["generation"] = 1
+            self.assertEqual(
+                observer.reentry_research(
+                    host, proposal, previous_stop_at_ms=30_000,
+                ).outcome, "WAIT_SOURCE",
+            )
+            self.assertEqual(rest.requests, [])
+        finally:
+            observer.close()
+
     def test_open_wedge_certifies_source_only_fade_on_same_candidate(self):
         """Open trade gets completed source facts, not a fresh trade signal."""
         observed, recent, previous, current = PatternFlowSourceTests.fading_source()
