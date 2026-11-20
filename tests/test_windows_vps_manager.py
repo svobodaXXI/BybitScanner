@@ -837,6 +837,48 @@ class TestWindowsVpsManager(unittest.TestCase):
             self.assertEqual(recover_last_request_context(path),
                              (request, "", ""))
 
+    def test_only_pending_uuid_is_auto_recovered_and_terminal_receipt_is_durable(self):
+        from tools.windows_vps_manager import (
+            recover_pending_request, recover_last_request_context,
+            mark_request_terminal,
+        )
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "last_request_id"
+            request, sha = "c" * 32, "d" * 40
+            remember_request_id(request, path, action="update", sha=sha)
+            self.assertEqual(recover_pending_request(path), (request, "update", sha))
+            # An unrelated request cannot terminate the current durable intent.
+            mark_request_terminal("a" * 32, path)
+            self.assertEqual(recover_pending_request(path), (request, "update", sha))
+            mark_request_terminal(request, path)
+            self.assertEqual(recover_pending_request(path), ("", "", ""))
+            self.assertEqual(recover_last_request_context(path), (request, "update", sha))
+            # Legacy UUID-only and malformed action/SHA must not auto-execute.
+            remember_request_id(request, path)
+            self.assertEqual(recover_pending_request(path), ("", "", ""))
+            path.write_text(request + "\\nupdate\\nINVALID\\nPENDING\\n", encoding="ascii")
+            self.assertEqual(recover_pending_request(path), ("", "", ""))
+
+    def test_recovered_running_status_watches_same_uuid_and_never_submits(self):
+        from tools.windows_vps_manager import CONTROL_MODULE
+        request = "a" * 32
+        command = ["ssh", CONTROL_MODULE + " status " + request]
+        response = subprocess.CompletedProcess(
+            command, 3, stdout="REQUEST_ID=" + request +
+            "\\nSTATUS=RUNNING\\n", stderr="")
+        fake = SimpleNamespace(events=queue.Queue())
+        with (patch("tools.windows_vps_manager.run_readonly_ssh_with_laptop_agent_recovery",
+                    return_value=(response, "")) as probe,
+              patch("tools.windows_vps_manager.watch_owner_request",
+                    return_value=("submitted", "STATUS=RUNNING")) as watcher,
+              patch("tools.windows_vps_manager.subprocess.run") as submit):
+            VPSManager.worker_control(fake, command, "status", request)
+        self.assertEqual(fake.events.get_nowait()[0], "submitted")
+        probe.assert_called_once()
+        watcher.assert_called_once()
+        self.assertIs(watcher.call_args.args[0], command)
+        submit.assert_not_called()
+
     def test_watcher_success_is_bound_to_exact_postcheck_sha(self):
         from tools.windows_vps_manager import CONTROL_MODULE
         request, sha = "f" * 32, "a" * 40
