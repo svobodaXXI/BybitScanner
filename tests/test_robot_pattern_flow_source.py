@@ -58,6 +58,51 @@ class PatternFlowSourceTests(unittest.TestCase):
                         "3" if wrong_kline else "4", "404")
         return observation, recent, previous, current
 
+    @classmethod
+    def fading_source(cls):
+        """Complete Bybit-like facts but NO qualifying entry acceleration."""
+        from dataclasses import replace
+
+        observed, recent, previous, current = cls.source()
+        observed["prints"] = tuple(
+            replace(item, price=Decimal("100")) if item.trade_id == "d"
+            else item for item in observed["prints"]
+        )
+        for row in recent["result"]["list"]:
+            if row["execId"] == "d":
+                row["price"] = "100"
+        current["result"]["list"][0][1:7] = [
+            "100", "100", "100", "100", "4", "400",
+        ]
+        return observed, recent, previous, current
+
+    def test_source_only_certifies_facts_without_inventing_entry_signal(self):
+        source = self.fading_source()
+        self.assertIsNone(certified_snapshot(
+            *source, closed_at_ms=self.CLOSE,
+            decision_ms=self.CLOSE + 10,
+        ))
+        facts = certified_snapshot(
+            *source, closed_at_ms=self.CLOSE,
+            decision_ms=self.CLOSE + 10, source_only=True,
+        )
+        self.assertIsNotNone(facts)
+        self.assertEqual(facts["flow_observation"]["direction"], None)
+        self.assertFalse(
+            facts["flow_observation"]["transition"].buy_wave_accelerating
+        )
+        self.assertEqual(facts["flow_source"]["print_count"], 4)
+        self.assertTrue(facts["flow_source"]["source_complete"])
+        self.assertEqual(len(facts["flow_source"]["print_facts_sha256"]), 64)
+        self.assertFalse(is_robot_executable_signal(facts, timeframe="1"))
+        # Missing source parity remains forbidden even for mere observations.
+        bad = list(self.fading_source())
+        bad[0]["prints"] = bad[0]["prints"][:-1]
+        self.assertIsNone(certified_snapshot(
+            *bad, closed_at_ms=self.CLOSE,
+            decision_ms=self.CLOSE + 10, source_only=True,
+        ))
+
     def test_two_certified_minutes_are_readonly_pattern_flow_evidence(self):
         item = certified_snapshot(
             *self.source(), closed_at_ms=self.CLOSE,
