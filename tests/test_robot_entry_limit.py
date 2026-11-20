@@ -459,5 +459,57 @@ class PostBreakoutWedgeImpulseQuoteTests(unittest.TestCase):
             )
 
 
+
+
+class PostBreakoutFrozenQuoteRestartTests(unittest.TestCase):
+    """A durable research quote cannot become a resurrected order after restart."""
+
+    def test_freeze_restore_same_candidate_and_source_only(self):
+        from types import SimpleNamespace
+        from robot_entry_limit import (
+            freeze_post_breakout_impulse_quote,
+            verify_frozen_post_breakout_impulse_quote,
+        )
+
+        host = PostBreakoutWedgeImpulseQuoteTests.host()
+        source = PostBreakoutWedgeImpulseQuoteTests.receipt()
+        plan = PostBreakoutWedgeImpulseQuoteTests.plan(host=host, receipt=source)
+        frozen = freeze_post_breakout_impulse_quote(plan, source)
+        self.assertIs(frozen["trading_authorized"], False)
+        self.assertTrue(verify_frozen_post_breakout_impulse_quote(host, frozen))
+        host.state_revision += 1  # Persisted preview increments the Robot CAS revision.
+        self.assertTrue(verify_frozen_post_breakout_impulse_quote(host, frozen))
+
+        for key, bad in (
+            ("client_action_id", "impossible-foreign"),
+            ("source_sha256", "impossible"),
+            ("source_decision_ms", 179_999),
+            ("entry_side", "Sell"),
+            ("stop_price", "120.0"),
+            ("take_price", "99.00"),
+            ("trading_authorized", True),
+        ):
+            with self.subTest(key=key):
+                corrupted = dict(frozen)
+                corrupted[key] = bad
+                self.assertFalse(verify_frozen_post_breakout_impulse_quote(
+                    host, corrupted,
+                ))
+        host.symbol = SimpleNamespace(value="WRONGUSDT")
+        self.assertFalse(verify_frozen_post_breakout_impulse_quote(host, frozen))
+
+    def test_mismatched_source_cannot_freeze_quote(self):
+        from dataclasses import replace
+        from robot_entry_limit import freeze_post_breakout_impulse_quote
+
+        proposal = PostBreakoutWedgeImpulseQuoteTests.plan()
+        bad_source = replace(
+            PostBreakoutWedgeImpulseQuoteTests.receipt(),
+            candidate_id="some-other-candidate",
+        )
+        with self.assertRaises(RobotEntryLimitError):
+            freeze_post_breakout_impulse_quote(proposal, bad_source)
+
+
 if __name__ == "__main__":
     unittest.main()
