@@ -1027,6 +1027,61 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertEqual(len(self.executor.cancel_calls), 1)
         self.assertFalse(self.executor.protection_calls)
 
+    def test_l_shape_early_owner_relinks_lost_cas_without_second_order(self):
+        from terminal.persistence.sqlite_store import ConcurrentUpdate
+
+        host = self._setup_impulse_early_l_shape_owner()
+        store = self.monitor._store()
+        original_save = store.save_robot_candidate_state
+        saves = [0]
+        def lost_order_link(*args, **kwargs):
+            saves[0] += 1
+            if saves[0] == 2:
+                raise ConcurrentUpdate("order created, candidate link CAS unavailable")
+            return original_save(*args, **kwargs)
+        store.save_robot_candidate_state = lost_order_link
+        try:
+            self.assertEqual(self.monitor.tick(), (host.candidate_id,))
+        finally:
+            store.save_robot_candidate_state = original_save
+        candidate = self.store.get_robot_candidate(host.candidate_id)
+        intent = candidate.robot_state["execution"]["impulse_entry_intent"]
+        self.assertNotIn("limit_order_id", candidate.robot_state["execution"])
+        self.assertEqual(len(self.executor.limit_calls), 1)
+        self.assertIsNotNone(self.store.get_robot_paper_limit_by_create_action(
+            ACCOUNT_ID, Symbol(SYMBOL), intent["client_action_id"],
+        ))
+        self.assertEqual(self.monitor.tick(), (host.candidate_id,))
+        candidate = self.store.get_robot_candidate(host.candidate_id)
+        self.assertIn("limit_order_id", candidate.robot_state["execution"])
+        self.assertEqual(len(self.executor.limit_calls), 1)
+
+    def test_l_shape_early_limit_uses_native_admission_epoch_and_wave_expiry(self):
+        from terminal.runtime.paper_runtime import PaperRuntime
+        import robot_entry_limit
+
+        host = self._setup_impulse_early_l_shape_owner()
+        self.assertEqual(self.monitor.tick(), (host.candidate_id,))
+        candidate = self.store.get_robot_candidate(host.candidate_id)
+        order_id = candidate.robot_state["execution"]["limit_order_id"]
+        # Native monitor records the current READY epoch before matching.
+        self.assertEqual(self.monitor.tick(), ())
+        owner = object.__new__(PaperRuntime)
+        owner.store = self.store
+        owner._account_id = ACCOUNT_ID
+        owner._paper_account_id = ACCOUNT_ID
+        symbol = Symbol(SYMBOL)
+        self.assertIn(order_id, owner._robot_linked_entry_limits(symbol))
+        active = self.store.load_active_paper_limits(ACCOUNT_ID, symbol)
+        now = self.clock.value
+        self.assertNotIn(order_id, owner._robot_entry_limit_ids_fenced_by_admission(
+            symbol, active, event_received_at_ms=now,
+        ))
+        self.assertIn(order_id, owner._robot_entry_limit_ids_fenced_by_admission(
+            symbol, active,
+            event_received_at_ms=now + robot_entry_limit.IMPULSE_ENTRY_LIMIT_MAX_AGE_MS + 1,
+        ))
+
     def test_l_shape_early_impulse_partial_fill_gets_native_protection(self):
         import robot_entry_limit
         host = self._setup_impulse_early_l_shape_owner()
