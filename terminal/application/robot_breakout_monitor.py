@@ -3011,7 +3011,7 @@ class RobotBreakoutMonitor:
             record.candidate_id, record.symbol.value,
         )
         now_ms = self._now_ms()
-        execution["protection_failure"] = type(error).__name__
+        execution["protection_failure"] = str(error)
         execution["emergency_close_pending"] = True
         execution["emergency_close_attempted_at_ms"] = now_ms
         execution["emergency_close_intent"] = {
