@@ -2255,8 +2255,8 @@ class PaperRuntime:
         for candidate in self.store.load_active_robot_candidates_for_symbol(
             self._paper_account_id, symbol,
         ):
-            state = candidate.robot_state or {}
-            execution = state.get("execution") or {}
+            candidate_state = candidate.robot_state or {}
+            execution = candidate_state.get("execution") or {}
             if (not isinstance(execution, Mapping)
                     or execution.get("entry_mode") != "IMPULSE_EARLY_LIMIT"):
                 continue
