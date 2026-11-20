@@ -1081,15 +1081,14 @@ export function ChartPanel({
                     <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
                   </svg>
                 </button>
-                <button type="button" aria-label="Автопилот" title="Автопилот"
+                <button type="button" aria-label="Робот" title="Робот"
                   onClick={() => onEditorNavigate?.("AUTOPILOT")}>
                   <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <circle cx="12" cy="12" r="9" />
-                    <circle cx="12" cy="12" r="2.2" />
-                    <line x1="4.5" y1="9.5" x2="10.2" y2="11.3" />
-                    <line x1="19.5" y1="9.5" x2="13.8" y2="11.3" />
-                    <line x1="12" y1="14.2" x2="12" y2="20.5" />
-                    <path d="M4.8 9.8 Q12 6.5 19.2 9.8" />
+                    <rect x="4" y="7" width="16" height="13" rx="3" />
+                    <path d="M12 7V3M9.5 3h5M4 12H2M20 12h2" />
+                    <circle cx="9" cy="13" r="1" />
+                    <circle cx="15" cy="13" r="1" />
+                    <path d="M9 17h6" />
                   </svg>
                 </button>
               </nav>
