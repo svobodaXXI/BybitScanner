@@ -301,3 +301,166 @@ def submit_initial_retest_limit(
     """
 
     return submitter.create_limit(plan.request)
+
+
+# The original protected Robot LIMIT owner remains the only execution path.
+# This is a pure, unsubmitted quote for an earlier post-breakout Wedge entry.
+# It MUST NOT be passed to create_limit without a separately validated durable
+# owner/recovery path; existing retest LIMIT behavior remains unchanged.
+@dataclass(frozen=True, slots=True)
+class PostBreakoutImpulseLimitResearch:
+    candidate_id: str
+    state_revision: int
+    breakout_known_at_ms: int
+    decision_ms: int
+    direction: str
+    quoted_price: Decimal
+    stop_price: Decimal
+    take_price: Decimal
+    planned_net_rr: Decimal
+    worst_loss_per_base_usdt: Decimal
+    request: LimitCommandRequest
+
+    @property
+    def trading_authorized(self) -> bool:
+        return False
+
+
+def build_post_breakout_wedge_impulse_limit_research(
+    record,
+    flow_receipt,
+    book,
+    *,
+    tick_size: Decimal,
+    now_ms: int,
+    max_book_age_ms: int = 1000,
+) -> PostBreakoutImpulseLimitResearch:
+    """Quote a canonical Wedge entry BEFORE its former retest, without orders.
+
+    Uses the actual READY book side instead of the old retest-boundary
+    price. The existing frozen Robot STOP/TAKE and fee-aware RR are reused.
+    Admission, position exposure, working-volume normalization, persistent
+    intent, protected entry coverage, actual fills and risk budget MUST be
+    proven independently by the existing execution owner BEFORE dispatch.
+    """
+    from robot_entry_flow_evidence import (
+        canonical_host_breakout_known_at_ms,
+        observe_post_breakout_impulse_timing,
+    )
+    import robot_protection
+    from retest_account_risk import position_worst_case_loss_usdt
+    from terminal.market_data.models import BookHealth, NormalizedOrderBook
+
+    if (type(now_ms) is not int or now_ms <= 0
+            or type(max_book_age_ms) is not int or max_book_age_ms <= 0
+            or not isinstance(tick_size, Decimal)
+            or not tick_size.is_finite() or tick_size <= 0):
+        raise RobotEntryLimitError("invalid quote clock or tick size")
+    try:
+        snapshot, state = record.signal_snapshot, record.robot_state
+        cid, rev, symbol = record.candidate_id, record.state_revision, record.symbol.value
+    except AttributeError as error:
+        raise RobotEntryLimitError("frozen candidate identity unavailable") from error
+    if (record.status != "APPROVED" or not isinstance(snapshot, Mapping)
+            or not isinstance(state, Mapping)
+            or snapshot.get("pattern") not in ("Falling Wedge", "Rising Wedge")
+            or snapshot.get("symbol") != symbol
+            or state.get("phase") != "WAITING_RETEST"
+            or state.get("retest_index") is not None
+            or state.get("execution") not in (None, {})
+            or type(rev) is not int or rev < 0
+            or not isinstance(cid, str) or not cid):
+        raise RobotEntryLimitError("not an unowned approved pre-retest Wedge")
+    breakout_ms = canonical_host_breakout_known_at_ms(record)
+    if breakout_ms is None:
+        raise RobotEntryLimitError("original Wedge breakout is unproven")
+    choice = observe_post_breakout_impulse_timing(
+        record, flow_receipt, breakout_known_at_ms=breakout_ms,
+        decision_ms=now_ms,
+    )
+    if choice is None or choice.outcome != "IMPULSE_ENTRY_RESEARCH":
+        raise RobotEntryLimitError("candidate-bound directional flow not certified")
+    if (not isinstance(book, NormalizedOrderBook)
+            or book.symbol.value != symbol or book.health is not BookHealth.READY
+            or type(book.received_at_ms) is not int
+            or not 0 <= now_ms - book.received_at_ms <= max_book_age_ms
+            or not book.bids or not book.asks
+            or book.bids[0].price.value >= book.asks[0].price.value):
+        raise RobotEntryLimitError("fresh executable two-sided book is not proven")
+    for source_ms in (book.source_event_at_ms, book.source_matching_engine_cts_ms):
+        if source_ms is not None and (
+                type(source_ms) is not int or source_ms > now_ms):
+            raise RobotEntryLimitError("book source clock is invalid")
+    direction = state["direction"]
+    side = OrderSide.BUY if direction == DIRECTION_LONG else OrderSide.SELL
+    best_bid = book.bids[0].price.value
+    best_ask = book.asks[0].price.value
+    price = best_ask if side is OrderSide.BUY else best_bid
+    if (not isinstance(price, Decimal) or price <= 0
+            or not price.is_finite()
+            or normalize_limit_price(price, tick_size, side) != price):
+        raise RobotEntryLimitError("book price is not executable at the tick")
+    geometry_index = state.get("geometry_cursor")
+    index = _required_int(geometry_index, "geometry_cursor")
+    if index < state["breakout_index"]:
+        raise RobotEntryLimitError("Wedge cursor predates breakout")
+    boundary_side = "upper" if side is OrderSide.BUY else "lower"
+    frozen_boundary = _positive_decimal(
+        boundary_price(snapshot, side=boundary_side, geometry_index=index),
+        "frozen Wedge boundary",
+    )
+    # A quote merely touching or returning inside the pattern is NOT the
+    # impulse-entry scenario; the exit-side best bid/ask must both clear it.
+    if (side is OrderSide.BUY and best_bid <= frozen_boundary
+            or side is OrderSide.SELL and best_ask >= frozen_boundary):
+        raise RobotEntryLimitError("price no longer outside pattern realization boundary")
+    structural = robot_protection.wedge_structural_extreme(snapshot, direction)
+    reference, frozen_target = robot_protection.wedge_frozen_reference_target(
+        snapshot, direction,
+    )
+    candidate = {
+        "candidate_id": cid, "status": "APPROVED", "timeframe": "1",
+        "signal_snapshot": snapshot,
+    }
+    protection = robot_protection.build_protection_plan(
+        candidate, state, average_entry=price,
+        structural_extreme=structural, tick_size=tick_size,
+        frozen_signal_reference_price=reference,
+        frozen_scanner_target_price=frozen_target,
+    )
+    # A one-base-unit fee ratio is quantity-invariant for the fixed stop/take;
+    # this is a quote, NOT a proof of normalized 1 WV or total account risk.
+    fee = Decimal("0.0006")
+    rr = robot_protection.post_fill_net_rr(
+        direction, average_entry=price, quantity=Decimal(1),
+        entry_fee=price * fee, stop_price=protection.stop_price,
+        take_price=protection.take_price, exit_fee_rate=fee,
+    )
+    if rr < robot_protection.wedge_min_entry_rr():
+        raise RobotEntryLimitError("after-fee Wedge RR below current floor")
+    risk = position_worst_case_loss_usdt(
+        direction=direction, quantity=Decimal(1), entry_price=price,
+        stop_price=protection.stop_price, fee_rate=fee,
+    )
+    if risk is None or risk <= 0:
+        raise RobotEntryLimitError("Wedge protective loss is not computable")
+    # One stable initial-attempt action identity, independent of book refresh.
+    # Owner-side persistence MUST freeze its price before ever dispatching.
+    digest = hashlib.sha256(
+        f"{cid}\0post-breakout-impulse-limit\0{state['breakout_index']}".encode("utf-8")
+    ).hexdigest()[:32]
+    request = LimitCommandRequest(
+        client_action_id=ClientActionId(f"robot-impulse-limit-{digest}"),
+        symbol=symbol, side=side,
+        volume=VolumeRequest(VolumeUnit.WORKING_VOLUME, Decimal("1")),
+        sizing_reference_price=price, limit_price=price,
+        time_in_force=TimeInForce.GTC,
+    )
+    return PostBreakoutImpulseLimitResearch(
+        candidate_id=cid, state_revision=rev,
+        breakout_known_at_ms=breakout_ms, decision_ms=now_ms,
+        direction=direction, quoted_price=price,
+        stop_price=protection.stop_price, take_price=protection.take_price,
+        planned_net_rr=rr, worst_loss_per_base_usdt=risk,
+        request=request,
+    )
