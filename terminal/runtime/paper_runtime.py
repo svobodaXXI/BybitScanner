@@ -3136,7 +3136,10 @@ class PaperRuntime:
                 continue
             phase = candidate.robot_state.get("phase")
             execution = candidate.robot_state.get("execution") or {}
-            if phase == "RETEST_DETECTED":
+            if phase == "RETEST_DETECTED" or (
+                phase == "WAITING_RETEST"
+                and execution.get("entry_mode") == "IMPULSE_EARLY_LIMIT"
+            ):
                 order_ids = (execution.get("limit_order_id"),)
             elif phase == "BOX_ENTRY_READY":
                 source_id = execution.get("source_box_candidate_id")
