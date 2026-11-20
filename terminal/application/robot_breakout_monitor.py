@@ -561,7 +561,8 @@ class RobotBreakoutMonitor:
 
             if (phase != robot_state_machine.PHASE_RETEST_DETECTED
                     and not (
-                        phase == robot_state_machine.PHASE_WAITING_RETEST
+                        phase in (robot_state_machine.PHASE_WAITING_RETEST,
+                                  robot_l_shape.PHASE_WAITING_RETEST)
                         and isinstance(execution, Mapping)
                         and execution.get("entry_mode") == IMPULSE_EARLY_LIMIT_ENTRY_MODE
                         and execution.get("limit_order_id")
@@ -768,29 +769,30 @@ class RobotBreakoutMonitor:
             return False
         return True
 
-    def _advance_wedge_impulse_early_limit(
+    def _advance_impulse_early_limit(
         self, record: RobotCandidateRecord,
     ) -> bool:
-        """Canonical PAPER Robot LIMIT owner for impulse, with durable first intent.
+        """Canonical Wedge/L-shape PAPER LIMIT owner with durable first intent.
 
         The only entry mechanism is the existing action executor. An uncertain
         submission is NEVER replayed. Recovery correlates the original create
         action to an actual Robot-owned LIMIT before enabling fills; the same
         native finalize/protection path handles any partial fill.
         """
+        pattern = record.signal_snapshot.get("pattern")
+        wedge = pattern in ("Falling Wedge", "Rising Wedge")
         if (self._account_id.value != "paper" or record.status != "APPROVED"
                 or record.robot_state is None
-                or record.signal_snapshot.get("pattern")
-                    not in ("Falling Wedge", "Rising Wedge")):
+                or not (wedge or pattern == "L-shape")):
             return False
         state = record.robot_state
         execution = dict(state.get("execution") or {})
         intent = execution.get("impulse_entry_intent")
         if intent is not None:
+            verify = (robot_entry_limit.verify_frozen_post_breakout_impulse_quote
+                      if wedge else robot_entry_limit.verify_frozen_post_breakout_l_shape_quote)
             if (execution.get("entry_mode") != IMPULSE_EARLY_LIMIT_ENTRY_MODE
-                    or not robot_entry_limit.verify_frozen_post_breakout_impulse_quote(
-                        record, intent,
-                    )):
+                    or not verify(record, intent)):
                 self._escalate_reconciliation(
                     "ROBOT_IMPULSE_ENTRY_INTENT_INVALID "
                     f"candidate_id={record.candidate_id}"
@@ -818,7 +820,8 @@ class RobotBreakoutMonitor:
                 return False
             if "limit_order_id" not in execution:
                 execution["limit_order_id"] = order.order_id.value
-                execution["last_limit_index"] = state["geometry_cursor"]
+                if wedge:
+                    execution["last_limit_index"] = state["geometry_cursor"]
                 new_state = dict(state)
                 new_state["execution"] = execution
                 try:
@@ -836,8 +839,10 @@ class RobotBreakoutMonitor:
             # No separate impulse fill path or secondary protection plan.
             return self._advance_retest_detected(record)
 
+        early_phase = ("WAITING_RETEST" if wedge
+                       else robot_l_shape.PHASE_WAITING_RETEST)
         if (not self._impulse_early_paper_enabled
-                or state.get("phase") != "WAITING_RETEST"
+                or state.get("phase") != early_phase
                 or self._get_pattern_flow_evidence is None
                 or self._get_market_book is None
                 or execution.get("limit_order_id")
@@ -855,7 +860,12 @@ class RobotBreakoutMonitor:
             book = self._get_market_book(record.symbol.value)
             if book is None:
                 return False
-            quote = robot_entry_limit.build_post_breakout_wedge_impulse_limit_research(
+            build_quote = (
+                robot_entry_limit.build_post_breakout_wedge_impulse_limit_research
+                if wedge else
+                robot_entry_limit.build_post_breakout_l_shape_impulse_limit_research
+            )
+            quote = build_quote(
                 record, receipt, book,
                 tick_size=self._tick_size_provider(record.symbol.value),
                 now_ms=self._now_ms(),
@@ -904,7 +914,8 @@ class RobotBreakoutMonitor:
         # recovered from the create action, PAPER's admission matcher fences it.
         linked = dict(durable)
         linked["limit_order_id"] = result.order_id
-        linked["last_limit_index"] = state["geometry_cursor"]
+        if wedge:
+            linked["last_limit_index"] = state["geometry_cursor"]
         completed_state = dict(new_state)
         completed_state["execution"] = linked
         try:
@@ -961,10 +972,10 @@ class RobotBreakoutMonitor:
         execution = record.robot_state.get("execution") or {}
         if (isinstance(execution, Mapping)
                 and execution.get("entry_mode") == IMPULSE_EARLY_LIMIT_ENTRY_MODE):
-            return self._advance_wedge_impulse_early_limit(record)
+            return self._advance_impulse_early_limit(record)
         if (phase == robot_state_machine.PHASE_WAITING_RETEST
                 and self._impulse_early_paper_enabled
-                and self._advance_wedge_impulse_early_limit(record)):
+                and self._advance_impulse_early_limit(record)):
             return True
         if phase == robot_state_machine.PHASE_RETEST_DETECTED:
             return self._advance_retest_detected(record)
@@ -1015,6 +1026,15 @@ class RobotBreakoutMonitor:
             return True
 
         phase = record.robot_state.get("phase")
+        execution = record.robot_state.get("execution") or {}
+        if (isinstance(execution, Mapping)
+                and execution.get("entry_mode") == IMPULSE_EARLY_LIMIT_ENTRY_MODE):
+            return self._advance_impulse_early_limit(record)
+        if (phase == robot_l_shape.PHASE_WAITING_RETEST
+                and record.signal_snapshot.get("pattern") == "L-shape"
+                and self._impulse_early_paper_enabled
+                and self._advance_impulse_early_limit(record)):
+            return True
         if phase == robot_state_machine.PHASE_RETEST_DETECTED:
             return self._advance_l_shape_retest_detected(record)
         if phase == robot_l_shape.PHASE_INVALIDATED:
@@ -1844,6 +1864,34 @@ class RobotBreakoutMonitor:
         )
         if order is None or order.quantity <= 0:
             return False
+
+        if execution.get("entry_mode") == IMPULSE_EARLY_LIMIT_ENTRY_MODE:
+            intent = execution.get("impulse_entry_intent")
+            decision_ms = intent.get("decision_ms") if isinstance(intent, Mapping) else None
+            if type(decision_ms) is not int:
+                self._escalate_reconciliation(
+                    f"ROBOT_LSHAPE_IMPULSE_CLOCK_UNPROVEN candidate_id={record.candidate_id}"
+                )
+                return False
+            if self._now_ms() - decision_ms > IMPULSE_ENTRY_LIMIT_MAX_AGE_MS:
+                if order.status not in INACTIVE_LIMIT_STATUSES:
+                    digest = hashlib.sha256(
+                        f"{record.candidate_id}\0impulse-expired-entry".encode("utf-8")
+                    ).hexdigest()[:32]
+                    cancelled = self._action_executor.cancel_limit(
+                        PaperLimitCancelRequest(
+                            ClientActionId(f"robot-impulse-expiry-{digest}"),
+                            record.symbol.value, order.order_id.value,
+                        )
+                    )
+                    if getattr(cancelled, "status", None) != CommandResultStatus.COMPLETED:
+                        return False
+                    refreshed = self._store().get_paper_limit(
+                        order.order_id.value, self._account_id,
+                    )
+                    if refreshed is None or refreshed.status not in INACTIVE_LIMIT_STATUSES:
+                        return False
+                    order = refreshed
 
         # An old APPROVED standalone Double Top/Bottom may already own an
         # entry LIMIT from a previous release. Blocking fresh submissions is
