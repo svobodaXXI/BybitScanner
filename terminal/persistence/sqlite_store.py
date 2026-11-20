@@ -1217,6 +1217,14 @@ class SQLiteStore:
         ("robot_candidates_active_symbol",
          "robot_candidates(trading_account_id, symbol, approved_at_ms, candidate_id) "
          "WHERE status IN ('APPROVED', 'OPEN')"),
+        # Partial index prevents each protected-book event from parsing all
+        # historical candidates on a symbol. Only anomalous recovery markers
+        # enter this tiny index; exact candidate evidence stays in the main row.
+        ("robot_candidates_emergency_quarantine",
+         "robot_candidates(trading_account_id, symbol) "
+         "WHERE robot_state_json IS NOT NULL AND ("
+         "json_type(robot_state_json, '$.execution.emergency_close_pending') IS NOT NULL "
+         "OR json_type(robot_state_json, '$.execution.emergency_close_intent') IS NOT NULL)"),
     )
 
     @staticmethod
