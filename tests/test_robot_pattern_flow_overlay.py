@@ -413,6 +413,22 @@ class PostBreakoutImpulsePriorityResearchTests(unittest.TestCase):
                 "potential_percent": "10", "reward_risk": "2.5",
             }
             if pattern == "MIRROR":
+                # Owner-approved post-#1193 origin; no legacy HORN/Box or
+                # wrong-side breakout may count as a MIRROR flow host.
+                snapshot[term].update({
+                    "level_id": "lvl-impulse-mirror-fixture",
+                    "level_source": "pattern_boundary",
+                    "level_pattern": (
+                        "Rising Wedge" if direction == "LONG"
+                        else "Falling Wedge"
+                    ),
+                    "level_side": (
+                        "lower" if direction == "LONG" else "upper"
+                    ),
+                    "level_breakout_direction": (
+                        "DOWN" if direction == "LONG" else "UP"
+                    ),
+                })
                 snapshot[term]["confirmation"] = {
                     "close_time_ms": 180_000, "timeframe": "1",
                     "kind": "ENGULFING",
