@@ -31,7 +31,7 @@ def opener(request, timeout=0):
     metadata = {
         updates.API + "/branches/" + updates.BRANCH: {"commit": {"sha": SHA}},
         updates.API + "/git/ref/tags/" + tag: {"object": {"type": "commit", "sha": SHA}},
-        updates.API + "/compare/" + SHA + "..." + SHA: {
+        updates.API + "/compare/" + SHA + "..." + SHA + updates.COMPARE_SUMMARY_PAGE: {
             "status": "identical", "behind_by": 0, "ahead_by": 0,
         },
         updates.API + "/releases?per_page=30": [{
@@ -225,7 +225,7 @@ def test_later_unrelated_stable_commits_do_not_invalidate_desktop_release():
         url = request.full_url
         if url == updates.API + "/branches/" + updates.BRANCH:
             return Reply(json.dumps({"commit": {"sha": newer}}).encode())
-        if url == updates.API + "/compare/" + SHA + "..." + newer:
+        if url == updates.API + "/compare/" + SHA + "..." + newer + updates.COMPARE_SUMMARY_PAGE:
             return Reply(json.dumps({"status": "ahead", "behind_by": 0, "ahead_by": 1}).encode())
         return opener(request, timeout=timeout)
 
@@ -239,7 +239,7 @@ def test_divergent_releases_fail_closed():
         url = request.full_url
         if url == updates.API + "/branches/" + updates.BRANCH:
             return Reply(json.dumps({"commit": {"sha": newer}}).encode())
-        if url == updates.API + "/compare/" + SHA + "..." + newer:
+        if url == updates.API + "/compare/" + SHA + "..." + newer + updates.COMPARE_SUMMARY_PAGE:
             return Reply(json.dumps({"status": "diverged", "behind_by": 1,
                                      "ahead_by": 1}).encode())
         return opener(request, timeout=timeout)
@@ -249,10 +249,33 @@ def test_divergent_releases_fail_closed():
 
 
 
+
+def test_large_historical_compare_uses_summary_page_without_files():
+    """A large Compare response must never block an otherwise valid update."""
+    old = "0" * 40
+    expected = (updates.API + "/compare/" + old + "..." + SHA
+                + updates.COMPARE_SUMMARY_PAGE)
+    requested = []
+
+    def comparison(request, timeout=0):
+        url = request.full_url
+        requested.append(url)
+        if url != expected:
+            # GitHub's normal first Compare page may exceed the 256 KB limit.
+            return Reply(b"x" * 256_001)
+        return Reply(json.dumps({
+            "status": "ahead", "ahead_by": 400, "behind_by": 0,
+            "total_commits": 400,
+        }).encode())
+
+    updates.require_forward_update(old, SHA, opener=comparison)
+    assert requested == [expected]
+
+
 def test_known_installed_version_cannot_downgrade():
     old = "b" * 40
     def compare(request, timeout=0):
-        if request.full_url == updates.API + "/compare/" + old + "..." + SHA:
+        if request.full_url == updates.API + "/compare/" + old + "..." + SHA + updates.COMPARE_SUMMARY_PAGE:
             return Reply(json.dumps({"status": "behind", "behind_by": 1,
                                      "ahead_by": 0}).encode())
         return opener(request, timeout=timeout)
@@ -263,7 +286,7 @@ def test_known_installed_version_cannot_downgrade():
 def test_known_installed_version_can_advance():
     old = "0" * 40
     def compare(request, timeout=0):
-        if request.full_url == updates.API + "/compare/" + old + "..." + SHA:
+        if request.full_url == updates.API + "/compare/" + old + "..." + SHA + updates.COMPARE_SUMMARY_PAGE:
             return Reply(json.dumps({"status": "ahead", "behind_by": 0,
                                      "ahead_by": 5}).encode())
         return opener(request, timeout=timeout)
