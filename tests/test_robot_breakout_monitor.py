@@ -3309,6 +3309,23 @@ class ImpulseEarlyWedgeResearchOwnerTests(unittest.TestCase):
         self.assertFalse(owner._advance_one(host))
         self.assertEqual(saved, [])
 
+    def test_optional_source_outage_and_cas_failure_do_not_quarantine(self):
+        owner, host, saved = self.harness()
+        def broken_source(_record):
+            raise RuntimeError("temporary ws disconnected")
+        owner._get_pattern_flow_evidence = broken_source
+        self.assertFalse(owner._advance_one(host))
+        self.assertEqual(saved, [])
+
+        owner, host, saved = self.harness()
+        def conflicting_save(**_kwargs):
+            raise RuntimeError("concurrent candidate revision")
+        owner._store = lambda: SimpleNamespace(
+            save_robot_candidate_state=conflicting_save,
+        )
+        self.assertFalse(owner._advance_one(host))
+        self.assertEqual(saved, [])
+
     def test_foreign_position_and_book_uncertainty_never_prepare(self):
         owner, host, saved = self.harness()
         owner._active_other_owner_candidate_ids = lambda _r: ("foreign-owner",)
