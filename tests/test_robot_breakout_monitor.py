@@ -1066,19 +1066,24 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         order_id = candidate.robot_state["execution"]["limit_order_id"]
         # Native monitor records the current READY epoch before matching.
         self.assertEqual(self.monitor.tick(), ())
-        owner = object.__new__(PaperRuntime)
-        owner.store = self.store
-        owner._account_id = ACCOUNT_ID
-        owner._paper_account_id = ACCOUNT_ID
+        # The real runtime keeps its account-id property read-only; exercise
+        # only the actual gate methods with an explicit PAPER test context.
+        owner = SimpleNamespace(
+            store=self.store, _account_id=ACCOUNT_ID,
+            _paper_account_id=ACCOUNT_ID,
+        )
+        owner._robot_linked_entry_limits = (
+            lambda symbol: PaperRuntime._robot_linked_entry_limits(owner, symbol)
+        )
         symbol = Symbol(SYMBOL)
         self.assertIn(order_id, owner._robot_linked_entry_limits(symbol))
         active = self.store.load_active_paper_limits(ACCOUNT_ID, symbol)
         now = self.clock.value
-        self.assertNotIn(order_id, owner._robot_entry_limit_ids_fenced_by_admission(
-            symbol, active, event_received_at_ms=now,
+        self.assertNotIn(order_id, PaperRuntime._robot_entry_limit_ids_fenced_by_admission(
+            owner, symbol, active, event_received_at_ms=now,
         ))
-        self.assertIn(order_id, owner._robot_entry_limit_ids_fenced_by_admission(
-            symbol, active,
+        self.assertIn(order_id, PaperRuntime._robot_entry_limit_ids_fenced_by_admission(
+            owner, symbol, active,
             event_received_at_ms=now + robot_entry_limit.IMPULSE_ENTRY_LIMIT_MAX_AGE_MS + 1,
         ))
 
