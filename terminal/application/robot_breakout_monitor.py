@@ -675,6 +675,54 @@ class RobotBreakoutMonitor:
             store, self._account_id, clock_ms=self._clock_ms,
         )._candidate_is_inert(record)
 
+    def _prepare_wedge_early_impulse_research(self, record: RobotCandidateRecord) -> bool:
+        """Persist an early-entry proposal, NEVER a pending execution intent.
+
+        This is a PAPER-only research side channel on the original APPROVED
+        Wedge; protected entry ownership still belongs entirely to the
+        legacy RETEST path until a separate idempotent executor is proven.
+        No create/amend/cancel, position, stop or take operation is possible.
+        """
+        if (self._account_id.value != "paper"
+                or self._get_pattern_flow_evidence is None
+                or self._get_market_book is None
+                or record.robot_state is None
+                or record.status != "APPROVED"
+                or record.signal_snapshot.get("pattern")
+                    not in ("Falling Wedge", "Rising Wedge")
+                or record.robot_state.get("phase") != "WAITING_RETEST"
+                or "impulse_entry_research" in record.robot_state):
+            return False
+        if not self._read_admission_gate()[0]:
+            return False
+        if (self._active_other_owner_candidate_ids(record)
+                or self._pre_entry_block_reason(record) is not None):
+            return False
+        try:
+            receipt = self._get_pattern_flow_evidence(record)
+            if receipt is None:
+                return False
+            book = self._get_market_book(record.symbol.value)
+            if book is None:
+                return False
+            quote = robot_entry_limit.build_post_breakout_wedge_impulse_limit_research(
+                record, receipt, book,
+                tick_size=self._tick_size_provider(record.symbol.value),
+                now_ms=self._now_ms(),
+                max_book_age_ms=self._late_market_max_book_age_ms,
+            )
+            frozen = robot_entry_limit.freeze_post_breakout_impulse_quote(
+                quote, receipt,
+            )
+        except (robot_entry_limit.RobotEntryLimitError, ValueError, TypeError):
+            return False
+        # State CAS prevents an asynchronously revised candidate accepting
+        # old evidence. No order submission or owner coverage arm occurs.
+        updated = dict(record.robot_state)
+        updated["impulse_entry_research"] = frozen
+        self._persist_state(record, updated)
+        return True
+
     def _advance_one(self, record: RobotCandidateRecord) -> bool:
         if (
             record.signal_snapshot.get("pattern") == "IKIGAI_BOX"
@@ -716,6 +764,9 @@ class RobotBreakoutMonitor:
         phase = record.robot_state.get("phase")
         if phase == robot_state_machine.PHASE_RETEST_DETECTED:
             return self._advance_retest_detected(record)
+        if (phase == robot_state_machine.PHASE_WAITING_RETEST
+                and self._prepare_wedge_early_impulse_research(record)):
+            return True
         if phase == robot_state_machine.PHASE_EXPIRED_AT_APEX:
             return False
 
