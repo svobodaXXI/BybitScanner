@@ -924,6 +924,9 @@ class VPSManager(tk.Tk):
         if mode == "status" and not request:
             messagebox.showinfo("VPS Manager", "Введите точный ID операции (32 символа)")
             return
+        if mode == "status":
+            prior_id, prior_action, prior_sha = recover_last_request_context()
+            sha = prior_sha if prior_id == request and prior_action == "update" else ""
         try:
             command = control_ssh_command(
                 self.host.get(), self.user.get(), self.key.get(),
@@ -936,8 +939,8 @@ class VPSManager(tk.Tk):
                 "Подтверждение PAPER", f"Отправить на VPS действие {mode} для {sha}?"):
                 return
             try:
-                remember_request_id(request)
-            except OSError:
+                remember_request_id(request, action=mode, sha=sha)
+            except (OSError, ValueError):
                 messagebox.showerror(
                     "VPS Manager", "Не удалось сохранить ID операции. Действие не отправлено."
                 )
@@ -992,7 +995,9 @@ class VPSManager(tk.Tk):
             output = result.stdout.strip()
             if mode not in CONTROL_ACTIONS.values():
                 if mode == "status":
-                    state = gui_owner_status(output, result.returncode, request)
+                    state = gui_owner_status(
+                        output, result.returncode, request,
+                        verify_sha=update_status_target(command))
                     if transient_ssh_failure(result):
                         # Only retry the same read-only UUID status query.
                         state, output = watch_owner_request(
@@ -1030,7 +1035,12 @@ class VPSManager(tk.Tk):
             # Lost submit reply => only query the same request; never replay it.
             # Pin status to the exact authorized submit route and UUID even
             # if GUI fields are edited while the detached action is running.
-            status_command = [*command[:-1], CONTROL_MODULE + " status " + request]
+            target = re.search(
+                r" submit update ([0-9a-f]{40})(?: |$)", command[-1]
+            ) if mode == "update" else None
+            verify_sha = target.group(1) if target else ""
+            status_command = [*command[:-1], CONTROL_MODULE + " status " + request
+                              + (" --verify-update " + verify_sha if verify_sha else "")]
             state = ("submitted" if result.returncode == 0
                      and "REQUEST_ID=" + request in output.splitlines()
                      and any(line.startswith("SUBMISSION=ACCEPTED")
@@ -1038,41 +1048,12 @@ class VPSManager(tk.Tk):
                      else "unproven")
             state, details = watch_owner_request(
                 status_command, request, initially_submitted=(state == "submitted"))
-            # After a successful UPDATE, run a separate read-only installed SHA,
-            # Backend/Telegram DB identity and PAPER quiescence proof over the
-            # SAME pinned SSH route. Never replay the submitted mutation.
-            if state == "success" and mode == "update":
-                target = command[-1].split(" submit update ", 1)
-                if len(target) != 2:
-                    state = "unproven"
-                    details += "\nPOSTCHECK=BLOCKED_UNPROVEN_TARGET"
-                else:
-                    sha = target[1].split(" ", 1)[0]
-                    if EXACT_SHA.fullmatch(sha) is None:
-                        state = "unproven"
-                        details += "\nPOSTCHECK=BLOCKED_INVALID_SHA"
-                    else:
-                        proof_command = [*command[:-1],
-                                         CONTROL_MODULE + " verify-update " + sha]
-                        try:
-                            proof, recovered = run_readonly_ssh_with_laptop_agent_recovery(
-                                proof_command, capture_output=True, text=True,
-                                errors="replace", timeout=35,
-                                stdin=subprocess.DEVNULL, creationflags=NO_WINDOW,
-                                check=False)
-                            proof_lines = proof.stdout.strip().splitlines()
-                            verified = (proof.returncode == 0
-                                        and "POSTCHECK=VERIFIED_EDITOR_ONLY" in proof_lines
-                                        and "INSTALLED_SHA=" + sha in proof_lines)
-                            details += "\n" + proof.stdout.strip()
-                            if recovered:
-                                details += "\n" + recovered
-                            if not verified:
-                                state = "unproven"
-                                details += "\nPOSTCHECK=UNVERIFIED; update not repeated"
-                        except (OSError, subprocess.TimeoutExpired):
-                            state = "unproven"
-                            details += "\nPOSTCHECK=UNPROVEN_TRANSPORT; update not repeated"
+            # The same UUID status response now carries the read-only postcheck.
+            # No extra SSH request, no mutation replay and no unbound success.
+            if mode == "update" and (not verify_sha or state == "success"
+                                     and "POSTCHECK=VERIFIED_EDITOR_ONLY" not in details):
+                state = "unproven"
+                details += "\nPOSTCHECK=UNPROVEN_TARGET_OR_RECEIPT"
             self.events.put((state, (precheck_receipt + "\n" if precheck_receipt else "")
                              + (output or "Ответ запуска неизвестен")
                              + "\n" + details + "\nREQUEST_ID=" + request))
