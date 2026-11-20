@@ -608,7 +608,24 @@ export function ReplayPage() {
   const [simulationGraphPending, setSimulationGraphPending] = useState(true);
   const [runLoading, setRunLoading] = useState(false);
   const [desktopUpdate, setDesktopUpdate] = useState("idle");
+  const [desktopSha, setDesktopSha] = useState<string | null>(null);
   const [runWaitingSeconds, setRunWaitingSeconds] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    void fetch("/local-replay/desktop-version", { cache: "no-store" })
+      .then(response => response.ok ? response.json() as Promise<unknown> : null)
+      .then(data => {
+        if (!active || !data || typeof data !== "object" || !("sha" in data)) return;
+        const sha = (data as { sha: unknown }).sha;
+        if (typeof sha !== "string" || !/^[0-9a-f]{40}$/.test(sha)) return;
+        setDesktopSha(sha);
+        window.document.title = `Машина времени · v${sha.slice(0, 8)}`;
+      })
+      .catch(() => { /* A source checkout has no release identity. */ });
+    return () => { active = false; };
+  }, []);
+
 
   useEffect(() => {
     if (!runLoading) { setRunWaitingSeconds(0); return; }
@@ -1204,7 +1221,13 @@ export function ReplayPage() {
     <main className="replay-shell">
       <header className="replay-header">
         <div>
-          <h1>Машина времени</h1>
+          <div className="replay-title">
+            <h1>Машина времени</h1>
+            <span className="replay-build-version" title={desktopSha ?? "Идентификатор сборки недоступен"}
+              aria-label={desktopSha ? `Версия ${desktopSha}` : "Версия не определена"}>
+              {desktopSha ? `v${desktopSha.slice(0, 8)}` : "версия не определена"}
+            </span>
+          </div>
         </div>
         <div className="replay-desktop-update">
           <button type="button" disabled={desktopUpdate === "checking" || desktopUpdate === "restarting"}
