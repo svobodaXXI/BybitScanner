@@ -143,6 +143,37 @@ class RobotBePartialOwnerPaperTests(unittest.TestCase):
             self.assertEqual(repeated.status, CommandResultStatus.COMPLETED)
             self.assertEqual(len(self.runtime.store.load_executions()), before + 1)
 
+    def test_monitor_routes_fade_to_real_owner_without_old_m1_trigger(self):
+        from unittest.mock import patch
+
+        receipt = self._fade_receipt()
+        clock_ms = receipt.closed_at_ms + 5_000
+        self.runtime._impulse_fade_paper_enabled = True
+        monitor = self._enable_auto()
+        monitor._impulse_fade_paper_enabled = True
+        monitor._get_pattern_flow_evidence = lambda _record: receipt
+        monitor._get_closed_candle = lambda _symbol: (_ for _ in ()).throw(
+            AssertionError("dynamic fade must not need old +2R candle")
+        )
+        original_execs = len(self.runtime.store.load_executions())
+        with patch("time.time", return_value=clock_ms / 1000):
+            with patch.object(self.runtime, "_streamed_book", side_effect=lambda _s:
+                              _crossing_book(self.symbol.value, bid="64700", ask="64700.5")):
+                self.assertEqual(monitor.tick(), (self.candidate_id,))
+                self.assertEqual(
+                    len(self.runtime.store.load_executions()), original_execs + 1,
+                )
+                self.assertEqual(
+                    self.runtime.store.get_protection_projection(self.key).stop_loss,
+                    Decimal("64000"),
+                )
+                self.assertEqual(monitor.tick(), (self.candidate_id,))
+                stop = self.runtime.store.get_protection_projection(self.key).stop_loss
+                self.assertGreater(stop, Decimal("64000"))
+                self.assertLess(stop, Decimal("64700"))
+                self.assertEqual(monitor.tick(), (self.candidate_id,))
+        self.assertEqual(len(self.runtime.store.load_executions()), original_execs + 1)
+
     def test_dynamic_fade_invalid_source_cannot_dispatch_or_disarm_stop(self):
         from dataclasses import replace
         from unittest.mock import patch
