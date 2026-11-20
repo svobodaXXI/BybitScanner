@@ -464,3 +464,132 @@ def build_post_breakout_wedge_impulse_limit_research(
         planned_net_rr=rr, worst_loss_per_base_usdt=risk,
         request=request,
     )
+
+
+# A source-bound research quote remains NON-EXECUTABLE even after persistence.
+# In particular, no caller may reconstruct an order request from this record
+# and dispatch it without the dedicated protected owner/rollback lifecycle.
+IMPULSE_QUOTE_VERSION = "POST_BREAKOUT_IMPULSE_RESEARCH_V1"
+
+
+def freeze_post_breakout_impulse_quote(
+    proposal: PostBreakoutImpulseLimitResearch,
+    flow_receipt,
+) -> dict[str, object]:
+    """Freeze the research quote and source identity for restart-safe inspection.
+
+    This is NOT a command intent. The canonical owner must independently
+    preflight, freeze and persist its own submit intent before any entry order.
+    """
+    from robot_entry_flow_evidence import CandidateBoundFlowEvidence
+
+    if (not isinstance(proposal, PostBreakoutImpulseLimitResearch)
+            or not isinstance(flow_receipt, CandidateBoundFlowEvidence)
+            or proposal.trading_authorized
+            or proposal.candidate_id != flow_receipt.candidate_id
+            or proposal.state_revision != flow_receipt.state_revision
+            or proposal.direction != flow_receipt.direction
+            or flow_receipt.decision_ms > proposal.decision_ms
+            or proposal.quoted_price != proposal.request.limit_price
+            or proposal.quoted_price != proposal.request.sizing_reference_price
+            or flow_receipt.source_complete is not True
+            or flow_receipt.receipt_cutoff_proven is not True
+            or flow_receipt.transport_generation_proven is not True):
+        raise RobotEntryLimitError("research quote and certified source diverge")
+    return {
+        "version": IMPULSE_QUOTE_VERSION,
+        "candidate_id": proposal.candidate_id,
+        "source_revision": proposal.state_revision,
+        "direction": proposal.direction,
+        "symbol": proposal.request.symbol,
+        "source_sha256": flow_receipt.print_facts_sha256,
+        "source_closed_at_ms": flow_receipt.closed_at_ms,
+        "source_decision_ms": flow_receipt.decision_ms,
+        "breakout_known_at_ms": proposal.breakout_known_at_ms,
+        "decision_ms": proposal.decision_ms,
+        "client_action_id": proposal.request.client_action_id.value,
+        "entry_side": proposal.request.side.value,
+        "quoted_price": str(proposal.quoted_price),
+        "stop_price": str(proposal.stop_price),
+        "take_price": str(proposal.take_price),
+        "planned_net_rr": str(proposal.planned_net_rr),
+        "worst_loss_per_base_usdt": str(proposal.worst_loss_per_base_usdt),
+        "trading_authorized": False,
+    }
+
+
+def verify_frozen_post_breakout_impulse_quote(
+    record, frozen: Mapping[str, object],
+) -> bool:
+    """Inspect a durable research quote without resurrecting trading authority.
+
+    Frozen quote may be stale after restart or index advance. Its sole value is
+    causal evidence: never send/restore orders from this return value.
+    """
+    from robot_entry_flow_evidence import canonical_host_breakout_known_at_ms
+
+    if not isinstance(frozen, Mapping) or frozen.get("version") != IMPULSE_QUOTE_VERSION:
+        return False
+    if frozen.get("trading_authorized") is not False:
+        return False
+    try:
+        state, snapshot = record.robot_state, record.signal_snapshot
+        if not isinstance(state, Mapping) or not isinstance(snapshot, Mapping):
+            return False
+        direction = state.get("direction")
+        if (
+            record.status != "APPROVED"
+            or frozen.get("candidate_id") != record.candidate_id
+            or frozen.get("symbol") != record.symbol.value
+            or frozen.get("direction") != direction
+            or snapshot.get("symbol") != record.symbol.value
+            or state.get("phase") not in ("WAITING_RETEST", "RETEST_DETECTED")
+            or not isinstance(frozen.get("source_revision"), int)
+            or isinstance(frozen.get("source_revision"), bool)
+            or frozen["source_revision"] > record.state_revision
+            or frozen["source_revision"] < 0
+            or frozen.get("breakout_known_at_ms")
+                != canonical_host_breakout_known_at_ms(record)
+        ):
+            return False
+        signature = frozen.get("source_sha256")
+        if (not isinstance(signature, str) or len(signature) != 64
+                or any(ch not in "0123456789abcdef" for ch in signature.lower())):
+            return False
+        for key in ("source_closed_at_ms", "source_decision_ms", "decision_ms"):
+            if type(frozen.get(key)) is not int or frozen[key] < 0:
+                return False
+        if not (
+            frozen["breakout_known_at_ms"]
+            <= frozen["source_closed_at_ms"]
+            <= frozen["source_decision_ms"]
+            <= frozen["decision_ms"]
+        ):
+            return False
+        entry = _positive_decimal(frozen.get("quoted_price"), "quoted_price")
+        stop = _positive_decimal(frozen.get("stop_price"), "stop_price")
+        take = _positive_decimal(frozen.get("take_price"), "take_price")
+        rr = _positive_decimal(frozen.get("planned_net_rr"), "planned_net_rr")
+        loss = _positive_decimal(
+            frozen.get("worst_loss_per_base_usdt"), "worst_loss_per_base_usdt",
+        )
+        if rr <= 0 or loss <= 0:
+            return False
+        if not (
+            stop < entry < take if direction == DIRECTION_LONG
+            else take < entry < stop if direction == DIRECTION_SHORT
+            else False
+        ):
+            return False
+        side = "BUY" if direction == DIRECTION_LONG else "SELL"
+        if frozen.get("entry_side") != side:
+            return False
+        index = state.get("breakout_index")
+        if type(index) is not int:
+            return False
+        digest = hashlib.sha256(
+            f"{record.candidate_id}\0post-breakout-impulse-limit\0{index}".encode("utf-8")
+        ).hexdigest()[:32]
+        return frozen.get("client_action_id") == f"robot-impulse-limit-{digest}"
+    except (AttributeError, KeyError, TypeError, ValueError, ArithmeticError):
+        return False
