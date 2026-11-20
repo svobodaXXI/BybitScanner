@@ -2050,6 +2050,36 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
             "RECONCILIATION_REQUIRED",
         )
 
+    def test_emergency_intent_persist_failure_prevents_close_dispatch(self):
+        """A failed durable write cannot trigger any aggregate close."""
+        self._create_candidate(start_width=0.0)
+        self._drive_to_retest_detected()
+        self._place_legacy_unfiltered_limit()
+        order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
+        self.executor.fill_resting_limit(
+            order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"),
+        )
+        original_save = self.store.save_robot_candidate_state
+
+        def fail_intent(candidate_id, **kwargs):
+            if (kwargs["robot_state"].get("execution") or {}).get("emergency_close_intent"):
+                raise RuntimeError("durable intent write failed")
+            return original_save(candidate_id, **kwargs)
+
+        with patch.object(self.store, "save_robot_candidate_state", side_effect=fail_intent):
+            self.monitor.tick()
+        self.assertEqual(
+            [name for name, _ in self.executor.protection_calls if name == "full_close"],
+            [],
+        )
+        candidate = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(candidate.status, "APPROVED")
+        self.assertNotIn("emergency_close_intent", candidate.robot_state["execution"])
+        self.assertEqual(
+            self.store.get_robot_runtime_state(ACCOUNT_ID).recovery_status,
+            "RECONCILIATION_REQUIRED",
+        )
+
     def test_finalize_trade_fences_without_protection_when_entry_projection_is_missing(self):
         self._create_candidate()
         self._drive_to_retest_detected()
