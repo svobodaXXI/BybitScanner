@@ -1998,6 +1998,20 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
             ).side, PositionSide.LONG,
         )
 
+    def test_real_paper_emergency_market_identity_contract(self):
+        """Robot PAPER acceptance exercises the actual owner/execution path.
+
+        The runtime module's focused pytest functions are not otherwise run
+        by this CI workflow (only compiled / selected older runtime cases).
+        Keep the exact transport and durable order correlation exercised here.
+        """
+        from tests.test_terminal_paper_runtime import (
+            test_robot_emergency_close_identity_reaches_both_owner_adapters,
+            test_robot_emergency_close_persists_exact_market_command_and_replay_is_noop,
+        )
+        test_robot_emergency_close_identity_reaches_both_owner_adapters()
+        test_robot_emergency_close_persists_exact_market_command_and_replay_is_noop()
+
     def test_emergency_intent_is_durable_before_first_full_close(self):
         self._create_candidate(start_width=0.0)
         self._drive_to_retest_detected()
