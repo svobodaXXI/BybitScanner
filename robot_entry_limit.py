@@ -732,6 +732,8 @@ def verify_frozen_post_breakout_l_shape_quote(
     independently owned by canonical PAPER Robot Admission/executor.
     """
     import robot_l_shape
+    import robot_protection
+    from retest_account_risk import position_worst_case_loss_usdt
     from robot_entry_flow_evidence import canonical_host_breakout_known_at_ms
 
     if (not isinstance(frozen, Mapping)
@@ -786,6 +788,24 @@ def verify_frozen_post_breakout_l_shape_quote(
                 or (direction == DIRECTION_SHORT and not take < entry < stop)
                 or (direction == DIRECTION_LONG and entry <= terms.reference)
                 or (direction == DIRECTION_SHORT and entry >= terms.reference)):
+            return False
+        # Compare ALL frozen economics against native immutable L-shape terms.
+        # Protective-side geometry alone is insufficient: otherwise a changed
+        # STOP/RR/risk could be adopted after a restart.
+        expected_stop = robot_protection.limited_stop(
+            direction, entry_price=entry, preferred_stop=terms.stop,
+        )
+        expected_rr = robot_l_shape.net_reward_risk(
+            direction, entry_price=entry,
+            stop_price=expected_stop, target_price=terms.target,
+        )
+        expected_loss = position_worst_case_loss_usdt(
+            direction=direction, quantity=Decimal("1"), entry_price=entry,
+            stop_price=expected_stop,
+            fee_rate=robot_l_shape.PAPER_ROBOT_FEE_RATE,
+        )
+        if (stop != expected_stop or rr != expected_rr
+                or expected_loss is None or loss != expected_loss):
             return False
         side = OrderSide.BUY.value if direction == DIRECTION_LONG else OrderSide.SELL.value
         digest = hashlib.sha256(
