@@ -68,6 +68,15 @@ jobs:
           if ($tagRef) { throw 'DESKTOP_TAG_ALREADY_EXISTS' }
           "DESKTOP_SHA=$sha" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "DESKTOP_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Verify repository-scoped release identity is configured
+        shell: pwsh
+        env:
+          APP_CLIENT_ID: ${{ vars.DESKTOP_RELEASE_APP_CLIENT_ID }}
+          APP_KEY: ${{ secrets.DESKTOP_RELEASE_APP_PRIVATE_KEY }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:APP_CLIENT_ID) -or [string]::IsNullOrWhiteSpace($env:APP_KEY)) {
+            throw 'DESKTOP_RELEASE_APP_NOT_CONFIGURED'
+          }
       - name: Build local replay static UI
         working-directory: terminal/frontend
         shell: pwsh
@@ -103,10 +112,19 @@ jobs:
           }
           $proc.Refresh()
           if ($proc.ExitCode -ne 2) { throw 'MANAGER_PYTHON_DLL_BOOTSTRAP_UNPROVEN' }
+      - name: Mint short-lived repository-scoped release token
+        id: desktop_release_token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.DESKTOP_RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.DESKTOP_RELEASE_APP_PRIVATE_KEY }}
+          # Omitting owner and repositories scopes to this repository only.
+          permission-contents: write
+          permission-workflows: write
       - name: Publish owner-approved desktop release
         shell: pwsh
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.desktop_release_token.outputs.token }}
         run: |
           $ErrorActionPreference='Stop'
           $stable=((git ls-remote origin refs/heads/stable/adfb50b-forward) -split '\s+')[0].Trim()
