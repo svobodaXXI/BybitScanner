@@ -788,7 +788,7 @@ class TestWindowsVpsManager(unittest.TestCase):
         runner.assert_called_once()
         self.assertIs(runner.call_args.args[0], command)
 
-    def test_update_requires_exact_postcheck_and_never_resubmits(self):
+    def test_update_requires_bound_status_proof_and_no_extra_ssh(self):
         from tools.windows_vps_manager import CONTROL_MODULE
         request = "1" * 32
         sha = "b" * 40
@@ -797,12 +797,10 @@ class TestWindowsVpsManager(unittest.TestCase):
         submitted = subprocess.CompletedProcess(
             command, 0, "REQUEST_ID=" + request +
             "\nSUBMISSION=ACCEPTED; action continues on VPS independently of SSH\n", "")
-        healthy = ("INSTALLED_SHA=" + sha +
-                   "\nPOSTCHECK=VERIFIED_EDITOR_ONLY\n")
-        for code, receipt, expected in (
-            (0, healthy, "success"),
-            (0, "INSTALLED_SHA=" + sha + "\nPOSTCHECK=BLOCKED_UNPROVEN\n", "unproven"),
-            (2, healthy, "unproven"),
+        for observed, receipt, expected in (
+            ("success", "STATUS=FINISHED_OK\nPOSTCHECK=VERIFIED_EDITOR_ONLY", "success"),
+            ("success", "STATUS=FINISHED_OK\nPOSTCHECK=BLOCKED_UNPROVEN", "unproven"),
+            ("unproven", "STATUS=FINISHED_OK\nPOSTCHECK=BLOCKED_UNPROVEN", "unproven"),
         ):
             fake = SimpleNamespace(events=queue.Queue())
             with (patch("tools.windows_vps_manager.precheck_laptop_owner_submit",
@@ -810,19 +808,56 @@ class TestWindowsVpsManager(unittest.TestCase):
                   patch("tools.windows_vps_manager.subprocess.run",
                         return_value=submitted) as send,
                   patch("tools.windows_vps_manager.watch_owner_request",
-                        return_value=("success", "STATUS=FINISHED_OK")),
-                  patch("tools.windows_vps_manager.run_readonly_ssh_with_laptop_agent_recovery",
-                        return_value=(subprocess.CompletedProcess(
-                            command, code, receipt, ""), "")) as proof):
+                        return_value=(observed, receipt)) as watcher,
+                  patch("tools.windows_vps_manager.run_readonly_ssh_with_laptop_agent_recovery"
+                        ) as postcheck):
                 VPSManager.worker_control(fake, command, "update", request)
             kind, result = fake.events.get_nowait()
             self.assertEqual(kind, expected)
             self.assertIn("REQUEST_ID=" + request, result)
             send.assert_called_once()
-            proof.assert_called_once()
-            self.assertIn("verify-update " + sha, proof.call_args.args[0][-1])
-            self.assertNotIn(" submit ", proof.call_args.args[0][-1])
+            watcher.assert_called_once()
+            self.assertIn("status " + request + " --verify-update " + sha,
+                          watcher.call_args.args[0][-1])
+            postcheck.assert_not_called()
 
+    def test_request_context_survives_relaunch_and_rejects_mismatch(self):
+        from tools.windows_vps_manager import recover_last_request_context
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "last_request_id"
+            request, sha = "c" * 32, "d" * 40
+            remember_request_id(request, path, action="update", sha=sha)
+            self.assertEqual(recover_last_request_id(path), request)
+            self.assertEqual(recover_last_request_context(path),
+                             (request, "update", sha))
+            path.write_text(request + "\nupdate\n" + "bad" + "\n", encoding="ascii")
+            self.assertEqual(recover_last_request_context(path),
+                             (request, "", ""))
+            remember_request_id(request, path)
+            self.assertEqual(recover_last_request_context(path),
+                             (request, "", ""))
+
+    def test_watcher_success_is_bound_to_exact_postcheck_sha(self):
+        from tools.windows_vps_manager import CONTROL_MODULE
+        request, sha = "f" * 32, "a" * 40
+        cmd = ["ssh", CONTROL_MODULE + " status " + request +
+               " --verify-update " + sha]
+        for proof, expected in (
+            ("STATUS=FINISHED_OK\nINSTALLED_SHA=" + sha +
+             "\nPOSTCHECK=VERIFIED_EDITOR_ONLY", "success"),
+            ("STATUS=FINISHED_OK\nPOSTCHECK=VERIFIED_EDITOR_ONLY", "unproven"),
+            ("STATUS=FINISHED_OK\nINSTALLED_SHA=" + "b" * 40 +
+             "\nPOSTCHECK=VERIFIED_EDITOR_ONLY", "unproven"),
+        ):
+            reply = subprocess.CompletedProcess(
+                cmd, 0 if "INSTALLED_SHA=" + sha in proof else 2,
+                "REQUEST_ID=" + request + "\n" + proof + "\n", "")
+            with patch("tools.windows_vps_manager.run_readonly_ssh_with_laptop_agent_recovery",
+                       return_value=(reply, "")) as reader:
+                state, _ = watch_owner_request(cmd, request, initially_submitted=False,
+                                               attempts=1)
+            self.assertEqual(state, expected)
+            reader.assert_called_once()
     def test_gui_unknown_submit_checks_status_without_resubmitting(self):
         fake = SimpleNamespace(events=queue.Queue(), host=Mock(), user=Mock(), key=Mock())
         fake.host.get.return_value = "bybitscanner-vps"
