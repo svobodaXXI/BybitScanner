@@ -396,3 +396,40 @@ def test_owner_mirror_origin_side_direction_and_legacy_frozen_terms_are_fail_clo
         "level_breakout_direction": "UP", "direction": "SHORT",
     })
     assert not mirror_frozen_entry_allowed(None)
+
+
+def test_robot_direct_wedge_mirror_uses_only_realization_boundary(monkeypatch):
+    """Legacy approved Wedge records cannot expose the opposite ray to Robot."""
+    import mirror_retest_robot as robot
+
+    upper = Boundary("upper-test", 0, 110, 0, 0)
+    lower = Boundary("lower-test", 0, 90, 0, 0)
+    monkeypatch.setattr(robot, "boundaries_from_candidate_snapshot",
+                        lambda **kwargs: (upper, lower))
+    for pattern, side, outward in (
+        ("Rising Wedge", "lower-test", "DOWN"),
+        ("Falling Wedge", "upper-test", "UP"),
+    ):
+        calls = []
+        def replay(policy, ref, symbol, boundary, *, direction, now_ms):
+            calls.append(boundary.boundary_id)
+            return ({"breakout": {"direction": outward, "close_time_ms": M}}, False)
+        monkeypatch.setattr(robot, "_replay_active", replay)
+        candidate = SimpleNamespace(
+            signal_snapshot={"pattern": pattern}, candidate_id="wedge-test", approved_at_ms=0,
+        )
+        active = robot.find_active_campaign(
+            SimpleNamespace(), (candidate,), symbol="TESTUSDT",
+            direction="LONG" if outward == "DOWN" else "SHORT", now_ms=2 * M,
+        )
+        assert calls == [side]
+        assert active is not None and active["boundary"].boundary_id == side
+
+        def wrong(policy, ref, symbol, boundary, *, direction, now_ms):
+            return ({"breakout": {"direction": "UP" if outward == "DOWN" else "DOWN",
+                                  "close_time_ms": M}}, False)
+        monkeypatch.setattr(robot, "_replay_active", wrong)
+        assert robot.find_active_campaign(
+            SimpleNamespace(), (candidate,), symbol="TESTUSDT",
+            direction="LONG" if outward == "DOWN" else "SHORT", now_ms=2 * M,
+        ) is None
