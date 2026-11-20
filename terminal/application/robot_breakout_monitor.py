@@ -839,6 +839,12 @@ class RobotBreakoutMonitor:
     def _advance_box_entry_ready(
         self, record: RobotCandidateRecord, *, match_resting_orders: bool = True,
     ) -> bool:
+        # Leave unresolved-symbol recovery to the canonical protection owner,
+        # never start a new Box/MIRROR entry from an ambiguous position.
+        if self._store().robot_symbol_quarantine_candidate_ids(
+            self._account_id, record.symbol,
+        ):
+            return False
         execution = dict(record.robot_state.get("execution") or {})
         source = self._box_source(record, execution)
         catchup = execution.get("box_catchup")
@@ -2325,6 +2331,14 @@ class RobotBreakoutMonitor:
         allowed_limit_order_id: str | None = None,
         allowed_limit_order_ids: tuple[str, ...] | None = None,
     ) -> str | None:
+        quarantined = self._store().robot_symbol_quarantine_candidate_ids(
+            self._account_id, record.symbol,
+        )
+        if quarantined:
+            return (
+                "ROBOT_SYMBOL_QUARANTINED "
+                f"symbol={record.symbol.value} candidate_ids={','.join(quarantined)}"
+            )
         position_key = PositionKey(self._account_id, Category.LINEAR, record.symbol, 0)
         position = self._store().get_position_projection(position_key)
         if (
