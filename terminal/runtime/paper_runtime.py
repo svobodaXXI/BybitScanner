@@ -320,7 +320,7 @@ class RobotPaperActionExecutor:
             lambda runtime: runtime._robot_full_close(request, evidence=evidence)
         )
 
-    def wedge_be_step(self, candidate_id: str, symbol: str, candle):
+    def wedge_be_step(self, candidate_id: str, symbol: str, candle, *, fade_receipt=None):
         # Fresh public book acquisition is OFF the SQLite owner; never fall
         # back to a synchronous exchange request from its single writer.
         evidence = self._runtime._dispatch_robot_market_book(symbol)
@@ -332,6 +332,7 @@ class RobotPaperActionExecutor:
         return self._runtime._dispatch_robot_command(
             lambda runtime: runtime._robot_wedge_be_auto_step(
                 candidate_id, symbol=symbol, candle=candle, book=evidence,
+                fade_receipt=fade_receipt,
             )
         )
 
@@ -783,6 +784,7 @@ class PaperRuntime:
         robot_command_dispatcher: Callable[[Callable[["PaperRuntime"], object]], object] | None = None,
         robot_tick_interval_s: float = DEFAULT_TICK_INTERVAL_S,
         wedge_be_auto_paper_enabled: bool = False,
+        impulse_fade_paper_enabled: bool = False,
     ) -> None:
         # Bound (if given) via this constructor argument, or later via
         # start_robot_monitor() once a real one exists -- see the class
@@ -791,6 +793,9 @@ class PaperRuntime:
         if type(wedge_be_auto_paper_enabled) is not bool:
             raise ValueError("PAPER Wedge BE opt-in must be explicit bool")
         self._wedge_be_auto_paper_enabled = wedge_be_auto_paper_enabled
+        if type(impulse_fade_paper_enabled) is not bool:
+            raise ValueError("PAPER impulse fade opt-in must be explicit bool")
+        self._impulse_fade_paper_enabled = impulse_fade_paper_enabled
         # (arm, release) of RobotProtectionCoverageManager, bound by the composition
         # root before the monitor may create a resting entry LIMIT.
         self._robot_entry_coverage: tuple[
@@ -1136,6 +1141,7 @@ class PaperRuntime:
             submit_market=self._dispatch_robot_market_submit,
             tick_interval_s=robot_tick_interval_s,
             wedge_be_auto_paper_enabled=wedge_be_auto_paper_enabled,
+            impulse_fade_paper_enabled=impulse_fade_paper_enabled,
             arm_entry_coverage=self._arm_robot_entry_coverage,
             release_entry_coverage=self._release_robot_entry_coverage,
             incident_dir=self._robot_incident_dir,
@@ -4301,6 +4307,7 @@ class PaperRuntime:
         self, candidate_id: str, *, symbol: str,
         candle: Mapping[str, object] | None,
         book: NormalizedOrderBook,
+        fade_receipt=None,
     ) -> CommandResult:
         """Owner-only resumed BE state machine; opt-in, PAPER-only, no replay.
 
@@ -4345,6 +4352,21 @@ class PaperRuntime:
             return self._robot_wedge_be_reconcile_partial(
                 candidate_id, book=book, worst_case_slippage_ticks=2,
             )
+        if fade_receipt is not None and self._impulse_fade_paper_enabled:
+            # Source and source_time are independently re-attested by the
+            # same serialized owner after position/STOP/fees preflight.
+            close_ms = getattr(fade_receipt, "closed_at_ms", None)
+            if type(close_ms) is not int or close_ms < 180_000 or close_ms % 60_000:
+                return CommandResult(
+                    "be-fade-source-" + candidate_id, CommandResultStatus.BLOCKED,
+                    "be_fade_source_invalid", "Unproven post-fill Wedge flow close",
+                )
+            return self._robot_wedge_be_partial_once(
+                candidate_id, candle_open_ms=close_ms - 60_000,
+                candle_end_ms=close_ms,
+                candle_high=Decimal(0), candle_low=Decimal(0),
+                book=book, fade_receipt=fade_receipt,
+            )
         if candle is None:
             return CommandResult(
                 "be-no-candle-" + candidate_id, CommandResultStatus.BLOCKED,
@@ -4372,7 +4394,7 @@ class PaperRuntime:
         self, candidate_id: str, *,
         candle_open_ms: int, candle_end_ms: int,
         candle_high: Decimal, candle_low: Decimal,
-        book: NormalizedOrderBook,
+        book: NormalizedOrderBook, fade_receipt=None,
     ) -> CommandResult:
         """Guarded one-shot Wedge partial on the serialized PAPER owner.
 
