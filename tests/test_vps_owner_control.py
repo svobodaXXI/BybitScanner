@@ -48,7 +48,11 @@ class OwnerControlTests(unittest.TestCase):
             return result, out.getvalue()
 
         with (patch("tools.vps_release_identity.verify_release", return_value=target),
-              patch("tools.runtime_intent.http_get", side_effect=getter)):
+              patch("tools.runtime_intent.http_get", side_effect=getter),
+              patch("tools.paper_maintenance._durable_editor_freeze",
+                    return_value=identity),
+              patch("tools.paper_maintenance._paper_start_quiescent",
+                    return_value=True)):
             self.assertEqual(check()[0], 0)
             self.assertIn("POSTCHECK=VERIFIED_EDITOR_ONLY", check()[1])
             data["/api/robot/protection-health"]["covered_symbols"] = ["BTCUSDT"]
@@ -57,6 +61,32 @@ class OwnerControlTests(unittest.TestCase):
             data["/health"]["database_identity"] = "c" * 64
             self.assertEqual(check()[0], 2)
         self.assertEqual(control.verify_update("invalid"), 2)
+
+    def test_finished_status_requires_bound_update_postcheck(self):
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from unittest.mock import patch
+        output = ("LoadState=loaded\nActiveState=active\nSubState=exited\n"
+                  "Result=success\nExecMainStatus=0\n")
+        run = lambda cmd, **kw: completed(cmd, out=output)
+        for proof, expected in ((0, 0), (2, 2)):
+            with patch.object(control, "verify_update", return_value=proof) as check:
+                with redirect_stdout(StringIO()) as reply:
+                    self.assertEqual(control.status(R, run=run, verify_sha=SHA), expected)
+                self.assertIn("STATUS=FINISHED_OK", reply.getvalue())
+                check.assert_called_once_with(SHA)
+        with patch.object(control, "verify_update") as check:
+            self.assertEqual(control.status(R, run=run), 0)
+            check.assert_not_called()
+
+    def test_invalid_update_proof_does_not_skip_durable_checks(self):
+        from unittest.mock import patch
+        with (patch("tools.vps_release_identity.verify_release", return_value=SHA),
+              patch("tools.paper_maintenance._durable_editor_freeze",
+                    side_effect=ValueError("PAPER_unproven")),
+              patch("tools.runtime_intent.http_get") as getter):
+            self.assertEqual(control.verify_update(SHA), 2)
+            getter.assert_not_called()
 
     def test_submit_detaches_exact_action_without_shell_or_runtime_bypass(self):
         calls = []
