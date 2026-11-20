@@ -436,8 +436,11 @@ def build_post_breakout_wedge_impulse_limit_research(
         entry_fee=price * fee, stop_price=protection.stop_price,
         take_price=protection.take_price, exit_fee_rate=fee,
     )
-    if rr < robot_protection.wedge_min_entry_rr():
-        raise RobotEntryLimitError("after-fee Wedge RR below current floor")
+    # Post-fill native Wedge protection requires >=2 net RR. Do not issue a
+    # marketable pre-retest LIMIT that the existing owner would immediately
+    # emergency-close after filling.
+    if rr < max(Decimal("2"), robot_protection.wedge_min_entry_rr()):
+        raise RobotEntryLimitError("after-fee Wedge RR below post-fill owner floor")
     risk = position_worst_case_loss_usdt(
         direction=direction, quantity=Decimal(1), entry_price=price,
         stop_price=protection.stop_price, fee_rate=fee,
