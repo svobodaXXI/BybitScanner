@@ -3466,6 +3466,43 @@ class ImpulseNativeMarketMatcherAgeFenceTests(unittest.TestCase):
         self.assertEqual(match(180_001), frozenset({order_id.value}))
 
 
+class ImpulseEntryProtectionCoverageTests(unittest.TestCase):
+    """Protect the real early entry even though its phase is not RETEST_DETECTED."""
+
+    def test_native_runtime_roles_keep_early_limit_coverage(self):
+        from terminal.runtime.paper_runtime import PaperRuntime
+
+        record = SimpleNamespace(
+            status="APPROVED", symbol=Symbol(SYMBOL),
+            robot_state={
+                "phase": "WAITING_RETEST",
+                "execution": {
+                    "entry_mode": "IMPULSE_EARLY_LIMIT",
+                    "limit_order_id": "native-impulse-limit-1",
+                },
+            },
+        )
+        order = SimpleNamespace(status="open", filled_quantity=Decimal("0"))
+        runtime = object.__new__(PaperRuntime)
+        runtime._paper_account_id = ACCOUNT_ID
+        runtime.store = SimpleNamespace(
+            load_active_robot_candidate_states=lambda _acct: (record,),
+            load_unresolved_paper_protection_obligations=lambda _acct: (),
+            get_paper_limit=lambda _oid, _acct: order,
+        )
+        self.assertEqual(
+            runtime.robot_protection_coverage_roles(), {SYMBOL: "ENTRY_PENDING"},
+        )
+        order.status = "cancelled"
+        self.assertEqual(runtime.robot_protection_coverage_roles(), {})
+        order.filled_quantity = Decimal("0.5")
+        self.assertEqual(
+            runtime.robot_protection_coverage_roles(), {SYMBOL: "ENTRY_PENDING"},
+        )
+        record.status = "OPEN"
+        self.assertEqual(runtime.robot_protection_coverage_roles(), {SYMBOL: "EXPOSURE"})
+
+
 class ImpulseEarlyWedgeResearchOwnerTests(unittest.TestCase):
     """Protected Robot's owner observes early timing but never places an order."""
 
