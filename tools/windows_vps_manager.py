@@ -185,7 +185,8 @@ def recover_pending_request(path: Path | None = None) -> tuple[str, str, str]:
         return "", "", ""
     if len(rows) != 4 or rows[3] != "PENDING":
         return "", "", ""
-    return recover_last_request_context(target)
+    request, action, sha = recover_last_request_context(target)
+    return (request, action, sha) if action else ("", "", "")
 
 
 def mark_request_terminal(request: str, path: Path | None = None) -> None:
@@ -1067,15 +1068,15 @@ class VPSManager(tk.Tk):
                         # Only retry the same read-only UUID status query.
                         state, output = watch_owner_request(
                             command, request, initially_submitted=False)
-                elif mode == "preflight":
-                    state = ("observed" if result.returncode == 0 and
-                             "PREFLIGHT_READ_ONLY_DATA_COLLECTED_NOT_ACCEPTED" in output
-                             else "unproven")
-                    if state == "submitted":
+                    elif state == "submitted":
                         state, output = watch_owner_request(
                             command, request, initially_submitted=True)
                     if state in ("success", "failed"):
                         mark_request_terminal(request)
+                elif mode == "preflight":
+                    state = ("observed" if result.returncode == 0 and
+                             "PREFLIGHT_READ_ONLY_DATA_COLLECTED_NOT_ACCEPTED" in output
+                             else "unproven")
                 elif mode == "list":
                     if result.returncode != 0 or output == "REQUEST_LIST=UNPROVEN":
                         state = "unproven"
