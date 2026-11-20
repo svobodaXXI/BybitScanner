@@ -4501,36 +4501,103 @@ class PaperRuntime:
         if not levels:
             raise RuntimeError("BE executable quote unavailable")
         price = levels[0].price.value
-        # The candle high/low reaching +2R is not enough if the current
-        # executable quote already fell back below that threshold.
-        risk = abs(trade.average_entry - trade.stop_price)
-        if (
-            (trade.direction == "LONG" and price < trade.average_entry + risk * 2)
-            or (trade.direction == "SHORT" and price > trade.average_entry - risk * 2)
-        ):
-            return CommandResult(
-                "be-retraced-" + candidate.candidate_id,
-                CommandResultStatus.BLOCKED, "be_quote_retraced",
-                "Current executable price is no longer at +2R",
+        fade_choice = None
+        if fade_receipt is not None and self._impulse_fade_paper_enabled:
+            # Exactly the same owner, admission, trade/fill and STOP/TAKE
+            # preflight as +2R. Certifying a source is NOT trading authority.
+            instrument = self._instrument_provider(candidate.symbol.value)
+            tick = instrument.tick_size
+            fee = self._market_executor.fee_rate
+            if tick <= 0 or not price.is_finite() or price <= 0:
+                raise RuntimeError("Wedge fade tick/quote unavailable")
+            fade_choice = robot_protection.observe_wedge_impulse_fade_partial(
+                candidate, fade_receipt,
+                first_entry_fill_ms=max(f.exchange_timestamp_ms for f in fills),
+                average_entry=trade.average_entry,
+                original_quantity=trade.entry_quantity,
+                remaining_quantity=position.quantity.value,
+                quantity_step=instrument.quantity_step,
+                total_entry_fees=sum((f.fee for f in fills), Decimal(0)),
+                exit_fee_rate=fee,
+                executable_price=price,
+                active_stop=protection.stop_loss,
+                active_take=protection.take_profit,
+                observed_at_ms=book.received_at_ms,
+                adverse_slippage_bps=tick * Decimal(2) * Decimal(10_000) / price,
             )
-        partial = robot_protection.plan_wedge_partial_at_two_r(
-            trade.direction, pattern=trade.pattern,
-            average_entry=trade.average_entry, initial_stop=trade.stop_price,
-            active_stop=protection.stop_loss, active_take=protection.take_profit,
-            original_quantity=trade.entry_quantity,
-            remaining_quantity=position.quantity.value,
-            quantity_step=self._instrument_provider(candidate.symbol.value).quantity_step,
-            entry_fill_ms=max(f.exchange_timestamp_ms for f in fills),
-            candle_open_ms=candle_open_ms, candle_end_ms=candle_end_ms,
-            candle_high=candle_high, candle_low=candle_low,
-            available_at_ms=book.received_at_ms,
-        )
-        if partial is None:
-            return CommandResult(
-                "be-no-trigger-" + candidate.candidate_id,
-                CommandResultStatus.BLOCKED, "be_not_triggered",
-                "Closed M1 did not prove an unambiguous +2R partial",
+            if fade_choice is None:
+                return CommandResult(
+                    "be-fade-unproven-" + candidate.candidate_id,
+                    CommandResultStatus.BLOCKED, "be_fade_unproven",
+                    "No causal, profitable, owner-bound fading impulse",
+                )
+            partial = fade_choice.partial_quantity
+            remaining = position.quantity.value - partial
+            adverse_price = (
+                price - tick * 2 if trade.direction == "LONG"
+                else price + tick * 2
             )
+            if adverse_price <= 0:
+                raise RuntimeError("BE fade adverse exit price is invalid")
+            gross = (
+                (adverse_price - trade.average_entry) * partial
+                if trade.direction == "LONG"
+                else (trade.average_entry - adverse_price) * partial
+            )
+            # Strict preflight: after a WORSE partial fill, the unchanged
+            # remaining STOP must still be tighten-able to net BE. Actual
+            # post-fill execution prices/fees are re-attested before amendment.
+            try:
+                robot_protection.fee_aware_break_even_stop(
+                    trade.direction, average_entry=trade.average_entry,
+                    original_quantity=trade.entry_quantity,
+                    closed_quantity=partial,
+                    remaining_quantity=remaining,
+                    realized_gross_pnl=gross,
+                    total_entry_fees=sum((f.fee for f in fills), Decimal(0)),
+                    realized_exit_fees=price * partial * fee,
+                    stop_exit_fee_rate=fee, tick_size=tick,
+                    current_stop=protection.stop_loss,
+                    executable_price=price,
+                    worst_case_slippage_ticks=2,
+                )
+            except robot_protection.RobotProtectionError:
+                return CommandResult(
+                    "be-fade-no-safe-stop-" + candidate.candidate_id,
+                    CommandResultStatus.BLOCKED, "be_fade_no_safe_stop",
+                    "Even a conservative fill cannot protect the remainder at net BE",
+                )
+        else:
+            # Legacy +2R mode is unchanged unless the separately authorized
+            # fade source/opt-in is present.
+            risk = abs(trade.average_entry - trade.stop_price)
+            if (
+                (trade.direction == "LONG" and price < trade.average_entry + risk * 2)
+                or (trade.direction == "SHORT" and price > trade.average_entry - risk * 2)
+            ):
+                return CommandResult(
+                    "be-retraced-" + candidate.candidate_id,
+                    CommandResultStatus.BLOCKED, "be_quote_retraced",
+                    "Current executable price is no longer at +2R",
+                )
+            partial = robot_protection.plan_wedge_partial_at_two_r(
+                trade.direction, pattern=trade.pattern,
+                average_entry=trade.average_entry, initial_stop=trade.stop_price,
+                active_stop=protection.stop_loss, active_take=protection.take_profit,
+                original_quantity=trade.entry_quantity,
+                remaining_quantity=position.quantity.value,
+                quantity_step=self._instrument_provider(candidate.symbol.value).quantity_step,
+                entry_fill_ms=max(f.exchange_timestamp_ms for f in fills),
+                candle_open_ms=candle_open_ms, candle_end_ms=candle_end_ms,
+                candle_high=candle_high, candle_low=candle_low,
+                available_at_ms=book.received_at_ms,
+            )
+            if partial is None:
+                return CommandResult(
+                    "be-no-trigger-" + candidate.candidate_id,
+                    CommandResultStatus.BLOCKED, "be_not_triggered",
+                    "Closed M1 did not prove an unambiguous +2R partial",
+                )
         if (
             (trade.direction == "LONG" and not (protection.stop_loss < price < protection.take_profit))
             or (trade.direction == "SHORT" and not (protection.take_profit < price < protection.stop_loss))
@@ -4545,6 +4612,20 @@ class PaperRuntime:
         )
         state = dict(candidate.robot_state)
         execution["wedge_be_partial_intent"] = intent
+        if fade_choice is not None:
+            # Durable provenance is adjacent to, not part of, the immutable
+            # partial intent; the existing restore method stays compatible.
+            execution["wedge_be_fade_source"] = {
+                "version": 1, "candidate_id": fade_choice.candidate_id,
+                "source_revision": fade_choice.source_revision,
+                "source_sha256": fade_choice.source_sha256,
+                "closed_at_ms": fade_receipt.closed_at_ms,
+                "decision_ms": fade_receipt.decision_ms,
+                "partial_quantity": str(partial),
+                "estimated_partial_net_usdt": str(
+                    fade_choice.estimated_partial_net_usdt
+                ),
+            }
         state["execution"] = execution
         self.store.save_robot_candidate_state(
             candidate.candidate_id, status="OPEN", robot_state=state,
