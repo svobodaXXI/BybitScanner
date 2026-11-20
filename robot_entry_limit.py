@@ -581,7 +581,7 @@ def verify_frozen_post_breakout_impulse_quote(
             else False
         ):
             return False
-        side = "BUY" if direction == DIRECTION_LONG else "SELL"
+        side = OrderSide.BUY.value if direction == DIRECTION_LONG else OrderSide.SELL.value
         if frozen.get("entry_side") != side:
             return False
         index = state.get("breakout_index")
