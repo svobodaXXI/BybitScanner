@@ -785,6 +785,7 @@ class PaperRuntime:
         robot_tick_interval_s: float = DEFAULT_TICK_INTERVAL_S,
         wedge_be_auto_paper_enabled: bool = False,
         impulse_fade_paper_enabled: bool = False,
+        impulse_early_paper_enabled: bool = False,
     ) -> None:
         # Bound (if given) via this constructor argument, or later via
         # start_robot_monitor() once a real one exists -- see the class
@@ -796,6 +797,9 @@ class PaperRuntime:
         if type(impulse_fade_paper_enabled) is not bool:
             raise ValueError("PAPER impulse fade opt-in must be explicit bool")
         self._impulse_fade_paper_enabled = impulse_fade_paper_enabled
+        if type(impulse_early_paper_enabled) is not bool:
+            raise ValueError("PAPER early impulse opt-in must be explicit bool")
+        self._impulse_early_paper_enabled = impulse_early_paper_enabled
         # (arm, release) of RobotProtectionCoverageManager, bound by the composition
         # root before the monitor may create a resting entry LIMIT.
         self._robot_entry_coverage: tuple[
@@ -1142,6 +1146,7 @@ class PaperRuntime:
             tick_interval_s=robot_tick_interval_s,
             wedge_be_auto_paper_enabled=wedge_be_auto_paper_enabled,
             impulse_fade_paper_enabled=impulse_fade_paper_enabled,
+            impulse_early_paper_enabled=impulse_early_paper_enabled,
             arm_entry_coverage=self._arm_robot_entry_coverage,
             release_entry_coverage=self._release_robot_entry_coverage,
             incident_dir=self._robot_incident_dir,
