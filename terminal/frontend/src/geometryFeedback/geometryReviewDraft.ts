@@ -20,7 +20,7 @@ export const EDITOR_REVIEW_PATTERNS = [
   { value: "Wedge", label: "Клин" },
   { value: "Ikigai Box", label: "Коробка" },
   { value: "Triangle", label: "Треугольник" },
-  { value: "Double Top/Bottom", label: "Двойная вершина / дно" },
+  { value: "Broadening", label: "Рупор" },
   { value: "Head and Shoulders", label: "Голова и плечи" },
   { value: "G-Shaped", label: "Г-образный паттерн" },
 ] as const;
