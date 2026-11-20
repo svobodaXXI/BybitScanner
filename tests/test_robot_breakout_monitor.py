@@ -3042,6 +3042,7 @@ class RobotBoxSourceAccountFenceTests(unittest.TestCase):
         source_id = "box-plan-original"
         record = SimpleNamespace(
             candidate_id="approved-box-child", symbol=Symbol(SYMBOL),
+            signal_snapshot={"pattern": "IKIGAI_BOX", "source_box_candidate_id": source_id},
             robot_state={"source_box_candidate_id": source_id},
         )
         store = Mock()
@@ -3051,6 +3052,7 @@ class RobotBoxSourceAccountFenceTests(unittest.TestCase):
             source = SimpleNamespace(
                 candidate_id=source_id, status="BOX_PLAN_ONLY",
                 symbol=Symbol(SYMBOL), trading_account_id=account,
+                signal_snapshot={"pattern": "IKIGAI_BOX", "identity": {"symbol": SYMBOL}},
             )
             store.get_robot_candidate.return_value = source
             with self.subTest(source_account=account):
@@ -3067,8 +3069,65 @@ class RobotBoxSourceAccountFenceTests(unittest.TestCase):
         store.get_robot_candidate.return_value = SimpleNamespace(
             status="BOX_PLAN_ONLY", symbol=Symbol("OTHERUSDT"),
             trading_account_id=monitor._account_id,
+            signal_snapshot={"pattern": "IKIGAI_BOX", "identity": {"symbol": "OTHERUSDT"}},
         )
         with self.assertRaises(RobotBreakoutMonitorError):
+            monitor._box_source(record, {})
+
+
+
+    def test_mutable_box_state_cannot_redirect_immutable_source(self):
+        from terminal.application.robot_breakout_monitor import RobotBreakoutMonitorError
+
+        monitor = object.__new__(RobotBreakoutMonitor)
+        monitor._account_id = ACCOUNT_ID
+        store = Mock()
+        monitor._store = lambda: store
+        source_id = "box-plan-original"
+        record = SimpleNamespace(
+            symbol=Symbol(SYMBOL),
+            signal_snapshot={"pattern": "IKIGAI_BOX", "source_box_candidate_id": source_id},
+            robot_state={"source_box_candidate_id": source_id},
+        )
+        original_source = SimpleNamespace(
+            candidate_id=source_id, status="BOX_PLAN_ONLY",
+            symbol=Symbol(SYMBOL), trading_account_id=ACCOUNT_ID,
+            signal_snapshot={"pattern": "IKIGAI_BOX", "identity": {"symbol": SYMBOL}},
+        )
+        store.get_robot_candidate.return_value = original_source
+
+        # A valid normal handoff still resolves the exact immutable source.
+        self.assertIs(monitor._box_source(record, {}), original_source)
+        self.assertIs(monitor._box_source(
+            record, {"source_box_candidate_id": source_id},
+        ), original_source)
+
+        # Even another plan for the same account/symbol must never replace
+        # the immutable snapshot's chosen source during replay or recovery.
+        store.get_robot_candidate.reset_mock()
+        record.robot_state = {"source_box_candidate_id": "box-plan-other"}
+        with self.assertRaisesRegex(RobotBreakoutMonitorError, "conflicts with frozen"):
+            monitor._box_source(record, {})
+        store.get_robot_candidate.assert_not_called()
+
+        record.robot_state = {"source_box_candidate_id": source_id}
+        with self.assertRaisesRegex(RobotBreakoutMonitorError, "conflicts with frozen"):
+            monitor._box_source(record, {"source_box_candidate_id": "box-plan-other"})
+        store.get_robot_candidate.assert_not_called()
+
+        # The source must remain an actual Box, not a different pattern
+        # reusing the same account/symbol and source candidate ID.
+        store.get_robot_candidate.return_value = SimpleNamespace(
+            status="BOX_PLAN_ONLY", symbol=Symbol(SYMBOL),
+            trading_account_id=ACCOUNT_ID,
+            signal_snapshot={"pattern": "MIRROR", "identity": {"symbol": SYMBOL}},
+        )
+        with self.assertRaises(RobotBreakoutMonitorError):
+            monitor._box_source(record, {})
+
+        # A candidate without its frozen source identity is unprovable.
+        record.signal_snapshot = {"pattern": "IKIGAI_BOX"}
+        with self.assertRaisesRegex(RobotBreakoutMonitorError, "lacks source plan identity"):
             monitor._box_source(record, {})
 
 
