@@ -168,11 +168,37 @@ def recover_last_request_context(
         return "", "", ""
     if len(rows) == 1:
         return rows[0], "", ""  # old manager wrote only the UUID
-    if (len(rows) != 3 or rows[1] not in CONTROL_ACTIONS.values()
+    if (len(rows) not in (3, 4) or rows[1] not in CONTROL_ACTIONS.values()
+            or (len(rows) == 4 and rows[3] not in ("PENDING", "DONE"))
             or (EXACT_SHA.fullmatch(rows[2]) is None
                 and not (rows[2] == "installed" and rows[1] in ("start", "stop")))):
         return rows[0], "", ""  # malformed context cannot authorize a postcheck
     return rows[0], rows[1], rows[2]
+
+
+def recover_pending_request(path: Path | None = None) -> tuple[str, str, str]:
+    """Only a persisted, unfinished, exact owner action is auto-observed."""
+    target = path if path is not None else request_id_store()
+    try:
+        rows = target.read_text(encoding="ascii").splitlines()
+    except (OSError, UnicodeError):
+        return "", "", ""
+    if len(rows) != 4 or rows[3] != "PENDING":
+        return "", "", ""
+    return recover_last_request_context(target)
+
+
+def mark_request_terminal(request: str, path: Path | None = None) -> None:
+    """Only mark the same durable UUID terminal; never submit anything."""
+    target = path if path is not None else request_id_store()
+    if REQUEST_ID.fullmatch(request) is None:
+        return
+    req, action, sha = recover_pending_request(target)
+    if req != request or not action:
+        return
+    staged = target.with_suffix(".tmp")
+    staged.write_text("\n".join((req, action, sha, "DONE")) + "\n", encoding="ascii")
+    staged.replace(target)
 
 
 def recover_last_request_id(path: Path | None = None) -> str:
@@ -193,7 +219,7 @@ def remember_request_id(
     target = path if path is not None else request_id_store()
     target.parent.mkdir(parents=True, exist_ok=True)
     staged = target.with_suffix(".tmp")
-    payload = request + ("\n" + action + "\n" + sha if action else "") + "\n"
+    payload = request + ("\n" + action + "\n" + sha + "\nPENDING" if action else "") + "\n"
     staged.write_text(payload, encoding="ascii")
     staged.replace(target)
 
@@ -677,6 +703,7 @@ def run_cli(options: argparse.Namespace) -> int:
             if (gui_owner_status(output, completed.returncode, req,
                                  verify_sha=sha) == "success"):
                 print("OPERATION_FINISHED_OK; request_id=" + req)
+                mark_request_terminal(req)
                 return 0
             if completed.returncode == 3 and "STATUS=RUNNING" in lines:
                 print("OPERATION_RUNNING; request_id=" + req)
@@ -707,6 +734,8 @@ def run_cli(options: argparse.Namespace) -> int:
             proof_cmd, req, initially_submitted=submitted)
         print(proof)
         print("OWNER_RESULT=" + state.upper() + "; request_id=" + req)
+        if state in ("success", "failed"):
+            mark_request_terminal(req)
         return 0 if state == "success" else 2
     if completed.returncode != 0:
         print("REMOTE_STATUS_UNPROVEN; request_id=" + req)
@@ -806,6 +835,10 @@ class VPSManager(tk.Tk):
         self.log.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
         self.after(100, self.drain)
+        pending_id, pending_action, _ = recover_pending_request()
+        if pending_id and pending_action:
+            # Same local UUID, read-only status. Never replay submit on relaunch.
+            self.after(200, lambda: self.run_control("status"))
 
     def update_desktop(self) -> None:
         """Update ONLY this local manager, never call owner VPS monolith."""
@@ -1038,6 +1071,11 @@ class VPSManager(tk.Tk):
                     state = ("observed" if result.returncode == 0 and
                              "PREFLIGHT_READ_ONLY_DATA_COLLECTED_NOT_ACCEPTED" in output
                              else "unproven")
+                    if state == "submitted":
+                        state, output = watch_owner_request(
+                            command, request, initially_submitted=True)
+                    if state in ("success", "failed"):
+                        mark_request_terminal(request)
                 elif mode == "list":
                     if result.returncode != 0 or output == "REQUEST_LIST=UNPROVEN":
                         state = "unproven"
@@ -1086,6 +1124,8 @@ class VPSManager(tk.Tk):
                                      and "POSTCHECK=VERIFIED_EDITOR_ONLY" not in details):
                 state = "unproven"
                 details += "\nPOSTCHECK=UNPROVEN_TARGET_OR_RECEIPT"
+            if state in ("success", "failed"):
+                mark_request_terminal(request)
             self.events.put((state, (precheck_receipt + "\n" if precheck_receipt else "")
                              + (output or "Ответ запуска неизвестен")
                              + "\n" + details + "\nREQUEST_ID=" + request))
