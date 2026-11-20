@@ -332,11 +332,15 @@ class RobotBreakoutMonitor:
         self._get_pattern_flow_evidence = observer
 
     def _pattern_flow_allows_entry(self, record: RobotCandidateRecord) -> bool:
-        """Optional same-candidate causal timing at an already approved entry gate.
+        """Fail closed at an unowned entry boundary when PAPER flow is enabled.
 
-        No evidence => original behavior. Certified contradictory/mismatched
-        evidence => defer the *same* pre-order candidate. Never interfere with
-        previously persisted order ownership, fills or protection recovery.
+        With the opt-in observer absent, retain the original Robot route.
+        With it bound, a fresh, exact-owner, directionally supportive and
+        independently source-complete receipt is mandatory for ALL supported
+        families (Wedge, L-shape, MIRROR, Ikigai Box). Missing/foreign/stale
+        evidence cannot silently bypass impulse timing and submit the old
+        entry. This gate never touches an already-owned entry, fill, STOP,
+        TAKE, cancel or recovery lifecycle.
         """
         observer = self._get_pattern_flow_evidence
         if observer is None:
@@ -347,11 +351,10 @@ class RobotBreakoutMonitor:
         try:
             receipt = observer(record)
         except Exception:
-            receipt = None  # optional source failure cannot grant new authority
-        return (receipt is None
-                or match_existing_pattern_flow(
-                    scope, receipt, now_ms=self._now_ms(),
-                ))
+            return False  # uncertainty is not a trading authorization
+        return match_existing_pattern_flow(
+            scope, receipt, now_ms=self._now_ms(),
+        )
 
     def start(self) -> None:
         if self._started:
