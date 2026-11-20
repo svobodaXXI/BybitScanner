@@ -5870,6 +5870,36 @@ class SQLiteStore:
                 blocked.append(str(row["candidate_id"]))
         return tuple(blocked)
 
+    def robot_account_quarantines(
+        self, trading_account_id: TradingAccountId,
+    ) -> dict[str, tuple[str, ...]]:
+        """Inspect every potentially unproven emergency without guessing risk.
+
+        The small partial recovery-marker index excludes normal historical
+        candidates. Delegate proof of terminal disposition to the exact
+        symbol predicate shared with canonical entry admission.
+        """
+        self._assert_owner()
+        rows = self._connection.execute(
+            """SELECT DISTINCT symbol FROM robot_candidates
+               WHERE trading_account_id=? AND robot_state_json IS NOT NULL
+                 AND (
+                    json_type(robot_state_json, '$.execution.emergency_close_pending') IS NOT NULL
+                    OR json_type(robot_state_json, '$.execution.emergency_close_intent') IS NOT NULL
+                 )
+               ORDER BY symbol""",
+            (trading_account_id.value,),
+        )
+        result: dict[str, tuple[str, ...]] = {}
+        for row in rows:
+            symbol = Symbol(str(row["symbol"]))
+            pending = self.robot_symbol_quarantine_candidate_ids(
+                trading_account_id, symbol,
+            )
+            if pending:
+                result[symbol.value] = pending
+        return result
+
     def load_robot_candidates_for_symbol(
         self, trading_account_id: TradingAccountId, symbol: Symbol,
     ) -> tuple[RobotCandidateRecord, ...]:
