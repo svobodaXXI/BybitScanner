@@ -282,3 +282,36 @@ def test_desktop_publication_owner_request_is_exact_and_one_shot():
     assert "STABLE_MOVED_BEFORE_PUBLISH" in workflow
     assert "DESKTOP_TAG_ALREADY_EXISTS" in workflow
     assert workflow.count("gh release create") == 1
+
+
+def test_desktop_release_publication_uses_scoped_app_workflows_permission():
+    """An exact stable workflow-delta release requires workflows:write.
+
+    The ordinary GITHUB_TOKEN stays read-only for validation; only the
+    release creation step receives the short-lived repository-scoped token.
+    """
+    workflow = (Path(__file__).resolve().parents[1] / ".github" / "workflows"
+                / "desktop-release-packages.yml").read_text(encoding="utf-8")
+    assert "DESKTOP_RELEASE_APP_NOT_CONFIGURED" in workflow
+    gate = workflow.index("Verify repository-scoped release identity is configured")
+    build = workflow.index("Build local replay static UI")
+    smoke = workflow.index("Smoke-test packaged Manager Python DLL")
+    token_step = workflow.index("Mint short-lived repository-scoped release token")
+    release = workflow.index("Publish owner-approved desktop release")
+    assert gate < build < smoke < token_step < release
+
+    scoped = workflow[token_step:release]
+    assert "uses: actions/create-github-app-token@v3" in scoped
+    assert "client-id: ${{ vars.DESKTOP_RELEASE_APP_CLIENT_ID }}" in scoped
+    assert "private-key: ${{ secrets.DESKTOP_RELEASE_APP_PRIVATE_KEY }}" in scoped
+    assert "permission-contents: write" in scoped
+    assert "permission-workflows: write" in scoped
+    assert not any(line.strip().startswith(("owner:", "repositories:"))
+                   for line in scoped.splitlines())
+
+    publication = workflow[release:]
+    assert "GH_TOKEN: ${{ steps.desktop_release_token.outputs.token }}" in publication
+    assert "GH_TOKEN: ${{ github.token }}" not in publication
+    assert publication.count("gh release create") == 1
+    assert "--target $env:DESKTOP_SHA" in publication
+    assert "STABLE_MOVED_BEFORE_PUBLISH" in publication
