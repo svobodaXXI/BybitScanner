@@ -796,12 +796,12 @@ class TestWindowsVpsManager(unittest.TestCase):
                    " submit update " + sha + " --request-id " + request]
         submitted = subprocess.CompletedProcess(
             command, 0, "REQUEST_ID=" + request +
-            "\\nSUBMISSION=ACCEPTED; action continues on VPS independently of SSH\\n", "")
+            "\nSUBMISSION=ACCEPTED; action continues on VPS independently of SSH\n", "")
         healthy = ("INSTALLED_SHA=" + sha +
-                   "\\nPOSTCHECK=VERIFIED_EDITOR_ONLY\\n")
+                   "\nPOSTCHECK=VERIFIED_EDITOR_ONLY\n")
         for code, receipt, expected in (
             (0, healthy, "success"),
-            (0, "INSTALLED_SHA=" + sha + "\\nPOSTCHECK=BLOCKED_UNPROVEN\\n", "unproven"),
+            (0, "INSTALLED_SHA=" + sha + "\nPOSTCHECK=BLOCKED_UNPROVEN\n", "unproven"),
             (2, healthy, "unproven"),
         ):
             fake = SimpleNamespace(events=queue.Queue())
