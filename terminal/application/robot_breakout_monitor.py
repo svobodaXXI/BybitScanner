@@ -714,13 +714,26 @@ class RobotBreakoutMonitor:
             frozen = robot_entry_limit.freeze_post_breakout_impulse_quote(
                 quote, receipt,
             )
-        except (robot_entry_limit.RobotEntryLimitError, ValueError, TypeError):
+        except Exception:
+            # Optional market-data observation cannot quarantine a normally
+            # executable pattern when a source/transport adapter is unavailable.
             return False
-        # State CAS prevents an asynchronously revised candidate accepting
-        # old evidence. No order submission or owner coverage arm occurs.
+        # A research write is CAS-scoped, with no order submission or
+        # owner coverage arm; a conflict is NOT a successful persistence.
         updated = dict(record.robot_state)
         updated["impulse_entry_research"] = frozen
-        self._persist_state(record, updated)
+        try:
+            self._store().save_robot_candidate_state(
+                record.candidate_id,
+                status="APPROVED",
+                robot_state=updated,
+                expected_revision=record.state_revision,
+                updated_at_ms=self._now_ms(),
+            )
+        except Exception:
+            # The optional evidence path cannot affect the original entry
+            # lifecycle. Missing research persistence is not market authority.
+            return False
         return True
 
     def _advance_one(self, record: RobotCandidateRecord) -> bool:
