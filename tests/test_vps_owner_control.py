@@ -71,7 +71,8 @@ class OwnerControlTests(unittest.TestCase):
         from io import StringIO
         from unittest.mock import patch
         output = ("LoadState=loaded\nActiveState=active\nSubState=exited\n"
-                  "Result=success\nExecMainStatus=0\n")
+                  "Result=success\nExecMainStatus=0\n"
+                  "Description=BybitScanner update " + SHA[:12] + " origin=win-laptop\n")
         run = lambda cmd, **kw: completed(cmd, out=output)
         for proof, expected in ((0, 0), (2, 2)):
             with patch.object(control, "verify_update", return_value=proof) as check:
@@ -81,6 +82,14 @@ class OwnerControlTests(unittest.TestCase):
                 check.assert_called_once_with(SHA)
         with patch.object(control, "verify_update") as check:
             self.assertEqual(control.status(R, run=run), 0)
+            check.assert_not_called()
+        unrelated = output.replace("BybitScanner update", "BybitScanner start")
+        with patch.object(control, "verify_update") as check:
+            with redirect_stdout(StringIO()) as receipt:
+                self.assertEqual(
+                    control.status(R, run=lambda cmd, **kw: completed(cmd, out=unrelated),
+                                   verify_sha=SHA), 2)
+            self.assertIn("POSTCHECK=BLOCKED_REQUEST_TARGET_MISMATCH", receipt.getvalue())
             check.assert_not_called()
 
     def test_invalid_update_proof_does_not_skip_durable_checks(self):
