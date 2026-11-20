@@ -793,3 +793,47 @@ def test_mirror_standalone_handoff_carries_double_reversal_only_as_context(monke
     assert "auxiliary_reversal" not in opposite
     expired = run(evidence, 540_000)
     assert "auxiliary_reversal" not in expired
+
+
+def test_forbidden_persisted_mirror_level_is_revoked_without_paper_or_telegram(root, fixed_levels, monkeypatch):
+    """Old candidate=True, pending breakout and standalone entry cannot bypass policy."""
+    from mirror_levels.levels import LevelRegistry
+    from mirror_levels.tracker import new_record
+    import mirror_retest_robot as robot
+    import pattern_robot_integration as handoff
+
+    forbidden = level_at(101.0, 5 * M, source="pattern_boundary", pattern="IKIGAI_BOX")
+    registry = LevelRegistry()
+    registry.add(forbidden)
+    state = ms.empty_state("TESTUSDT", "1")
+    state["registry"] = registry.to_dict()
+    state["records"] = {forbidden.level_id: {
+        **new_record(forbidden), "lifecycle": ms.LIFECYCLE_TRACKING,
+        "status": STATUS_UNTESTED, "candidate": True, "rejection": None,
+        "last_event_ms": 5 * M,
+        "naked_retest": {"breakout": {
+            "direction": "UP", "campaign_direction": "SHORT",
+            "open_time_ms": 10 * M, "close_time_ms": 11 * M,
+        }, "retest": None},
+    }}
+    state["pending_notifications"] = [{"level_id": forbidden.level_id, "kind": "breakout", "chart": {}}]
+    state["standalone_entries"] = [{
+        "entry_id": f"{forbidden.level_id}@1@{12 * M}",
+        "terms": {"level_id": forbidden.level_id, "source_timeframe": "1"},
+        "handoff": "PENDING", "candidate_id": None,
+    }]
+    ms.save_state(state, root)
+    assert robot.scanner_level_sources("TESTUSDT", root=root) == []
+    monkeypatch.setattr(handoff, "prepare_robot_handoff",
+                        lambda *a, **kw: pytest.fail("forbidden MIRROR admission"))
+    fixed_levels["levels"] = [forbidden]
+    summary = observe(frame(flat_bars(16)), root)
+    after = ms.load_state("TESTUSDT", "1", root)
+    old = after["records"][forbidden.level_id]
+    assert summary["new_candidates"] == 0
+    assert old["candidate"] is False and old["robot"] is None
+    assert old["lifecycle"] == ms.LIFECYCLE_REJECTED
+    assert old["rejection"] == "mirror_source_policy_revoked"
+    assert after["pending_notifications"] == []
+    assert after["standalone_entries"][0]["handoff"] == "OFF"
+    assert forbidden.level_id in ms.LevelRegistry.from_dict(after["registry"]).levels
