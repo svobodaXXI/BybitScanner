@@ -788,6 +788,41 @@ class TestWindowsVpsManager(unittest.TestCase):
         runner.assert_called_once()
         self.assertIs(runner.call_args.args[0], command)
 
+    def test_update_requires_exact_postcheck_and_never_resubmits(self):
+        from tools.windows_vps_manager import CONTROL_MODULE
+        request = "1" * 32
+        sha = "b" * 40
+        command = ["ssh", "root@vps", CONTROL_MODULE +
+                   " submit update " + sha + " --request-id " + request]
+        submitted = subprocess.CompletedProcess(
+            command, 0, "REQUEST_ID=" + request +
+            "\\nSUBMISSION=ACCEPTED; action continues on VPS independently of SSH\\n", "")
+        healthy = ("INSTALLED_SHA=" + sha +
+                   "\\nPOSTCHECK=VERIFIED_EDITOR_ONLY\\n")
+        for code, receipt, expected in (
+            (0, healthy, "success"),
+            (0, "INSTALLED_SHA=" + sha + "\\nPOSTCHECK=BLOCKED_UNPROVEN\\n", "unproven"),
+            (2, healthy, "unproven"),
+        ):
+            fake = SimpleNamespace(events=queue.Queue())
+            with (patch("tools.windows_vps_manager.precheck_laptop_owner_submit",
+                        return_value=(True, "PREFLIGHT=PROVEN")),
+                  patch("tools.windows_vps_manager.subprocess.run",
+                        return_value=submitted) as send,
+                  patch("tools.windows_vps_manager.watch_owner_request",
+                        return_value=("success", "STATUS=FINISHED_OK")),
+                  patch("tools.windows_vps_manager.run_readonly_ssh_with_laptop_agent_recovery",
+                        return_value=(subprocess.CompletedProcess(
+                            command, code, receipt, ""), "")) as proof):
+                VPSManager.worker_control(fake, command, "update", request)
+            kind, result = fake.events.get_nowait()
+            self.assertEqual(kind, expected)
+            self.assertIn("REQUEST_ID=" + request, result)
+            send.assert_called_once()
+            proof.assert_called_once()
+            self.assertIn("verify-update " + sha, proof.call_args.args[0][-1])
+            self.assertNotIn(" submit ", proof.call_args.args[0][-1])
+
     def test_gui_unknown_submit_checks_status_without_resubmitting(self):
         fake = SimpleNamespace(events=queue.Queue(), host=Mock(), user=Mock(), key=Mock())
         fake.host.get.return_value = "bybitscanner-vps"
