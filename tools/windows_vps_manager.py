@@ -636,14 +636,22 @@ def run_cli(options: argparse.Namespace) -> int:
                                        timeout=35, stdin=subprocess.DEVNULL, check=False)
             recovery = ""
     except (OSError, subprocess.TimeoutExpired) as exc:
-        if options.operation == "preflight":
-            failure = ("SSH_CLIENT_TIMEOUT" if isinstance(exc, subprocess.TimeoutExpired)
-                       else "SSH_CLIENT_SPAWN_FAILURE")
-            print("PREFLIGHT_FAILURE_CLASS=" + failure)
-            print("PREFLIGHT_BLOCKED_UNPROVEN")
+        if (options.operation in CONTROL_ACTIONS.values()
+                and isinstance(exc, subprocess.TimeoutExpired)):
+            # The single submit might have reached the VPS. Never resubmit:
+            # query its pre-persisted UUID via the existing read-only watcher.
+            completed = subprocess.CompletedProcess(
+                argv, 255, stdout="", stderr="SSH_SUBMIT_TIMEOUT")
+            recovery = ""
         else:
-            print("SSH_UNPROVEN; request_id=" + req + "; check status; do not resubmit")
-        return 2
+            if options.operation == "preflight":
+                failure = ("SSH_CLIENT_TIMEOUT" if isinstance(exc, subprocess.TimeoutExpired)
+                           else "SSH_CLIENT_SPAWN_FAILURE")
+                print("PREFLIGHT_FAILURE_CLASS=" + failure)
+                print("PREFLIGHT_BLOCKED_UNPROVEN")
+            else:
+                print("SSH_UNPROVEN; request_id=" + req + "; no submit retry")
+            return 2
     output = completed.stdout.strip()
     print(output)
     if recovery:
@@ -678,25 +686,31 @@ def run_cli(options: argparse.Namespace) -> int:
                 return 2
         print("REMOTE_STATUS_UNPROVEN; request_id=" + req)
         return 2
-    if completed.returncode != 0:
-        print("REMOTE_STATUS_UNPROVEN; request_id=" + req)
-        return 2
     if options.operation in CONTROL_ACTIONS.values():
-        if not ("REQUEST_ID=" + req in output.splitlines()
-                and any(line.startswith("SUBMISSION=ACCEPTED")
-                        for line in output.splitlines())):
-            print("SUBMISSION_UNPROVEN; request_id=" + req +
-                  "; never resend without status recovery")
+        submitted = (
+            completed.returncode == 0
+            and "REQUEST_ID=" + req in output.splitlines()
+            and any(line.startswith("SUBMISSION=ACCEPTED")
+                    for line in output.splitlines())
+        )
+        # Only an established transport-loss outcome may transition to
+        # read-only UUID recovery. Auth/host-key refusal does not retry.
+        transport_lost = (completed.stderr == "SSH_SUBMIT_TIMEOUT"
+                          or transient_ssh_failure(completed))
+        if not submitted and not transport_lost:
+            print("SUBMISSION_UNPROVEN; request_id=" + req + "; no submit retry")
             return 2
-        # Same canonical UUID watcher for GUI and CLI: no manual poll loop.
         proof_cmd = control_ssh_command(
             host, user, key, "status", request_id=req,
             sha=sha if options.operation == "update" else "")
         state, proof = watch_owner_request(
-            proof_cmd, req, initially_submitted=True)
+            proof_cmd, req, initially_submitted=submitted)
         print(proof)
         print("OWNER_RESULT=" + state.upper() + "; request_id=" + req)
         return 0 if state == "success" else 2
+    if completed.returncode != 0:
+        print("REMOTE_STATUS_UNPROVEN; request_id=" + req)
+        return 2
     return 0
 
 
