@@ -39,8 +39,9 @@ def _timestamp_ms(value: object) -> int:
     if not n.is_finite() or n <= 0:
         raise ArchiveEvidenceError("invalid timestamp")
     value_ms = n * 1000 if n < 100_000_000_000 else n
-    if value_ms != value_ms.to_integral_value():
-        raise ArchiveEvidenceError("sub-millisecond timestamp")
+    # Bybit publicTrade timestamps have 100-us fractions (e.g. .1921).
+    # Retain the original archive string; floor ONLY for the offline coarse
+    # window filter. This must not certify live decision-time ordering.
     return int(value_ms)
 
 
