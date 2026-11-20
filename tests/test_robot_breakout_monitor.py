@@ -3437,21 +3437,22 @@ class ImpulseNativeMarketMatcherAgeFenceTests(unittest.TestCase):
             },
         )
         account = TradingAccountId("paper")
-        runtime = object.__new__(PaperRuntime)
-        runtime._paper_account_id = account
-        runtime._account_id = account
-        runtime.store = SimpleNamespace(
-            load_active_robot_entry_orders=lambda _account, _symbol: {
-                order_id.value: (Symbol(SYMBOL), 5),
-            },
-            load_active_robot_candidates_for_symbol=lambda _account, _symbol: (candidate,),
-            get_robot_runtime_state=lambda _account: SimpleNamespace(
-                mode="ROBOT_RUNNING", recovery_status="READY", version=5,
+        runtime = SimpleNamespace(
+            _paper_account_id=account, _account_id=account,
+            store=SimpleNamespace(
+                load_active_robot_entry_orders=lambda _account, _symbol: {
+                    order_id.value: (Symbol(SYMBOL), 5),
+                },
+                load_active_robot_candidates_for_symbol=lambda _account, _symbol: (candidate,),
+                get_robot_runtime_state=lambda _account: SimpleNamespace(
+                    mode="ROBOT_RUNNING", recovery_status="READY", version=5,
+                ),
             ),
+            _robot_linked_entry_limits=lambda _symbol: {order_id.value: 5},
         )
         active = (SimpleNamespace(order_id=order_id),)
-        match = lambda at: runtime._robot_entry_limit_ids_fenced_by_admission(
-            Symbol(SYMBOL), active, event_received_at_ms=at,
+        match = lambda at: PaperRuntime._robot_entry_limit_ids_fenced_by_admission(
+            runtime, Symbol(SYMBOL), active, event_received_at_ms=at,
         )
         self.assertEqual(match(179_999), frozenset({order_id.value}))
         self.assertEqual(match(180_000), frozenset())
