@@ -2180,7 +2180,11 @@ class PaperRuntime:
             phase = candidate.robot_state.get("phase")
             execution = candidate.robot_state.get("execution") or {}
             stamp = execution.get("entry_admission_version")
-            if candidate.status == "APPROVED" and phase == "RETEST_DETECTED":
+            if candidate.status == "APPROVED" and (
+                phase == "RETEST_DETECTED"
+                or (phase == "WAITING_RETEST"
+                    and execution.get("entry_mode") == "IMPULSE_EARLY_LIMIT")
+            ):
                 order_id = execution.get("limit_order_id")
                 if isinstance(order_id, str) and order_id.strip():
                     linked[order_id.strip()] = stamp
@@ -2306,7 +2310,11 @@ class PaperRuntime:
                     continue
                 execution = candidate.robot_state.get("execution") or {}
                 phase = candidate.robot_state.get("phase")
-                if candidate.status == "APPROVED" and phase == "RETEST_DETECTED":
+                if candidate.status == "APPROVED" and (
+                    phase == "RETEST_DETECTED"
+                    or (phase == "WAITING_RETEST"
+                        and execution.get("entry_mode") == "IMPULSE_EARLY_LIMIT")
+                ):
                     order_id = execution.get("limit_order_id")
                     # The first MIRROR target touch must terminate an UNFILLED
                     # entry even inside an OPEN candle. Closed-candle checks
