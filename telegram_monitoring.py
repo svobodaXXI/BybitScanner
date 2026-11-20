@@ -783,6 +783,37 @@ def _signal_archive_ids(record: RobotCandidateRecord) -> list[str]:
     return ids
 
 
+def _load_archived_candidate_source(record: RobotCandidateRecord) -> dict | None:
+    """Exact candidate archive first, then the Scanner's same-formation origin.
+
+    A Scanner writes origin:<symbol>:<timeframe>:<formation_id> alongside
+    source-original.  Older/partially archived candidates may lack their own
+    copy.  Never search by ticker alone or accept another pattern's origin.
+    """
+    original = signal_archive.load_original_signal(_signal_archive_ids(record))
+    if original is not None:
+        return original
+    snapshot = record.signal_snapshot
+    formation_id = snapshot.get("scanner_formation_id")
+    timeframe = snapshot.get("timeframe")
+    pattern = snapshot.get("pattern")
+    if (not isinstance(formation_id, str) or not formation_id
+            or len(formation_id) > 256
+            or not isinstance(pattern, str) or not pattern
+            or str(snapshot.get("symbol", "")) != record.symbol.value
+            or str(timeframe or "") not in {"1", "5"}):
+        return None
+    origin_id = f"origin:{record.symbol.value}:{timeframe}:{formation_id}"
+    original = signal_archive.load_original_signal([origin_id])
+    if (original is None
+            or original.get("candidate_id") != origin_id
+            or original.get("symbol") != record.symbol.value
+            or str(original.get("timeframe")) != str(timeframe)
+            or original.get("pattern") != pattern):
+        return None
+    return original
+
+
 def _format_signal_time(ms) -> str:
     return datetime.fromtimestamp(int(ms) / 1000, timezone.utc).strftime("%d.%m.%Y %H:%M:%S UTC")
 
@@ -894,7 +925,7 @@ def _send_source_signal_card(chat_id, token: str) -> None:
         _send_text(chat_id, "Исходный сигнал не найден или ссылка неоднозначна.")
         return
     symbol = record.symbol.value
-    original = signal_archive.load_original_signal(_signal_archive_ids(record))
+    original = _load_archived_candidate_source(record)
     if original is not None:
         if _repost_original_signal(chat_id, original):
             return
