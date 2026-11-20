@@ -23,6 +23,11 @@ ASSETS = {
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 DIGEST = re.compile(r"sha256:([0-9a-f]{64})\Z")
 MAX_DOWNLOAD = 180_000_000
+# GitHub Compare includes the full files/patches array on page 1, which can
+# exceed the bounded 256 KB metadata reader for older installed releases.
+# Page 2 with one commit/page still returns status/ahead_by/behind_by, even
+# when the comparison has zero or one commit, without the files array.
+COMPARE_SUMMARY_PAGE = "?per_page=1&page=2"
 
 
 class UpdateBlocked(ValueError):
@@ -90,7 +95,8 @@ def find_asset(kind: str, *, opener=urlopen) -> ReleaseAsset:
     if (not isinstance(ref_object, dict) or ref_object.get("type") != "commit"
             or ref_object.get("sha") != sha):
         raise UpdateBlocked("release_tag_commit_mismatch")
-    comparison = _json(API + "/compare/" + sha + "..." + head, opener=opener)
+    comparison = _json(API + "/compare/" + sha + "..." + head
+                       + COMPARE_SUMMARY_PAGE, opener=opener)
     if (not isinstance(comparison, dict)
             or comparison.get("status") not in ("ahead", "identical")
             or comparison.get("behind_by") != 0):
@@ -155,8 +161,8 @@ def require_forward_update(installed_sha: str, release_sha: str, *, opener=urlop
         raise UpdateBlocked("installed_desktop_version_untrusted")
     if installed_sha == release_sha:
         raise UpdateBlocked("desktop_already_current")
-    comparison = _json(API + "/compare/" + installed_sha + "..." + release_sha,
-                       opener=opener)
+    comparison = _json(API + "/compare/" + installed_sha + "..." + release_sha
+                       + COMPARE_SUMMARY_PAGE, opener=opener)
     if (not isinstance(comparison, dict)
             or comparison.get("status") != "ahead"
             or comparison.get("behind_by") != 0):
