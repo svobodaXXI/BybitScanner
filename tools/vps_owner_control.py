@@ -28,7 +28,7 @@ def unit_name(request: str) -> str:
     return UNIT_PREFIX + request + ".service"
 
 
-def status(request: str, *, run=subprocess.run) -> int:
+def status(request: str, *, run=subprocess.run, verify_sha: str = "") -> int:
     unit = unit_name(request)
     result = run(
         ["systemctl", "show", "--no-pager",
@@ -64,6 +64,11 @@ def status(request: str, *, run=subprocess.run) -> int:
     print("RESULT=" + fields.get("Result", "unknown"))
     print("EXIT_CODE=" + fields.get("ExecMainStatus", "unknown"))
     print("DESCRIPTION=" + fields.get("Description", "")[:180])
+    if state == "FINISHED_OK" and verify_sha:
+        if SHA.fullmatch(verify_sha) is None:
+            print("POSTCHECK=BLOCKED_INVALID_SHA")
+            return 2
+        return verify_update(verify_sha)
     return 0 if state == "FINISHED_OK" else 3 if state == "RUNNING" else 2
 
 
@@ -141,6 +146,14 @@ def verify_update(target: str) -> int:
                 raise ValueError("http_payload_invalid")
             return payload
 
+        # Reuse the existing canonical read-only durable PAPER guards:
+        # healthy HTTP alone cannot prove FLAT positions or retired owners.
+        from tools.paper_maintenance import _durable_editor_freeze, _paper_start_quiescent
+        expected_identity = _durable_editor_freeze(Path(REPO), None)
+        if not _paper_start_quiescent(Path(REPO), None):
+            print("POSTCHECK=BLOCKED_DURABLE_OWNERS")
+            return 2
+
         backend = fetch("http://127.0.0.1:8765/api/health")
         scanner = fetch("http://127.0.0.1:8765/api/scanner/status")
         autopilot = fetch("http://127.0.0.1:8765/api/robot/autopilot")
@@ -154,7 +167,7 @@ def verify_update(target: str) -> int:
             and backend.get("mode") == "paper"
             and backend.get("paper_live_safe") is True
             and backend.get("robot_admission_ready") is False
-            and isinstance(identity, str) and len(identity) == 64
+            and isinstance(identity, str) and identity == expected_identity
             and telegram.get("component") == "telegram_monitoring"
             and telegram.get("status") == "ready"
             and telegram.get("database_identity") == identity
@@ -171,7 +184,9 @@ def verify_update(target: str) -> int:
             and protection.get("unhealthy_symbols") == {}
         )
         print("INSTALLED_SHA=" + installed)
-        print("BACKEND_TELEGRAM_DB_MATCH=" + str(telegram.get("database_identity") == identity))
+        print("BACKEND_TELEGRAM_DB_MATCH=" + str(
+            isinstance(identity, str) and identity == expected_identity
+            and telegram.get("database_identity") == identity))
         print("SCANNER_STOPPED=" + str(scanner.get("mode") == "SCANNER_STOPPED"))
         print("AUTOPILOT_OFF=" + str(autopilot.get("mode") == "OFF"))
         print("PROTECTION_QUIESCENT=" + str(
@@ -211,6 +226,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--origin", default="vps-console")
     q = sub.add_parser("status")
     q.add_argument("request_id")
+    q.add_argument("--verify-update", dest="verify_sha", default="")
     sub.add_parser("list")
     v = sub.add_parser("verify-update")
     v.add_argument("sha")
@@ -220,7 +236,7 @@ def main(argv: list[str] | None = None) -> int:
             return submit(args.action, args.sha, args.request_id or uuid.uuid4().hex,
                           args.origin)
         if args.command == "status":
-            return status(args.request_id)
+            return status(args.request_id, verify_sha=args.verify_sha)
         if args.command == "verify-update":
             return verify_update(args.sha)
         return list_requests()
