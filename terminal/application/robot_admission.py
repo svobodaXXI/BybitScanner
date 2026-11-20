@@ -189,6 +189,14 @@ def _admit_box_plan_candidate(
                 raise RobotAdmissionRejected("Robot runtime state is unavailable")
             if runtime.mode != "ROBOT_RUNNING" or runtime.recovery_status != "READY":
                 raise RobotAdmissionRejected("Robot admission is not ready")
+            quarantined = store.robot_symbol_quarantine_candidate_ids(
+                PAPER_ACCOUNT_ID, source.symbol,
+            )
+            if quarantined:
+                raise RobotAdmissionRejected(
+                    "Robot symbol quarantined after unproven emergency close: "
+                    + ",".join(quarantined)
+                )
             direction = str((source.signal_snapshot.get("identity") or {}).get("direction", ""))
             parent = linked_mirror_parent_candidate(
                 store,
@@ -507,6 +515,14 @@ def admit_robot_candidate(
                     raise RobotAdmissionRejected("Robot runtime state is unavailable")
                 if runtime.mode != "ROBOT_RUNNING" or runtime.recovery_status != "READY":
                     raise RobotAdmissionRejected("Robot admission is not ready")
+                quarantined = store.robot_symbol_quarantine_candidate_ids(
+                    PAPER_ACCOUNT_ID, symbol,
+                )
+                if quarantined:
+                    raise RobotAdmissionRejected(
+                        "Robot symbol quarantined after unproven emergency close: "
+                        + ",".join(quarantined)
+                    )
                 _reject_source_terminal_snapshot(store, candidate_id, snapshot_sha256)
 
                 owners = active_robot_owner_candidate_ids(
