@@ -165,7 +165,10 @@ def inspect_archive_pair(
                     if (type(seq) is not int or type(update) is not int
                             or seq < 0 or update < 0):
                         raise ArchiveEvidenceError("invalid book seq/update ID")
-                    if event["type"] == "snapshot":
+                    # Bybit u=1 means service-restart resnapshot even when
+                    # the envelope says delta. A pre-restart sequence must
+                    # never be compared to the new orderbook generation.
+                    if event["type"] == "snapshot" or update == 1:
                         have_snapshot = True
                         last_seq = seq
                         if stamp < end_ms:
