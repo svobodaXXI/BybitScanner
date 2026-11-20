@@ -63,6 +63,35 @@ def _candidate(direction="LONG", phase="RETEST_DETECTED"):
 
 
 class ObserverTests(unittest.TestCase):
+    def test_open_wedge_certifies_source_only_fade_on_same_candidate(self):
+        """Open trade gets completed source facts, not a fresh trade signal."""
+        observed, recent, previous, current = PatternFlowSourceTests.fading_source()
+        host = _candidate()
+        host.status = "OPEN"
+        host.robot_state["pattern"] = "Falling Wedge"
+        context = _Context(observed)
+        rest = _REST(recent, previous, current)
+        observer = PatternFlowObserver(
+            SimpleNamespace(list_contexts=lambda: (context,)),
+            rest, "unused",
+            clock_ms=lambda: PatternFlowSourceTests.CLOSE + 5_000,
+            get_candidates=lambda: (host,),
+        )
+        try:
+            self.assertEqual(observer.once(), 1)
+            evidence = observer.get(host)
+            self.assertIsNotNone(evidence)
+            self.assertEqual(evidence.candidate_id, host.candidate_id)
+            self.assertEqual(evidence.state_revision, host.state_revision)
+            self.assertEqual(evidence.direction, "LONG")
+            self.assertTrue(evidence.source_complete)
+            self.assertFalse(evidence.transition.buy_wave_accelerating)
+            self.assertEqual(len(rest.requests), 3)
+            host.status = "INVALIDATED"
+            self.assertEqual(observer.once(), 0)
+        finally:
+            observer.close()
+
     def test_early_preview_observes_subminute_wave_without_entry_authority(self):
         from terminal.market_data.impulse_observation import PublicTradeObservation
         now = 1_800_030
