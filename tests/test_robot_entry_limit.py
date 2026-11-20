@@ -414,6 +414,7 @@ class PostBreakoutWedgeImpulseQuoteTests(unittest.TestCase):
                     self.plan(receipt=proof)
 
     def test_book_must_be_fresh_ready_and_outside_frozen_pattern(self):
+        from dataclasses import replace
         from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
         from terminal.domain.models import Price, Quantity, Symbol
 
