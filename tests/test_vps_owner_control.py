@@ -14,6 +14,99 @@ def completed(cmd, code=0, out=""):
 
 
 class OwnerControlTests(unittest.TestCase):
+    def test_update_postcheck_is_read_only_and_fails_closed(self):
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from unittest.mock import patch
+
+        target = "b" * 40
+        identity = "a" * 64
+        data = {
+            "/api/health": {"ok": True, "component": "paper_backend",
+                            "mode": "paper", "build_sha": target,
+                            "paper_live_safe": True, "robot_admission_ready": False,
+                            "database_identity": identity},
+            "/api/scanner/status": {"ok": True, "mode": "SCANNER_STOPPED",
+                                     "worker_quiescent": True},
+            "/api/robot/autopilot": {"ok": True, "mode": "OFF"},
+            "/api/robot/protection-health": {"ok": True, "healthy": True,
+                         "covered_symbols": [], "armed_symbols": [],
+                         "coverage_roles": {}, "unhealthy_symbols": {}},
+            "/health": {"component": "telegram_monitoring",
+                         "status": "ready", "database_identity": identity},
+        }
+
+        def getter(url, timeout):
+            self.assertEqual(timeout, 3)
+            key = "/health" if ":8766" in url else url.split(":8765", 1)[1]
+            return SimpleNamespace(status=200, json=lambda: data[key])
+
+        def check():
+            out = StringIO()
+            with redirect_stdout(out):
+                result = control.verify_update(target)
+            return result, out.getvalue()
+
+        from unittest.mock import Mock
+        from unittest.mock import patch as mock_patch
+        import sys
+        fake = SimpleNamespace(
+            _durable_editor_freeze=Mock(return_value=identity),
+            _paper_start_quiescent=Mock(return_value=True),
+        )
+        with (patch("tools.vps_release_identity.verify_release", return_value=target),
+              patch("tools.runtime_intent.http_get", side_effect=getter),
+              mock_patch.dict(sys.modules, {"tools.paper_maintenance": fake})):
+            self.assertEqual(check()[0], 0)
+            self.assertIn("POSTCHECK=VERIFIED_EDITOR_ONLY", check()[1])
+            data["/api/robot/protection-health"]["covered_symbols"] = ["BTCUSDT"]
+            self.assertEqual(check()[0], 2)
+            data["/api/robot/protection-health"]["covered_symbols"] = []
+            data["/health"]["database_identity"] = "c" * 64
+            self.assertEqual(check()[0], 2)
+        self.assertEqual(control.verify_update("invalid"), 2)
+
+    def test_finished_status_requires_bound_update_postcheck(self):
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from unittest.mock import patch
+        output = ("LoadState=loaded\nActiveState=active\nSubState=exited\n"
+                  "Result=success\nExecMainStatus=0\n"
+                  "Description=BybitScanner update " + SHA[:12] + " origin=win-laptop\n")
+        run = lambda cmd, **kw: completed(cmd, out=output)
+        for proof, expected in ((0, 0), (2, 2)):
+            with patch.object(control, "verify_update", return_value=proof) as check:
+                with redirect_stdout(StringIO()) as reply:
+                    self.assertEqual(control.status(R, run=run, verify_sha=SHA), expected)
+                self.assertIn("STATUS=FINISHED_OK", reply.getvalue())
+                check.assert_called_once_with(SHA)
+        with patch.object(control, "verify_update") as check:
+            self.assertEqual(control.status(R, run=run), 0)
+            check.assert_not_called()
+        unrelated = output.replace("BybitScanner update", "BybitScanner start")
+        with patch.object(control, "verify_update") as check:
+            with redirect_stdout(StringIO()) as receipt:
+                self.assertEqual(
+                    control.status(R, run=lambda cmd, **kw: completed(cmd, out=unrelated),
+                                   verify_sha=SHA), 2)
+            self.assertIn("POSTCHECK=BLOCKED_REQUEST_TARGET_MISMATCH", receipt.getvalue())
+            check.assert_not_called()
+
+    def test_invalid_update_proof_does_not_skip_durable_checks(self):
+        import sys
+        from unittest.mock import patch, Mock
+        fake = SimpleNamespace(
+            _durable_editor_freeze=Mock(side_effect=ValueError("PAPER_unproven")),
+            _paper_start_quiescent=Mock(return_value=True),
+        )
+        with (patch("tools.vps_release_identity.verify_release", return_value=SHA),
+              patch.dict(sys.modules, {"tools.paper_maintenance": fake}),
+              patch("tools.runtime_intent.http_get") as getter):
+            self.assertEqual(control.verify_update(SHA), 2)
+            fake._durable_editor_freeze.assert_called_once()
+            fake._paper_start_quiescent.assert_not_called()
+            getter.assert_not_called()
+
     def test_submit_detaches_exact_action_without_shell_or_runtime_bypass(self):
         calls = []
 
