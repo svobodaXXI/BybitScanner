@@ -856,7 +856,7 @@ class TestWindowsVpsManager(unittest.TestCase):
             # Legacy UUID-only and malformed action/SHA must not auto-execute.
             remember_request_id(request, path)
             self.assertEqual(recover_pending_request(path), ("", "", ""))
-            path.write_text(request + "\\nupdate\\nINVALID\\nPENDING\\n", encoding="ascii")
+            path.write_text(request + "\nupdate\nINVALID\nPENDING\n", encoding="ascii")
             self.assertEqual(recover_pending_request(path), ("", "", ""))
 
     def test_recovered_running_status_watches_same_uuid_and_never_submits(self):
@@ -865,7 +865,7 @@ class TestWindowsVpsManager(unittest.TestCase):
         command = ["ssh", CONTROL_MODULE + " status " + request]
         response = subprocess.CompletedProcess(
             command, 3, stdout="REQUEST_ID=" + request +
-            "\\nSTATUS=RUNNING\\n", stderr="")
+            "\nSTATUS=RUNNING\n", stderr="")
         fake = SimpleNamespace(events=queue.Queue())
         with (patch("tools.windows_vps_manager.run_readonly_ssh_with_laptop_agent_recovery",
                     return_value=(response, "")) as probe,
