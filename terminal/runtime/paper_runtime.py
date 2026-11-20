@@ -4361,12 +4361,20 @@ class PaperRuntime:
                     "be-fade-source-" + candidate_id, CommandResultStatus.BLOCKED,
                     "be_fade_source_invalid", "Unproven post-fill Wedge flow close",
                 )
-            return self._robot_wedge_be_partial_once(
+            fade_result = self._robot_wedge_be_partial_once(
                 candidate_id, candle_open_ms=close_ms - 60_000,
                 candle_end_ms=close_ms,
                 candle_high=Decimal(0), candle_low=Decimal(0),
                 book=book, fade_receipt=fade_receipt,
             )
+            if (fade_result.status is not CommandResultStatus.BLOCKED
+                    or fade_result.reason_code not in (
+                        "be_fade_unproven", "be_fade_no_safe_stop"
+                    )
+                    or candle is None):
+                return fade_result
+            # No fade dispatch/intent was created. Preserve the legacy
+            # closed-M1 +2R path when independently available.
         if candle is None:
             return CommandResult(
                 "be-no-candle-" + candidate_id, CommandResultStatus.BLOCKED,
