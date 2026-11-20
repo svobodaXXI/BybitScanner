@@ -843,6 +843,139 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
             self.feed.push(SYMBOL, _candle_at(104, high=99, low=97, close=98))
         return record
 
+    def _setup_impulse_early_wedge_owner(self):
+        """Original APPROVED Wedge and real PAPER store, no retest candle."""
+        from dataclasses import replace
+        from robot_entry_flow_evidence import CandidateBoundFlowEvidence
+        from tests.test_robot_entry_limit import PostBreakoutWedgeImpulseQuoteTests
+
+        self._create_candidate()
+        self.monitor.tick()
+        self.feed.push(SYMBOL, _candle_at(101, high=96, low=94, close=95))
+        self.monitor.tick()
+        self.feed.push(SYMBOL, _candle_at(102, high=106, low=97, close=105))
+        self.monitor.tick()
+        host = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(host.robot_state["phase"], "WAITING_RETEST")
+        self.clock.value = T0_MS + 3 * 60_000 + 100
+        now = self.clock.value
+
+        template = PostBreakoutWedgeImpulseQuoteTests.receipt()
+        proof = replace(
+            template, candidate_id=host.candidate_id,
+            state_revision=host.state_revision,
+            symbol=SYMBOL, closed_at_ms=now - 100,
+            decision_ms=now - 90,
+            transition=replace(template.transition, known_at_ms=now - 90),
+        )
+        # The closed M1 proof must be minute-aligned, known AFTER breakout.
+        proof = replace(proof, closed_at_ms=(now // 60_000) * 60_000)
+        self.monitor._get_pattern_flow_evidence = lambda _record: proof
+        book = NormalizedOrderBook(
+            symbol=Symbol(SYMBOL),
+            bids=(PriceLevel(Price(Decimal("99.0")), Quantity(Decimal("10"))),),
+            asks=(PriceLevel(Price(Decimal("99.1")), Quantity(Decimal("10"))),),
+            health=BookHealth.READY, received_at_ms=now - 50,
+            available_depth=1,
+        )
+        self.monitor._get_market_book = lambda _symbol: book
+        self.monitor._impulse_early_paper_enabled = True
+
+        def robot_create_limit(req):
+            self.executor.limit_calls.append(req)
+            self.executor._order_counter += 1
+            oid = OrderId(f"test-impulse-{self.executor._order_counter}")
+            self.store.create_paper_limit(
+                client_action_id=req.client_action_id.value,
+                request_fingerprint=f"verified-early-{self.executor._order_counter}",
+                order_id=oid, order_link_id=f"test-impulse-link-{self.executor._order_counter}",
+                trading_account_id=ACCOUNT_ID,
+                symbol=Symbol(req.symbol), side=req.side,
+                price=req.limit_price, quantity=req.volume.amount,
+                created_at_ms=self.clock(), robot_entry=True,
+            )
+            return PaperLimitMutationResult(
+                req.client_action_id.value, CommandResultStatus.COMPLETED,
+                "created", oid.value,
+            )
+
+        self.executor.create_limit = robot_create_limit
+        return host, proof
+
+    def test_impulse_early_limit_executes_once_and_uses_native_stop_take(self):
+        host, proof = self._setup_impulse_early_wedge_owner()
+        self.assertEqual(self.monitor.tick(), ("candidate-1",))
+        record = self.store.get_robot_candidate(host.candidate_id)
+        self.assertEqual(record.robot_state["phase"], "WAITING_RETEST")
+        owned = record.robot_state["execution"]
+        self.assertEqual(owned["entry_mode"], "IMPULSE_EARLY_LIMIT")
+        self.assertEqual(len(self.executor.limit_calls), 1)
+        self.assertIs(owned["impulse_entry_intent"]["trading_authorized"], False)
+        order_id = owned["limit_order_id"]
+        order = self.store.get_robot_paper_limit_by_create_action(
+            ACCOUNT_ID, Symbol(SYMBOL), owned["impulse_entry_intent"]["client_action_id"],
+        )
+        self.assertEqual(order.order_id.value, order_id)
+        self.assertEqual(order.price, Decimal("99.1"))
+        self.assertEqual(order.status, "open")
+        self.assertEqual(self.monitor.tick(), ())
+        self.assertEqual(len(self.executor.limit_calls), 1)
+
+        # Authoritative PAPER fill uses original candidate / existing STOP+TAKE.
+        self.executor.fill_resting_limit(
+            order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("99.1"),
+        )
+        self.monitor.process_authoritative_fill(SYMBOL)
+        record = self.store.get_robot_candidate(host.candidate_id)
+        self.assertEqual(record.status, "OPEN")
+        self.assertTrue(any(name == "create_stop" for name, _ in self.executor.protection_calls))
+        self.assertTrue(any(name == "create_take" for name, _ in self.executor.protection_calls))
+        self.assertEqual(len(self.executor.limit_calls), 1)
+
+    def test_impulse_uncertain_dispatch_is_durable_and_never_retried(self):
+        host, _proof = self._setup_impulse_early_wedge_owner()
+        def lost_ack(_req):
+            raise RuntimeError("transport outcome unknown")
+        self.executor.create_limit = lost_ack
+        self.assertEqual(self.monitor.tick(), ("candidate-1",))
+        candidate = self.store.get_robot_candidate(host.candidate_id)
+        self.assertIn("impulse_entry_intent", candidate.robot_state["execution"])
+        self.assertNotIn("limit_order_id", candidate.robot_state["execution"])
+        self.monitor._impulse_early_paper_enabled = False
+        self.assertEqual(self.monitor.tick(), ())
+        self.assertEqual(self.monitor.tick(), ())
+        self.assertIsNone(self.store.get_robot_paper_limit_by_create_action(
+            ACCOUNT_ID, Symbol(SYMBOL),
+            candidate.robot_state["execution"]["impulse_entry_intent"]["client_action_id"],
+        ))
+
+    def test_impulse_order_is_correlated_after_lost_candidate_link(self):
+        host, _proof = self._setup_impulse_early_wedge_owner()
+        native_create = self.executor.create_limit
+        self.executor.create_limit = native_create
+        normal_save = self.monitor._store().save_robot_candidate_state
+        # The durable first intent is saved; only the post-create link CAS
+        # is unavailable. Next tick must correlate action without resubmission.
+        saves = [0]
+        def intermittent_save(*args, **kwargs):
+            saves[0] += 1
+            if saves[0] == 2:
+                from terminal.persistence.sqlite_store import ConcurrentUpdate
+                raise ConcurrentUpdate("simulated link conflict")
+            return normal_save(*args, **kwargs)
+        self.monitor._store().save_robot_candidate_state = intermittent_save
+        try:
+            self.assertEqual(self.monitor.tick(), ("candidate-1",))
+        finally:
+            self.monitor._store().save_robot_candidate_state = normal_save
+        c = self.store.get_robot_candidate(host.candidate_id)
+        self.assertNotIn("limit_order_id", c.robot_state["execution"])
+        self.assertEqual(len(self.executor.limit_calls), 1)
+        self.assertEqual(self.monitor.tick(), ("candidate-1",))
+        c = self.store.get_robot_candidate(host.candidate_id)
+        self.assertIn("limit_order_id", c.robot_state["execution"])
+        self.assertEqual(len(self.executor.limit_calls), 1)
+
     def test_unsupported_pattern_without_state_is_invalidated_once_and_unblocks_recovery(self):
         from contextlib import redirect_stdout
         import io
