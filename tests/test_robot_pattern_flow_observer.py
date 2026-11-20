@@ -11,6 +11,7 @@ from robot_entry_flow_evidence import (
 )
 from terminal.market_data.pattern_flow_observer import (
     PatternFlowObserver, pattern_flow_enabled, PATTERN_FLOW_PAPER_OPT_IN,
+    impulse_early_paper_enabled, IMPULSE_EARLY_PAPER_OPT_IN,
     source_coverage_audit,
 )
 from tests.test_robot_pattern_flow_source import PatternFlowSourceTests
@@ -455,6 +456,30 @@ class ObserverTests(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertFalse(pattern_flow_enabled({PATTERN_FLOW_PAPER_OPT_IN: value}))
         self.assertTrue(pattern_flow_enabled({PATTERN_FLOW_PAPER_OPT_IN: "1"}))
+
+    def test_early_entry_requires_two_independent_exact_paper_opt_ins(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertFalse(impulse_early_paper_enabled())
+        self.assertFalse(impulse_early_paper_enabled({
+            PATTERN_FLOW_PAPER_OPT_IN: "1",
+        }))
+        self.assertFalse(impulse_early_paper_enabled({
+            IMPULSE_EARLY_PAPER_OPT_IN: "1",
+        }))
+        for value in ("", "0", "true", "yes", "2"):
+            with self.subTest(value=value):
+                self.assertFalse(impulse_early_paper_enabled({
+                    PATTERN_FLOW_PAPER_OPT_IN: "1",
+                    IMPULSE_EARLY_PAPER_OPT_IN: value,
+                }))
+                self.assertFalse(impulse_early_paper_enabled({
+                    PATTERN_FLOW_PAPER_OPT_IN: value,
+                    IMPULSE_EARLY_PAPER_OPT_IN: "1",
+                }))
+        self.assertTrue(impulse_early_paper_enabled({
+            PATTERN_FLOW_PAPER_OPT_IN: "1",
+            IMPULSE_EARLY_PAPER_OPT_IN: "1",
+        }))
 
     def test_certified_tape_is_bound_to_existing_candidate_no_signal_or_order(self):
         observed, recent, previous, current = PatternFlowSourceTests.source()
