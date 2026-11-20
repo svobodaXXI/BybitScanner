@@ -149,8 +149,11 @@ def verify_update(target: str) -> int:
         # Reuse the existing canonical read-only durable PAPER guards:
         # healthy HTTP alone cannot prove FLAT positions or retired owners.
         from tools.paper_maintenance import _durable_editor_freeze, _paper_start_quiescent
-        expected_identity = _durable_editor_freeze(Path(REPO), None)
-        if not _paper_start_quiescent(Path(REPO), None):
+        # Match the canonical maintenance action's systemd EnvironmentFile.
+        # An SSH owner shell does not inherit the Backend's PAPER DB path.
+        env_file = Path("/etc/bybitscanner/paper.env")
+        expected_identity = _durable_editor_freeze(Path(REPO), env_file)
+        if not _paper_start_quiescent(Path(REPO), env_file):
             print("POSTCHECK=BLOCKED_DURABLE_OWNERS")
             return 2
 
