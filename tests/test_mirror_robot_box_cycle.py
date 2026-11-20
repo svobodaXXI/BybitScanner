@@ -52,7 +52,7 @@ def wedge_snapshot(level=110.0):
     line_low = {"slope": 0.0, "intercept": level}
     line_high = {"slope": 0.0, "intercept": level + 20}
     return {
-        "pattern": "Falling Wedge", "symbol": SYMBOL, "timeframe": "5", "scanner_formation_id": "f-mirror",
+        "pattern": "Rising Wedge", "symbol": SYMBOL, "timeframe": "5", "scanner_formation_id": "f-mirror",
         "robot_geometry": {"robot_coordinate_timeframe": "1", "upper_line": line_high, "lower_line": line_low},
         "scanner_geometry_cursor": build_scanner_geometry_cursor_anchor(
             geometry_index=0, source_candle_time_ms=WEDGE_AS_OF, timeframe="1"),
