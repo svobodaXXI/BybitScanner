@@ -2190,7 +2190,7 @@ class PaperRuntime:
             stamp = execution.get("entry_admission_version")
             if candidate.status == "APPROVED" and (
                 phase == "RETEST_DETECTED"
-                or (phase == "WAITING_RETEST"
+                or (phase in ("WAITING_RETEST", "L_SHAPE_WAITING_RETEST")
                     and execution.get("entry_mode") == "IMPULSE_EARLY_LIMIT")
             ):
                 order_id = execution.get("limit_order_id")
@@ -2345,7 +2345,7 @@ class PaperRuntime:
                 phase = candidate.robot_state.get("phase")
                 if candidate.status == "APPROVED" and (
                     phase == "RETEST_DETECTED"
-                    or (phase == "WAITING_RETEST"
+                    or (phase in ("WAITING_RETEST", "L_SHAPE_WAITING_RETEST")
                         and execution.get("entry_mode") == "IMPULSE_EARLY_LIMIT")
                 ):
                     order_id = execution.get("limit_order_id")
@@ -3143,7 +3143,7 @@ class PaperRuntime:
             phase = candidate.robot_state.get("phase")
             execution = candidate.robot_state.get("execution") or {}
             if phase == "RETEST_DETECTED" or (
-                phase == "WAITING_RETEST"
+                phase in ("WAITING_RETEST", "L_SHAPE_WAITING_RETEST")
                 and execution.get("entry_mode") == "IMPULSE_EARLY_LIMIT"
             ):
                 order_ids = (execution.get("limit_order_id"),)
