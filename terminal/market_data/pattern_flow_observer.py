@@ -488,6 +488,30 @@ class PatternFlowObserver:
             breakout_known_at_ms=breakout, decision_ms=now_ms,
         )
 
+    def reentry_research(
+        self, record, proposal, *, previous_stop_at_ms: int,
+    ) -> PatternImpulseTimingResearch | None:
+        """Research the next impulse using ONLY this host's cached receipt.
+
+        The caller must supply the canonical, previously attested STOP retry
+        proposal. Neither an observer nor this result may reserve an attempt,
+        enter PAPER, modify STOP/TAKE, or infer an executable fill. This path
+        performs no REST, SQLite, subscription or owner-thread mutation.
+        """
+        from terminal.application.robot_reentry_adapter import (
+            observe_post_stop_campaign_renewal,
+        )
+
+        breakout_ms = canonical_host_breakout_known_at_ms(record)
+        if breakout_ms is None:
+            return None
+        return observe_post_stop_campaign_renewal(
+            proposal, record, self.get(record),
+            previous_stop_at_ms=previous_stop_at_ms,
+            breakout_known_at_ms=breakout_ms,
+            decision_ms=self._clock(),
+        )
+
     def _json(self, endpoint: str, *, params: dict) -> dict:
         if getattr(self._rest, "verify", True) is False:
             raise ValueError("unverified REST TLS")
