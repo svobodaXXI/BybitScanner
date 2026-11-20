@@ -470,15 +470,10 @@ class RobotBreakoutMonitor:
             execution = record.robot_state.get("execution") or {}
 
             if phase == "BOX_ENTRY_READY":
-                source_id = execution.get("source_box_candidate_id")
-                if not isinstance(source_id, str) or not source_id.strip():
-                    source_id = record.robot_state.get("source_box_candidate_id")
-                if not isinstance(source_id, str) or not source_id.strip():
-                    continue
                 try:
-                    source = self._store().get_robot_candidate(source_id.strip())
-                    if source is None:
-                        continue
+                    # The authoritative-fill shortcut must use the same frozen
+                    # source/ownership check as the normal Box entry path.
+                    source = self._box_source(record, execution)
                     proof = self._store().prove_box_owned_position(source.candidate_id)
                     if proof.entry_quantity <= 0:
                         continue
@@ -748,20 +743,31 @@ class RobotBreakoutMonitor:
     def _box_source(
         self, record: RobotCandidateRecord, execution: Mapping[str, object],
     ) -> RobotCandidateRecord:
-        source_id = execution.get("source_box_candidate_id")
-        if not isinstance(source_id, str) or not source_id.strip():
-            source_id = record.robot_state.get("source_box_candidate_id")
+        # The frozen candidate snapshot is the only authority for the source
+        # Box plan. Durable phase/execution state is mutable and must not
+        # redirect a recovered candidate to a different same-symbol Box.
+        snapshot = record.signal_snapshot
+        source_id = (snapshot.get("source_box_candidate_id")
+                     if isinstance(snapshot, Mapping) else None)
         if not isinstance(source_id, str) or not source_id.strip():
             raise RobotBreakoutMonitorError("Box Robot handoff lacks source plan identity")
-        source = self._store().get_robot_candidate(source_id.strip())
+        for state_id in (
+            (record.robot_state or {}).get("source_box_candidate_id"),
+            execution.get("source_box_candidate_id"),
+        ):
+            if state_id is not None and state_id != source_id:
+                raise RobotBreakoutMonitorError("Box source plan conflicts with frozen candidate identity")
+        source = self._store().get_robot_candidate(source_id)
         if (
             source is None
             or source.status != "BOX_PLAN_ONLY"
             or source.trading_account_id != self._account_id
             or source.symbol != record.symbol
+            or source.signal_snapshot.get("pattern") != "IKIGAI_BOX"
+            or source.signal_snapshot.get("identity", {}).get("symbol") != record.symbol.value
         ):
-            # A source ID is not proof of ownership. Never construct Box
-            # orders/protection using a plan from another trading account.
+            # Account, symbol, pattern and identity must match the exact source
+            # frozen before admission; never construct orders from a foreign Box.
             raise RobotBreakoutMonitorError("Box source plan is unavailable or mismatched")
         return source
 
