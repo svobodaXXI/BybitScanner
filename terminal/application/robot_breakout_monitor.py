@@ -1436,6 +1436,12 @@ class RobotBreakoutMonitor:
         execution = dict(record.robot_state.get("execution") or {})
         if self._hold_unproven_emergency_close(record, execution):
             return False
+        # This covers already-resting, partial and late-Market entry paths:
+        # no new dispatch or entry finalization on a quarantined symbol.
+        if self._store().robot_symbol_quarantine_candidate_ids(
+            self._account_id, record.symbol,
+        ):
+            return False
 
         if "limit_order_id" not in execution:
             # Previously APPROVED standalone Double Top/Bottom candidates
@@ -1705,6 +1711,12 @@ class RobotBreakoutMonitor:
         execution = dict(record.robot_state.get("execution") or {})
         if self._hold_unproven_emergency_close(record, execution):
             return False
+        # This covers already-resting, partial and late-Market entry paths:
+        # no new dispatch or entry finalization on a quarantined symbol.
+        if self._store().robot_symbol_quarantine_candidate_ids(
+            self._account_id, record.symbol,
+        ):
+            return False
 
         if (
             execution.get("entry_mode") == LATE_ADMISSION_MARKET
@@ -1907,6 +1919,12 @@ class RobotBreakoutMonitor:
     ) -> bool:
         if self._hold_unproven_emergency_close(record, execution):
             return False
+        # This covers already-resting, partial and late-Market entry paths:
+        # no new dispatch or entry finalization on a quarantined symbol.
+        if self._store().robot_symbol_quarantine_candidate_ids(
+            self._account_id, record.symbol,
+        ):
+            return False
         intent = execution.get("late_market_intent")
 
         if isinstance(intent, Mapping):
@@ -2065,6 +2083,12 @@ class RobotBreakoutMonitor:
         actual_wv: Decimal,
     ) -> bool:
         if self._hold_unproven_emergency_close(record, execution):
+            return False
+        # This covers already-resting, partial and late-Market entry paths:
+        # no new dispatch or entry finalization on a quarantined symbol.
+        if self._store().robot_symbol_quarantine_candidate_ids(
+            self._account_id, record.symbol,
+        ):
             return False
         direction = record.robot_state["direction"]
         try:
