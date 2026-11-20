@@ -34,7 +34,7 @@ from tradingview_bridge import (
 from pattern_robot_integration import prepare_robot_handoff
 
 from signal_archive import load_frozen_signal_geometry, record_original_signal
-from signal_geometry_producer import build_wedge_geometry_snapshot
+from signal_geometry_producer import build_box_geometry_snapshot, build_wedge_geometry_snapshot
 from signal_geometry_snapshot import canonical_bytes
 
 from timeframe_format import format_timeframe_ru
@@ -129,7 +129,8 @@ CHARTS_DIR = "charts"
 
 
 def archive_source_chart(*, symbol, timeframe, pattern, text, chart_path,
-                         formation_id=None, geometry=None, frozen_candles=None):
+                         formation_id=None, geometry=None, frozen_candles=None,
+                         box_formation=None):
     """Archive the exact original chart for identity-based Telegram navigation.
 
     Returns (callback token or None, PNG bytes or None). This is presentation
@@ -150,8 +151,12 @@ def archive_source_chart(*, symbol, timeframe, pattern, text, chart_path,
     # OHLC and rays in the deterministic handle; retries of the same source
     # still resolve to exactly one archived record.
     provisional_id = "source-original:" + "0" * 24
-    frozen = build_wedge_geometry_snapshot(
-        provisional_id, symbol, timeframe, geometry, frozen_candles,
+    frozen = (
+        build_box_geometry_snapshot(
+            provisional_id, symbol, timeframe, box_formation, frozen_candles,
+        ) if box_formation is not None else build_wedge_geometry_snapshot(
+            provisional_id, symbol, timeframe, geometry, frozen_candles,
+        )
     )
     token_input = (
         f"{symbol}|{timeframe}|".encode("utf-8")
