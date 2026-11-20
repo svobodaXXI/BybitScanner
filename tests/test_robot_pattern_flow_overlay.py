@@ -733,5 +733,112 @@ class StopCampaignRenewalResearchTests(unittest.TestCase):
         self.assertIsNone(self._observe(host=host))
 
 
+class PatternFlowOptInExecutionGateTests(unittest.TestCase):
+    """Opt-in entry fences ALL native families before order ownership."""
+
+    @staticmethod
+    def _monitor(observer):
+        from terminal.application.robot_breakout_monitor import RobotBreakoutMonitor
+
+        monitor = object.__new__(RobotBreakoutMonitor)
+        monitor._clock_ms = lambda: 181_000
+        monitor._get_pattern_flow_evidence = observer
+        return monitor
+
+    @staticmethod
+    def _record(pattern, direction, phase):
+        from types import SimpleNamespace
+
+        snap = {"pattern": pattern}
+        state = {"phase": phase, "direction": direction}
+        if pattern in ("L-shape", "MIRROR"):
+            snap["l_shape" if pattern == "L-shape" else "mirror_entry"] = {
+                "direction": direction,
+            }
+        if pattern == "IKIGAI_BOX":
+            snap["identity"] = {"direction": direction}
+            snap["source_box_candidate_id"] = "frozen-box-plan"
+            state["source_box_candidate_id"] = "frozen-box-plan"
+        return SimpleNamespace(
+            candidate_id="pattern-original", symbol=SimpleNamespace(value="BTCUSDT"),
+            signal_snapshot=snap, robot_state=state, status="APPROVED",
+            state_revision=9,
+        )
+
+    @staticmethod
+    def _families():
+        return (
+            ("Falling Wedge", "LONG", "RETEST_DETECTED"),
+            ("Rising Wedge", "SHORT", "RETEST_DETECTED"),
+            ("L-shape", "LONG", "RETEST_DETECTED"),
+            ("MIRROR", "SHORT", "RETEST_DETECTED"),
+            ("IKIGAI_BOX", "LONG", "BOX_ENTRY_READY"),
+        )
+
+    @staticmethod
+    def _receipt(direction):
+        proof = certificate()
+        return replace(
+            proof, candidate_id="pattern-original", direction=direction,
+            transition=replace(
+                transition(buy=direction == "LONG", sell=direction == "SHORT"),
+                current_delta_fraction=Decimal(
+                    "0.45" if direction == "LONG" else "-0.45",
+                ),
+                current_price_change_bps=Decimal(
+                    "11" if direction == "LONG" else "-11",
+                ),
+            ),
+        )
+
+    def test_absent_observer_preserves_original_paper_entry_path(self):
+        owner = self._monitor(None)
+        for pattern, direction, phase in self._families():
+            with self.subTest(pattern=pattern):
+                self.assertTrue(owner._pattern_flow_allows_entry(
+                    self._record(pattern, direction, phase),
+                ))
+
+    def test_optin_absent_or_erroring_source_blocks_new_entry_for_all_families(self):
+        for observer in (lambda _: None, lambda _: (_ for _ in ()).throw(
+            RuntimeError("source reconnecting"),
+        )):
+            owner = self._monitor(observer)
+            for pattern, direction, phase in self._families():
+                with self.subTest(pattern=pattern, observer=observer):
+                    self.assertFalse(owner._pattern_flow_allows_entry(
+                        self._record(pattern, direction, phase),
+                    ))
+
+    def test_only_fresh_bound_same_direction_tape_allows_existing_entry_gate(self):
+        for pattern, direction, phase in self._families():
+            with self.subTest(pattern=pattern):
+                record = self._record(pattern, direction, phase)
+                good = self._receipt(direction)
+                self.assertTrue(
+                    self._monitor(lambda _: good)._pattern_flow_allows_entry(record),
+                )
+                for bad in (
+                    replace(good, candidate_id="foreign"),
+                    replace(good, state_revision=8),
+                    replace(good, symbol="ETHUSDT"),
+                    replace(good, direction="SHORT" if direction == "LONG" else "LONG"),
+                    replace(good, source_complete=False),
+                    replace(good, receipt_cutoff_proven=False),
+                    replace(good, transport_generation_proven=False),
+                    replace(good, closed_at_ms=60_000),
+                ):
+                    self.assertFalse(
+                        self._monitor(lambda _, receipt=bad: receipt)
+                        ._pattern_flow_allows_entry(record),
+                    )
+                # Auxiliary reversal formations are NOT independent entries.
+                auxiliary = self._record("Double Top", "SHORT", "RETEST_DETECTED")
+                self.assertFalse(
+                    self._monitor(lambda _: good)
+                    ._pattern_flow_allows_entry(auxiliary),
+                )
+
+
 if __name__ == "__main__":
     unittest.main()
