@@ -47,12 +47,16 @@ class OwnerControlTests(unittest.TestCase):
                 result = control.verify_update(target)
             return result, out.getvalue()
 
+        from unittest.mock import Mock
+        from unittest.mock import patch as mock_patch
+        import sys
+        fake = SimpleNamespace(
+            _durable_editor_freeze=Mock(return_value=identity),
+            _paper_start_quiescent=Mock(return_value=True),
+        )
         with (patch("tools.vps_release_identity.verify_release", return_value=target),
               patch("tools.runtime_intent.http_get", side_effect=getter),
-              patch("tools.paper_maintenance._durable_editor_freeze",
-                    return_value=identity),
-              patch("tools.paper_maintenance._paper_start_quiescent",
-                    return_value=True)):
+              mock_patch.dict(sys.modules, {"tools.paper_maintenance": fake})):
             self.assertEqual(check()[0], 0)
             self.assertIn("POSTCHECK=VERIFIED_EDITOR_ONLY", check()[1])
             data["/api/robot/protection-health"]["covered_symbols"] = ["BTCUSDT"]
@@ -80,12 +84,18 @@ class OwnerControlTests(unittest.TestCase):
             check.assert_not_called()
 
     def test_invalid_update_proof_does_not_skip_durable_checks(self):
-        from unittest.mock import patch
+        import sys
+        from unittest.mock import patch, Mock
+        fake = SimpleNamespace(
+            _durable_editor_freeze=Mock(side_effect=ValueError("PAPER_unproven")),
+            _paper_start_quiescent=Mock(return_value=True),
+        )
         with (patch("tools.vps_release_identity.verify_release", return_value=SHA),
-              patch("tools.paper_maintenance._durable_editor_freeze",
-                    side_effect=ValueError("PAPER_unproven")),
+              patch.dict(sys.modules, {"tools.paper_maintenance": fake}),
               patch("tools.runtime_intent.http_get") as getter):
             self.assertEqual(control.verify_update(SHA), 2)
+            fake._durable_editor_freeze.assert_called_once()
+            fake._paper_start_quiescent.assert_not_called()
             getter.assert_not_called()
 
     def test_submit_detaches_exact_action_without_shell_or_runtime_bypass(self):
