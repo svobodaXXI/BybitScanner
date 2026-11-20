@@ -603,6 +603,9 @@ def run_cli(options: argparse.Namespace) -> int:
                                   CONTROL_ACTIONS.values() else
                                   recover_last_request_id() if options.operation == "status" else "")
     sha = options.sha or ("installed" if options.operation in ("start", "stop") else "")
+    if options.operation == "status":
+        saved_id, saved_action, saved_sha = recover_last_request_context()
+        sha = saved_sha if req == saved_id and saved_action == "update" else ""
     try:
         argv = control_ssh_command(host, user, key, options.operation,
                                    sha=sha, request_id=req)
@@ -611,8 +614,8 @@ def run_cli(options: argparse.Namespace) -> int:
         return 2
     if options.operation in CONTROL_ACTIONS.values():
         try:
-            remember_request_id(req)
-        except OSError:
+            remember_request_id(req, action=options.operation, sha=sha)
+        except (OSError, ValueError):
             print("BLOCKED: request ID cannot be preserved; no operation sent")
             return 2
         print("REQUEST_ID=" + req, flush=True)
@@ -663,7 +666,8 @@ def run_cli(options: argparse.Namespace) -> int:
         # Require the exact request ID and matching state/code; SSH failure
         # or an unrelated/partial reply must remain UNPROVEN.
         if "REQUEST_ID=" + req in lines:
-            if completed.returncode == 0 and "STATUS=FINISHED_OK" in lines:
+            if (gui_owner_status(output, completed.returncode, req,
+                                 verify_sha=sha) == "success"):
                 print("OPERATION_FINISHED_OK; request_id=" + req)
                 return 0
             if completed.returncode == 3 and "STATUS=RUNNING" in lines:
@@ -678,7 +682,21 @@ def run_cli(options: argparse.Namespace) -> int:
         print("REMOTE_STATUS_UNPROVEN; request_id=" + req)
         return 2
     if options.operation in CONTROL_ACTIONS.values():
-        print("SUBMITTED_NOT_COMPLETE; request_id=" + req)
+        if not ("REQUEST_ID=" + req in output.splitlines()
+                and any(line.startswith("SUBMISSION=ACCEPTED")
+                        for line in output.splitlines())):
+            print("SUBMISSION_UNPROVEN; request_id=" + req +
+                  "; never resend without status recovery")
+            return 2
+        # Same canonical UUID watcher for GUI and CLI: no manual poll loop.
+        proof_cmd = control_ssh_command(
+            host, user, key, "status", request_id=req,
+            sha=sha if options.operation == "update" else "")
+        state, proof = watch_owner_request(
+            proof_cmd, req, initially_submitted=True)
+        print(proof)
+        print("OWNER_RESULT=" + state.upper() + "; request_id=" + req)
+        return 0 if state == "success" else 2
     return 0
 
 
