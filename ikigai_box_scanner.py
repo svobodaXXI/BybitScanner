@@ -19,6 +19,7 @@ from geometry.ikigai_box import IkigaiBoxWatch, detect_ikigai_box
 from geometry.ikigai_box_completion import box_first_grid_already_completed
 from geometry.ikigai_box_chart import ikigai_box_signal_text, render_ikigai_box_chart
 from notification import (
+    archive_source_chart,
     build_tradingview_keyboard,
     get_telegram_chat_ids,
     get_telegram_owner_chat_id,
@@ -174,6 +175,13 @@ def send_ikigai_box_observation(
         symbol, timeframe, closed, formation.direction,
         now_ms=int(time.time() * 1000),
     )
+    source_token = None
+    if owner_chat_id and not test_mode:
+        source_token, _ = archive_source_chart(
+            symbol=symbol, timeframe=timeframe, pattern="Ikigai Box",
+            text=message, chart_path=chart_path, formation_id=identity,
+            box_formation=formation, frozen_candles=closed,
+        )
     delivered = True
     archived_image = None
     if robot_handle:
@@ -188,7 +196,15 @@ def send_ikigai_box_observation(
             symbol, timeframe,
             include_review_actions=is_owner,
             robot_candidate_id=robot_handle if is_owner else None,
+            signal_id=(f"source-original:{source_token}" if is_owner and source_token else None),
         )
+        if is_owner and not source_token and not test_mode:
+            # Never open a live symbol-only Editor in place of frozen Box evidence.
+            markup["inline_keyboard"] = [
+                [button for button in row if button.get("text") != "✏️ Редактор"]
+                for row in markup["inline_keyboard"]
+            ]
+            markup["inline_keyboard"] = [row for row in markup["inline_keyboard"] if row]
         try:
             text_response = send_message(config.TELEGRAM_TOKEN, chat_id, message)
             if not isinstance(text_response, dict) or not text_response.get("ok"):
@@ -309,13 +325,28 @@ def send_ikigai_box_watch_observation(
     )
     message = ikigai_box_signal_text(symbol, timeframe, watch)
     owner_chat_id = get_telegram_owner_chat_id()
+    source_token = None
+    if owner_chat_id and not test_mode:
+        source_token, _ = archive_source_chart(
+            symbol=symbol, timeframe=timeframe, pattern="Ikigai Box WATCH",
+            text=message, chart_path=chart_path,
+            formation_id=identity, box_formation=watch, frozen_candles=closed,
+        )
     delivered = True
     for recipient in recipients:
         markup = build_tradingview_keyboard(
             symbol, timeframe,
             include_review_actions=(recipient == owner_chat_id and bool(owner_chat_id)),
             robot_candidate_id=None,
+            signal_id=(f"source-original:{source_token}"
+                       if recipient == owner_chat_id and source_token else None),
         )
+        if recipient == owner_chat_id and not source_token and not test_mode:
+            markup["inline_keyboard"] = [
+                [button for button in row if button.get("text") != "✏️ Редактор"]
+                for row in markup["inline_keyboard"]
+            ]
+            markup["inline_keyboard"] = [row for row in markup["inline_keyboard"] if row]
         try:
             text_response = send_message(config.TELEGRAM_TOKEN, recipient, message)
             if not isinstance(text_response, dict) or not text_response.get("ok"):
