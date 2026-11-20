@@ -465,29 +465,31 @@ class RobotBreakoutMonitor:
                 fade_receipt = self._get_pattern_flow_evidence(record)
             except Exception:
                 fade_receipt = None
-        if "wedge_be_partial_intent" not in execution and fade_receipt is None:
-            source = self._get_closed_candle(record.symbol.value)
-            if not isinstance(source, Mapping):
-                return False
-            timestamp = source.get("time_ms")
-            if type(timestamp) is not int or timestamp <= 0 or timestamp % 60_000:
-                return False
-            end_ms = timestamp + 60_000
-            age_ms = self._clock_ms() - end_ms
-            if age_ms < 0 or age_ms > 90_000:
-                # Never trade on a still forming, delayed or stale bar.
-                return False
+        if "wedge_be_partial_intent" not in execution:
+            # Keep the legacy +2R candle available even with a candidate
+            # fade source, so an unqualified fade never masks the old exit.
             try:
-                high = Decimal(str(source["high"]))
-                low = Decimal(str(source["low"]))
-            except (KeyError, ValueError, TypeError, ArithmeticError):
+                source = self._get_closed_candle(record.symbol.value)
+            except Exception:
+                if fade_receipt is None:
+                    raise
+                source = None
+            if isinstance(source, Mapping):
+                timestamp = source.get("time_ms")
+                if type(timestamp) is int and timestamp > 0 and timestamp % 60_000 == 0:
+                    end_ms = timestamp + 60_000
+                    age_ms = self._clock_ms() - end_ms
+                    if 0 <= age_ms <= 90_000:
+                        try:
+                            high = Decimal(str(source["high"]))
+                            low = Decimal(str(source["low"]))
+                            if (high.is_finite() and low.is_finite()
+                                    and low > 0 and high >= low):
+                                candle = {"time_ms": timestamp, "high": high, "low": low}
+                        except (KeyError, ValueError, TypeError, ArithmeticError):
+                            pass
+            if candle is None and fade_receipt is None:
                 return False
-            if (
-                not high.is_finite() or not low.is_finite()
-                or low <= 0 or high < low
-            ):
-                return False
-            candle = {"time_ms": timestamp, "high": high, "low": low}
         if fade_receipt is not None:
             result = step(
                 record.candidate_id, record.symbol.value, candle,
