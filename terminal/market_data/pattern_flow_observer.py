@@ -34,12 +34,24 @@ BASE_URL = "https://api.bybit.com"
 _PAPER = TradingAccountId("paper")
 MAX_CANDIDATES_PER_PASS = 1
 PATTERN_FLOW_PAPER_OPT_IN = "BYBITSCANNER_ROBOT_PATTERN_FLOW_PAPER_AUTO"
+IMPULSE_EARLY_PAPER_OPT_IN = "BYBITSCANNER_ROBOT_IMPULSE_EARLY_PAPER_AUTO"
 
 
 def pattern_flow_enabled(environ: Mapping[str, str] | None = None) -> bool:
     """Explicit owner-approved PAPER opt-in; OFF for any other value."""
     values = os.environ if environ is None else environ
     return values.get(PATTERN_FLOW_PAPER_OPT_IN) == "1"
+
+
+def impulse_early_paper_enabled(environ: Mapping[str, str] | None = None) -> bool:
+    """Early PAPER entries need TWO explicit gates; source-only is insufficient.
+
+    The enabled policy is still subordinate to native Robot admission, the
+    source certificate, protection coverage and actual order preflight.
+    """
+    values = os.environ if environ is None else environ
+    return (pattern_flow_enabled(values)
+            and values.get(IMPULSE_EARLY_PAPER_OPT_IN) == "1")
 
 
 
