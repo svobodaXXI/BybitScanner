@@ -46,7 +46,9 @@ from terminal.api.models import (
     ClientActionId, CommandResultStatus, MarketCommandRequest, PaperLimitCancelRequest,
     PaperStopMutationRequest,
 )
-from terminal.application.command_identity import CommandIdentityCandidate
+from terminal.application.command_identity import (
+    CommandIdentityCandidate, robot_emergency_close_identity,
+)
 from terminal.application.ikigai_box_first_grid import build_box_first_grid_specs
 from terminal.application.ikigai_box_catchup import (
     build_box_emergency_close_market_plan,
@@ -3045,6 +3047,9 @@ class RobotBreakoutMonitor:
         request = robot_protection.emergency_close_request(
             record.candidate_id, record.symbol.value,
         )
+        identity = robot_emergency_close_identity(
+            request.client_action_id.value, record.symbol.value,
+        )
         now_ms = self._now_ms()
         execution["protection_failure"] = str(error)
         execution["emergency_close_pending"] = True
@@ -3061,6 +3066,8 @@ class RobotBreakoutMonitor:
             "average_entry": str(confirmed.average_entry),
             "entry_position_version": confirmed.position_version,
             "client_action_id": request.client_action_id.value,
+            "command_id": identity.command_id.value,
+            "order_link_id": identity.order_link_id,
             # A committed intent is considered possibly dispatched, even if
             # the process dies immediately after this transaction.
             "dispatch_outcome": "UNKNOWN",
