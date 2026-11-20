@@ -859,7 +859,7 @@ class TestWindowsVpsManager(unittest.TestCase):
             path.write_text(request + "\nupdate\nINVALID\nPENDING\n", encoding="ascii")
             self.assertEqual(recover_pending_request(path), ("", "", ""))
 
-    def test_recovered_running_status_watches_same_uuid_and_never_submits(self):
+    def test_only_resumed_running_status_watches_same_uuid_without_submit(self):
         from tools.windows_vps_manager import CONTROL_MODULE
         request = "a" * 32
         command = ["ssh", CONTROL_MODULE + " status " + request]
@@ -872,7 +872,7 @@ class TestWindowsVpsManager(unittest.TestCase):
               patch("tools.windows_vps_manager.watch_owner_request",
                     return_value=("submitted", "STATUS=RUNNING")) as watcher,
               patch("tools.windows_vps_manager.subprocess.run") as submit):
-            VPSManager.worker_control(fake, command, "status", request)
+            VPSManager.worker_control(fake, command, "resume", request)
         self.assertEqual(fake.events.get_nowait()[0], "submitted")
         probe.assert_called_once()
         watcher.assert_called_once()
