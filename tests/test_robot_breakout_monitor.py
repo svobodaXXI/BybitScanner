@@ -3268,7 +3268,10 @@ class ImpulseEarlyWedgeResearchOwnerTests(unittest.TestCase):
         holder._active_other_owner_candidate_ids = lambda _r: ()
         holder._pre_entry_block_reason = lambda _r: None
         saved = []
-        holder._persist_state = lambda _r, state: saved.append(dict(state))
+        holder._store = lambda: SimpleNamespace(
+            save_robot_candidate_state=lambda *args, **kwargs:
+                saved.append(dict(kwargs["robot_state"])),
+        )
         holder._get_closed_candle = lambda _s: None
         holder._action_executor = None  # Unexpected order dispatch must crash.
         return holder, fixture.host(), saved
