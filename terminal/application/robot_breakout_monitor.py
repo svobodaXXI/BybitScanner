@@ -1436,12 +1436,9 @@ class RobotBreakoutMonitor:
         execution = dict(record.robot_state.get("execution") or {})
         if self._hold_unproven_emergency_close(record, execution):
             return False
-        # This covers already-resting, partial and late-Market entry paths:
-        # no new dispatch or entry finalization on a quarantined symbol.
-        if self._store().robot_symbol_quarantine_candidate_ids(
-            self._account_id, record.symbol,
-        ):
-            return False
+        # Preserve legacy Double Top/Bottom cancellation/recovery before new
+        # entry safety guards. New L-shape entries run _pre_entry_block_reason
+        # and the owner-side LIMIT matcher independently fences the symbol.
 
         if "limit_order_id" not in execution:
             # Previously APPROVED standalone Double Top/Bottom candidates
