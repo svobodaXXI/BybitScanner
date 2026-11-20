@@ -608,7 +608,7 @@ def test_real_horn_kncusdt_does_not_originate_mirror(root):
                                  now_ms=int(window["time"].iloc[-1]))
     state = ms.load_state("KNCUSDT", "5", root)
     assert all(level["pattern"] != "Broadening" for level in state["registry"]["levels"])
-    assert all(row["pattern"] != "Broadening" for row in ms.project_mirror_levels(root, include_waiting=True)["levels"])
+    assert all(row["level"]["pattern"] != "Broadening" for row in ms.project_mirror_levels(root, include_waiting=True)["levels"])
 
 
 def test_real_drift_wedge_5m_boundaries_breakout_and_first_retest(root, fixed_levels, monkeypatch):
