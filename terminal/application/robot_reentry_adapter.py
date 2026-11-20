@@ -5,7 +5,7 @@ an attempt reservation. No second order or financial journal is introduced.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 import hashlib
 import json
@@ -13,6 +13,10 @@ from typing import Mapping, Any
 
 import robot_l_shape
 import robot_state_machine
+from robot_entry_flow_evidence import (
+    CandidateBoundFlowEvidence, PatternImpulseTimingResearch,
+    observe_post_breakout_impulse_timing,
+)
 from scanner_geometry_cursor import CURSOR_VERSION
 from terminal.application.robot_reentry_thesis import verified_same_thesis
 from terminal.application.robot_admission import RobotReentryAdmissionRequest
@@ -196,6 +200,64 @@ def proven_pattern_entry(
         )
     except (ValueError, TypeError, KeyError, robot_l_shape.RobotLShapeError):
         return None
+
+
+def observe_post_stop_campaign_renewal(
+    proposal: RobotReentryAdmissionRequest | None,
+    record: Any,
+    evidence: CandidateBoundFlowEvidence | None,
+    *,
+    previous_stop_at_ms: int,
+    breakout_known_at_ms: int,
+    decision_ms: int,
+) -> PatternImpulseTimingResearch | None:
+    """Research a renewed impulse on an EXISTING, canonically linked STOP retry.
+
+    The trusted Robot Admission transaction must independently establish the
+    STOP execution, FLAT, no obligations, same-thesis lineage and risk budget.
+    This read-only overlay never grants admission, creates a candidate/order,
+    or alters the canonical retry; its output is non-executable by definition.
+    The previous and current FULL M1 flow windows must be wholly post-STOP
+    AND post new-pattern confirmation. A post-STOP print alone is not enough.
+    """
+    if (not isinstance(proposal, RobotReentryAdmissionRequest)
+            or not isinstance(proposal.previous_stop_exec_id, str)
+            or not proposal.previous_stop_exec_id
+            or proposal.original_risk_budget_usdt is not None
+            or proposal.strategy_confirmation_proven is not True
+            or not isinstance(proposal.campaign_id, str)
+            or not proposal.campaign_id
+            or type(proposal.confirmed_at_ms) is not int
+            or type(previous_stop_at_ms) is not int
+            or previous_stop_at_ms <= 0
+            or proposal.confirmed_at_ms <= previous_stop_at_ms
+            or type(breakout_known_at_ms) is not int
+            or breakout_known_at_ms < proposal.confirmed_at_ms):
+        return None
+
+    research = observe_post_breakout_impulse_timing(
+        record, evidence,
+        breakout_known_at_ms=breakout_known_at_ms,
+        decision_ms=decision_ms,
+    )
+    if research is None or research.direction != proposal.direction:
+        return None
+    if research.outcome != "IMPULSE_ENTRY_RESEARCH":
+        return research
+    # The certified transition contains TWO complete closed M1 windows.
+    # Reject a pre-STOP/pre-pattern first minute even if the second accelerates.
+    if (not isinstance(evidence, CandidateBoundFlowEvidence)
+            or evidence.closed_at_ms - 120_000 < max(
+                previous_stop_at_ms, proposal.confirmed_at_ms,
+            )):
+        return replace(
+            research, outcome="WAIT_SOURCE",
+            reason="RENEWED_FLOW_WINDOWS_NOT_POST_STOP_AND_PATTERN",
+        )
+    return replace(
+        research, outcome="REENTRY_IMPULSE_RESEARCH",
+        reason="CANONICAL_STOP_RETRY_WITH_NEW_CAUSAL_TAKER_WAVE",
+    )
 
 
 def automatic_reentry_proposal(
