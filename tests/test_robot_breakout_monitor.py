@@ -949,6 +949,43 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
             candidate.robot_state["execution"]["impulse_entry_intent"]["client_action_id"],
         ))
 
+    def test_expired_impulse_limit_is_cancelled_without_new_trade(self):
+        import robot_entry_limit
+
+        host, _proof = self._setup_impulse_early_wedge_owner()
+        self.assertEqual(self.monitor.tick(), ("candidate-1",))
+        record = self.store.get_robot_candidate(host.candidate_id)
+        order_id = record.robot_state["execution"]["limit_order_id"]
+        self.clock.advance(robot_entry_limit.IMPULSE_ENTRY_LIMIT_MAX_AGE_MS + 200)
+        self.assertEqual(self.monitor.tick(), ("candidate-1",))
+        order = self.store.get_paper_limit(order_id, ACCOUNT_ID)
+        self.assertEqual(order.status, "cancelled")
+        record = self.store.get_robot_candidate(host.candidate_id)
+        self.assertEqual(record.status, "INVALIDATED")
+        self.assertEqual(len(self.executor.limit_calls), 1)
+        self.assertEqual(len(self.executor.cancel_calls), 1)
+        self.assertFalse(self.executor.protection_calls)
+
+    def test_expired_impulse_partial_fill_is_protected_by_original_owner(self):
+        import robot_entry_limit
+
+        host, _proof = self._setup_impulse_early_wedge_owner()
+        self.assertEqual(self.monitor.tick(), ("candidate-1",))
+        row = self.store.get_robot_candidate(host.candidate_id)
+        order_id = row.robot_state["execution"]["limit_order_id"]
+        self.executor.fill_resting_limit(
+            order_id, SYMBOL, OrderSide.BUY, Decimal("0.5"), Decimal("99.1"),
+        )
+        self.clock.advance(robot_entry_limit.IMPULSE_ENTRY_LIMIT_MAX_AGE_MS + 200)
+        self.assertEqual(self.monitor.tick(), ("candidate-1",))
+        row = self.store.get_robot_candidate(host.candidate_id)
+        self.assertEqual(row.status, "OPEN")
+        self.assertEqual(
+            self.store.get_paper_limit(order_id, ACCOUNT_ID).status, "cancelled",
+        )
+        self.assertTrue(any(k == "create_stop" for k, _ in self.executor.protection_calls))
+        self.assertTrue(any(k == "create_take" for k, _ in self.executor.protection_calls))
+
     def test_impulse_order_is_correlated_after_lost_candidate_link(self):
         host, _proof = self._setup_impulse_early_wedge_owner()
         native_create = self.executor.create_limit
