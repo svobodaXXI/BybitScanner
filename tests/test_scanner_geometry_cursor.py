@@ -2,6 +2,8 @@ import unittest
 
 import pandas as pd
 
+from robot_state_machine import boundary_price
+
 from scanner_geometry_cursor import (
     ScannerGeometryCursorError,
     ScannerGeometryCursorProvider,
@@ -95,6 +97,48 @@ class ScannerGeometryCursorTests(unittest.TestCase):
         # Projection never mutates the native Scanner geometry.
         self.assertEqual(source["upper_line"]["slope"], -5.0)
         self.assertEqual(source["apex"]["index"], 220.5)
+
+    def test_real_at_wedge_uses_frozen_robot_1m_slope_only_once(self):
+        # The verified ATUSDT 2026-10-31 snapshot already projects Scanner M5
+        # slopes to Robot M1. Reprojecting it gives a false early breakout.
+        snapshot = {
+            "pattern": "Falling Wedge",
+            "scanner_geometry_cursor": build_scanner_geometry_cursor_anchor(
+                geometry_index=199,
+                source_candle_time_ms=1793451300000,  # 12:55 UTC
+                timeframe="1",
+            ),
+            "robot_geometry": {
+                "current_index": 199,
+                "robot_coordinate_timeframe": "1",
+                "scanner_source_timeframe": "5",
+                "upper_line": {
+                    "slope": -1.3187500000000005e-05,
+                    "intercept": 0.1296415,
+                },
+                "lower_line": {
+                    "slope": -9.954022988505749e-06,
+                    "intercept": 0.1277033793103448,
+                },
+                "apex": {"index": 599.3921350810972, "valid_intersection": True},
+            },
+        }
+        index = project_latest_geometry_index(
+            snapshot, latest_closed_candle_time_ms=1793452200000,
+        )  # Last closed 13:10 UTC 1m candle
+        self.assertEqual(index, 214)
+        self.assertAlmostEqual(
+            boundary_price(snapshot, side="upper", geometry_index=index),
+            0.126819375, places=10,
+        )
+        self.assertAlmostEqual(
+            boundary_price(snapshot, side="lower", geometry_index=index),
+            0.125573218, places=9,
+        )
+        # PAPER fill 0.12681 alone is NOT above the boundary at index 214.
+        self.assertLess(0.12681, boundary_price(
+            snapshot, side="upper", geometry_index=index,
+        ))
 
     def test_projection_advances_in_frozen_index_space(self):
         snapshot = _snapshot(build_scanner_geometry_cursor_anchor(
