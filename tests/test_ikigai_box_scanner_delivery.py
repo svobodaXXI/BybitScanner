@@ -43,26 +43,26 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
             "source_id": "double-reversal:" + "a" * 64,
             "symbol": "TESTUSDT", "source_timeframe": "5",
             "pattern": "Double Top", "direction": "SHORT",
-            "confirmed_at_ms": 100, "expires_at_ms": 700,
+            "confirmed_at_ms": 300_000, "expires_at_ms": 900_000,
         }
         with patch.object(box, "build_auxiliary_reversal_evidence", return_value=reversal):
             note = box._box_auxiliary_note(
-                "TESTUSDT", "5", closed, "SHORT", now_ms=200,
+                "TESTUSDT", "5", closed, "SHORT", now_ms=600_000,
             )
             self.assertIn("Двойная вершина", note)
             self.assertEqual(
                 box._box_auxiliary_note(
-                    "TESTUSDT", "5", closed, "LONG", now_ms=200,
+                    "TESTUSDT", "5", closed, "LONG", now_ms=600_000,
                 ), "",
             )
             self.assertEqual(
                 box._box_auxiliary_note(
-                    "OTHERUSDT", "5", closed, "SHORT", now_ms=200,
+                    "OTHERUSDT", "5", closed, "SHORT", now_ms=600_000,
                 ), "",
             )
             self.assertEqual(
                 box._box_auxiliary_note(
-                    "TESTUSDT", "5", closed, "SHORT", now_ms=700,
+                    "TESTUSDT", "5", closed, "SHORT", now_ms=900_000,
                 ), "",
             )
         self.assertEqual(box.box_robot_formation(closed, formation), frozen_before)
