@@ -33,6 +33,17 @@ vi.mock("lightweight-charts", () => ({
   }),
 }));
 
+it("shows legacy DT/DB review as historical text, never a selectable pattern", () => {
+  render(<ChartPanel candles={[]} tickSize={null} editorMode
+    signalIdentity="signal-legacy" originalPattern="Rising Wedge"
+    savedCorrectedPattern="Double Top/Bottom"
+    snapshotRevision={"a".repeat(64)} barsSha256={"b".repeat(64)} />);
+  const select = screen.getByRole("combobox", { name: "Правильный паттерн" });
+  expect(select).toHaveValue("Rising Wedge");
+  expect(within(select).queryByRole("option", { name: /Двойная вершина/ })).toBeNull();
+  expect(screen.getByLabelText("Ранее сохранённое исправление")).toHaveTextContent("Double Top/Bottom");
+});
+
 it("keeps correction form left and all three quick actions bottom-right", async () => {
   const onShowCurrentEditorChart = vi.fn();
   const onExtendEditorHistory = vi.fn().mockResolvedValue(undefined);
