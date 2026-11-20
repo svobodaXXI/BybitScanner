@@ -800,7 +800,7 @@ class TestWindowsVpsManager(unittest.TestCase):
         with patch("tools.windows_vps_manager.subprocess.run", side_effect=[submit, status]) as run:
             VPSManager.worker_control(fake, ["ssh", "submit"], "update", request)
         self.assertEqual(run.call_count, 2)
-        self.assertEqual(fake.events.get_nowait()[0], "success")
+        self.assertEqual(fake.events.get_nowait()[0], "unproven")  # no SHA/postcheck evidence
 
     def test_gui_submit_timeout_recovers_existing_uuid_without_resubmit(self):
         request = "a" * 32
@@ -815,7 +815,7 @@ class TestWindowsVpsManager(unittest.TestCase):
                    side_effect=[subprocess.TimeoutExpired("ssh", 35), status]) as remote:
             VPSManager.worker_control(fake, ["ssh", "submit"], "update", request)
         event, details = fake.events.get_nowait()
-        self.assertEqual(event, "success")
+        self.assertEqual(event, "unproven")  # completed UUID alone is insufficient
         self.assertIn("REQUEST_ID=" + request, details)
         self.assertEqual(remote.call_count, 2)
         self.assertEqual(remote.call_args_list[0].args[0], ["ssh", "submit"])
