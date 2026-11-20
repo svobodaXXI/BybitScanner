@@ -216,7 +216,7 @@ export function ChartPanel({
   barsSha256?: string | null;
   savedReviewId?: string | null;
   savedReviewLabel?: GeometryReviewDraft["label"] | null;
-  savedCorrectedPattern?: GeometryReviewDraft["corrected_pattern"] | null;
+  savedCorrectedPattern?: GeometryReviewDraft["corrected_pattern"] | "Double Top/Bottom" | null;
   savedReviewNote?: string | null;
   onSaveGeometryReview?: (review: GeometryReviewDraft & { note: string; idempotency_key: string }) =>
     Promise<{ reviewId: string; label: GeometryReviewDraft["label"] }>;
@@ -1112,7 +1112,7 @@ export function ChartPanel({
                   <option value="Wedge">Клин</option>
                   <option value="Ikigai Box">Коробка</option>
                   <option value="Triangle">Треугольник</option>
-                  <option value="Double Top/Bottom">Двойная вершина / дно</option>
+                  <option value="Broadening">Рупор</option>
                   <option value="Head and Shoulders">Голова и плечи</option>
                   <option value="G-Shaped">Г-образный паттерн</option>
                 </select>
@@ -1165,6 +1165,10 @@ export function ChartPanel({
               {originalPattern && !isEditorReviewPattern(originalPattern) && (
                 <option value={originalPattern}>{originalPattern} · исходный</option>
               )}
+              {savedCorrectedPattern && !isEditorReviewPattern(savedCorrectedPattern) &&
+                savedCorrectedPattern !== originalPattern && (
+                  <option value={savedCorrectedPattern}>{savedCorrectedPattern} · сохранено ранее</option>
+                )}
               {EDITOR_REVIEW_PATTERNS.map(({ value, label }) =>
                 <option key={value} value={value}>{label}</option>
               )}
