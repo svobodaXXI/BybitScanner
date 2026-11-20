@@ -328,6 +328,16 @@ class MirrorFreshnessTests(unittest.TestCase):
         terms = base.pop("l_shape")
         # MIRROR's breakout_time_ms denotes the CONFIRMATION candle open.
         terms["breakout_time_ms"] = DECISION
+        # This is a positive, source-proven MIRROR fixture, not a pre-fix
+        # legacy candidate with unknown level origin.
+        side = "upper" if direction == "SHORT" else "lower"
+        terms.update({
+            "level_id": "lvl-0123456789abcdef01234567",
+            "level_timeframe": str(TF), "level_source": "swing_zone",
+            "level_pattern": None, "level_side": side,
+            "level_breakout_direction": "UP" if side == "upper" else "DOWN",
+            "level_breakout_close_ms": DECISION,
+        })
         terms["confirmation"] = {
             "kind": "ENGULFING", "timeframe": str(TF),
             "open_time_ms": DECISION, "close_time_ms": FIRST,

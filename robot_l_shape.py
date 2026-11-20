@@ -166,6 +166,10 @@ def frozen_terms(snapshot: Mapping[str, Any]) -> FrozenLShapeTerms:
     terms = snapshot.get(TERMS_KEYS[pattern])
     if not isinstance(terms, Mapping):
         raise RobotLShapeError("L-shape frozen terms are missing")
+    if pattern == MIRROR_PATTERN:
+        from mirror_levels.levels import mirror_frozen_entry_allowed
+        if not mirror_frozen_entry_allowed(terms):
+            raise RobotLShapeError("MIRROR frozen source revoked or unproven")
 
     direction = str(terms.get("direction", "")).strip().upper()
     if direction not in {DIRECTION_LONG, DIRECTION_SHORT}:
