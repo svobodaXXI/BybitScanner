@@ -306,7 +306,8 @@ export function ChartPanel({
   const [, setExtensionStatus] = useState("");
   const proposalToken = useRef<{ content: string; key: string } | null>(null);
   const [correctPattern, setCorrectPattern] = useState<string>(
-    savedCorrectedPattern ?? originalPattern ?? "",
+    savedCorrectedPattern && isEditorReviewPattern(savedCorrectedPattern)
+      ? savedCorrectedPattern : originalPattern ?? "",
   );
   // Persisted review text belongs to the same immutable review ID as the
   // restored editable rays. A fresh editor must not silently erase the note.
@@ -1165,14 +1166,15 @@ export function ChartPanel({
               {originalPattern && !isEditorReviewPattern(originalPattern) && (
                 <option value={originalPattern}>{originalPattern} · исходный</option>
               )}
-              {savedCorrectedPattern && !isEditorReviewPattern(savedCorrectedPattern) &&
-                savedCorrectedPattern !== originalPattern && (
-                  <option value={savedCorrectedPattern}>{savedCorrectedPattern} · сохранено ранее</option>
-                )}
               {EDITOR_REVIEW_PATTERNS.map(({ value, label }) =>
                 <option key={value} value={value}>{label}</option>
               )}
             </select>
+            {savedCorrectedPattern && !isEditorReviewPattern(savedCorrectedPattern) && (
+              <small aria-label="Ранее сохранённое исправление">
+                Ранее сохранённый тип: {savedCorrectedPattern}
+              </small>
+            )}
             <input
               aria-label="Комментарий к исправлению"
               placeholder="Комментарий (необязательно)"
