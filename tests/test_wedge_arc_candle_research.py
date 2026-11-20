@@ -1,12 +1,14 @@
 """Exact-boundary OHLC/candle arc research gates, no executable Robot path."""
 from copy import deepcopy
+from dataclasses import replace
 from decimal import Decimal
 from types import SimpleNamespace
 import unittest
 
-from robot_entry_flow_evidence import FlowTransition
+from robot_entry_flow_evidence import CandidateBoundFlowEvidence, FlowTransition
 from terminal.market_data.wedge_arc_candle_research import (
     observe_closed_wedge_arc_candles,
+    observe_wedge_arc_with_certified_tape_receipt,
 )
 
 
@@ -187,6 +189,87 @@ class FrozenWedgeArcCandlesTests(unittest.TestCase):
         self.assertIsNone(self.evaluate(max_boundary_distance_atr=Decimal("NaN")))
         self.assertIsNone(self.evaluate(doji_body_fraction=Decimal("0.8")))
         self.assertIsNone(self.evaluate(source_id=""))
+
+
+
+class CertifiedTapeArcResearchTests(FrozenWedgeArcCandlesTests):
+    """An exact producer-certified source receipt must match the same M1 event."""
+
+    @classmethod
+    def receipt(cls, *, direction="LONG", **overrides):
+        values = dict(
+            candidate_id="wedge-arc-1", symbol="BTCUSDT",
+            direction=direction, state_revision=3,
+            source_kind="BYBIT_TRIPLE_CLOSED_M1_CERTIFIED",
+            closed_at_ms=360_000, decision_ms=360_010,
+            print_facts_sha256="a" * 64, source_complete=True,
+            receipt_cutoff_proven=True, transport_generation_proven=True,
+            transition=cls.flow(direction),
+        )
+        values.update(overrides)
+        return CandidateBoundFlowEvidence(**values)
+
+    @classmethod
+    def joined(cls, *, host=None, receipt=None, bars=None, decision_ms=360_020):
+        host = cls.host() if host is None else host
+        if bars is None:
+            bars = cls.bearish() if host.robot_state["direction"] == "SHORT" else cls.bullish()
+        if receipt is None:
+            receipt = cls.receipt(direction=host.robot_state["direction"])
+        return observe_wedge_arc_with_certified_tape_receipt(
+            host, bars, receipt, decision_ms=decision_ms,
+            atr=Decimal("2"), max_boundary_distance_atr=Decimal("0.25"),
+            doji_body_fraction=Decimal("0.1"),
+            source_id="independent-closed-M1-research",
+        )
+
+    def test_matching_long_and_short_receipts_remain_nontrading(self):
+        for pattern in ("Falling Wedge", "Rising Wedge"):
+            with self.subTest(pattern=pattern):
+                result = self.joined(host=self.host(pattern))
+                self.assertIsNotNone(result)
+                self.assertTrue(result.tape_receipt_metadata_matched)
+                self.assertEqual(result.outcome, "ARC_CANDLE_CONTEXT_RESEARCH")
+                self.assertFalse(result.source_complete)
+                self.assertFalse(result.trading_authorized)
+                self.assertFalse(result.confluence.trading_authorized)
+
+    def test_invalid_candidate_revision_source_and_receipt_cutoff_are_rejected(self):
+        base = self.receipt()
+        changes = (
+            dict(candidate_id="other"),
+            dict(symbol="ETHUSDT"),
+            dict(direction="SHORT"),
+            dict(state_revision=4),
+            dict(source_kind="OBSERVED_ONLY"),
+            dict(source_complete=False),
+            dict(receipt_cutoff_proven=False),
+            dict(transport_generation_proven=False),
+            dict(print_facts_sha256="x" * 64),
+            dict(print_facts_sha256="a" * 63),
+            dict(closed_at_ms=420_000),
+            dict(decision_ms=360_030),
+            dict(transition=replace(base.transition, known_at_ms=360_011)),
+        )
+        for change in changes:
+            with self.subTest(change=change):
+                self.assertIsNone(self.joined(receipt=replace(base, **change)))
+
+    def test_m5_history_cannot_be_misrepresented_as_completed_m1(self):
+        bars = list(deepcopy(self.bullish()))
+        for i, item in enumerate(bars):
+            item["time"] = (i + 1) * 300_000
+        self.assertIsNone(self.joined(bars=tuple(bars)))
+
+    def test_unproven_preview_cannot_be_promoted_to_tape_receipt(self):
+        from terminal.market_data.pattern_flow_observer import EarlyPatternFlowPreview
+        preview = EarlyPatternFlowPreview(
+            candidate_id="wedge-arc-1", state_revision=3, symbol="BTCUSDT",
+            direction="LONG", known_at_ms=360_010, transport_generation=1,
+            transition=self.flow(), gap_or_truncation=True,
+        )
+        self.assertFalse(preview.source_complete)
+        self.assertIsNone(self.joined(receipt=preview))
 
 
 if __name__ == "__main__":
