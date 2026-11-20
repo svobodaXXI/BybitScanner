@@ -68,6 +68,14 @@ def status(request: str, *, run=subprocess.run, verify_sha: str = "") -> int:
         if SHA.fullmatch(verify_sha) is None:
             print("POSTCHECK=BLOCKED_INVALID_SHA")
             return 2
+        # A completed UUID may refer to STOP, START or another release.
+        # Bind its immutable systemd description to this approved UPDATE.
+        description = fields.get("Description", "")
+        if not description.startswith(
+            "BybitScanner update " + verify_sha[:12] + " origin="
+        ):
+            print("POSTCHECK=BLOCKED_REQUEST_TARGET_MISMATCH")
+            return 2
         return verify_update(verify_sha)
     return 0 if state == "FINISHED_OK" else 3 if state == "RUNNING" else 2
 
