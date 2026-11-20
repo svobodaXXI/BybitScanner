@@ -1428,6 +1428,8 @@ class RobotBreakoutMonitor:
         self, record: RobotCandidateRecord, *, match_resting_orders: bool = True,
     ) -> bool:
         execution = dict(record.robot_state.get("execution") or {})
+        if self._hold_unproven_emergency_close(record, execution):
+            return False
 
         if "limit_order_id" not in execution:
             # Previously APPROVED standalone Double Top/Bottom candidates
@@ -1695,6 +1697,8 @@ class RobotBreakoutMonitor:
                 record, match_resting_orders=match_resting_orders,
             )
         execution = dict(record.robot_state.get("execution") or {})
+        if self._hold_unproven_emergency_close(record, execution):
+            return False
 
         if (
             execution.get("entry_mode") == LATE_ADMISSION_MARKET
@@ -1895,6 +1899,8 @@ class RobotBreakoutMonitor:
     def _advance_late_admission(
         self, record: RobotCandidateRecord, execution: dict[str, object],
     ) -> bool:
+        if self._hold_unproven_emergency_close(record, execution):
+            return False
         intent = execution.get("late_market_intent")
 
         if isinstance(intent, Mapping):
@@ -2052,6 +2058,8 @@ class RobotBreakoutMonitor:
         entry_path: str,
         actual_wv: Decimal,
     ) -> bool:
+        if self._hold_unproven_emergency_close(record, execution):
+            return False
         direction = record.robot_state["direction"]
         try:
             entry_evidence = self._prove_entry_evidence(
@@ -2097,7 +2105,9 @@ class RobotBreakoutMonitor:
                     frozen_scanner_target_price=target_price, existing_stop=existing_stop,
                 )
         except Exception as error:
-            self._fail_closed_unprotected_fill(record, error)
+            self._fail_closed_unprotected_fill(
+                record, error, entry_path=entry_path, entry_evidence=entry_evidence,
+            )
             return False
 
         entry_quantity = entry_evidence.quantity
@@ -2118,7 +2128,9 @@ class RobotBreakoutMonitor:
             ):
                 raise RobotBreakoutMonitorError("initial protection submission did not complete")
         except Exception as error:
-            self._fail_closed_unprotected_fill(record, error)
+            self._fail_closed_unprotected_fill(
+                record, error, entry_path=entry_path, entry_evidence=entry_evidence,
+            )
             return False
 
         duplicate_owners = self._active_other_owner_candidate_ids(record)
@@ -2172,7 +2184,9 @@ class RobotBreakoutMonitor:
                     f"POST_FILL_NET_RR_BELOW_2 rr={actual_rr}"
                 )
         except Exception as error:
-            self._fail_closed_unprotected_fill(record, error)
+            self._fail_closed_unprotected_fill(
+                record, error, entry_path=entry_path, entry_evidence=entry_evidence,
+            )
             return False
 
         now_ms = self._now_ms()
@@ -2923,84 +2937,197 @@ class RobotBreakoutMonitor:
                 )
         self._release_entry_coverage(record.symbol.value)
 
+    def _hold_unproven_emergency_close(
+        self, record: RobotCandidateRecord, execution: Mapping[str, object],
+    ) -> bool:
+        """Never redispatch an uncorrelated aggregate close after an uncertain result.
+
+        The current PAPER full_close client action id is NOT a durable Market
+        command identity. A retry could close a replacement position.
+        """
+        if not (
+            execution.get("emergency_close_pending")
+            or execution.get("emergency_close_intent")
+        ):
+            return False
+        self._escalate_reconciliation(
+            "ROBOT_EMERGENCY_CLOSE_OUTCOME_UNPROVEN "
+            f"symbol={record.symbol.value} candidate_id={record.candidate_id}"
+        )
+        return True
+
     def _fail_closed_unprotected_fill(
-        self, record: RobotCandidateRecord, error: Exception,
+        self, record: RobotCandidateRecord, error: Exception, *,
+        entry_path: str, entry_evidence: _EntryEvidence,
     ) -> None:
+        """Persist exact post-fill recovery intent BEFORE any irreversible close.
+
+        The action id alone does not deduplicate PAPER full_close. A crash or
+        unknown response must not send the aggregate close a second time.
+        """
+        execution = dict(record.robot_state.get("execution") or {})
+        if self._hold_unproven_emergency_close(record, execution):
+            return
+
         duplicate_owners = self._active_other_owner_candidate_ids(record)
         if duplicate_owners:
-            execution = dict(record.robot_state.get("execution") or {})
-            execution["protection_failure"] = str(error)
-            execution["duplicate_owner_candidate_ids"] = list(duplicate_owners)
-            execution["duplicate_ownership_detected_at_ms"] = self._now_ms()
-            self._persist_execution(record, execution)
             self._escalate_duplicate_ownership(record, duplicate_owners)
             return
 
-        if self._incident_dir is not None:
-            snapshot = record.signal_snapshot if isinstance(record.signal_snapshot, Mapping) else {}
-            record_robot_incident(
-                incident_type="ROBOT_PROTECTION_EMERGENCY_CLOSE",
-                stage="initial_protection",
-                reason_code="INITIAL_PROTECTION_FAILURE",
-                symbol=record.symbol.value,
-                timeframe=snapshot.get("timeframe"),
-                pattern=snapshot.get("pattern"),
-                candidate_id=record.candidate_id,
-                error=error,
-                facts={
-                    "stop_proven": False,
-                    "take_proven": False,
-                    "market_data_authoritative": None,
-                    "intended_stop_crossed": None,
-                    "deadline_at_ms": None,
-                    "age_ms": None,
-                },
-                selected_recovery_action="EMERGENCY_CLOSE",
-                incident_dir=self._incident_dir,
-                timestamp_ms=self._now_ms(),
+        try:
+            confirmed = self._prove_entry_evidence(
+                record, execution, entry_path=entry_path,
             )
+            if confirmed is None or confirmed != entry_evidence:
+                raise RobotBreakoutMonitorError("entry evidence changed before emergency intent")
+            fills = tuple(
+                fill
+                for order_id in confirmed.order_ids
+                for fill in self._store().load_executions_for_order(
+                    self._account_id, order_id,
+                )
+            )
+            execution_ids = tuple(sorted(fill.dedup_key.exec_id.value for fill in fills))
+            if not execution_ids or len(execution_ids) != len(set(execution_ids)):
+                raise RobotBreakoutMonitorError("emergency entry executions are ambiguous")
+            if any(
+                item.symbol == record.symbol
+                for item in self._store().load_unresolved_paper_protection_obligations(
+                    self._account_id,
+                )
+            ):
+                raise RobotBreakoutMonitorError(
+                    "existing protection obligation could race emergency close"
+                )
+        except Exception as proof_error:
+            self._escalate_reconciliation(
+                "ROBOT_EMERGENCY_CLOSE_ENTRY_UNPROVEN "
+                f"symbol={record.symbol.value} candidate_id={record.candidate_id} "
+                f"error={type(proof_error).__name__}"
+            )
+            return
 
-        request = robot_protection.emergency_close_request(record.candidate_id, record.symbol.value)
-        execution = dict(record.robot_state.get("execution") or {})
-        execution["protection_failure"] = str(error)
-        execution["emergency_close_attempted_at_ms"] = self._now_ms()
+        request = robot_protection.emergency_close_request(
+            record.candidate_id, record.symbol.value,
+        )
+        now_ms = self._now_ms()
+        execution["protection_failure"] = type(error).__name__
+        execution["emergency_close_pending"] = True
+        execution["emergency_close_attempted_at_ms"] = now_ms
+        execution["emergency_close_intent"] = {
+            "candidate_id": record.candidate_id,
+            "account_id": self._account_id.value,
+            "symbol": record.symbol.value,
+            "direction": str(record.robot_state["direction"]),
+            "entry_path": entry_path,
+            "entry_order_ids": [item.value for item in confirmed.order_ids],
+            "entry_execution_ids": list(execution_ids),
+            "entry_quantity": str(confirmed.quantity),
+            "average_entry": str(confirmed.average_entry),
+            "entry_position_version": confirmed.position_version,
+            "client_action_id": request.client_action_id.value,
+            # A committed intent is considered possibly dispatched, even if
+            # the process dies immediately after this transaction.
+            "dispatch_outcome": "UNKNOWN",
+        }
+        durable_state = dict(record.robot_state)
+        durable_state["execution"] = execution
+        try:
+            prepared = self._store().save_robot_candidate_state(
+                record.candidate_id,
+                status=record.status,
+                robot_state=durable_state,
+                expected_revision=record.state_revision,
+                updated_at_ms=now_ms,
+            )
+        except Exception as persist_error:
+            self._escalate_reconciliation(
+                "ROBOT_EMERGENCY_CLOSE_INTENT_NOT_DURABLE "
+                f"symbol={record.symbol.value} candidate_id={record.candidate_id} "
+                f"error={type(persist_error).__name__}"
+            )
+            return
+
+        if self._incident_dir is not None:
+            try:
+                snapshot = (
+                    record.signal_snapshot
+                    if isinstance(record.signal_snapshot, Mapping) else {}
+                )
+                record_robot_incident(
+                    incident_type="ROBOT_PROTECTION_EMERGENCY_CLOSE",
+                    stage="initial_protection",
+                    reason_code="INITIAL_PROTECTION_FAILURE",
+                    symbol=record.symbol.value,
+                    timeframe=snapshot.get("timeframe"),
+                    pattern=snapshot.get("pattern"),
+                    candidate_id=record.candidate_id,
+                    error=error,
+                    facts={
+                        "stop_proven": False,
+                        "take_proven": False,
+                        "market_data_authoritative": None,
+                        "intended_stop_crossed": None,
+                        "deadline_at_ms": None,
+                        "age_ms": None,
+                    },
+                    selected_recovery_action="EMERGENCY_CLOSE",
+                    incident_dir=self._incident_dir,
+                    timestamp_ms=now_ms,
+                )
+            except Exception:
+                # Incident telemetry cannot revoke an already durable intent.
+                pass
 
         try:
             result = self._action_executor.full_close(request)
-        except Exception as close_error:
-            execution["emergency_close_pending"] = True
-            execution["emergency_close_error"] = str(close_error)
-            self._persist_execution(record, execution)
+        except Exception:
+            self._escalate_reconciliation(
+                "ROBOT_EMERGENCY_CLOSE_OUTCOME_UNPROVEN "
+                f"symbol={record.symbol.value} candidate_id={record.candidate_id}"
+            )
             return
 
-        authoritative_flat = False
         completed = getattr(result, "status", None) == CommandResultStatus.COMPLETED
+        authoritative_flat = False
         if completed:
-            position_key = PositionKey(self._account_id, Category.LINEAR, record.symbol, 0)
+            position_key = PositionKey(
+                self._account_id, Category.LINEAR, record.symbol, 0,
+            )
             projection = self._store().get_position_projection(position_key)
-            authoritative_flat = projection is None or projection.quantity.value <= 0
+            authoritative_flat = (
+                projection is not None
+                and projection.side is PositionSide.FLAT
+                and projection.quantity.value == 0
+            )
 
         if not (completed and authoritative_flat):
-            execution["emergency_close_pending"] = True
-            self._persist_execution(record, execution)
+            self._escalate_reconciliation(
+                "ROBOT_EMERGENCY_CLOSE_OUTCOME_UNPROVEN "
+                f"symbol={record.symbol.value} candidate_id={record.candidate_id}"
+            )
             return
 
+        # Same-call COMPLETED and authoritative FLAT: retire the candidate.
+        # Retain the durable dispatch intent as historical evidence.
         execution.pop("emergency_close_pending", None)
-        execution.pop("emergency_close_error", None)
         execution["emergency_close_outcome"] = robot_protection.RECOVERY_CLOSED
         execution["emergency_closed_at_ms"] = self._now_ms()
-        new_state = dict(record.robot_state)
+        new_state = dict(prepared.robot_state)
         new_state["execution"] = execution
         try:
             self._store().save_robot_candidate_state(
-                record.candidate_id,
+                prepared.candidate_id,
                 status="INVALIDATED",
                 robot_state=new_state,
-                expected_revision=record.state_revision,
+                expected_revision=prepared.state_revision,
                 updated_at_ms=self._now_ms(),
             )
-        except ConcurrentUpdate:
-            pass
+        except Exception:
+            self._escalate_reconciliation(
+                "ROBOT_EMERGENCY_CLOSE_TERMINAL_NOT_DURABLE "
+                f"symbol={record.symbol.value} candidate_id={record.candidate_id}"
+            )
 
     def _persist_l_shape_invalidation(
         self,
