@@ -154,6 +154,7 @@ class FrozenWedgeArcCandlesTests(unittest.TestCase):
         rows = list(deepcopy(self.bullish()))
         # Down -> up -> down invalidates every 4-6-candle rounded arc.
         rows[3]["low"] = 99.6
+        rows[3]["close"] = 99.7  # preserve valid OHLC while breaking the arc
         result = self.evaluate(bars=tuple(rows))
         self.assertEqual(result.outcome, "ARC_NOT_OBSERVED")
         self.assertIsNone(result.confluence)
