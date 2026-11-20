@@ -155,23 +155,46 @@ def request_id_store() -> Path:
     return base / "BybitScanner" / "VPSManager" / "last_request_id"
 
 
-def recover_last_request_id(path: Path | None = None) -> str:
+def recover_last_request_context(
+    path: Path | None = None,
+) -> tuple[str, str, str]:
+    """Recover one UUID plus its exact action/SHA; legacy UUID-only is valid."""
     target = path if path is not None else request_id_store()
     try:
-        value = target.read_text(encoding="ascii").strip()
+        rows = target.read_text(encoding="ascii").splitlines()
     except (OSError, UnicodeError):
-        return ""
-    return value if REQUEST_ID.fullmatch(value) else ""
+        return "", "", ""
+    if not rows or REQUEST_ID.fullmatch(rows[0]) is None:
+        return "", "", ""
+    if len(rows) == 1:
+        return rows[0], "", ""  # old manager wrote only the UUID
+    if (len(rows) != 3 or rows[1] not in CONTROL_ACTIONS.values()
+            or (EXACT_SHA.fullmatch(rows[2]) is None
+                and not (rows[2] == "installed" and rows[1] in ("start", "stop")))):
+        return rows[0], "", ""  # malformed context cannot authorize a postcheck
+    return rows[0], rows[1], rows[2]
 
 
-def remember_request_id(request: str, path: Path | None = None) -> None:
-    """Persist before submit so an interrupted client can query status only."""
+def recover_last_request_id(path: Path | None = None) -> str:
+    return recover_last_request_context(path)[0]
+
+
+def remember_request_id(
+    request: str, path: Path | None = None, *,
+    action: str = "", sha: str = "",
+) -> None:
+    """Atomically persist the UUID/action/SHA before any owner submission."""
     if REQUEST_ID.fullmatch(request) is None:
         raise ValueError("invalid_request_id")
+    if action and (action not in CONTROL_ACTIONS.values()
+                   or (EXACT_SHA.fullmatch(sha) is None
+                       and not (sha == "installed" and action in ("start", "stop")))):
+        raise ValueError("invalid_owner_context")
     target = path if path is not None else request_id_store()
     target.parent.mkdir(parents=True, exist_ok=True)
     staged = target.with_suffix(".tmp")
-    staged.write_text(request + "\n", encoding="ascii")
+    payload = request + ("\n" + action + "\n" + sha if action else "") + "\n"
+    staged.write_text(payload, encoding="ascii")
     staged.replace(target)
 
 
@@ -185,17 +208,37 @@ CONTROL_ACTIONS = {
 CONTROL_MODULE = "cd /opt/BybitScanner && /opt/BybitScanner/venv/bin/python -m tools.vps_owner_control"
 
 
-def gui_owner_status(stdout: str, returncode: int, request: str) -> str:
-    """Only an exact UUID and matching server status can color a GUI result."""
+def gui_owner_status(
+    stdout: str, returncode: int, request: str, *,
+    verify_sha: str = "",
+) -> str:
+    """Bind successful update status to UUID, exact release and PAPER proof."""
     lines = stdout.strip().splitlines()
     states = [line for line in lines if line.startswith("STATUS=")]
     if "REQUEST_ID=" + request not in lines or len(states) != 1:
+        return "unproven"
+    if verify_sha and states[0] == "STATUS=FINISHED_OK":
+        if (returncode == 0 and EXACT_SHA.fullmatch(verify_sha)
+                and "INSTALLED_SHA=" + verify_sha in lines
+                and "POSTCHECK=VERIFIED_EDITOR_ONLY" in lines):
+            return "success"
         return "unproven"
     return {
         (0, "STATUS=FINISHED_OK"): "success",
         (3, "STATUS=RUNNING"): "submitted",
         (2, "STATUS=FAILED"): "failed",
     }.get((returncode, states[0]), "unproven")
+
+
+def update_status_target(command: list[str]) -> str:
+    """Only a generated exact-SHA status command may request proof."""
+    if not command:
+        return ""
+    match = re.fullmatch(
+        re.escape(CONTROL_MODULE) + r" status [0-9a-f]{32} --verify-update ([0-9a-f]{40})",
+        command[-1],
+    )
+    return match.group(1) if match else ""
 
 
 
@@ -227,6 +270,7 @@ def watch_owner_request(
             return run_readonly_ssh_with_laptop_agent_recovery(command, **kwargs)[0]
     sleep = sleep or time.sleep
     state = "submitted" if initially_submitted else "unproven"
+    verify_sha = update_status_target(status_command)
     latest = ""
     unknown = 0
     transport_unknown = 0
@@ -244,9 +288,13 @@ def watch_owner_request(
         except OSError:
             return state, latest + "\nSTATUS_UNPROVEN; SSH client unavailable; operation not resubmitted"
         else:
-            observed = gui_owner_status(reply.stdout, reply.returncode, request)
+            observed = gui_owner_status(
+                reply.stdout, reply.returncode, request, verify_sha=verify_sha)
             if observed in ("success", "failed"):
                 return observed, reply.stdout.strip()
+            if (verify_sha and "STATUS=FINISHED_OK" in reply.stdout.splitlines()
+                    and "REQUEST_ID=" + request in reply.stdout.splitlines()):
+                return "unproven", reply.stdout.strip() + "\nPOSTCHECK_UNPROVEN_NO_RESUBMIT"
             transient = transient_ssh_failure(reply)
             if observed == "submitted":
                 state = "submitted"
@@ -390,6 +438,10 @@ def control_ssh_command(host: str, user: str, key: str, operation: str,
         if REQUEST_ID.fullmatch(request_id) is None:
             raise ValueError("Недопустимый ID операции")
         args = ["status", request_id]
+        if sha:
+            if EXACT_SHA.fullmatch(sha) is None:
+                raise ValueError("Недопустимый SHA проверки обновления")
+            args.extend(["--verify-update", sha])
     elif operation == "list":
         args = ["list"]
     elif operation == "preflight":
