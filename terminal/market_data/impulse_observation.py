@@ -33,19 +33,42 @@ class PublicTradeObservation:
     """Bounded, generation-fenced, atomic per-frame read-only observation."""
 
     LIMIT = 512
+    # Bybit recent-trade offers at most 1000 exact IDs in a single response.
+    # This capacity is only available after explicit PAPER flow opt-in.
+    # REST still has to bracket BOTH closed minutes; capacity alone cannot
+    # prove completeness or increase the amount REST can attest.
+    CERTIFICATION_LIMIT = 1000
     FRAME_LIMIT = 1024
 
     def __init__(self, symbol: str) -> None:
         self.symbol = symbol
         self._lock = Lock()
         self._generation = 0
-        self._prints: deque[ObservedPrint] = deque(maxlen=self.LIMIT)
+        self._capacity = self.LIMIT
+        self._prints: deque[ObservedPrint] = deque(maxlen=self._capacity)
         self._ids: dict[str, ObservedPrint] = {}
         self._last_ms: int | None = None
         self._last_sequence: int | None = None
         self._frames = 0
         self._invalid_frames = 0
         self._gap = True  # startup/subscription history is unproven
+
+    def enable_certification_buffer(self) -> bool:
+        """Opt-in only: one bounded two-closed-minute exact-print window.
+
+        No new subscription or queue, and zero extra per-print hashing.
+        Resetting source state cannot retroactively certify prints observed
+        before the opt-in. A fresh two-minute window must arrive naturally.
+        """
+        with self._lock:
+            if self._capacity == self.CERTIFICATION_LIMIT:
+                return False
+            self._capacity = self.CERTIFICATION_LIMIT
+            self._prints = deque(maxlen=self._capacity)
+            self._ids.clear()
+            self._generation += 1  # fence any earlier source proof
+            self._gap = True
+            return True
 
     def mark_gap(self) -> None:
         """A disconnect/reconnect invalidates continuity and per-generation IDs."""
@@ -127,8 +150,18 @@ class PublicTradeObservation:
                 pending[item.trade_id] = replace(item, received_at_ms=received_at_ms)
                 timestamp = item.timestamp_ms
                 sequence = item.sequence
+            if pending and self._capacity == self.CERTIFICATION_LIMIT:
+                # Retain at most the current M1 plus the previous two
+                # completed minutes, never an unbounded historical tape.
+                # One added print after the M1 boundary must not discard
+                # the two completed minutes required for certification.
+                latest = next(reversed(pending.values())).timestamp_ms
+                cutoff = latest // 60_000 * 60_000 - 120_000
+                while self._prints and self._prints[0].timestamp_ms < cutoff:
+                    retired = self._prints.popleft()
+                    self._ids.pop(retired.trade_id, None)
             for item in pending.values():
-                if len(self._prints) == self.LIMIT:
+                if len(self._prints) == self._capacity:
                     evicted = self._prints.popleft()
                     self._ids.pop(evicted.trade_id, None)
                     self._gap = True  # evicted evidence cannot support full-history claims
@@ -146,6 +179,7 @@ class PublicTradeObservation:
                 "symbol": self.symbol,
                 "generation": self._generation,
                 "observed_prints": len(self._prints),
+                "buffer_capacity": self._capacity,
                 "observed_frames": self._frames,
                 "invalid_frames": self._invalid_frames,
                 "last_trade_ms": self._last_ms,
@@ -188,10 +222,14 @@ def audit_recent_trade_overlap(
         return unknown
     symbol = snapshot.get("symbol")
     observed = snapshot.get("prints")
+    capacity = snapshot.get("buffer_capacity", PublicTradeObservation.LIMIT)
     result = rest_response.get("result")
     if (not isinstance(symbol, str) or not symbol.endswith("USDT")
             or not isinstance(observed, tuple)
-            or len(observed) > PublicTradeObservation.LIMIT
+            or type(capacity) is not int
+            or capacity not in (PublicTradeObservation.LIMIT,
+                                PublicTradeObservation.CERTIFICATION_LIMIT)
+            or len(observed) > capacity
             or type(snapshot.get("generation")) is not int
             or snapshot["generation"] < 0
             or rest_response.get("retCode") != 0
@@ -292,10 +330,14 @@ def audit_closed_m1_trade_parity(
         return unknown
     symbol = snapshot.get("symbol")
     prints = snapshot.get("prints")
+    capacity = snapshot.get("buffer_capacity", PublicTradeObservation.LIMIT)
     if (not isinstance(symbol, str) or not symbol.isalnum()
             or not symbol.endswith("USDT")
             or not isinstance(prints, tuple)
-            or not 0 < len(prints) <= PublicTradeObservation.LIMIT
+            or type(capacity) is not int
+            or capacity not in (PublicTradeObservation.LIMIT,
+                                PublicTradeObservation.CERTIFICATION_LIMIT)
+            or not 0 < len(prints) <= capacity
             or type(snapshot.get("generation")) is not int
             or snapshot["generation"] < 0
             or type(snapshot.get("observed_frames")) is not int

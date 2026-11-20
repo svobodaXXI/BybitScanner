@@ -31,7 +31,20 @@ on:
       - "robot_protection.py"
       - "robot_entry_flow_evidence.py"
       - "tests/test_robot_entry_flow_evidence.py"
+      - "tests/test_robot_pattern_flow_source.py"
       - "terminal/market_data/impulse_observation.py"
+      - "terminal/market_data/impulse_producer.py"
+      - "tests/test_robot_pattern_flow_overlay.py"
+      - "terminal/market_data/wedge_candle_exhaustion_research.py"
+      - "tests/test_wedge_candle_exhaustion_research.py"
+      - "terminal/market_data/wedge_arc_candle_research.py"
+      - "tests/test_wedge_arc_candle_research.py"
+      - "tools/inspect_bybit_historical_pair.py"
+      - "tests/test_bybit_historical_archive_pair.py"
+      - "terminal/market_data/pattern_flow_observer.py"
+      - "terminal/market_data/pattern_flow_shadow_evidence.py"
+      - "tests/test_robot_pattern_flow_shadow_evidence.py"
+      - "tests/test_robot_pattern_flow_observer.py"
       - "tests/test_public_trade_impulse_observation.py"
       - "robot_flat_closure.py"
       - "tests/test_robot_flat_closure.py"
@@ -147,11 +160,15 @@ jobs:
           mplfinance==0.12.10b0
           six==1.17.0
       - name: Verify shared causal Impulse Flow rules without order runtime
-        run: python -m unittest tests.test_robot_entry_flow_evidence -v
+        run: python -m unittest tests.test_robot_entry_flow_evidence tests.test_robot_pattern_flow_overlay tests.test_wedge_candle_exhaustion_research tests.test_wedge_arc_candle_research tests.test_bybit_historical_archive_pair -v
+      - name: Verify no autonomous Impulse candidate and verified read-only flow source
+        run: python -m unittest tests.test_robot_pattern_flow_source tests.test_robot_pattern_flow_observer tests.test_robot_pattern_flow_shadow_evidence -v
       - name: Verify publicTrade observation without order runtime
         run: python -m unittest tests.test_public_trade_impulse_observation -v
       - name: Verify subscribed-only Scanner source diagnostics
         run: python -m unittest tests.test_terminal_market_data_hub -v
+      - name: Profile synthetic extra source cost without live subscriptions
+        run: python -m tools.profile_pattern_flow_source_load
       - name: Compile acceptance surface
         run: >-
           python -m py_compile
@@ -196,6 +213,14 @@ jobs:
           analyzer/core.py
           notification.py
           pattern_robot_integration.py
+          terminal/market_data/impulse_producer.py
+          robot_entry_flow_evidence.py
+          tests/test_robot_pattern_flow_source.py
+          tests/test_robot_pattern_flow_overlay.py
+          terminal/market_data/pattern_flow_observer.py
+          terminal/market_data/pattern_flow_shadow_evidence.py
+          tests/test_robot_pattern_flow_shadow_evidence.py
+          tests/test_robot_pattern_flow_observer.py
           robot_l_shape.py
           l_shape_scanner.py
           tools/stop_robot_runtime.py

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
+from typing import Mapping
 
 ZERO = Decimal("0")
 ONE_THOUSAND = Decimal("1000")
@@ -429,6 +430,7 @@ def recognize_impulse_signal(
     transition: FlowTransition | None, *, closed_at_ms: int,
     candle_open: Decimal, candle_close: Decimal,
     candle_low: Decimal, candle_high: Decimal,
+    decision_ms: int | None = None,
 ) -> ImpulseSignal | None:
     """Shared Scanner impulse recognition from consecutive actual taker windows.
 
@@ -444,12 +446,18 @@ def recognize_impulse_signal(
         raise ValueError("invalid completed Scanner OHLC geometry")
     if transition is None:
         return None
-    if not isinstance(transition, FlowTransition) or transition.known_at_ms != closed_at_ms:
-        raise ValueError("only same-close authenticated flow may identify an impulse")
+    # Historical same-close research remains the default. A live Scanner can
+    # explicitly report the LATER time when independent REST/kline evidence
+    # became available; it must not backdate the decision to the M1 close.
+    decided = closed_at_ms if decision_ms is None else decision_ms
+    if (type(decided) is not int or decided < closed_at_ms
+            or not isinstance(transition, FlowTransition)
+            or transition.known_at_ms != decided):
+        raise ValueError("only causally available completed flow may identify an impulse")
     if transition.buy_wave_accelerating and candle_close > candle_open:
-        return ImpulseSignal("LONG", closed_at_ms, candle_close, candle_low)
+        return ImpulseSignal("LONG", decided, candle_close, candle_low)
     if transition.sell_wave_accelerating and candle_close < candle_open:
-        return ImpulseSignal("SHORT", closed_at_ms, candle_close, candle_high)
+        return ImpulseSignal("SHORT", decided, candle_close, candle_high)
     return None
 
 
@@ -532,3 +540,535 @@ def plan_impulse_protected_entry(
     if not rr.is_finite() or rr < min_entry_rr():
         raise ValueError("protected impulse net RR below shared Robot floor")
     return ImpulseProtectedPlan(signal, entry, stop, take, quantity, rr, worst_loss)
+
+
+
+# A background observation can strengthen or contradict ONE canonical pattern
+# entry. It never becomes a Scanner candidate, confidence probability, order,
+# new admission gate or requirement to accumulate N confirmations.
+# Closely related views of the SAME market event share an evidence group.
+_ENTRY_ARGUMENT_GROUPS = {
+    "TAKER_PRESSURE": "EXECUTED_FLOW",
+    "OPPOSING_PRESSURE_FADE": "EXECUTED_FLOW",
+    "LIQUIDATION": "LIQUIDATIONS",
+    "OPEN_INTEREST": "OPEN_INTEREST",
+    "DMI_CROSS": "DMI",
+    "DMI_PRECURSOR": "DMI",
+    "REVERSAL_CANDLE": "PRICE_REVERSAL",
+    "DOUBLE_EXTREMUM": "PRICE_REVERSAL",
+}
+_ARGUMENT_OUTCOMES = frozenset(("SUPPORT", "CONTRADICT", "NEUTRAL"))
+
+
+@dataclass(frozen=True, slots=True)
+class PatternEntryArgument:
+    """A time-stamped auxiliary fact, never authority for a new signal/order.
+
+    The respective source producer owns authenticity and availability; this
+    aggregation contract merely rejects mismatched, stale or future evidence.
+    """
+    kind: str
+    candidate_id: str
+    state_revision: int
+    symbol: str
+    direction: str
+    outcome: str
+    source_id: str
+    event_at_ms: int
+    available_at_ms: int
+
+
+@dataclass(frozen=True, slots=True)
+class PatternEntryConfluence:
+    """Read-only per-pattern evidence summary; NOT a trading score or veto."""
+    candidate_id: str
+    state_revision: int
+    symbol: str
+    pattern: str
+    direction: str
+    evaluated_at_ms: int
+    group_outcomes: tuple[tuple[str, str], ...]
+    trading_authorized: bool = False
+
+    @property
+    def supporting_groups(self) -> tuple[str, ...]:
+        return tuple(name for name, state in self.group_outcomes
+                     if state == "SUPPORT")
+
+
+def summarize_pattern_entry_arguments(
+    record, arguments: tuple[PatternEntryArgument, ...], *, decision_ms: int,
+) -> PatternEntryConfluence | None:
+    """Evaluate optional factors ONLY for an existing approved Robot entry.
+
+    This does not infer a breakout, create a candidate, or change a Robot gate.
+    A host's own immutable breakout/retest/Box/Mirror strategy must still prove
+    its original entry eligibility. Missing or unverified factors are UNKNOWN.
+    """
+    scope = existing_pattern_entry_scope(record)
+    if (scope is None or type(decision_ms) is not int or decision_ms < 0
+            or not isinstance(arguments, tuple)):
+        return None
+
+    grouped: dict[str, set[str]] = {
+        name: set() for name in set(_ENTRY_ARGUMENT_GROUPS.values())
+    }
+    for item in arguments:
+        if not isinstance(item, PatternEntryArgument):
+            continue
+        group = _ENTRY_ARGUMENT_GROUPS.get(item.kind)
+        if group is None or item.outcome not in _ARGUMENT_OUTCOMES:
+            continue
+        if (item.candidate_id != scope.candidate_id
+                or type(item.state_revision) is not int
+                or item.state_revision != scope.state_revision
+                or item.symbol != scope.symbol
+                or item.direction != scope.direction
+                or not isinstance(item.source_id, str) or not item.source_id
+                or len(item.source_id) > 128
+                or type(item.event_at_ms) is not int
+                or type(item.available_at_ms) is not int
+                or not 0 <= item.event_at_ms <= item.available_at_ms <= decision_ms):
+            continue
+        grouped[group].add(item.outcome)
+
+    def state(votes: set[str]) -> str:
+        if "SUPPORT" in votes and "CONTRADICT" in votes:
+            return "CONFLICT"
+        if "SUPPORT" in votes:
+            return "SUPPORT"
+        if "CONTRADICT" in votes:
+            return "CONTRADICT"
+        if "NEUTRAL" in votes:
+            return "NEUTRAL"
+        return "UNKNOWN"
+
+    return PatternEntryConfluence(
+        scope.candidate_id, scope.state_revision, scope.symbol,
+        scope.pattern, scope.direction, decision_ms,
+        tuple((group, state(grouped[group])) for group in sorted(grouped)),
+    )
+
+
+# Entry-timing overlay ONLY: it is never an independent Scanner candidate,
+# Admission permission, entry order, STOP/TAKE plan or Robot state transition.
+@dataclass(frozen=True, slots=True)
+class ExistingPatternEntryScope:
+    """Exact durable candidate at its already-authorized pre-entry boundary."""
+
+    candidate_id: str
+    symbol: str
+    pattern: str
+    direction: str
+    state_revision: int
+    status: str
+    phase: str
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateBoundFlowEvidence:
+    """Bounded causal flow observation, bound to the SAME frozen candidate.
+
+    A producer must independently certify REST/WS parity and timely receipts;
+    constructing this object alone NEVER establishes source completeness.
+    """
+
+    candidate_id: str
+    symbol: str
+    direction: str
+    state_revision: int
+    source_kind: str
+    closed_at_ms: int
+    decision_ms: int
+    print_facts_sha256: str
+    source_complete: bool
+    receipt_cutoff_proven: bool
+    transport_generation_proven: bool
+    transition: FlowTransition
+
+
+# Only established canonical Robot order-entry families. Do not equate a
+# visual Scanner signal or a BOX_PLAN_ONLY source with approved Robot ownership.
+# MIRROR uses L-shape's existing LIMIT executor; Ikigai Box uses its
+# protected grid owner. Double Top/Bottom are auxiliary-only after #1153
+# and cannot become a stand-alone impulse timing scope.
+_PATTERN_FLOW_PHASES = {
+    "Falling Wedge": "RETEST_DETECTED",
+    "Rising Wedge": "RETEST_DETECTED",
+    "L-shape": "RETEST_DETECTED",
+    "MIRROR": "RETEST_DETECTED",
+    "IKIGAI_BOX": "BOX_ENTRY_READY",
+}
+_FIXED_PATTERN_DIRECTIONS = {
+    "Falling Wedge": "LONG", "Rising Wedge": "SHORT",
+}
+_FROZEN_DIRECTION_TERMS = {
+    "L-shape": "l_shape", "MIRROR": "mirror_entry",
+    "IKIGAI_BOX": "identity",
+}
+
+
+def existing_pattern_entry_scope(record) -> ExistingPatternEntryScope | None:
+    """Exact persisted approved candidate & frozen direction at its own entry gate.
+
+    Pure and read-only: never substitutes a new candidate or invents strategy
+    terms. The normal Robot admission/risk/order preflight remains mandatory.
+    """
+    try:
+        snapshot = record.signal_snapshot
+        state = record.robot_state
+        if (not isinstance(snapshot, Mapping) or not isinstance(state, Mapping)
+                or record.status != "APPROVED"):
+            return None
+        pattern = snapshot.get("pattern")
+        phase = state.get("phase")
+        direction = state.get("direction")
+        if (pattern not in _PATTERN_FLOW_PHASES
+                or _PATTERN_FLOW_PHASES[pattern] != phase
+                or direction not in ("LONG", "SHORT")):
+            return None
+        expected_direction = _FIXED_PATTERN_DIRECTIONS.get(pattern)
+        if expected_direction is None:
+            terms = snapshot.get(_FROZEN_DIRECTION_TERMS[pattern])
+            if not isinstance(terms, Mapping):
+                return None
+            expected_direction = terms.get("direction")
+        if expected_direction != direction:
+            return None
+        candidate_id = record.candidate_id
+        symbol = record.symbol.value
+        revision = record.state_revision
+        if (not isinstance(candidate_id, str) or not candidate_id
+                or not isinstance(symbol, str) or not symbol.endswith("USDT")
+                or type(revision) is not int or revision < 0):
+            return None
+        if pattern == "IKIGAI_BOX":
+            # The source plan stays BOX_PLAN_ONLY, while this immutable
+            # *linked approved candidate* owns the first grid entry.
+            source_id = snapshot.get("source_box_candidate_id")
+            if (not isinstance(source_id, str) or not source_id
+                    or state.get("source_box_candidate_id") != source_id):
+                return None
+        return ExistingPatternEntryScope(
+            candidate_id, symbol, pattern, direction, revision,
+            record.status, phase,
+        )
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return None
+
+
+def match_existing_pattern_flow(
+    candidate: ExistingPatternEntryScope,
+    evidence: CandidateBoundFlowEvidence | None,
+    *,
+    now_ms: int,
+) -> bool:
+    """True only for fresh, same-owner, same-direction pre-entry flow.
+
+    Descriptive signal timing only. The canonical Robot must INDEPENDENTLY
+    prove breakout/retest, admission, risk, ownership, STOP/TAKE and entry
+    protection before it can place any order. UNKNOWN evidence is False,
+    never an independently executable IMPULSE_FLOW candidate.
+    """
+    if (not isinstance(candidate, ExistingPatternEntryScope)
+            or not isinstance(evidence, CandidateBoundFlowEvidence)
+            or type(now_ms) is not int):
+        return False
+    if (candidate.pattern not in _PATTERN_FLOW_PHASES
+            or _PATTERN_FLOW_PHASES[candidate.pattern] != candidate.phase
+            or candidate.status != "APPROVED"
+            or (_FIXED_PATTERN_DIRECTIONS.get(candidate.pattern)
+                not in (None, candidate.direction))
+            or candidate.direction not in ("LONG", "SHORT")
+            or not candidate.candidate_id or not candidate.symbol.endswith("USDT")
+            or type(candidate.state_revision) is not int
+            or candidate.state_revision < 0):
+        return False
+    if (evidence.candidate_id != candidate.candidate_id
+            or evidence.symbol != candidate.symbol
+            or evidence.direction != candidate.direction
+            or type(evidence.state_revision) is not int
+            or evidence.state_revision != candidate.state_revision):
+        return False
+    if (evidence.source_kind != "BYBIT_TRIPLE_CLOSED_M1_CERTIFIED"
+            or evidence.source_complete is not True
+            or evidence.receipt_cutoff_proven is not True
+            or evidence.transport_generation_proven is not True
+            or not isinstance(evidence.print_facts_sha256, str)
+            or len(evidence.print_facts_sha256) != 64
+            or any(c not in "0123456789abcdef"
+                   for c in evidence.print_facts_sha256)):
+        return False
+    if (type(evidence.closed_at_ms) is not int
+            or type(evidence.decision_ms) is not int
+            or evidence.closed_at_ms <= 0
+            or evidence.closed_at_ms % 60_000
+            or not evidence.closed_at_ms <= evidence.decision_ms
+               <= evidence.closed_at_ms + 60_000
+            or not evidence.decision_ms <= now_ms
+               <= evidence.closed_at_ms + 120_000):
+        return False
+    transition = evidence.transition
+    if (not isinstance(transition, FlowTransition)
+            or transition.known_at_ms != evidence.decision_ms):
+        return False
+    return (
+        transition.buy_wave_accelerating is True
+        if candidate.direction == "LONG"
+        else transition.sell_wave_accelerating is True
+    )
+
+
+def canonical_host_breakout_known_at_ms(record) -> int | None:
+    """Derive post-breakout availability from the EXISTING frozen Robot state.
+
+    Wedge uses the durable breakout candle index + immutable Scanner cursor;
+    L-shape/MIRROR use their validated frozen family-specific terms. Never
+    trust a caller-supplied breakout time or infer a Box breakout from its
+    entry-ready phase. This is research provenance, NOT entry authority.
+    """
+    try:
+        snapshot, state = record.signal_snapshot, record.robot_state
+        if (record.status != "APPROVED"
+                or not isinstance(snapshot, Mapping)
+                or not isinstance(state, Mapping)):
+            return None
+        pattern = snapshot.get("pattern")
+        phase = state.get("phase")
+        direction = state.get("direction")
+        if (state.get("pattern") != pattern
+                or direction not in ("LONG", "SHORT")):
+            return None
+
+        if pattern in ("Falling Wedge", "Rising Wedge"):
+            import robot_state_machine
+            from scanner_geometry_cursor import project_latest_geometry_index
+
+            if (state.get("state_version") != robot_state_machine.STATE_VERSION
+                    or direction != _FIXED_PATTERN_DIRECTIONS[pattern]
+                    or phase not in ("WAITING_RETEST", "RETEST_DETECTED")):
+                return None
+            anchor = snapshot.get("scanner_geometry_cursor")
+            if (not isinstance(anchor, Mapping)
+                    or anchor.get("version") != "1.0"
+                    or str(anchor.get("timeframe")) != "1"):
+                return None
+            first_index = anchor.get("geometry_index")
+            source_time = anchor.get("source_candle_time_ms")
+            breakout_index = state.get("breakout_index")
+            cursor = state.get("geometry_cursor")
+            if (type(first_index) is not int or first_index < 0
+                    or type(source_time) is not int or source_time <= 0
+                    or source_time % 60_000
+                    or type(breakout_index) is not int
+                    or breakout_index <= first_index
+                    or type(cursor) is not int or cursor < breakout_index):
+                return None
+            geometry = snapshot.get("robot_geometry", snapshot.get("geometry"))
+            apex = geometry.get("apex") if isinstance(geometry, Mapping) else None
+            apex_index = apex.get("index") if isinstance(apex, Mapping) else None
+            if (apex_index is None
+                    or Decimal(str(apex_index)) <= breakout_index):
+                return None
+            if phase == "WAITING_RETEST" and state.get("retest_index") is not None:
+                return None
+            if phase == "RETEST_DETECTED":
+                retest = state.get("retest_index")
+                if (type(retest) is not int
+                        or not breakout_index < retest <= cursor):
+                    return None
+            # Existing geometry-state validator owns pattern/direction/lines.
+            robot_state_machine.boundary_price(
+                snapshot,
+                side="upper" if direction == "LONG" else "lower",
+                geometry_index=breakout_index,
+            )
+            breakout_start = source_time + (
+                breakout_index - first_index
+            ) * 60_000
+            if project_latest_geometry_index(
+                snapshot, latest_closed_candle_time_ms=breakout_start,
+            ) != breakout_index:
+                return None
+            return breakout_start + 60_000  # available only after M1 close
+
+        if pattern in ("L-shape", "MIRROR"):
+            import robot_l_shape
+
+            if (state.get("state_version") != robot_l_shape.STATE_VERSION
+                    or phase not in _POST_BREAKOUT_RESEARCH_PHASES[pattern]):
+                return None
+            terms = robot_l_shape.frozen_terms(snapshot)
+            if (terms.direction != direction
+                    or state.get("breakout_time_ms") != terms.breakout_time_ms):
+                return None
+            # MIRROR's confirmation must pass its existing family contract.
+            initial, _event = robot_l_shape.initialize_state({
+                "status": "APPROVED", "signal_snapshot": snapshot,
+            })
+            if initial.get("phase") not in _POST_BREAKOUT_RESEARCH_PHASES[pattern]:
+                return None
+            interval = int(terms.source_timeframe) * 60_000
+            if terms.breakout_time_ms <= 0 or terms.breakout_time_ms % interval:
+                return None
+            last = state.get("last_candle_time_ms")
+            if type(last) is not int or last < terms.breakout_time_ms:
+                return None
+            if phase == "RETEST_DETECTED":
+                retest = state.get("retest_time_ms")
+                if (type(retest) is not int or retest < terms.breakout_time_ms + interval
+                        or last < retest):
+                    return None
+            elif state.get("retest_time_ms") is not None:
+                return None
+            return terms.breakout_time_ms + interval
+
+        # Box source-plan and linked grid do not yet persist an equivalent
+        # certified realization-side breakout time: UNKNOWN, never fabricated.
+        return None
+    except (AttributeError, KeyError, TypeError, ValueError,
+            ArithmeticError, OverflowError):
+        return None
+    except Exception as error:
+        # Only known pure contract failures from existing adapters are
+        # expected; other exceptions are not promoted to research entries.
+        if type(error).__name__ in (
+            "RobotStateMachineError", "ScannerGeometryCursorError",
+            "RobotLShapeError",
+        ):
+            return None
+        raise
+
+
+# Research-only early entry candidate: the authoritative Robot entry phases
+# above deliberately stay unchanged until the protected owner path is proven.
+# WAITING_RETEST is after a pattern breakout, not a permission to send an order.
+_POST_BREAKOUT_RESEARCH_PHASES = {
+    "Falling Wedge": frozenset(("WAITING_RETEST", "RETEST_DETECTED")),
+    "Rising Wedge": frozenset(("WAITING_RETEST", "RETEST_DETECTED")),
+    "L-shape": frozenset(("L_SHAPE_WAITING_RETEST", "RETEST_DETECTED")),
+    "MIRROR": frozenset(("RETEST_DETECTED",)),
+    "IKIGAI_BOX": frozenset(("BOX_ENTRY_READY",)),
+}
+
+
+@dataclass(frozen=True, slots=True)
+class PatternImpulseTimingResearch:
+    """A pattern-bound timing hypothesis, NEVER an order/admission permit."""
+
+    candidate_id: str
+    state_revision: int
+    symbol: str
+    pattern: str
+    direction: str
+    decision_ms: int
+    outcome: str
+    reason: str
+
+    @property
+    def trading_authorized(self) -> bool:
+        return False
+
+
+def observe_post_breakout_impulse_timing(
+    record,
+    evidence: CandidateBoundFlowEvidence | None,
+    *,
+    breakout_known_at_ms: int,
+    decision_ms: int,
+) -> PatternImpulseTimingResearch | None:
+    """Prefer causal taker momentum after the host breakout, without a retest gate.
+
+    The ORIGINAL pattern's frozen lifecycle must independently attest
+    its breakout and match the supplied timestamp. Only a frozen APPROVED host
+    and a complete, bound two-closed-M1 flow may suggest research timing.
+    A suggestion NEVER creates an order, changes a Robot phase or implies
+    that earlier execution or the replay's hypothetical fill is possible.
+    """
+    canonical_breakout_ms = canonical_host_breakout_known_at_ms(record)
+    if (canonical_breakout_ms is None
+            or type(breakout_known_at_ms) is not int
+            or breakout_known_at_ms != canonical_breakout_ms
+            or type(decision_ms) is not int
+            or decision_ms < canonical_breakout_ms):
+        return None
+    try:
+        snapshot, state = record.signal_snapshot, record.robot_state
+        if (record.status != "APPROVED"
+                or not isinstance(snapshot, Mapping)
+                or not isinstance(state, Mapping)):
+            return None
+        pattern = snapshot.get("pattern")
+        direction = state.get("direction")
+        phase = state.get("phase")
+        if (pattern not in _POST_BREAKOUT_RESEARCH_PHASES
+                or phase not in _POST_BREAKOUT_RESEARCH_PHASES[pattern]
+                or direction not in ("LONG", "SHORT")):
+            return None
+        frozen = _FIXED_PATTERN_DIRECTIONS.get(pattern)
+        if frozen is None:
+            terms = snapshot.get(_FROZEN_DIRECTION_TERMS[pattern])
+            if not isinstance(terms, Mapping):
+                return None
+            frozen = terms.get("direction")
+        candidate_id, revision, symbol = (
+            record.candidate_id, record.state_revision, record.symbol.value,
+        )
+        if (frozen != direction
+                or not isinstance(candidate_id, str) or not candidate_id
+                or type(revision) is not int or revision < 0
+                or not isinstance(symbol, str) or not symbol.isalnum()
+                or not symbol.endswith("USDT")):
+            return None
+        if pattern == "IKIGAI_BOX":
+            source_id = snapshot.get("source_box_candidate_id")
+            if (not isinstance(source_id, str) or not source_id
+                    or state.get("source_box_candidate_id") != source_id):
+                return None
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return None
+
+    def result(outcome: str, reason: str) -> PatternImpulseTimingResearch:
+        return PatternImpulseTimingResearch(
+            candidate_id, revision, symbol, pattern, direction,
+            decision_ms, outcome, reason,
+        )
+
+    # Unlike the OLD Robot's existing_pattern_entry_scope(), this research
+    # path may describe a post-breakout candidate before RETEST_DETECTED.
+    # An uncertified preview or missing receipt is explicitly UNKNOWN.
+    if not isinstance(evidence, CandidateBoundFlowEvidence):
+        return result("WAIT_SOURCE", "NO_CERTIFIED_CANDIDATE_FLOW")
+    digest = evidence.print_facts_sha256
+    if (evidence.candidate_id != candidate_id
+            or evidence.state_revision != revision
+            or evidence.symbol != symbol or evidence.direction != direction
+            or evidence.source_kind != "BYBIT_TRIPLE_CLOSED_M1_CERTIFIED"
+            or evidence.source_complete is not True
+            or evidence.receipt_cutoff_proven is not True
+            or evidence.transport_generation_proven is not True
+            or not isinstance(digest, str) or len(digest) != 64
+            or any(ch not in "0123456789abcdef" for ch in digest.lower())
+            or type(evidence.closed_at_ms) is not int
+            or evidence.closed_at_ms % 60_000
+            or evidence.closed_at_ms < breakout_known_at_ms
+            or type(evidence.decision_ms) is not int
+            or evidence.decision_ms < evidence.closed_at_ms
+            or evidence.decision_ms > decision_ms
+            or decision_ms - evidence.closed_at_ms > 120_000
+            or not isinstance(evidence.transition, FlowTransition)
+            or evidence.transition.known_at_ms != evidence.decision_ms):
+        return result("WAIT_SOURCE", "FLOW_PROVENANCE_UNPROVEN")
+    trans = evidence.transition
+    delta, movement = trans.current_delta_fraction, trans.current_price_change_bps
+    if (not isinstance(delta, Decimal) or not delta.is_finite()
+            or not isinstance(movement, Decimal) or not movement.is_finite()):
+        return result("WAIT_DIRECTION", "DIRECTIONAL_TAKER_WAVE_NOT_PROVEN")
+    supportive = (
+        trans.buy_wave_accelerating and delta > ZERO and movement > ZERO
+        if direction == "LONG"
+        else trans.sell_wave_accelerating and delta < ZERO and movement < ZERO
+    )
+    if not supportive:
+        return result("WAIT_DIRECTION", "DIRECTIONAL_TAKER_WAVE_NOT_PROVEN")
+    return result("IMPULSE_ENTRY_RESEARCH", "HOST_BOUND_DIRECTIONAL_TAKER_WAVE")

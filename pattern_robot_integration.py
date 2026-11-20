@@ -119,6 +119,7 @@ def prepare_robot_handoff(
     *,
     timeframe: str,
     enabled: bool,
+    candidate_id: str | None = None,
 ) -> RobotHandoffResult:
     """Persist one executable signal snapshot for later common admission.
 
@@ -138,6 +139,7 @@ def prepare_robot_handoff(
         candidate = create_signal_snapshot(
             signal_snapshot,
             timeframe=str(timeframe).strip(),
+            **({"candidate_id": candidate_id} if candidate_id is not None else {}),
         )
     except Exception as error:
         symbol = (

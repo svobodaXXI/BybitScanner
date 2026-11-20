@@ -367,6 +367,147 @@ def plan_wedge_partial_at_two_r(
     return proposed if Decimal(0) < proposed < remaining_quantity else None
 
 
+
+@dataclass(frozen=True, slots=True)
+class WedgeImpulseFadeResearch:
+    """Non-executable, pattern-bound candidate for dynamic partial profit."""
+
+    candidate_id: str
+    source_revision: int
+    symbol: str
+    direction: str
+    observed_at_ms: int
+    source_sha256: str
+    partial_quantity: Decimal
+    quote_price: Decimal
+    estimated_partial_net_usdt: Decimal
+    reason: str = "DIRECTIONAL_PRICE_IMPACT_FADING"
+
+    @property
+    def trading_authorized(self) -> bool:
+        return False
+
+
+def observe_wedge_impulse_fade_partial(
+    record, receipt, *,
+    first_entry_fill_ms: int,
+    average_entry: Decimal,
+    original_quantity: Decimal,
+    remaining_quantity: Decimal,
+    quantity_step: Decimal,
+    total_entry_fees: Decimal,
+    exit_fee_rate: Decimal,
+    executable_price: Decimal,
+    active_stop: Decimal,
+    active_take: Decimal,
+    observed_at_ms: int,
+    adverse_slippage_bps: Decimal,
+) -> WedgeImpulseFadeResearch | None:
+    """Research a fade-triggered first partial, NOT a close or STOP amendment.
+
+    The two certified M1 flow windows must be wholly AFTER the first fill.
+    No fixed percentage threshold triggers exit: only declining impact from
+    continued same-direction takers plus executable after-cost positive PnL.
+    A 25%-maximum FIRST partial reuses the present Wedge BE execution cap.
+    The serialized owner still must attest current trade/position, full
+    actual fill lineage and active STOP/TAKE before any action.
+    """
+    from robot_entry_flow_evidence import CandidateBoundFlowEvidence, FlowTransition
+
+    try:
+        if (record.status != "OPEN"
+                or record.signal_snapshot.get("pattern")
+                   not in ("Falling Wedge", "Rising Wedge")
+                or not isinstance(record.robot_state, Mapping)):
+            return None
+        direction = record.robot_state.get("direction")
+        pattern = record.signal_snapshot.get("pattern")
+        if direction != ("LONG" if pattern == "Falling Wedge" else "SHORT"):
+            return None
+        candidate_id, revision, symbol = (
+            record.candidate_id, record.state_revision, record.symbol.value
+        )
+        if (not isinstance(candidate_id, str) or not candidate_id
+                or type(revision) is not int or revision < 0
+                or not isinstance(symbol, str) or not symbol.endswith("USDT")):
+            return None
+        if (not isinstance(receipt, CandidateBoundFlowEvidence)
+                or receipt.candidate_id != candidate_id
+                or receipt.symbol != symbol or receipt.direction != direction
+                or receipt.state_revision != revision
+                or receipt.source_kind != "BYBIT_TRIPLE_CLOSED_M1_CERTIFIED"
+                or receipt.source_complete is not True
+                or receipt.receipt_cutoff_proven is not True
+                or receipt.transport_generation_proven is not True
+                or not isinstance(receipt.transition, FlowTransition)
+                or type(receipt.closed_at_ms) is not int
+                or receipt.closed_at_ms % 60_000
+                or type(receipt.decision_ms) is not int
+                or receipt.transition.known_at_ms != receipt.decision_ms
+                or type(first_entry_fill_ms) is not int
+                or first_entry_fill_ms < 0
+                or receipt.closed_at_ms - 120_000 <= first_entry_fill_ms
+                or type(observed_at_ms) is not int
+                or not receipt.closed_at_ms <= receipt.decision_ms <= observed_at_ms
+                or observed_at_ms - receipt.closed_at_ms > 120_000):
+            return None
+        digest = receipt.print_facts_sha256
+        if (not isinstance(digest, str) or len(digest) != 64
+                or any(ch not in "0123456789abcdef" for ch in digest.lower())):
+            return None
+        amounts = (
+            average_entry, original_quantity, remaining_quantity,
+            quantity_step, total_entry_fees, exit_fee_rate,
+            executable_price, active_stop, active_take, adverse_slippage_bps,
+        )
+        if any(not isinstance(x, Decimal) or not x.is_finite() for x in amounts):
+            return None
+        if (average_entry <= 0 or original_quantity <= 0
+                or remaining_quantity != original_quantity
+                or quantity_step <= 0 or total_entry_fees < 0
+                or not 0 <= exit_fee_rate < 1 or executable_price <= 0
+                or active_stop <= 0 or active_take <= 0
+                or adverse_slippage_bps < 0):
+            return None
+        if direction == "LONG" and not (
+                active_stop < average_entry < executable_price < active_take):
+            return None
+        if direction == "SHORT" and not (
+                active_take < executable_price < average_entry < active_stop):
+            return None
+        transition = receipt.transition
+        # "Impact fading" requires actual taker activity in both windows;
+        # it is not interchangeable with presumed stops or a static book wall.
+        fading = (
+            transition.buy_impact_fading and not transition.buy_wave_accelerating
+            if direction == "LONG"
+            else transition.sell_impact_fading and not transition.sell_wave_accelerating
+        )
+        if not fading:
+            return None
+        partial = (
+            original_quantity * Decimal("0.25") / quantity_step
+        ).to_integral_value(rounding=ROUND_FLOOR) * quantity_step
+        if not Decimal(0) < partial < remaining_quantity:
+            return None
+        sign = Decimal(1) if direction == "LONG" else Decimal(-1)
+        gross = sign * (executable_price - average_entry) * partial
+        allocated_entry_fee = total_entry_fees * partial / original_quantity
+        projected_exit_fee = executable_price * partial * exit_fee_rate
+        adverse_slippage = (
+            executable_price * partial * adverse_slippage_bps / Decimal(10_000)
+        )
+        net = gross - allocated_entry_fee - projected_exit_fee - adverse_slippage
+        if net <= 0:
+            return None
+        return WedgeImpulseFadeResearch(
+            candidate_id, revision, symbol, direction, observed_at_ms,
+            digest, partial, executable_price, net,
+        )
+    except (AttributeError, KeyError, TypeError, ValueError, ArithmeticError):
+        return None
+
+
 @dataclass(frozen=True, slots=True)
 class AttestedPartialEconomics:
     """Fill arithmetic only; an owner must independently attest order ownership."""

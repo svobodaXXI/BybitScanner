@@ -129,6 +129,24 @@ def reconcile_restart(
             raise RobotRestartError(
                 f"latest geometry index is unavailable for candidate {candidate_id}"
             )
+        # An early Wedge LIMIT can be in-flight without a linked order id
+        # across a crash. Reaching the apex must NOT silently terminalize
+        # the owner candidate, orphan its partial fill or discard STOP recovery.
+        # Full account reconciliation is required instead of a false EXPIRED.
+        execution = state.get("execution") or {}
+        if (isinstance(execution, Mapping)
+                and execution.get("entry_mode") == "IMPULSE_EARLY_LIMIT"
+                and execution.get("impulse_entry_intent") is not None
+                and state.get("phase") == "WAITING_RETEST"):
+            geometry = snapshot.get("robot_geometry") or snapshot.get("geometry")
+            apex = geometry.get("apex") if isinstance(geometry, Mapping) else None
+            apex_index = apex.get("index") if isinstance(apex, Mapping) else None
+            latest = latest_geometry_index_by_candidate.get(candidate_id)
+            if (type(latest) is not int or type(apex_index) not in (int, float)
+                    or isinstance(apex_index, bool) or latest >= apex_index):
+                raise RobotRestartError(
+                    "uncertain impulse entry at apex requires owner reconciliation"
+                )
         resumed, event = resume_without_replay(
             snapshot,
             state,

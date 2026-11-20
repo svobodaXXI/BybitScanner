@@ -31,6 +31,11 @@ from typing import Callable, Mapping, Protocol
 
 import mirror_retest_robot as mirror
 import robot_entry_limit
+from robot_entry_limit import IMPULSE_ENTRY_LIMIT_MAX_AGE_MS
+from robot_entry_flow_evidence import (
+    CandidateBoundFlowEvidence, existing_pattern_entry_scope,
+    match_existing_pattern_flow,
+)
 import robot_l_shape
 import robot_protection
 import robot_state_machine
@@ -87,6 +92,7 @@ from terminal.persistence.sqlite_store import (
 
 DEFAULT_TICK_INTERVAL_S = 60.0
 DEFAULT_LATE_MARKET_MAX_BOOK_AGE_MS = 1000
+IMPULSE_EARLY_LIMIT_ENTRY_MODE = "IMPULSE_EARLY_LIMIT"
 PAPER_CANDIDATE_ERROR_QUARANTINE_THRESHOLD = 3
 
 INACTIVE_LIMIT_STATUSES = {"filled", "cancelled"}
@@ -256,6 +262,11 @@ class RobotBreakoutMonitor:
         emergency_close_path: EmergencyClosePath | None = None,
         mirror_policy: "mirror.MirrorRobotPolicy | None" = None,
         wedge_be_auto_paper_enabled: bool = False,
+        impulse_fade_paper_enabled: bool = False,
+        impulse_early_paper_enabled: bool = False,
+        get_pattern_flow_evidence: Callable[
+            [RobotCandidateRecord], CandidateBoundFlowEvidence | None
+        ] | None = None,
     ) -> None:
         self._emergency_close_path = emergency_close_path
         # MIRROR RETEST overlay for Box attempts (OFF unless a policy is bound; see mirror_retest_robot).
@@ -263,6 +274,13 @@ class RobotBreakoutMonitor:
         if type(wedge_be_auto_paper_enabled) is not bool:
             raise ValueError("Wedge BE PAPER auto gate must be explicit bool")
         self._wedge_be_auto_paper_enabled = wedge_be_auto_paper_enabled
+        if type(impulse_fade_paper_enabled) is not bool:
+            raise ValueError("Impulse fade PAPER gate must be explicit bool")
+        self._impulse_fade_paper_enabled = impulse_fade_paper_enabled
+        if type(impulse_early_paper_enabled) is not bool:
+            raise ValueError("Impulse early PAPER gate must be explicit bool")
+        self._impulse_early_paper_enabled = impulse_early_paper_enabled
+        self._get_pattern_flow_evidence = get_pattern_flow_evidence
         # Resting entry LIMITs become fill-capable the moment they are durable, so
         # protection coverage for the symbol must already be listening. Without a
         # bound arm this monitor never creates a resting entry LIMIT (fail closed).
@@ -301,6 +319,42 @@ class RobotBreakoutMonitor:
             store = self._store_factory()
             self._local.store = store
         return store
+
+    def bind_pattern_flow_observer(
+        self,
+        observer: Callable[[RobotCandidateRecord], CandidateBoundFlowEvidence | None],
+    ) -> None:
+        """One in-process read-only overlay, bound before the Robot tick starts."""
+        if self._started or self._get_pattern_flow_evidence is not None:
+            raise RuntimeError("Robot pattern flow observer is already bound or running")
+        if not callable(observer):
+            raise TypeError("pattern flow observer must be callable")
+        self._get_pattern_flow_evidence = observer
+
+    def _pattern_flow_allows_entry(self, record: RobotCandidateRecord) -> bool:
+        """Fail closed at an unowned entry boundary when PAPER flow is enabled.
+
+        With the opt-in observer absent, retain the original Robot route.
+        With it bound, a fresh, exact-owner, directionally supportive and
+        independently source-complete receipt is mandatory for ALL supported
+        families (Wedge, L-shape, MIRROR, Ikigai Box). Missing/foreign/stale
+        evidence cannot silently bypass impulse timing and submit the old
+        entry. This gate never touches an already-owned entry, fill, STOP,
+        TAKE, cancel or recovery lifecycle.
+        """
+        observer = self._get_pattern_flow_evidence
+        if observer is None:
+            return True
+        scope = existing_pattern_entry_scope(record)
+        if scope is None:
+            return False
+        try:
+            receipt = observer(record)
+        except Exception:
+            return False  # uncertainty is not a trading authorization
+        return match_existing_pattern_flow(
+            scope, receipt, now_ms=self._now_ms(),
+        )
 
     def start(self) -> None:
         if self._started:
@@ -404,30 +458,48 @@ class RobotBreakoutMonitor:
         if not isinstance(execution, Mapping):
             raise RobotBreakoutMonitorError("Wedge BE execution state is malformed")
         candle = None
-        if "wedge_be_partial_intent" not in execution:
-            source = self._get_closed_candle(record.symbol.value)
-            if not isinstance(source, Mapping):
-                return False
-            timestamp = source.get("time_ms")
-            if type(timestamp) is not int or timestamp <= 0 or timestamp % 60_000:
-                return False
-            end_ms = timestamp + 60_000
-            age_ms = self._clock_ms() - end_ms
-            if age_ms < 0 or age_ms > 90_000:
-                # Never trade on a still forming, delayed or stale bar.
-                return False
+        fade_receipt = None
+        if ("wedge_be_partial_intent" not in execution
+                and self._impulse_fade_paper_enabled
+                and self._get_pattern_flow_evidence is not None):
+            # Only certified, same-candidate evidence may be evaluated by
+            # the canonical owner. A disconnected observer is never authority.
             try:
-                high = Decimal(str(source["high"]))
-                low = Decimal(str(source["low"]))
-            except (KeyError, ValueError, TypeError, ArithmeticError):
+                fade_receipt = self._get_pattern_flow_evidence(record)
+            except Exception:
+                fade_receipt = None
+        if "wedge_be_partial_intent" not in execution:
+            # Keep the legacy +2R candle available even with a candidate
+            # fade source, so an unqualified fade never masks the old exit.
+            try:
+                source = self._get_closed_candle(record.symbol.value)
+            except Exception:
+                if fade_receipt is None:
+                    raise
+                source = None
+            if isinstance(source, Mapping):
+                timestamp = source.get("time_ms")
+                if type(timestamp) is int and timestamp > 0 and timestamp % 60_000 == 0:
+                    end_ms = timestamp + 60_000
+                    age_ms = self._clock_ms() - end_ms
+                    if 0 <= age_ms <= 90_000:
+                        try:
+                            high = Decimal(str(source["high"]))
+                            low = Decimal(str(source["low"]))
+                            if (high.is_finite() and low.is_finite()
+                                    and low > 0 and high >= low):
+                                candle = {"time_ms": timestamp, "high": high, "low": low}
+                        except (KeyError, ValueError, TypeError, ArithmeticError):
+                            pass
+            if candle is None and fade_receipt is None:
                 return False
-            if (
-                not high.is_finite() or not low.is_finite()
-                or low <= 0 or high < low
-            ):
-                return False
-            candle = {"time_ms": timestamp, "high": high, "low": low}
-        result = step(record.candidate_id, record.symbol.value, candle)
+        if fade_receipt is not None:
+            result = step(
+                record.candidate_id, record.symbol.value, candle,
+                fade_receipt=fade_receipt,
+            )
+        else:
+            result = step(record.candidate_id, record.symbol.value, candle)
         return getattr(result, "status", None) is CommandResultStatus.COMPLETED
 
     def process_authoritative_fill(self, symbol: str) -> tuple[str, ...]:
@@ -487,7 +559,14 @@ class RobotBreakoutMonitor:
                     self._record_execution_error(record, error)
                 continue
 
-            if phase != robot_state_machine.PHASE_RETEST_DETECTED:
+            if (phase != robot_state_machine.PHASE_RETEST_DETECTED
+                    and not (
+                        phase in (robot_state_machine.PHASE_WAITING_RETEST,
+                                  robot_l_shape.PHASE_WAITING_RETEST)
+                        and isinstance(execution, Mapping)
+                        and execution.get("entry_mode") == IMPULSE_EARLY_LIMIT_ENTRY_MODE
+                        and execution.get("limit_order_id")
+                    )):
                 continue
             order_id = execution.get("limit_order_id")
             if not order_id:
@@ -629,6 +708,228 @@ class RobotBreakoutMonitor:
             store, self._account_id, clock_ms=self._clock_ms,
         )._candidate_is_inert(record)
 
+    def _prepare_wedge_early_impulse_research(self, record: RobotCandidateRecord) -> bool:
+        """Persist an early-entry proposal, NEVER a pending execution intent.
+
+        This is a PAPER-only research side channel on the original APPROVED
+        Wedge; protected entry ownership still belongs entirely to the
+        legacy RETEST path until a separate idempotent executor is proven.
+        No create/amend/cancel, position, stop or take operation is possible.
+        """
+        if (self._account_id.value != "paper"
+                or self._get_pattern_flow_evidence is None
+                or self._get_market_book is None
+                or record.robot_state is None
+                or record.status != "APPROVED"
+                or record.signal_snapshot.get("pattern")
+                    not in ("Falling Wedge", "Rising Wedge")
+                or record.robot_state.get("phase") != "WAITING_RETEST"
+                or "impulse_entry_research" in record.robot_state):
+            return False
+        if not self._read_admission_gate()[0]:
+            return False
+        if (self._active_other_owner_candidate_ids(record)
+                or self._pre_entry_block_reason(record) is not None):
+            return False
+        try:
+            receipt = self._get_pattern_flow_evidence(record)
+            if receipt is None:
+                return False
+            book = self._get_market_book(record.symbol.value)
+            if book is None:
+                return False
+            quote = robot_entry_limit.build_post_breakout_wedge_impulse_limit_research(
+                record, receipt, book,
+                tick_size=self._tick_size_provider(record.symbol.value),
+                now_ms=self._now_ms(),
+                max_book_age_ms=self._late_market_max_book_age_ms,
+            )
+            frozen = robot_entry_limit.freeze_post_breakout_impulse_quote(
+                quote, receipt,
+            )
+        except Exception:
+            # Optional market-data observation cannot quarantine a normally
+            # executable pattern when a source/transport adapter is unavailable.
+            return False
+        # A research write is CAS-scoped, with no order submission or
+        # owner coverage arm; a conflict is NOT a successful persistence.
+        updated = dict(record.robot_state)
+        updated["impulse_entry_research"] = frozen
+        try:
+            self._store().save_robot_candidate_state(
+                record.candidate_id,
+                status="APPROVED",
+                robot_state=updated,
+                expected_revision=record.state_revision,
+                updated_at_ms=self._now_ms(),
+            )
+        except Exception:
+            # The optional evidence path cannot affect the original entry
+            # lifecycle. Missing research persistence is not market authority.
+            return False
+        return True
+
+    def _advance_impulse_early_limit(
+        self, record: RobotCandidateRecord,
+    ) -> bool:
+        """Canonical Wedge/L-shape PAPER LIMIT owner with durable first intent.
+
+        The only entry mechanism is the existing action executor. An uncertain
+        submission is NEVER replayed. Recovery correlates the original create
+        action to an actual Robot-owned LIMIT before enabling fills; the same
+        native finalize/protection path handles any partial fill.
+        """
+        pattern = record.signal_snapshot.get("pattern")
+        wedge = pattern in ("Falling Wedge", "Rising Wedge")
+        if (self._account_id.value != "paper" or record.status != "APPROVED"
+                or record.robot_state is None
+                or not (wedge or pattern == "L-shape")):
+            return False
+        state = record.robot_state
+        execution = dict(state.get("execution") or {})
+        intent = execution.get("impulse_entry_intent")
+        if intent is not None:
+            verify = (robot_entry_limit.verify_frozen_post_breakout_impulse_quote
+                      if wedge else robot_entry_limit.verify_frozen_post_breakout_l_shape_quote)
+            if (execution.get("entry_mode") != IMPULSE_EARLY_LIMIT_ENTRY_MODE
+                    or not verify(record, intent)):
+                self._escalate_reconciliation(
+                    "ROBOT_IMPULSE_ENTRY_INTENT_INVALID "
+                    f"candidate_id={record.candidate_id}"
+                )
+                return False
+            order = self._store().get_robot_paper_limit_by_create_action(
+                self._account_id, record.symbol, intent["client_action_id"],
+            )
+            if order is None:
+                # A durable intent is not proof that create_limit was sent.
+                # Never resubmit: UNKNOWN transport must be reconciled.
+                return False
+            if (order.symbol != record.symbol
+                    or order.side.value != intent["entry_side"]
+                    or order.price != Decimal(intent["quoted_price"])
+                    or order.quantity <= 0
+                    or order.filled_quantity < 0
+                    or order.filled_quantity > order.quantity
+                    or (execution.get("limit_order_id") is not None
+                        and execution["limit_order_id"] != order.order_id.value)):
+                self._escalate_reconciliation(
+                    "ROBOT_IMPULSE_ORDER_OWNERSHIP_CONFLICT "
+                    f"candidate_id={record.candidate_id}"
+                )
+                return False
+            if "limit_order_id" not in execution:
+                execution["limit_order_id"] = order.order_id.value
+                if wedge:
+                    execution["last_limit_index"] = state["geometry_cursor"]
+                new_state = dict(state)
+                new_state["execution"] = execution
+                try:
+                    self._store().save_robot_candidate_state(
+                        record.candidate_id,
+                        status="APPROVED",
+                        robot_state=new_state,
+                        expected_revision=record.state_revision,
+                        updated_at_ms=self._now_ms(),
+                    )
+                except ConcurrentUpdate:
+                    return False
+                return True
+            # The original LIMIT-owned fill/STOP/TAKE logic is authoritative.
+            # No separate impulse fill path or secondary protection plan.
+            return self._advance_retest_detected(record)
+
+        early_phase = ("WAITING_RETEST" if wedge
+                       else robot_l_shape.PHASE_WAITING_RETEST)
+        if (not self._impulse_early_paper_enabled
+                or state.get("phase") != early_phase
+                or self._get_pattern_flow_evidence is None
+                or self._get_market_book is None
+                or execution.get("limit_order_id")
+                or execution.get("late_market_intent")):
+            return False
+        if not self._read_admission_gate()[0]:
+            return False
+        if (self._active_other_owner_candidate_ids(record)
+                or self._pre_entry_block_reason(record) is not None):
+            return False
+        try:
+            receipt = self._get_pattern_flow_evidence(record)
+            if receipt is None:
+                return False
+            book = self._get_market_book(record.symbol.value)
+            if book is None:
+                return False
+            build_quote = (
+                robot_entry_limit.build_post_breakout_wedge_impulse_limit_research
+                if wedge else
+                robot_entry_limit.build_post_breakout_l_shape_impulse_limit_research
+            )
+            quote = build_quote(
+                record, receipt, book,
+                tick_size=self._tick_size_provider(record.symbol.value),
+                now_ms=self._now_ms(),
+                max_book_age_ms=self._late_market_max_book_age_ms,
+            )
+            frozen = robot_entry_limit.freeze_post_breakout_impulse_quote(
+                quote, receipt,
+            )
+        except Exception:
+            # No exception from optional market evidence grants an entry.
+            return False
+        if not self._arm_entry_coverage(record.symbol.value):
+            return False
+        durable = dict(execution)
+        durable["entry_mode"] = IMPULSE_EARLY_LIMIT_ENTRY_MODE
+        durable["impulse_entry_intent"] = frozen
+        new_state = dict(state)
+        new_state["execution"] = durable
+        try:
+            fresh = self._store().save_robot_candidate_state(
+                record.candidate_id,
+                status="APPROVED",
+                robot_state=new_state,
+                expected_revision=record.state_revision,
+                updated_at_ms=self._now_ms(),
+            )
+        except ConcurrentUpdate:
+            self._release_entry_coverage(record.symbol.value)
+            return False
+        if (not self._read_admission_gate()[0]
+                or self._active_other_owner_candidate_ids(fresh)
+                or self._pre_entry_block_reason(fresh) is not None):
+            # The durable intent is deliberately retained for safe
+            # correlation. No order will be sent from this ambiguous state.
+            self._release_entry_coverage(record.symbol.value)
+            return True
+        try:
+            result = self._action_executor.create_limit(quote.request)
+        except Exception:
+            # Durable intent prevents a second submit after transport failure.
+            return True
+        if (getattr(result, "status", None) != CommandResultStatus.COMPLETED
+                or not getattr(result, "order_id", None)):
+            return True
+        # The order may already exist if this CAS fails: until the link is
+        # recovered from the create action, PAPER's admission matcher fences it.
+        linked = dict(durable)
+        linked["limit_order_id"] = result.order_id
+        if wedge:
+            linked["last_limit_index"] = state["geometry_cursor"]
+        completed_state = dict(new_state)
+        completed_state["execution"] = linked
+        try:
+            self._store().save_robot_candidate_state(
+                record.candidate_id,
+                status="APPROVED",
+                robot_state=completed_state,
+                expected_revision=fresh.state_revision,
+                updated_at_ms=self._now_ms(),
+            )
+        except ConcurrentUpdate:
+            pass
+        return True
+
     def _advance_one(self, record: RobotCandidateRecord) -> bool:
         if (
             record.signal_snapshot.get("pattern") == "IKIGAI_BOX"
@@ -668,8 +969,19 @@ class RobotBreakoutMonitor:
             return True
 
         phase = record.robot_state.get("phase")
+        execution = record.robot_state.get("execution") or {}
+        if (isinstance(execution, Mapping)
+                and execution.get("entry_mode") == IMPULSE_EARLY_LIMIT_ENTRY_MODE):
+            return self._advance_impulse_early_limit(record)
+        if (phase == robot_state_machine.PHASE_WAITING_RETEST
+                and self._impulse_early_paper_enabled
+                and self._advance_impulse_early_limit(record)):
+            return True
         if phase == robot_state_machine.PHASE_RETEST_DETECTED:
             return self._advance_retest_detected(record)
+        if (phase == robot_state_machine.PHASE_WAITING_RETEST
+                and self._prepare_wedge_early_impulse_research(record)):
+            return True
         if phase == robot_state_machine.PHASE_EXPIRED_AT_APEX:
             return False
 
@@ -714,6 +1026,15 @@ class RobotBreakoutMonitor:
             return True
 
         phase = record.robot_state.get("phase")
+        execution = record.robot_state.get("execution") or {}
+        if (isinstance(execution, Mapping)
+                and execution.get("entry_mode") == IMPULSE_EARLY_LIMIT_ENTRY_MODE):
+            return self._advance_impulse_early_limit(record)
+        if (phase == robot_l_shape.PHASE_WAITING_RETEST
+                and record.signal_snapshot.get("pattern") == "L-shape"
+                and self._impulse_early_paper_enabled
+                and self._advance_impulse_early_limit(record)):
+            return True
         if phase == robot_state_machine.PHASE_RETEST_DETECTED:
             return self._advance_l_shape_retest_detected(record)
         if phase == robot_l_shape.PHASE_INVALIDATED:
@@ -946,6 +1267,10 @@ class RobotBreakoutMonitor:
                     return True
                 self._save_execution_keep_status(record, execution)
                 return True
+            # Timing can only defer a NEW unowned Box grid, never rewrite
+            # already-owned slots, partial fills or protected STOP/TAKE.
+            if not self._pattern_flow_allows_entry(record):
+                return False
             # Prove the immutable FLAT/journal baseline before deriving any
             # executable catch-up plan. This is not order ownership and does
             # not require a temporary coverage arm: no order can fill yet.
@@ -1013,6 +1338,8 @@ class RobotBreakoutMonitor:
 
         ownership = self._store().load_box_order_ownership(source.candidate_id)
         if not ownership:
+            if not self._pattern_flow_allows_entry(record):
+                return False
             if self._get_market_book is None:
                 return False
             current_book = self._get_market_book(record.symbol.value)
@@ -1516,6 +1843,8 @@ class RobotBreakoutMonitor:
                 execution["mirror"] = decision
                 self._persist_execution(record, execution)
                 return True
+            if not self._pattern_flow_allows_entry(record):
+                return False
             if not self._arm_entry_coverage(record.symbol.value):
                 return False
             result = robot_entry_limit.submit_initial_retest_limit(
@@ -1535,6 +1864,34 @@ class RobotBreakoutMonitor:
         )
         if order is None or order.quantity <= 0:
             return False
+
+        if execution.get("entry_mode") == IMPULSE_EARLY_LIMIT_ENTRY_MODE:
+            intent = execution.get("impulse_entry_intent")
+            decision_ms = intent.get("decision_ms") if isinstance(intent, Mapping) else None
+            if type(decision_ms) is not int:
+                self._escalate_reconciliation(
+                    f"ROBOT_LSHAPE_IMPULSE_CLOCK_UNPROVEN candidate_id={record.candidate_id}"
+                )
+                return False
+            if self._now_ms() - decision_ms > IMPULSE_ENTRY_LIMIT_MAX_AGE_MS:
+                if order.status not in INACTIVE_LIMIT_STATUSES:
+                    digest = hashlib.sha256(
+                        f"{record.candidate_id}\0impulse-expired-entry".encode("utf-8")
+                    ).hexdigest()[:32]
+                    cancelled = self._action_executor.cancel_limit(
+                        PaperLimitCancelRequest(
+                            ClientActionId(f"robot-impulse-expiry-{digest}"),
+                            record.symbol.value, order.order_id.value,
+                        )
+                    )
+                    if getattr(cancelled, "status", None) != CommandResultStatus.COMPLETED:
+                        return False
+                    refreshed = self._store().get_paper_limit(
+                        order.order_id.value, self._account_id,
+                    )
+                    if refreshed is None or refreshed.status not in INACTIVE_LIMIT_STATUSES:
+                        return False
+                    order = refreshed
 
         # An old APPROVED standalone Double Top/Bottom may already own an
         # entry LIMIT from a previous release. Blocking fresh submissions is
@@ -1745,6 +2102,11 @@ class RobotBreakoutMonitor:
                 reason, details = rr_skip
                 self._invalidate_pre_entry_candidate(record, reason=reason, details=details)
                 return True
+            # The same approved-pattern timing overlay shared with L-shape,
+            # MIRROR, double extrema and the unowned Box grid. No second
+            # strategy, candidate, order or STOP/TAKE is ever introduced.
+            if not self._pattern_flow_allows_entry(record):
+                return False
             if not self._arm_entry_coverage(record.symbol.value):
                 return False
             result = robot_entry_limit.submit_initial_retest_limit(self._action_executor, plan)
@@ -1763,6 +2125,34 @@ class RobotBreakoutMonitor:
         order = self._store().get_paper_limit(execution["limit_order_id"], self._account_id)
         if order is None or order.quantity <= 0:
             return False
+
+        if execution.get("entry_mode") == IMPULSE_EARLY_LIMIT_ENTRY_MODE:
+            intent = execution.get("impulse_entry_intent")
+            decision_ms = intent.get("decision_ms") if isinstance(intent, Mapping) else None
+            if type(decision_ms) is not int:
+                self._escalate_reconciliation(
+                    f"ROBOT_IMPULSE_ENTRY_CLOCK_UNPROVEN candidate_id={record.candidate_id}"
+                )
+                return False
+            if self._now_ms() - decision_ms > IMPULSE_ENTRY_LIMIT_MAX_AGE_MS:
+                if order.status not in INACTIVE_LIMIT_STATUSES:
+                    digest = hashlib.sha256(
+                        f"{record.candidate_id}\0impulse-expired-entry".encode("utf-8")
+                    ).hexdigest()[:32]
+                    result = self._action_executor.cancel_limit(
+                        PaperLimitCancelRequest(
+                            ClientActionId(f"robot-impulse-expiry-{digest}"),
+                            record.symbol.value, order.order_id.value,
+                        )
+                    )
+                    if getattr(result, "status", None) != CommandResultStatus.COMPLETED:
+                        return False
+                    refreshed = self._store().get_paper_limit(
+                        order.order_id.value, self._account_id,
+                    )
+                    if refreshed is None or refreshed.status not in INACTIVE_LIMIT_STATUSES:
+                        return False
+                    order = refreshed
 
         filled_fraction = min(order.filled_quantity / order.quantity, Decimal("1"))
         inactive = order.status in INACTIVE_LIMIT_STATUSES
@@ -1854,6 +2244,10 @@ class RobotBreakoutMonitor:
                 tick_size=self._tick_size_provider(record.symbol.value),
                 order_id=execution["limit_order_id"],
             )
+            if execution.get("entry_mode") == IMPULSE_EARLY_LIMIT_ENTRY_MODE:
+                # Original frozen impulse quote is NEVER rewritten to a
+                # retest-boundary price. Entry remains with the same owner.
+                return False
             # The reprice changes the prospective entry price. Do not amend a
             # previously admitted resting LIMIT to a price with poor or
             # uncomputable RR; keep monitoring the original proven order.
@@ -1994,6 +2388,10 @@ class RobotBreakoutMonitor:
             self._persist_state(record, expired_state)
             return True
         if decision.action != LATE_DECISION_MARKET_ENTRY:
+            return False
+        # No new Market entry can bypass the same exact-ID timing check.
+        # Persisted intents skip this check and remain owned by recovery.
+        if not self._pattern_flow_allows_entry(record):
             return False
 
         intent = durable_late_admission_market_intent(

@@ -20,6 +20,7 @@ from typing import Callable, Mapping
 
 from terminal.api.rest import TerminalCommandApi
 import robot_protection
+from robot_entry_limit import IMPULSE_ENTRY_LIMIT_MAX_AGE_MS
 from terminal.application.command_identity import CommandIdentityCandidate
 from terminal.application.robot_trade_ledger import prove_robot_open_trade_ledger
 from terminal.api.models import (
@@ -319,7 +320,7 @@ class RobotPaperActionExecutor:
             lambda runtime: runtime._robot_full_close(request, evidence=evidence)
         )
 
-    def wedge_be_step(self, candidate_id: str, symbol: str, candle):
+    def wedge_be_step(self, candidate_id: str, symbol: str, candle, *, fade_receipt=None):
         # Fresh public book acquisition is OFF the SQLite owner; never fall
         # back to a synchronous exchange request from its single writer.
         evidence = self._runtime._dispatch_robot_market_book(symbol)
@@ -331,6 +332,7 @@ class RobotPaperActionExecutor:
         return self._runtime._dispatch_robot_command(
             lambda runtime: runtime._robot_wedge_be_auto_step(
                 candidate_id, symbol=symbol, candle=candle, book=evidence,
+                fade_receipt=fade_receipt,
             )
         )
 
@@ -782,6 +784,8 @@ class PaperRuntime:
         robot_command_dispatcher: Callable[[Callable[["PaperRuntime"], object]], object] | None = None,
         robot_tick_interval_s: float = DEFAULT_TICK_INTERVAL_S,
         wedge_be_auto_paper_enabled: bool = False,
+        impulse_fade_paper_enabled: bool = False,
+        impulse_early_paper_enabled: bool = False,
     ) -> None:
         # Bound (if given) via this constructor argument, or later via
         # start_robot_monitor() once a real one exists -- see the class
@@ -790,6 +794,12 @@ class PaperRuntime:
         if type(wedge_be_auto_paper_enabled) is not bool:
             raise ValueError("PAPER Wedge BE opt-in must be explicit bool")
         self._wedge_be_auto_paper_enabled = wedge_be_auto_paper_enabled
+        if type(impulse_fade_paper_enabled) is not bool:
+            raise ValueError("PAPER impulse fade opt-in must be explicit bool")
+        self._impulse_fade_paper_enabled = impulse_fade_paper_enabled
+        if type(impulse_early_paper_enabled) is not bool:
+            raise ValueError("PAPER early impulse opt-in must be explicit bool")
+        self._impulse_early_paper_enabled = impulse_early_paper_enabled
         # (arm, release) of RobotProtectionCoverageManager, bound by the composition
         # root before the monitor may create a resting entry LIMIT.
         self._robot_entry_coverage: tuple[
@@ -1135,6 +1145,8 @@ class PaperRuntime:
             submit_market=self._dispatch_robot_market_submit,
             tick_interval_s=robot_tick_interval_s,
             wedge_be_auto_paper_enabled=wedge_be_auto_paper_enabled,
+            impulse_fade_paper_enabled=impulse_fade_paper_enabled,
+            impulse_early_paper_enabled=impulse_early_paper_enabled,
             arm_entry_coverage=self._arm_robot_entry_coverage,
             release_entry_coverage=self._release_robot_entry_coverage,
             incident_dir=self._robot_incident_dir,
@@ -1165,6 +1177,12 @@ class PaperRuntime:
             database_path, self._paper_account_id,
         )
         self._wedge_terminal_producer.start()
+
+    def bind_robot_pattern_flow_observer(self, observer) -> None:
+        """Bind a read-only market-flow hint to the EXISTING Robot monitor."""
+        if self._robot_command_dispatcher is not None:
+            raise RuntimeError("Cannot bind pattern flow after Robot monitor start")
+        self._robot_breakout_monitor.bind_pattern_flow_observer(observer)
 
     def start_robot_monitor(
         self, dispatcher: Callable[[Callable[["PaperRuntime"], object]], object],
@@ -2149,6 +2167,7 @@ class PaperRuntime:
             if fenced_entry_ids is None:
                 fenced_entry_ids = self._robot_entry_limit_ids_fenced_by_admission(
                     symbol, active_orders,
+                    event_received_at_ms=book.received_at_ms,
                 )
             if order.order_id.value in fenced_entry_ids:
                 continue
@@ -2174,7 +2193,11 @@ class PaperRuntime:
             phase = candidate.robot_state.get("phase")
             execution = candidate.robot_state.get("execution") or {}
             stamp = execution.get("entry_admission_version")
-            if candidate.status == "APPROVED" and phase == "RETEST_DETECTED":
+            if candidate.status == "APPROVED" and (
+                phase == "RETEST_DETECTED"
+                or (phase in ("WAITING_RETEST", "L_SHAPE_WAITING_RETEST")
+                    and execution.get("entry_mode") == "IMPULSE_EARLY_LIMIT")
+            ):
                 order_id = execution.get("limit_order_id")
                 if isinstance(order_id, str) and order_id.strip():
                     linked[order_id.strip()] = stamp
@@ -2207,7 +2230,7 @@ class PaperRuntime:
         return linked
 
     def _robot_entry_limit_ids_fenced_by_admission(
-        self, symbol: Symbol, active_orders,
+        self, symbol: Symbol, active_orders, *, event_received_at_ms: int | None = None,
     ) -> frozenset[str]:
         """Robot ENTRY LIMIT ids that must not fill on this book event (#608).
 
@@ -2236,9 +2259,34 @@ class PaperRuntime:
             state is not None and state.mode == ROBOT_RUNNING and state.recovery_status == READY
         )
         fenced: set[str] = set()
+        # An old marketable impulse GTC is NOT a live momentum entry.
+        # Admission and a candidate link alone must never reauthorize
+        # price matching after the source wave's quote lifetime.
+        stale_impulse_ids: set[str] = set()
+        for candidate in self.store.load_active_robot_candidates_for_symbol(
+            self._paper_account_id, symbol,
+        ):
+            candidate_state = candidate.robot_state or {}
+            execution = candidate_state.get("execution") or {}
+            if (not isinstance(execution, Mapping)
+                    or execution.get("entry_mode") != "IMPULSE_EARLY_LIMIT"):
+                continue
+            order_id = execution.get("limit_order_id")
+            if not isinstance(order_id, str) or not order_id:
+                continue
+            intent = execution.get("impulse_entry_intent")
+            decision_ms = intent.get("decision_ms") if isinstance(intent, Mapping) else None
+            if (type(event_received_at_ms) is not int
+                    or type(decision_ms) is not int
+                    or event_received_at_ms < decision_ms
+                    or event_received_at_ms - decision_ms > IMPULSE_ENTRY_LIMIT_MAX_AGE_MS):
+                stale_impulse_ids.add(order_id)
         for order in active_orders:
             order_id = order.order_id.value
             if order_id not in robot_entries and order_id not in linked:
+                continue
+            if order_id in stale_impulse_ids:
+                fenced.add(order_id)
                 continue
             created_epoch = robot_entries.get(order_id, (None, None))[1]
             if (
@@ -2300,7 +2348,11 @@ class PaperRuntime:
                     continue
                 execution = candidate.robot_state.get("execution") or {}
                 phase = candidate.robot_state.get("phase")
-                if candidate.status == "APPROVED" and phase == "RETEST_DETECTED":
+                if candidate.status == "APPROVED" and (
+                    phase == "RETEST_DETECTED"
+                    or (phase in ("WAITING_RETEST", "L_SHAPE_WAITING_RETEST")
+                        and execution.get("entry_mode") == "IMPULSE_EARLY_LIMIT")
+                ):
                     order_id = execution.get("limit_order_id")
                     # The first MIRROR target touch must terminate an UNFILLED
                     # entry even inside an OPEN candle. Closed-candle checks
@@ -3095,7 +3147,10 @@ class PaperRuntime:
                 continue
             phase = candidate.robot_state.get("phase")
             execution = candidate.robot_state.get("execution") or {}
-            if phase == "RETEST_DETECTED":
+            if phase == "RETEST_DETECTED" or (
+                phase in ("WAITING_RETEST", "L_SHAPE_WAITING_RETEST")
+                and execution.get("entry_mode") == "IMPULSE_EARLY_LIMIT"
+            ):
                 order_ids = (execution.get("limit_order_id"),)
             elif phase == "BOX_ENTRY_READY":
                 source_id = execution.get("source_box_candidate_id")
@@ -3384,18 +3439,42 @@ class PaperRuntime:
                         trading_account_id=self._paper_account_id,
                         updated_at_ms=now_ms,
                     )
-            # Non-Box Robot positions keep the owner-frozen D2.3 aggregate
-            # attestation gate unchanged.
-            elif (
-                trade.entry_position_version is None
-                or trade.entry_quantity is None
-                or trade.entry_quantity <= 0
-                or position is None
-                or position.side is not expected_side
-                or position.quantity.value != trade.entry_quantity
-                or position.version != trade.entry_position_version
-            ):
-                return obligation
+            # A Wedge with a proven reduce-only partial has a smaller LOT and
+            # a later position revision; original entry-version equality is no
+            # longer valid. Prove the original entry + exact partial instead.
+            # All other strategies and unpartially-filled Wedges retain D2.3.
+            else:
+                if (trade.entry_position_version is None
+                        or trade.entry_quantity is None
+                        or trade.entry_quantity <= 0
+                        or position is None or position.side is not expected_side):
+                    return obligation
+                candidate = self.store.get_robot_candidate(trade.candidate_id)
+                execution_state = (
+                    candidate.robot_state.get("execution") or {}
+                    if candidate is not None
+                    and isinstance(candidate.robot_state, Mapping) else {}
+                )
+                has_partial = (
+                    isinstance(execution_state, Mapping)
+                    and "wedge_be_partial_intent" in execution_state
+                )
+                if has_partial:
+                    if position.sync_state not in ("synced", "synchronized"):
+                        return obligation
+                    try:
+                        self._attested_wedge_partial_for_protection(
+                            trade, remaining_quantity=position.quantity.value,
+                        )
+                    except (RuntimeError, ValueError, TypeError, robot_protection.RobotProtectionError):
+                        LOGGER.exception(
+                            "Robot Wedge partial STOP/TAKE close lacks exact fill lineage; "
+                            "obligation=%s trade_id=%s", obligation.obligation_id, trade.trade_id,
+                        )
+                        return obligation
+                elif (position.quantity.value != trade.entry_quantity
+                        or position.version != trade.entry_position_version):
+                    return obligation
             if obligation.status == "TRIGGERED":
                 obligation = self.store.transition_paper_protection_obligation(
                     obligation.obligation_id,
@@ -3465,6 +3544,88 @@ class PaperRuntime:
             return None
         return sum((fill.fee for fill in fills), Decimal("0"))
 
+    def _attested_wedge_partial_for_protection(
+        self, trade: RobotTradeRecord, *, remaining_quantity: Decimal,
+    ) -> robot_protection.AttestedPartialEconomics:
+        """Exact one-trade reduction lineage for STOP/TAKE and final PnL.
+
+        Called ONLY for a Wedge carrying a durable partial intent. The entry
+        orders, filled reduce-only command, exit order, quantity, direction,
+        prices and fees must all be independently recoverable from PAPER.
+        A pending/foreign/ambiguous partial cannot authorize STOP dispatch or
+        close financial finalization.
+        """
+        if (trade.pattern not in ("Falling Wedge", "Rising Wedge")
+                or trade.entry_quantity is None or trade.entry_quantity <= 0
+                or not isinstance(remaining_quantity, Decimal)
+                or not remaining_quantity.is_finite()
+                or not Decimal(0) < remaining_quantity < trade.entry_quantity):
+            raise RuntimeError("Wedge partial remainder not proven")
+        candidate = self.store.get_robot_candidate(trade.candidate_id)
+        if (candidate is None or candidate.status != "OPEN"
+                or candidate.trading_account_id != trade.trading_account_id
+                or candidate.symbol != trade.symbol
+                or candidate.signal_snapshot.get("pattern") != trade.pattern
+                or not isinstance(candidate.robot_state, Mapping)):
+            raise RuntimeError("Wedge partial candidate owner not proven")
+        state = candidate.robot_state
+        execution = state.get("execution") or {}
+        if not isinstance(execution, Mapping):
+            raise RuntimeError("Wedge partial execution state invalid")
+        intent = execution.get("wedge_be_partial_intent")
+        if not isinstance(intent, Mapping):
+            raise RuntimeError("Wedge partial intent missing")
+        robot_protection.restore_wedge_be_partial_intent(
+            intent, account_id=trade.trading_account_id.value,
+            trade_id=trade.trade_id, candidate_id=trade.candidate_id,
+            symbol=trade.symbol.value, direction=trade.direction,
+            original_quantity=trade.entry_quantity,
+            remaining_quantity=trade.entry_quantity,
+        )
+        command = self.store.get_command(CommandId(intent["command_id"]))
+        exit_side = OrderSide.SELL if trade.direction == "LONG" else OrderSide.BUY
+        if (
+            command is None or command.current_state.value != "filled"
+            or command.trading_account_id != trade.trading_account_id
+            or command.symbol != trade.symbol
+            or command.order_link_id != intent["order_link_id"]
+            or command.command_kind != "create_market"
+            or command.side is not exit_side
+            or command.normalized_quantity is None
+            or command.normalized_quantity.value != Decimal(intent["partial_quantity"])
+        ):
+            raise RuntimeError("Wedge reduce-only partial command not confirmed")
+        entry_orders = robot_entry_order_ids(
+            self.store, trade.trading_account_id, candidate, execution,
+            entry_path=trade.entry_path,
+        )
+        if not entry_orders:
+            raise RuntimeError("Wedge entry order identity unproven")
+        entry_fills = tuple(
+            fill for order_id in entry_orders
+            for fill in self.store.load_executions_for_order(
+                trade.trading_account_id, order_id,
+            )
+        )
+        exit_id = OrderId("paper-order-" + str(intent["order_link_id"]))
+        partial_fills = self.store.load_executions_for_order(
+            trade.trading_account_id, exit_id,
+        )
+        facts = robot_protection.summarize_attested_robot_partial(
+            trade.direction, trading_account_id=trade.trading_account_id,
+            symbol=trade.symbol,
+            entry_order_ids=tuple(order_id.value for order_id in entry_orders),
+            partial_order_id=exit_id.value,
+            entry_executions=entry_fills, partial_executions=partial_fills,
+            actual_remaining_quantity=remaining_quantity,
+        )
+        if (facts.original_quantity != trade.entry_quantity
+                or facts.average_entry != trade.average_entry
+                or facts.closed_quantity != Decimal(intent["partial_quantity"])
+                or facts.latest_partial_fill_ms <= int(intent["trigger_candle_end_ms"])):
+            raise RuntimeError("Wedge partial fills contradict durable trade/intent")
+        return facts
+
     def _finalize_paper_protection_obligation(
         self, obligation: PaperProtectionObligationRecord, trade: RobotTradeRecord,
         execution: Execution, *, now_ms: int,
@@ -3515,10 +3676,41 @@ class PaperRuntime:
             entry_fees = Decimal("0")
         fees_costs_usdt = entry_fees + execution.fee
         expected_side = PositionSide.LONG if trade.direction == "LONG" else PositionSide.SHORT
-        if expected_side is PositionSide.LONG:
-            realized_pnl_usdt = exit_quantity * (exit_price - trade.average_entry)
-        else:
-            realized_pnl_usdt = exit_quantity * (trade.average_entry - exit_price)
+        sign = Decimal(1) if expected_side is PositionSide.LONG else Decimal(-1)
+        realized_pnl_usdt = sign * exit_quantity * (exit_price - trade.average_entry)
+        candidate = self.store.get_robot_candidate(trade.candidate_id)
+        execution_state = (
+            candidate.robot_state.get("execution") or {}
+            if candidate is not None and isinstance(candidate.robot_state, Mapping)
+            else {}
+        )
+        if (isinstance(execution_state, Mapping)
+                and "wedge_be_partial_intent" in execution_state):
+            try:
+                facts = self._attested_wedge_partial_for_protection(
+                    trade, remaining_quantity=exit_quantity,
+                )
+                if (execution.order_id != obligation.order_id
+                        or execution.dedup_key.exec_id != obligation.exec_id
+                        or execution.symbol != trade.symbol
+                        or execution.dedup_key.trading_account_id != trade.trading_account_id
+                        or execution.side is not (
+                            OrderSide.SELL if trade.direction == "LONG" else OrderSide.BUY
+                        )
+                        or execution.exchange_timestamp_ms <= facts.latest_partial_fill_ms
+                        or trade.entry_quantity != facts.closed_quantity + exit_quantity):
+                    raise RuntimeError("Wedge final STOP execution contradicts partial lineage")
+                realized_pnl_usdt += facts.realized_gross_pnl
+                fees_costs_usdt = (
+                    facts.total_entry_fees + facts.realized_exit_fees + execution.fee
+                )
+            except (RuntimeError, ValueError, TypeError, robot_protection.RobotProtectionError):
+                LOGGER.exception(
+                    "Wedge aggregate partial+STOP PnL proof unavailable; "
+                    "preserving unresolved obligation=%s trade_id=%s",
+                    obligation.obligation_id, trade.trade_id,
+                )
+                return obligation
         # Owner-frozen convention (CR-PAPER-PROTECTION-LIFECYCLE-001 section 12):
         # actual_entry_notional_usdt is the attested Robot-owned entry
         # quantity (trade.entry_quantity, proven -- not merely assumed --
@@ -4257,6 +4449,7 @@ class PaperRuntime:
         self, candidate_id: str, *, symbol: str,
         candle: Mapping[str, object] | None,
         book: NormalizedOrderBook,
+        fade_receipt=None,
     ) -> CommandResult:
         """Owner-only resumed BE state machine; opt-in, PAPER-only, no replay.
 
@@ -4301,6 +4494,29 @@ class PaperRuntime:
             return self._robot_wedge_be_reconcile_partial(
                 candidate_id, book=book, worst_case_slippage_ticks=2,
             )
+        if fade_receipt is not None and self._impulse_fade_paper_enabled:
+            # Source and source_time are independently re-attested by the
+            # same serialized owner after position/STOP/fees preflight.
+            close_ms = getattr(fade_receipt, "closed_at_ms", None)
+            if type(close_ms) is not int or close_ms < 180_000 or close_ms % 60_000:
+                return CommandResult(
+                    "be-fade-source-" + candidate_id, CommandResultStatus.BLOCKED,
+                    "be_fade_source_invalid", "Unproven post-fill Wedge flow close",
+                )
+            fade_result = self._robot_wedge_be_partial_once(
+                candidate_id, candle_open_ms=close_ms - 60_000,
+                candle_end_ms=close_ms,
+                candle_high=Decimal(0), candle_low=Decimal(0),
+                book=book, fade_receipt=fade_receipt,
+            )
+            if (fade_result.status is not CommandResultStatus.BLOCKED
+                    or fade_result.reason_code not in (
+                        "be_fade_unproven", "be_fade_no_safe_stop"
+                    )
+                    or candle is None):
+                return fade_result
+            # No fade dispatch/intent was created. Preserve the legacy
+            # closed-M1 +2R path when independently available.
         if candle is None:
             return CommandResult(
                 "be-no-candle-" + candidate_id, CommandResultStatus.BLOCKED,
@@ -4328,7 +4544,7 @@ class PaperRuntime:
         self, candidate_id: str, *,
         candle_open_ms: int, candle_end_ms: int,
         candle_high: Decimal, candle_low: Decimal,
-        book: NormalizedOrderBook,
+        book: NormalizedOrderBook, fade_receipt=None,
     ) -> CommandResult:
         """Guarded one-shot Wedge partial on the serialized PAPER owner.
 
@@ -4435,36 +4651,103 @@ class PaperRuntime:
         if not levels:
             raise RuntimeError("BE executable quote unavailable")
         price = levels[0].price.value
-        # The candle high/low reaching +2R is not enough if the current
-        # executable quote already fell back below that threshold.
-        risk = abs(trade.average_entry - trade.stop_price)
-        if (
-            (trade.direction == "LONG" and price < trade.average_entry + risk * 2)
-            or (trade.direction == "SHORT" and price > trade.average_entry - risk * 2)
-        ):
-            return CommandResult(
-                "be-retraced-" + candidate.candidate_id,
-                CommandResultStatus.BLOCKED, "be_quote_retraced",
-                "Current executable price is no longer at +2R",
+        fade_choice = None
+        if fade_receipt is not None and self._impulse_fade_paper_enabled:
+            # Exactly the same owner, admission, trade/fill and STOP/TAKE
+            # preflight as +2R. Certifying a source is NOT trading authority.
+            instrument = self._instrument_provider(candidate.symbol.value)
+            tick = instrument.tick_size
+            fee = self._market_executor.fee_rate
+            if tick <= 0 or not price.is_finite() or price <= 0:
+                raise RuntimeError("Wedge fade tick/quote unavailable")
+            fade_choice = robot_protection.observe_wedge_impulse_fade_partial(
+                candidate, fade_receipt,
+                first_entry_fill_ms=max(f.exchange_timestamp_ms for f in fills),
+                average_entry=trade.average_entry,
+                original_quantity=trade.entry_quantity,
+                remaining_quantity=position.quantity.value,
+                quantity_step=instrument.quantity_step,
+                total_entry_fees=sum((f.fee for f in fills), Decimal(0)),
+                exit_fee_rate=fee,
+                executable_price=price,
+                active_stop=protection.stop_loss,
+                active_take=protection.take_profit,
+                observed_at_ms=book.received_at_ms,
+                adverse_slippage_bps=tick * Decimal(2) * Decimal(10_000) / price,
             )
-        partial = robot_protection.plan_wedge_partial_at_two_r(
-            trade.direction, pattern=trade.pattern,
-            average_entry=trade.average_entry, initial_stop=trade.stop_price,
-            active_stop=protection.stop_loss, active_take=protection.take_profit,
-            original_quantity=trade.entry_quantity,
-            remaining_quantity=position.quantity.value,
-            quantity_step=self._instrument_provider(candidate.symbol.value).quantity_step,
-            entry_fill_ms=max(f.exchange_timestamp_ms for f in fills),
-            candle_open_ms=candle_open_ms, candle_end_ms=candle_end_ms,
-            candle_high=candle_high, candle_low=candle_low,
-            available_at_ms=book.received_at_ms,
-        )
-        if partial is None:
-            return CommandResult(
-                "be-no-trigger-" + candidate.candidate_id,
-                CommandResultStatus.BLOCKED, "be_not_triggered",
-                "Closed M1 did not prove an unambiguous +2R partial",
+            if fade_choice is None:
+                return CommandResult(
+                    "be-fade-unproven-" + candidate.candidate_id,
+                    CommandResultStatus.BLOCKED, "be_fade_unproven",
+                    "No causal, profitable, owner-bound fading impulse",
+                )
+            partial = fade_choice.partial_quantity
+            remaining = position.quantity.value - partial
+            adverse_price = (
+                price - tick * 2 if trade.direction == "LONG"
+                else price + tick * 2
             )
+            if adverse_price <= 0:
+                raise RuntimeError("BE fade adverse exit price is invalid")
+            gross = (
+                (adverse_price - trade.average_entry) * partial
+                if trade.direction == "LONG"
+                else (trade.average_entry - adverse_price) * partial
+            )
+            # Strict preflight: after a WORSE partial fill, the unchanged
+            # remaining STOP must still be tighten-able to net BE. Actual
+            # post-fill execution prices/fees are re-attested before amendment.
+            try:
+                robot_protection.fee_aware_break_even_stop(
+                    trade.direction, average_entry=trade.average_entry,
+                    original_quantity=trade.entry_quantity,
+                    closed_quantity=partial,
+                    remaining_quantity=remaining,
+                    realized_gross_pnl=gross,
+                    total_entry_fees=sum((f.fee for f in fills), Decimal(0)),
+                    realized_exit_fees=price * partial * fee,
+                    stop_exit_fee_rate=fee, tick_size=tick,
+                    current_stop=protection.stop_loss,
+                    executable_price=price,
+                    worst_case_slippage_ticks=2,
+                )
+            except robot_protection.RobotProtectionError:
+                return CommandResult(
+                    "be-fade-no-safe-stop-" + candidate.candidate_id,
+                    CommandResultStatus.BLOCKED, "be_fade_no_safe_stop",
+                    "Even a conservative fill cannot protect the remainder at net BE",
+                )
+        else:
+            # Legacy +2R mode is unchanged unless the separately authorized
+            # fade source/opt-in is present.
+            risk = abs(trade.average_entry - trade.stop_price)
+            if (
+                (trade.direction == "LONG" and price < trade.average_entry + risk * 2)
+                or (trade.direction == "SHORT" and price > trade.average_entry - risk * 2)
+            ):
+                return CommandResult(
+                    "be-retraced-" + candidate.candidate_id,
+                    CommandResultStatus.BLOCKED, "be_quote_retraced",
+                    "Current executable price is no longer at +2R",
+                )
+            partial = robot_protection.plan_wedge_partial_at_two_r(
+                trade.direction, pattern=trade.pattern,
+                average_entry=trade.average_entry, initial_stop=trade.stop_price,
+                active_stop=protection.stop_loss, active_take=protection.take_profit,
+                original_quantity=trade.entry_quantity,
+                remaining_quantity=position.quantity.value,
+                quantity_step=self._instrument_provider(candidate.symbol.value).quantity_step,
+                entry_fill_ms=max(f.exchange_timestamp_ms for f in fills),
+                candle_open_ms=candle_open_ms, candle_end_ms=candle_end_ms,
+                candle_high=candle_high, candle_low=candle_low,
+                available_at_ms=book.received_at_ms,
+            )
+            if partial is None:
+                return CommandResult(
+                    "be-no-trigger-" + candidate.candidate_id,
+                    CommandResultStatus.BLOCKED, "be_not_triggered",
+                    "Closed M1 did not prove an unambiguous +2R partial",
+                )
         if (
             (trade.direction == "LONG" and not (protection.stop_loss < price < protection.take_profit))
             or (trade.direction == "SHORT" and not (protection.take_profit < price < protection.stop_loss))
@@ -4479,6 +4762,20 @@ class PaperRuntime:
         )
         state = dict(candidate.robot_state)
         execution["wedge_be_partial_intent"] = intent
+        if fade_choice is not None:
+            # Durable provenance is adjacent to, not part of, the immutable
+            # partial intent; the existing restore method stays compatible.
+            execution["wedge_be_fade_source"] = {
+                "version": 1, "candidate_id": fade_choice.candidate_id,
+                "source_revision": fade_choice.source_revision,
+                "source_sha256": fade_choice.source_sha256,
+                "closed_at_ms": fade_receipt.closed_at_ms,
+                "decision_ms": fade_receipt.decision_ms,
+                "partial_quantity": str(partial),
+                "estimated_partial_net_usdt": str(
+                    fade_choice.estimated_partial_net_usdt
+                ),
+            }
         state["execution"] = execution
         self.store.save_robot_candidate_state(
             candidate.candidate_id, status="OPEN", robot_state=state,
