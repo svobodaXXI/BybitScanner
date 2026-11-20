@@ -76,6 +76,18 @@
 6. **Полный causal replay новой стратегии:** по точным ID и каждому исполняемому семейству (Wedge, L-shape, MIRROR, Ikigai Box, впоследствии Triangle) проверить последовательность «новый импульс → защищённый вход → фактический fill → динамический partial → fee-aware STOP → подтверждённый выход → новый допустимый attempt», плюс пропуски, поздние fills, restart, неопределённость ленты и отсутствие лишних ордеров. Не подменять исполнение касанием OHLC и не использовать будущие свечи. Независимая выборка измеряет собственные net PnL после всех комиссий/проскальзывания, drawdown, частоту прибыльных/убыточных сделок, риск, пропущенные входы, качество источника и долю отказов. Не сравнивать со старой неполной стратегией. Пять архивных Wedge STOP не имеют полной publicTrade tape/первоначальной геометрии/decision-time receipt/frozen STOP; их результативность нового алгоритма недоказуема (`DATA_INSUFFICIENT`), поэтому накапливать свежие полные PAPER-эпизоды.
 7. После CI, code review и независимого after-cost доказательства: отдельно разрешённые merge → MONOLITH protected PAPER install → owner-approved PAPER activation и личная приёмка. LIVE запрещён.
 
+### 5.1. Исторические источники SOLUSDT — 20.11.2026, без изменения runtime
+
+Реально найдены открытые дневные каталоги для **октября 2026**:
+
+- trades: \`https://public.bybit.com/trading/SOLUSDT/SOLUSDT2026-10-01.csv.gz\` (индекс \`https://public.bybit.com/trading/SOLUSDT/\`);
+- L2: \`https://quote-saver.bycsi.com/orderbook/linear/SOLUSDT/2026-10-01_SOLUSDT_ob200.data.zip\` (индекс \`https://quote-saver.bycsi.com/orderbook/linear/SOLUSDT/\`);
+- user historical OCT-M5 ZIP contains BTC/ETH/SOL **OHLCV**, not tapes/DOM. These source catalog links prove **listed filenames only**, not byte-level integrity, actual ingestion or complete time-causal evidence.
+
+\`tools/inspect_bybit_historical_pair.py\` performs **offline read-only** preflight on two *already downloaded* matching UTC-day files. It validates symbol/day/window, trade IDs, archived timestamps/price/size, ZIP/JSONL layout, an initial book snapshot, ordered sequence and zero-size updates as **CANCEL_OR_FILL_UNKNOWN**. It rejects malformed, foreign, truncated-by-limit or noncanonical files and emits a JSON diagnostic. Unit tests synthesize an archive pair only to pin these denial rules; CI success is not a claim of real market-data validation.
+
+Because public daily files have no proven **Robot receipt-time** and historical L2 deletion cannot distinguish cancel from fill, all results remain \`historical_archive_only=true\`, \`source_complete_for_live_entry=false\`, \`orderbook_execution_attribution_proven=false\`, \`trading_authorized=false\`. Next: one verified real \`SOLUSDT\` UTC-day pair, checksum/record audit, exact interval alignment with available frozen wedge/arc/closed M1; **never** infer original Scanner geometry from an M5 chart. For matching absorption research, retain L2 \`cts/seq/u\`, public taker ID/time/side, archive-source hashes, and explicit unknown for missing receipt lineage; do not promote a matched time interval into an executable early entry. No VPS/PAPER/account mutation.
+
 ## 6. Что заимствуем из зрелых проектов — без копирования архитектуры
 
 - **NautilusTrader:** источник истины — события состояния ордеров/позиций и независимые risk/execution/reconciliation; применить к campaign/attempt idempotency и журналу фактических partial/STOP.
