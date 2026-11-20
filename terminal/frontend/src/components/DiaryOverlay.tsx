@@ -1442,12 +1442,10 @@ function formatFinrezPnl(value: string): string {
   if (amount === 0) return "0 USDT";
   const sign = amount > 0 ? "+" : "-";
   const magnitude = Math.abs(amount);
-  const digits = magnitude < 0.01 ? 6 : 4;
-  if (magnitude < 10 ** -digits) {
-    return `${sign}<${new Intl.NumberFormat("ru-RU", { minimumFractionDigits: digits }).format(10 ** -digits)} USDT`;
-  }
+  // Avoid displaying a real nonzero PnL as 0,00 after rounding to cents.
+  if (magnitude < 0.005) return `${sign}<0,01 USDT`;
   return `${sign}${new Intl.NumberFormat("ru-RU", {
-    minimumFractionDigits: 2, maximumFractionDigits: digits,
+    minimumFractionDigits: 2, maximumFractionDigits: 2,
   }).format(magnitude)} USDT`;
 }
 
