@@ -195,7 +195,7 @@ export function buildOwnerChartDraft(input: {
  * Manual patterns are unverified examples, not Scanner/Robot admissions.
  */
 export const OWNER_CHART_PATTERNS_V3 = [
-  "Wedge", "Ikigai Box", "Triangle", "Double Top/Bottom",
+  "Wedge", "Ikigai Box", "Triangle", "Broadening",
   "Head and Shoulders", "G-Shaped",
 ] as const;
 export type OwnerChartPatternV3 = typeof OWNER_CHART_PATTERNS_V3[number];
@@ -282,12 +282,12 @@ export function buildOwnerChartDraftV3(input: {
       input.drawings.some((drawing) => drawing.hidden))
     throw new Error("Нарисуйте от одного до восьми видимых инструментов");
   const isBox = input.pattern === "Ikigai Box";
-  const isTwoRay = input.pattern === "Wedge" || input.pattern === "Triangle";
+  const isTwoRay = input.pattern === "Wedge" || input.pattern === "Triangle" || input.pattern === "Broadening";
   if (isBox && (input.drawings.length !== 1 || input.drawings[0].type !== "fibonacci"))
     throw new Error("Для Коробки нарисуйте одну сетку Фибоначчи первого импульса");
   if (isTwoRay && (input.drawings.length !== 2 ||
       input.drawings.some((drawing) => drawing.type !== "ray")))
-    throw new Error("Для клина или треугольника нарисуйте два луча");
+    throw new Error("Для клина, треугольника или рупора нарисуйте два луча");
   if (input.note.length > 1024)
     throw new Error("Комментарий слишком длинный");
   if (lines.some((line) => line.anchors.length === 2 &&
