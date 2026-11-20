@@ -906,6 +906,145 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.executor.create_limit = robot_create_limit
         return host, proof
 
+    def _setup_impulse_early_l_shape_owner(self):
+        """Approved L-shape, no retest yet, original PAPER execution owner."""
+        from dataclasses import replace
+        from robot_entry_flow_evidence import CandidateBoundFlowEvidence
+        from tests.test_robot_pattern_flow_overlay import certificate, transition
+
+        snapshot = _l_shape_snapshot()
+        candidate, created = self.store.create_robot_candidate(
+            candidate_id="l-shape-early-1", trading_account_id=ACCOUNT_ID,
+            symbol=Symbol(SYMBOL), status="APPROVED",
+            signal_snapshot=snapshot, approved_at_ms=1, updated_at_ms=1,
+        )
+        self.assertTrue(created)
+        self.assertEqual(self.monitor.tick(), (candidate.candidate_id,))
+        host = self.store.get_robot_candidate(candidate.candidate_id)
+        self.assertEqual(host.robot_state["phase"], "L_SHAPE_WAITING_RETEST")
+        self.clock.value = T0_MS + 9 * 60_000 + 100
+        now = self.clock.value
+        closed = (now // 60_000) * 60_000
+        proof = replace(
+            certificate(), candidate_id=host.candidate_id,
+            symbol=SYMBOL, state_revision=host.state_revision,
+            closed_at_ms=closed, decision_ms=closed + 10,
+            transition=transition(known_at_ms=closed + 10),
+        )
+        self.monitor._get_pattern_flow_evidence = lambda _: proof
+        self.monitor._get_market_book = lambda _: NormalizedOrderBook(
+            symbol=Symbol(SYMBOL),
+            bids=(PriceLevel(Price(Decimal("101.0")), Quantity(Decimal("10"))),),
+            asks=(PriceLevel(Price(Decimal("101.1")), Quantity(Decimal("10"))),),
+            health=BookHealth.READY, received_at_ms=self.clock.value - 10,
+            available_depth=1,
+        )
+        self.monitor._impulse_early_paper_enabled = True
+
+        def robot_create_limit(request):
+            self.executor.limit_calls.append(request)
+            self.executor._order_counter += 1
+            ordinal = self.executor._order_counter
+            oid = OrderId(f"test-lshape-impulse-{ordinal}")
+            self.store.create_paper_limit(
+                client_action_id=request.client_action_id.value,
+                request_fingerprint=f"lshape-impulse-{ordinal}",
+                order_id=oid, order_link_id=f"lshape-impulse-link-{ordinal}",
+                trading_account_id=ACCOUNT_ID, symbol=Symbol(request.symbol),
+                side=request.side, price=request.limit_price,
+                quantity=request.volume.amount, created_at_ms=self.clock(),
+                robot_entry=True,
+            )
+            return PaperLimitMutationResult(
+                request.client_action_id.value, CommandResultStatus.COMPLETED,
+                "created", oid.value,
+            )
+
+        self.executor.create_limit = robot_create_limit
+        return host
+
+    def test_l_shape_early_impulse_owner_fills_and_protects_without_fake_retest(self):
+        host = self._setup_impulse_early_l_shape_owner()
+        self.assertEqual(self.monitor.tick(), (host.candidate_id,))
+        record = self.store.get_robot_candidate(host.candidate_id)
+        self.assertEqual(record.robot_state["phase"], "L_SHAPE_WAITING_RETEST")
+        owned = record.robot_state["execution"]
+        self.assertEqual(owned["entry_mode"], "IMPULSE_EARLY_LIMIT")
+        self.assertFalse(owned["impulse_entry_intent"]["trading_authorized"])
+        self.assertEqual(owned["impulse_entry_intent"]["quoted_price"], "101.1")
+        self.assertEqual(len(self.executor.limit_calls), 1)
+        self.assertEqual(self.monitor.tick(), ())
+        self.assertEqual(len(self.executor.limit_calls), 1)
+
+        order_id = owned["limit_order_id"]
+        self.assertEqual(
+            self.store.get_robot_paper_limit_by_create_action(
+                ACCOUNT_ID, Symbol(SYMBOL),
+                owned["impulse_entry_intent"]["client_action_id"],
+            ).order_id.value, order_id,
+        )
+        self.executor.fill_resting_limit(
+            order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("101.1"),
+        )
+        self.assertEqual(self.monitor.process_authoritative_fill(SYMBOL), (host.candidate_id,))
+        trade = self.store.get_robot_trade(f"robot-trade-{host.candidate_id}")
+        self.assertEqual(trade.pattern, "L-shape")
+        self.assertEqual(trade.entry_quantity, Decimal("1"))
+        self.assertEqual(self.store.get_robot_candidate(host.candidate_id).status, "OPEN")
+        self.assertEqual(
+            {name for name, _ in self.executor.protection_calls},
+            {"create_stop", "create_take"},
+        )
+
+    def test_l_shape_early_impulse_unknown_submit_never_retries(self):
+        host = self._setup_impulse_early_l_shape_owner()
+        attempts = []
+        def lost_ack(request):
+            attempts.append(request)
+            raise RuntimeError("lost transport acknowledgement")
+        self.executor.create_limit = lost_ack
+        self.assertEqual(self.monitor.tick(), (host.candidate_id,))
+        state = self.store.get_robot_candidate(host.candidate_id).robot_state
+        self.assertIn("impulse_entry_intent", state["execution"])
+        self.assertNotIn("limit_order_id", state["execution"])
+        self.monitor._impulse_early_paper_enabled = False
+        self.assertEqual(self.monitor.tick(), ())
+        self.assertEqual(self.monitor.tick(), ())
+        self.assertEqual(len(attempts), 1)
+        self.assertFalse(self.executor.protection_calls)
+
+    def test_l_shape_early_impulse_stale_unfilled_order_is_cancelled(self):
+        import robot_entry_limit
+        host = self._setup_impulse_early_l_shape_owner()
+        self.assertEqual(self.monitor.tick(), (host.candidate_id,))
+        order_id = self.store.get_robot_candidate(host.candidate_id).robot_state[
+            "execution"]["limit_order_id"]
+        self.clock.advance(robot_entry_limit.IMPULSE_ENTRY_LIMIT_MAX_AGE_MS + 200)
+        self.assertEqual(self.monitor.tick(), (host.candidate_id,))
+        self.assertEqual(self.store.get_paper_limit(order_id, ACCOUNT_ID).status, "cancelled")
+        self.assertEqual(self.store.get_robot_candidate(host.candidate_id).status, "INVALIDATED")
+        self.assertEqual(len(self.executor.limit_calls), 1)
+        self.assertEqual(len(self.executor.cancel_calls), 1)
+        self.assertFalse(self.executor.protection_calls)
+
+    def test_l_shape_early_impulse_partial_fill_gets_native_protection(self):
+        import robot_entry_limit
+        host = self._setup_impulse_early_l_shape_owner()
+        self.assertEqual(self.monitor.tick(), (host.candidate_id,))
+        order_id = self.store.get_robot_candidate(host.candidate_id).robot_state[
+            "execution"]["limit_order_id"]
+        self.executor.fill_resting_limit(
+            order_id, SYMBOL, OrderSide.BUY, Decimal("0.5"), Decimal("101.1"),
+        )
+        self.clock.advance(robot_entry_limit.IMPULSE_ENTRY_LIMIT_MAX_AGE_MS + 200)
+        self.assertEqual(self.monitor.tick(), (host.candidate_id,))
+        self.assertEqual(self.store.get_paper_limit(order_id, ACCOUNT_ID).status, "cancelled")
+        self.assertEqual(self.store.get_robot_candidate(host.candidate_id).status, "OPEN")
+        self.assertEqual(
+            {name for name, _ in self.executor.protection_calls},
+            {"create_stop", "create_take"},
+        )
+
     def test_impulse_early_limit_executes_once_and_uses_native_stop_take(self):
         host, proof = self._setup_impulse_early_wedge_owner()
         self.assertEqual(self.monitor.tick(), ("candidate-1",))
