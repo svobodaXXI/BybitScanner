@@ -102,6 +102,8 @@ describe("Editor two-pair review evidence", () => {
   it("keeps source geometry while storing an independently selected correct pattern", () => {
     expect(EDITOR_REVIEW_PATTERNS.some((item) => item.value === "Rising Wedge")).toBe(true);
     expect(isEditorReviewPattern("Triangle")).toBe(true);
+    expect(isEditorReviewPattern("Broadening")).toBe(true);
+    expect(isEditorReviewPattern("Double Top/Bottom")).toBe(false);
     expect(isEditorReviewPattern("untrusted-new-strategy")).toBe(false);
     const geometryAndPattern = buildEditorGeometryReview({
       ...review, correctedPattern: "Triangle",

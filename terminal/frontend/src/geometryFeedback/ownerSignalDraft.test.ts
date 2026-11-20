@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildOwnerChartDraft, buildOwnerChartDraftV3, buildOwnerSignalDraft } from "./ownerSignalDraft";
+import { OWNER_CHART_PATTERNS_V3, buildOwnerChartDraft, buildOwnerChartDraftV3, buildOwnerSignalDraft } from "./ownerSignalDraft";
 import type { DrawingObject } from "../chart/drawingModel";
 
 const candles = Array.from({ length: 120 }, (_, i) => ({
@@ -169,6 +169,22 @@ describe("untrusted V3 owner annotations", () => {
     });
     expect(draft.pattern).toBe("Ikigai Box");
     expect(draft.proposed_boundaries.map((x) => x.id)).toEqual(["first_impulse_fibonacci"]);
+  });
+
+  it("archives Broadening with two rays and excludes auxiliary DT/DB from new signals", () => {
+    const horn = buildOwnerChartDraftV3({
+      ...base, pattern: "Broadening", formationMovement: "UP",
+      drawings: [ray("upper", [30, 108], [80, 112]), ray("lower", [30, 95], [80, 90])],
+    });
+    expect(horn.pattern).toBe("Broadening");
+    expect(horn.proposed_boundaries).toHaveLength(2);
+    expect(horn.proposed_boundaries.every((line) => line.type === "ray")).toBe(true);
+    expect(horn).not.toHaveProperty("candidate_created");
+    expect([...OWNER_CHART_PATTERNS_V3]).not.toContain("Double Top/Bottom");
+    expect(() => buildOwnerChartDraftV3({
+      ...base, pattern: "Broadening", formationMovement: "UP",
+      drawings: [ray("upper", [30, 108], [80, 112])],
+    })).toThrow(/два луча/);
   });
 
   it("supports a G-shaped example without making a Robot candidate", () => {

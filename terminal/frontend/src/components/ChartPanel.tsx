@@ -216,7 +216,7 @@ export function ChartPanel({
   barsSha256?: string | null;
   savedReviewId?: string | null;
   savedReviewLabel?: GeometryReviewDraft["label"] | null;
-  savedCorrectedPattern?: GeometryReviewDraft["corrected_pattern"] | null;
+  savedCorrectedPattern?: GeometryReviewDraft["corrected_pattern"] | "Double Top/Bottom" | null;
   savedReviewNote?: string | null;
   onSaveGeometryReview?: (review: GeometryReviewDraft & { note: string; idempotency_key: string }) =>
     Promise<{ reviewId: string; label: GeometryReviewDraft["label"] }>;
@@ -306,7 +306,8 @@ export function ChartPanel({
   const [, setExtensionStatus] = useState("");
   const proposalToken = useRef<{ content: string; key: string } | null>(null);
   const [correctPattern, setCorrectPattern] = useState<string>(
-    savedCorrectedPattern ?? originalPattern ?? "",
+    savedCorrectedPattern && isEditorReviewPattern(savedCorrectedPattern)
+      ? savedCorrectedPattern : originalPattern ?? "",
   );
   // Persisted review text belongs to the same immutable review ID as the
   // restored editable rays. A fresh editor must not silently erase the note.
@@ -1112,7 +1113,7 @@ export function ChartPanel({
                   <option value="Wedge">Клин</option>
                   <option value="Ikigai Box">Коробка</option>
                   <option value="Triangle">Треугольник</option>
-                  <option value="Double Top/Bottom">Двойная вершина / дно</option>
+                  <option value="Broadening">Рупор</option>
                   <option value="Head and Shoulders">Голова и плечи</option>
                   <option value="G-Shaped">Г-образный паттерн</option>
                 </select>
@@ -1169,6 +1170,11 @@ export function ChartPanel({
                 <option key={value} value={value}>{label}</option>
               )}
             </select>
+            {savedCorrectedPattern && !isEditorReviewPattern(savedCorrectedPattern) && (
+              <small aria-label="Ранее сохранённое исправление">
+                Ранее сохранённый тип: {savedCorrectedPattern}
+              </small>
+            )}
             <input
               aria-label="Комментарий к исправлению"
               placeholder="Комментарий (необязательно)"

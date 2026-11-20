@@ -94,6 +94,19 @@ def test_pattern_review_is_append_only_and_does_not_change_scanner_geometry(tmp_
     assert len(list(tmp_path.rglob("*.json"))) == 2
 
 
+def test_broadening_correction_is_an_append_only_review(tmp_path):
+    source = _source()
+    existing = deepcopy(source)
+    payload = _payload(source, label="PATTERN_CORRECTED",
+                       token="test-broadening-correction-000001")
+    payload["corrected_pattern"] = "Broadening"
+    review = record_review(payload, source, directory=tmp_path)
+    assert review["submission"]["corrected_pattern"] == "Broadening"
+    assert review["source_boundaries"] == existing["boundaries"]
+    assert latest_review(source["signal_id"], snapshot=source, directory=tmp_path) == review
+    assert source == existing
+
+
 @pytest.mark.parametrize("changes", [
     {"corrected_pattern": ""},
     {"corrected_pattern": "arbitrary robot strategy"},

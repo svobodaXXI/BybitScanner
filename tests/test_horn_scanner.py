@@ -155,6 +155,71 @@ class DeliveryTest(unittest.TestCase):
         self.assertFalse(result)
         photo.assert_not_called()
 
+    def test_owner_editor_opens_exact_archived_horn_candles_and_two_rays(self):
+        from urllib.parse import parse_qs, urlsplit
+        from signal_archive import load_frozen_signal_geometry, load_original_signal
+
+        observation = self.observation()
+        with patch.dict(os.environ, {
+            "BYBITSCANNER_SIGNAL_ARCHIVE_DIR": os.path.join(self.tmp.name, "signal-archive"),
+            "BYBITSCANNER_TERMINAL_HTTPS_URL": "https://workspace.example.org",
+        }), patch.object(horn_scanner.config, "TELEGRAM_ENABLED", True), \
+                patch.object(horn_scanner, "get_telegram_owner_chat_id", return_value="owner"), \
+                patch.object(horn_scanner, "get_telegram_chat_ids", return_value=("owner",)), \
+                patch.object(horn_scanner, "load_memory", side_effect=lambda: self.memory), \
+                patch.object(horn_scanner, "save_memory", side_effect=lambda m: self.memory.update(m)), \
+                patch.object(horn_scanner, "send_photo", return_value={"ok": True, "result": {"message_id": 7}}) as photo:
+            self.assertTrue(horn_scanner.send_broadening_observation(
+                "TESTUSDT", observation, timeframe="5", root=self.root,
+            ))
+            rows = photo.call_args.kwargs["reply_markup"]["inline_keyboard"]
+            buttons = [button for row in rows for button in row]
+            editor = next(button for button in buttons if button["text"] == "✏️ Редактор")
+            params = parse_qs(urlsplit(editor["web_app"]["url"]).query)
+            self.assertEqual(params["mode"], ["EDITOR"])
+            self.assertEqual(params["symbol"], ["TESTUSDT"])
+            self.assertEqual(params["timeframe"], ["5m"])
+            source_id = params["signal_id"][0]
+            self.assertTrue(source_id.startswith("source-original:"))
+            frozen = load_frozen_signal_geometry(source_id)
+            self.assertIsNotNone(frozen)
+            self.assertEqual(load_original_signal([source_id])["pattern"], "Broadening")
+            self.assertEqual(frozen["signal_id"], source_id)
+            self.assertEqual(frozen["bars"][-1]["open_time_ms"], observation["decision_time_ms"])
+            self.assertEqual(len(frozen["bars"]), 112)
+            self.assertEqual({ray["boundary_id"] for ray in frozen["boundaries"]},
+                             {"upper", "lower"})
+            for ray in frozen["boundaries"]:
+                line = observation[ray["boundary_id"] + "_line"]
+                self.assertEqual(ray["kind"], "ray")
+                self.assertEqual(ray["anchors"], [
+                    {"bar_open_time_ms": line["anchor_time_ms"], "price": float(line["anchor_price"])},
+                    {"bar_open_time_ms": line["second_time_ms"], "price": float(line["second_price"])},
+                ])
+            self.assertTrue(any(button["text"] == "↩️ К сигналу" for button in buttons))
+            self.assertNotIn("direction", frozen)
+            self.assertNotIn("trade_side", frozen)
+
+    def test_missing_frozen_horn_source_does_not_send_symbol_only_editor(self):
+        observation = self.observation()
+        observation.pop("_frozen_geometry_candles")
+        with patch.dict(os.environ, {
+            "BYBITSCANNER_SIGNAL_ARCHIVE_DIR": os.path.join(self.tmp.name, "signal-archive"),
+            "BYBITSCANNER_TERMINAL_HTTPS_URL": "https://workspace.example.org",
+        }), patch.object(horn_scanner.config, "TELEGRAM_ENABLED", True), \
+                patch.object(horn_scanner, "get_telegram_owner_chat_id", return_value="owner"), \
+                patch.object(horn_scanner, "get_telegram_chat_ids", return_value=("owner",)), \
+                patch.object(horn_scanner, "load_memory", side_effect=lambda: self.memory), \
+                patch.object(horn_scanner, "save_memory", side_effect=lambda m: self.memory.update(m)), \
+                patch.object(horn_scanner, "send_photo", return_value={"ok": True, "result": {"message_id": 7}}) as photo:
+            self.assertTrue(horn_scanner.send_broadening_observation(
+                "TESTUSDT", observation, timeframe="5", root=self.root,
+            ))
+            buttons = [button for row in photo.call_args.kwargs["reply_markup"]["inline_keyboard"]
+                       for button in row]
+            self.assertFalse(any(button["text"] == "✏️ Редактор" for button in buttons))
+            self.assertFalse(any(button["text"] == "↩️ К сигналу" for button in buttons))
+
     def test_upgrade_to_mature_is_delivered_once_more(self):
         preliminary = self.observation()
         mature = dict(preliminary, stage="MATURE",

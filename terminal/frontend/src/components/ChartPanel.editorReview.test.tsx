@@ -33,6 +33,17 @@ vi.mock("lightweight-charts", () => ({
   }),
 }));
 
+it("shows legacy DT/DB review as historical text, never a selectable pattern", () => {
+  render(<ChartPanel candles={[]} tickSize={null} editorMode
+    signalIdentity="signal-legacy" originalPattern="Rising Wedge"
+    savedCorrectedPattern="Double Top/Bottom"
+    snapshotRevision={"a".repeat(64)} barsSha256={"b".repeat(64)} />);
+  const select = screen.getByRole("combobox", { name: "Правильный паттерн" });
+  expect(select).toHaveValue("Rising Wedge");
+  expect(within(select).queryByRole("option", { name: /Двойная вершина/ })).toBeNull();
+  expect(screen.getByLabelText("Ранее сохранённое исправление")).toHaveTextContent("Double Top/Bottom");
+});
+
 it("keeps correction form left and all three quick actions bottom-right", async () => {
   const onShowCurrentEditorChart = vi.fn();
   const onExtendEditorHistory = vi.fn().mockResolvedValue(undefined);
@@ -45,6 +56,8 @@ it("keeps correction form left and all three quick actions bottom-right", async 
   />);
   const selected = screen.getByRole("combobox", { name: "Правильный паттерн" });
   expect(selected).toHaveValue("Rising Wedge");
+  expect(within(selected).getByRole("option", { name: "Рупор" })).toHaveValue("Broadening");
+  expect(within(selected).queryByRole("option", { name: "Двойная вершина / дно" })).toBeNull();
   expect(screen.getByLabelText("Название исходного сигнала")).toHaveTextContent("Rising Wedge");
   expect(screen.queryByRole("combobox", { name: "Оценка сигнала" })).not.toBeInTheDocument();
   fireEvent.change(selected, { target: { value: "Triangle" } });
@@ -71,7 +84,10 @@ it("keeps correction form left and all three quick actions bottom-right", async 
   expect(onShowCurrentEditorChart).toHaveBeenCalledOnce();
   fireEvent.click(screen.getByRole("button", { name: "Создать новый сигнал" }));
   expect(screen.getByRole("button", { name: "Вернуться к исправлению" })).toBeInTheDocument();
-  expect(screen.getByRole("combobox", { name: "Тип нового сигнала" })).toHaveValue("Wedge");
+  const newPattern = screen.getByRole("combobox", { name: "Тип нового сигнала" });
+  expect(newPattern).toHaveValue("Wedge");
+  expect(within(newPattern).getByRole("option", { name: "Рупор" })).toHaveValue("Broadening");
+  expect(within(newPattern).queryByRole("option", { name: "Двойная вершина / дно" })).toBeNull();
   expect(screen.getByRole("combobox", { name: "Направление движения графика" })).toBeInTheDocument();
   expect(within(bottom as HTMLElement).queryByRole("button", { name: "Создать новый сигнал" })).toBeNull();
 });
