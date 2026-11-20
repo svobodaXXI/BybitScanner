@@ -26,6 +26,7 @@ def certified_snapshot(
     previous_kline: object,
     current_kline: object,
     *, closed_at_ms: int, decision_ms: int,
+    source_only: bool = False,
 ) -> dict | None:
     """Pure, bounded source evidence; NULL unless every independent fence holds.
 
@@ -33,6 +34,8 @@ def certified_snapshot(
     same pass, after closure. This code never turns a diagnostic 'timely WS
     observed only' into a completeness claim without full independent facts.
     """
+    if type(source_only) is not bool:
+        return None
     if (type(closed_at_ms) is not int or closed_at_ms <= 120_000
             or closed_at_ms % 60_000 or type(decision_ms) is not int
             or not closed_at_ms <= decision_ms <=
@@ -99,7 +102,10 @@ def certified_snapshot(
         candle_open=candle_open, candle_close=close,
         candle_high=high, candle_low=low, decision_ms=decision_ms,
     )
-    if signal is None or not permits_paper_entry(signal.direction, transition, oi_mode="OFF"):
+    if not source_only and (
+        signal is None
+        or not permits_paper_entry(signal.direction, transition, oi_mode="OFF")
+    ):
         return None
 
     evidence = "\n".join(
@@ -111,10 +117,15 @@ def certified_snapshot(
         "symbol": symbol,
         "flow_observation": {
             "transition": transition,
-            "direction": signal.direction,
+            # A source-only fact is NOT a fresh directional entry signal.
+            # Consumers must bind the transition to their original host.
+            "direction": (signal.direction if not source_only else None),
             "known_at_ms": decision_ms,
-            "closed_price": str(signal.closed_price),
-            "structural_extreme": str(signal.structural_extreme),
+            "closed_price": str(close),
+            "structural_extreme": (
+                str(signal.structural_extreme)
+                if signal is not None and not source_only else None
+            ),
         },
         "flow_source": {
             "kind": "BYBIT_TRIPLE_CLOSED_M1_CERTIFIED",
