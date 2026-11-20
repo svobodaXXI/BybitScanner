@@ -142,6 +142,45 @@ def read_approved_pattern_candidates(database_path: Path) -> tuple:
 
 
 
+def read_active_pattern_candidates(database_path: Path) -> tuple:
+    """Query-only source for the SAME Robot APPROVED and OPEN host IDs."""
+    path = Path(database_path)
+    connection = sqlite3.connect(
+        path.resolve().as_uri() + "?mode=ro", uri=True,
+        timeout=1, isolation_level=None,
+    )
+    try:
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA query_only=ON")
+        connection.execute("PRAGMA busy_timeout=1000")
+        store = SQLiteStore(connection, path, 1000)
+        return store.load_robot_candidates_by_status(_PAPER, ("APPROVED", "OPEN"))
+    finally:
+        connection.close()
+
+
+def _open_wedge_flow_scope(record) -> bool:
+    """Causal OPEN source observation only; no authority over its actual trade."""
+    try:
+        state, snapshot = record.robot_state, record.signal_snapshot
+        return (
+            record.status == "OPEN"
+            and isinstance(state, Mapping) and isinstance(snapshot, Mapping)
+            and snapshot.get("pattern") in ("Falling Wedge", "Rising Wedge")
+            and state.get("direction") == (
+                "LONG" if snapshot["pattern"] == "Falling Wedge" else "SHORT"
+            )
+            and state.get("pattern") == snapshot.get("pattern")
+            and state.get("phase") in ("WAITING_RETEST", "RETEST_DETECTED")
+            and isinstance(record.candidate_id, str) and bool(record.candidate_id)
+            and type(record.state_revision) is int and record.state_revision >= 0
+            and isinstance(record.symbol.value, str)
+            and record.symbol.value.endswith("USDT")
+        )
+    except (AttributeError, KeyError, TypeError):
+        return False
+
+
 # Sub-minute observation only. These local windows are intentionally NOT
 # equivalent to independent REST+closed-M1 certification or entry authority.
 EARLY_PREVIEW_WINDOW_MS = 15_000
@@ -225,7 +264,7 @@ class PatternFlowObserver:
         self._db_path = Path(database_path)
         self._clock = clock_ms or (lambda: int(time.time() * 1000))
         self._get_candidates = get_candidates or (
-            lambda: read_approved_pattern_candidates(self._db_path)
+            lambda: read_active_pattern_candidates(self._db_path)
         )
         self._lock = threading.Lock()
         # A certificate is usable only while its originating observation
@@ -258,8 +297,9 @@ class PatternFlowObserver:
         chosen = None
         priority = None
         for record in candidates:
-            if (record.status != "APPROVED"
-                    or record.signal_snapshot.get("pattern") not in allowed):
+            if (record.status not in ("APPROVED", "OPEN")
+                    or record.signal_snapshot.get("pattern") not in allowed
+                    or (record.status == "OPEN" and not _open_wedge_flow_scope(record))):
                 continue
             symbol = record.symbol.value
             state = record.robot_state or {}
@@ -279,8 +319,11 @@ class PatternFlowObserver:
             }
             if phase not in warmable[pattern]:
                 continue
-            score = (0 if existing_pattern_entry_scope(record) is not None else 1,
-                     str(record.candidate_id))
+            score = (
+                -1 if _open_wedge_flow_scope(record)
+                else 0 if existing_pattern_entry_scope(record) is not None else 1,
+                str(record.candidate_id),
+            )
             if priority is None or score < priority:
                 chosen, priority = symbol, score
         if chosen != self._flow_probe_symbol:
@@ -499,8 +542,9 @@ class PatternFlowObserver:
             # No guessed Box/foreign breakout timestamps are admitted.
             entry_scope = existing_pattern_entry_scope(record)
             breakout_ms = canonical_host_breakout_known_at_ms(record)
-            if (entry_scope is not None or (
-                    breakout_ms is not None and breakout_ms <= closed)):
+            if (_open_wedge_flow_scope(record)
+                    or entry_scope is not None
+                    or (breakout_ms is not None and breakout_ms <= closed)):
                 if record.symbol.value in contexts:
                     eligible.append(record)
 
@@ -569,9 +613,13 @@ class PatternFlowObserver:
                         or after.get("invalid_frames") != before.get("invalid_frames")
                         or original != observed):
                     continue
+                # OPEN Wedge needs certified FADING facts, not a fresh
+                # standalone acceleration/entry signal.
+                open_wedge = _open_wedge_flow_scope(record)
                 result = certified_snapshot(
                     before, recent, previous, current,
                     closed_at_ms=closed, decision_ms=decision,
+                    source_only=open_wedge,
                 )
                 if result is None:
                     continue
@@ -583,7 +631,10 @@ class PatternFlowObserver:
                 receipt = CandidateBoundFlowEvidence(
                     candidate_id=record.candidate_id,
                     symbol=record.symbol.value,
-                    direction=observed_flow["direction"],
+                    direction=(
+                        record.robot_state["direction"]
+                        if open_wedge else observed_flow["direction"]
+                    ),
                     state_revision=record.state_revision,
                     source_kind=source["kind"],
                     closed_at_ms=source["closed_at_ms"],
