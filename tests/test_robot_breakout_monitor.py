@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import robot_l_shape
 import robot_protection
@@ -3029,6 +3029,47 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertEqual(trade.average_entry, Decimal("100.2"))
         self.assertEqual(trade.stop_price, Decimal("100.2") * Decimal("0.985"))
         self.assertEqual(trade.take_price, Decimal("110"))
+
+
+class RobotBoxSourceAccountFenceTests(unittest.TestCase):
+    """A durable Box source belongs to the same Robot trading account."""
+
+    def test_recovered_box_source_must_match_monitor_account(self):
+        from terminal.application.robot_breakout_monitor import RobotBreakoutMonitorError
+
+        monitor = object.__new__(RobotBreakoutMonitor)
+        monitor._account_id = TradingAccountId("paper")
+        source_id = "box-plan-original"
+        record = SimpleNamespace(
+            candidate_id="approved-box-child", symbol=Symbol(SYMBOL),
+            robot_state={"source_box_candidate_id": source_id},
+        )
+        store = Mock()
+        monitor._store = lambda: store
+
+        for account in (TradingAccountId("other-paper"), TradingAccountId("paper")):
+            source = SimpleNamespace(
+                candidate_id=source_id, status="BOX_PLAN_ONLY",
+                symbol=Symbol(SYMBOL), trading_account_id=account,
+            )
+            store.get_robot_candidate.return_value = source
+            with self.subTest(source_account=account):
+                if account != monitor._account_id:
+                    with self.assertRaisesRegex(
+                        RobotBreakoutMonitorError, "Box source plan is unavailable or mismatched",
+                    ):
+                        monitor._box_source(record, {})
+                else:
+                    self.assertIs(monitor._box_source(record, {}), source)
+                store.get_robot_candidate.assert_called_with(source_id)
+
+        # Even a same-account plan never belongs to a different symbol.
+        store.get_robot_candidate.return_value = SimpleNamespace(
+            status="BOX_PLAN_ONLY", symbol=Symbol("OTHERUSDT"),
+            trading_account_id=monitor._account_id,
+        )
+        with self.assertRaises(RobotBreakoutMonitorError):
+            monitor._box_source(record, {})
 
 
 class RobotBreakoutMonitorRealThreadTests(unittest.TestCase):

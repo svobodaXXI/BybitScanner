@@ -757,8 +757,11 @@ class RobotBreakoutMonitor:
         if (
             source is None
             or source.status != "BOX_PLAN_ONLY"
+            or source.trading_account_id != self._account_id
             or source.symbol != record.symbol
         ):
+            # A source ID is not proof of ownership. Never construct Box
+            # orders/protection using a plan from another trading account.
             raise RobotBreakoutMonitorError("Box source plan is unavailable or mismatched")
         return source
 
