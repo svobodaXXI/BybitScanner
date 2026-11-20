@@ -174,6 +174,53 @@ class RobotBePartialOwnerPaperTests(unittest.TestCase):
                 self.assertEqual(monitor.tick(), (self.candidate_id,))
         self.assertEqual(len(self.runtime.store.load_executions()), original_execs + 1)
 
+    def test_unqualified_fade_does_not_mask_original_plus_two_r(self):
+        from dataclasses import replace
+        from unittest.mock import patch
+
+        receipt = self._fade_receipt()
+        receipt = replace(receipt, transition=replace(
+            receipt.transition, buy_impact_fading=False,
+        ))
+        now_ms = receipt.closed_at_ms + 5_000
+        self.runtime._impulse_fade_paper_enabled = True
+        monitor = self._enable_auto()
+        monitor._impulse_fade_paper_enabled = True
+        monitor._get_pattern_flow_evidence = lambda _record: receipt
+        before = len(self.runtime.store.load_executions())
+        with patch("time.time", return_value=now_ms / 1000):
+            with patch.object(self.runtime, "_streamed_book", side_effect=lambda _s:
+                              _crossing_book(self.symbol.value, bid="64800", ask="64800.5")):
+                self.assertEqual(monitor.tick(), (self.candidate_id,))
+                self.assertEqual(len(self.runtime.store.load_executions()), before + 1)
+                execution = self.runtime.store.get_robot_candidate(
+                    self.candidate_id,
+                ).robot_state["execution"]
+                self.assertIn("wedge_be_partial_intent", execution)
+                self.assertNotIn("wedge_be_fade_source", execution)
+
+    def test_invalid_fade_without_legacy_bar_never_forces_partial(self):
+        from dataclasses import replace
+        from unittest.mock import patch
+
+        receipt = self._fade_receipt()
+        receipt = replace(receipt, source_complete=False)
+        self.runtime._impulse_fade_paper_enabled = True
+        monitor = self._enable_auto()
+        monitor._impulse_fade_paper_enabled = True
+        monitor._get_pattern_flow_evidence = lambda _record: receipt
+        monitor._get_closed_candle = lambda _symbol: None
+        before = len(self.runtime.store.load_executions())
+        with patch("time.time", return_value=(receipt.closed_at_ms + 5_000) / 1000):
+            with patch.object(self.runtime, "_streamed_book", side_effect=lambda _s:
+                              _crossing_book(self.symbol.value, bid="64800", ask="64800.5")):
+                self.assertEqual(monitor.tick(), ())
+        self.assertEqual(len(self.runtime.store.load_executions()), before)
+        execution = self.runtime.store.get_robot_candidate(
+            self.candidate_id,
+        ).robot_state["execution"]
+        self.assertNotIn("wedge_be_partial_intent", execution)
+
     def test_dynamic_fade_invalid_source_cannot_dispatch_or_disarm_stop(self):
         from dataclasses import replace
         from unittest.mock import patch
