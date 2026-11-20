@@ -3257,6 +3257,7 @@ class ImpulseEarlyWedgeResearchOwnerTests(unittest.TestCase):
         fixture = PostBreakoutWedgeImpulseQuoteTests
         holder = object.__new__(RobotBreakoutMonitor)
         holder._account_id = TradingAccountId("paper" if paper else "live")
+        holder._impulse_early_paper_enabled = False
         holder._get_pattern_flow_evidence = (
             (lambda _r: fixture.receipt()) if with_flow else None
         )
