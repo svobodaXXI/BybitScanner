@@ -1960,51 +1960,95 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertEqual(self.store.get_position_projection(position_key).side, PositionSide.LONG)
 
     def test_repeated_tick_during_pending_emergency_close_is_idempotent_and_no_new_entry(self):
-        """While an emergency close is pending (ambiguous outcome), repeated
-        ticks must keep reconciling the same close -- never open a new entry
-        -- and once the close genuinely completes and reads back FLAT, the
-        candidate becomes terminal exactly once."""
+        """Unknown close outcome holds the candidate; a repeated tick never
+        sends another aggregate full_close, regardless of the stable label."""
         self._create_candidate(start_width=0.0)
         self._drive_to_retest_detected()
-        self._place_legacy_unfiltered_limit()  # reproduce an older, already-admitted order
+        self._place_legacy_unfiltered_limit()
         order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
-        self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"))
-        limit_calls_before = list(self.executor.limit_calls)
-        market_calls_before = list(self.executor.market_calls)
-
+        self.executor.fill_resting_limit(
+            order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"),
+        )
         self.executor.full_close_status = CommandResultStatus.REJECTED
-        first_advance = self.monitor.tick()
-        self.assertEqual(first_advance, ("candidate-1",))
+        self.monitor.tick()
         record = self.store.get_robot_candidate("candidate-1")
-        self.assertEqual(record.status, "APPROVED")
-        self.assertEqual(self.executor.limit_calls, limit_calls_before)  # no duplicate LIMIT
-        self.assertEqual(self.executor.market_calls, market_calls_before)  # no duplicate Market entry
+        intent = record.robot_state["execution"]["emergency_close_intent"]
+        self.assertTrue(record.robot_state["execution"]["emergency_close_pending"])
+        self.assertEqual(intent["entry_order_ids"], [order_id])
+        self.assertEqual(intent["entry_quantity"], "1")
+        self.assertEqual(intent["symbol"], SYMBOL)
+        self.assertEqual(intent["account_id"], "paper")
+        self.assertEqual(intent["dispatch_outcome"], "UNKNOWN")
+        self.assertEqual(len(intent["entry_execution_ids"]), 1)
+        self.assertEqual(len([x for x in self.executor.protection_calls if x[0] == "full_close"]), 1)
 
-        # Recovery: the exchange/runtime now genuinely accepts the close.
+        # A later tick cannot repeat even if the transport would now succeed.
         self.executor.full_close_status = CommandResultStatus.COMPLETED
-        second_advance = self.monitor.tick()
-
-        self.assertEqual(second_advance, ("candidate-1",))
-        record = self.store.get_robot_candidate("candidate-1")
-        self.assertEqual(record.status, "INVALIDATED")
-        self.assertIsNone(self.store.get_robot_trade("robot-trade-candidate-1"))
+        self.monitor.tick()
+        self.monitor.tick()
+        self.assertEqual(self.store.get_robot_candidate("candidate-1").status, "APPROVED")
+        self.assertEqual(len([x for x in self.executor.protection_calls if x[0] == "full_close"]), 1)
         self.assertEqual(
-            [name for name, _ in self.executor.protection_calls],
-            ["full_close", "full_close"],
+            self.store.get_robot_runtime_state(ACCOUNT_ID).recovery_status,
+            "RECONCILIATION_REQUIRED",
         )
-        # Both attempts used the exact same deterministic action id.
-        first_request, second_request = (
-            call[1] for call in self.executor.protection_calls
+        self.assertEqual(
+            self.store.get_position_projection(
+                PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
+            ).side, PositionSide.LONG,
         )
-        self.assertEqual(first_request.client_action_id, second_request.client_action_id)
-        self.assertEqual(self.executor.limit_calls, limit_calls_before)
-        self.assertEqual(self.executor.market_calls, market_calls_before)
 
-        # Terminal: a further tick must not attempt yet another close.
-        third_advance = self.monitor.tick()
-        self.assertEqual(third_advance, ())
-        self.assertEqual(len(self.executor.protection_calls), 2)
+    def test_emergency_intent_is_durable_before_first_full_close(self):
+        self._create_candidate(start_width=0.0)
+        self._drive_to_retest_detected()
+        self._place_legacy_unfiltered_limit()
+        order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
+        self.executor.fill_resting_limit(
+            order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"),
+        )
+        original_close = self.executor.full_close
 
+        def assert_prepared(request):
+            persisted = self.store.get_robot_candidate("candidate-1")
+            self.assertEqual(persisted.status, "APPROVED")
+            execution = persisted.robot_state["execution"]
+            self.assertTrue(execution["emergency_close_pending"])
+            intent = execution["emergency_close_intent"]
+            self.assertEqual(intent["client_action_id"], request.client_action_id.value)
+            self.assertEqual(intent["entry_order_ids"], [order_id])
+            self.assertEqual(intent["entry_position_version"],
+                             self.store.get_position_projection(
+                                 PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
+                             ).version)
+            self.assertEqual(len(intent["entry_execution_ids"]), 1)
+            return original_close(request)
+
+        with patch.object(self.executor, "full_close", side_effect=assert_prepared) as close:
+            self.monitor.tick()
+        self.assertEqual(close.call_count, 1)
+        self.assertEqual(self.store.get_robot_candidate("candidate-1").status, "INVALIDATED")
+
+    def test_emergency_close_transport_loss_remains_fenced_across_ticks(self):
+        self._create_candidate(start_width=0.0)
+        self._drive_to_retest_detected()
+        self._place_legacy_unfiltered_limit()
+        order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
+        self.executor.fill_resting_limit(
+            order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"),
+        )
+        with patch.object(
+            self.executor, "full_close", side_effect=RuntimeError("unknown transport result"),
+        ) as close:
+            self.monitor.tick()
+            self.monitor.tick()
+            self.assertEqual(close.call_count, 1)
+        candidate = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(candidate.status, "APPROVED")
+        self.assertTrue(candidate.robot_state["execution"]["emergency_close_pending"])
+        self.assertEqual(
+            self.store.get_robot_runtime_state(ACCOUNT_ID).recovery_status,
+            "RECONCILIATION_REQUIRED",
+        )
 
     def test_finalize_trade_fences_without_protection_when_entry_projection_is_missing(self):
         self._create_candidate()
