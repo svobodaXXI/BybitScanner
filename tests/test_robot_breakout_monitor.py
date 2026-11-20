@@ -2059,14 +2059,16 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.executor.fill_resting_limit(
             order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"),
         )
-        original_save = self.store.save_robot_candidate_state
+        # Monitor keeps its own per-thread SQLiteStore connection.
+        monitor_store = self.monitor._store()
+        original_save = monitor_store.save_robot_candidate_state
 
         def fail_intent(candidate_id, **kwargs):
             if (kwargs["robot_state"].get("execution") or {}).get("emergency_close_intent"):
                 raise RuntimeError("durable intent write failed")
             return original_save(candidate_id, **kwargs)
 
-        with patch.object(self.store, "save_robot_candidate_state", side_effect=fail_intent):
+        with patch.object(monitor_store, "save_robot_candidate_state", side_effect=fail_intent):
             self.monitor.tick()
         self.assertEqual(
             [name for name, _ in self.executor.protection_calls if name == "full_close"],
