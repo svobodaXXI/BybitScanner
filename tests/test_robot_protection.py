@@ -935,5 +935,140 @@ class MinEntryRrTests(unittest.TestCase):
             self.assertEqual(robot_protection.wedge_min_entry_rr(), Decimal("5"))
 
 
+
+
+class WedgeImpulseFadePartialResearchTests(unittest.TestCase):
+    """No hard percentage target, no order or STOP permission from a flow cue."""
+
+    @staticmethod
+    def case(direction="LONG"):
+        from dataclasses import replace
+        from types import SimpleNamespace
+        from robot_entry_flow_evidence import CandidateBoundFlowEvidence, FlowTransition
+
+        pattern = "Falling Wedge" if direction == "LONG" else "Rising Wedge"
+        host = SimpleNamespace(
+            status="OPEN", candidate_id="wedge-1", state_revision=4,
+            symbol=SimpleNamespace(value="BTCUSDT"),
+            signal_snapshot={"pattern": pattern},
+            robot_state={"direction": direction, "phase": "WAITING_RETEST"},
+        )
+        original_flow = FlowTransition(
+            known_at_ms=360_100,
+            current_delta_fraction=Decimal("0.21" if direction == "LONG" else "-0.21"),
+            current_price_change_bps=Decimal("3" if direction == "LONG" else "-3"),
+            buy_wave_accelerating=False, sell_wave_accelerating=False,
+            buy_impact_fading=(direction == "LONG"),
+            sell_impact_fading=(direction == "SHORT"),
+            bid_refill_observed=None, ask_refill_observed=None,
+            buy_absorption_candidate=None, sell_absorption_candidate=None,
+        )
+        receipt = CandidateBoundFlowEvidence(
+            candidate_id="wedge-1", symbol="BTCUSDT",
+            direction=direction, state_revision=4,
+            source_kind="BYBIT_TRIPLE_CLOSED_M1_CERTIFIED",
+            closed_at_ms=360_000, decision_ms=360_100,
+            print_facts_sha256="a" * 64,
+            source_complete=True, receipt_cutoff_proven=True,
+            transport_generation_proven=True,
+            transition=original_flow,
+        )
+        return host, receipt
+
+    @staticmethod
+    def evaluate(host, receipt, **overrides):
+        from robot_protection import observe_wedge_impulse_fade_partial
+
+        defaults = {
+            "first_entry_fill_ms": 180_000,
+            "average_entry": Decimal("100"),
+            "original_quantity": Decimal("4"),
+            "remaining_quantity": Decimal("4"),
+            "quantity_step": Decimal("0.1"),
+            "total_entry_fees": Decimal("0.24"),
+            "exit_fee_rate": Decimal("0.0006"),
+            "executable_price": Decimal("100.15") if receipt.direction == "LONG"
+                                else Decimal("99.85"),
+            "active_stop": Decimal("99") if receipt.direction == "LONG"
+                           else Decimal("101"),
+            "active_take": Decimal("104") if receipt.direction == "LONG"
+                           else Decimal("96"),
+            "observed_at_ms": 360_200,
+            "adverse_slippage_bps": Decimal("1"),
+        }
+        defaults.update(overrides)
+        return observe_wedge_impulse_fade_partial(host, receipt, **defaults)
+
+    def test_long_and_short_partial_respond_to_fade_below_third_percent(self):
+        for side in ("LONG", "SHORT"):
+            with self.subTest(side=side):
+                host, flow = self.case(side)
+                choice = self.evaluate(host, flow)
+                self.assertIsNotNone(choice)
+                self.assertEqual(choice.partial_quantity, Decimal("1.0"))
+                self.assertGreater(choice.estimated_partial_net_usdt, Decimal("0"))
+                self.assertFalse(choice.trading_authorized)
+                self.assertEqual(choice.candidate_id, host.candidate_id)
+
+    def test_no_partial_if_costs_or_slippage_absorb_the_move(self):
+        host, flow = self.case()
+        for kwargs in (
+            {"executable_price": Decimal("100.12")},
+            {"adverse_slippage_bps": Decimal("5")},
+            {"total_entry_fees": Decimal("0.8")},
+            {"exit_fee_rate": Decimal("0.001")},
+            {"remaining_quantity": Decimal("3")},
+            {"quantity_step": Decimal("2")},
+        ):
+            with self.subTest(kwargs=kwargs):
+                self.assertIsNone(self.evaluate(host, flow, **kwargs))
+
+    def test_fading_not_just_delta_or_acceleration_is_required(self):
+        from dataclasses import replace
+
+        host, receipt = self.case()
+        for transition in (
+            replace(receipt.transition, buy_impact_fading=False),
+            replace(receipt.transition, buy_wave_accelerating=True),
+        ):
+            with self.subTest(transition=transition):
+                self.assertIsNone(self.evaluate(
+                    host, replace(receipt, transition=transition),
+                ))
+
+    def test_open_owner_and_causal_source_binding_never_guess(self):
+        from dataclasses import replace
+
+        host, receipt = self.case()
+        for changed in (
+            {"candidate_id": "foreign"},
+            {"state_revision": 5},
+            {"symbol": "ETHUSDT"},
+            {"direction": "SHORT"},
+            {"source_complete": False},
+            {"receipt_cutoff_proven": False},
+            {"transport_generation_proven": False},
+            {"closed_at_ms": 240_000},
+            {"decision_ms": 360_201},
+            {"print_facts_sha256": "bad"},
+        ):
+            with self.subTest(changed=changed):
+                self.assertIsNone(self.evaluate(host, replace(receipt, **changed)))
+        host.status = "APPROVED"
+        self.assertIsNone(self.evaluate(host, receipt))
+
+    def test_no_fade_on_early_or_unprotected_position(self):
+        host, flow = self.case()
+        for args in (
+            {"first_entry_fill_ms": 240_000},
+            {"observed_at_ms": 480_001},
+            {"active_stop": Decimal("100.25")},
+            {"active_take": Decimal("100.10")},
+            {"executable_price": Decimal("99.99")},
+        ):
+            with self.subTest(args=args):
+                self.assertIsNone(self.evaluate(host, flow, **args))
+
+
 if __name__ == "__main__":
     unittest.main()
