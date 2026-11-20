@@ -34,6 +34,10 @@ def mirror(*, confirmation_close=1_060_000, symbol="LABUSDT"):
     snap = lshape(breakout_ms=confirmation_close - 60_000, symbol=symbol)
     snap["pattern"] = "MIRROR"
     snap["mirror_entry"] = snap.pop("l_shape") | {
+        "level_id": "lvl-0123456789abcdef01234567",
+        "level_timeframe": "1", "level_source": "swing_zone",
+        "level_pattern": None, "level_side": "lower",
+        "level_breakout_direction": "DOWN", "level_breakout_close_ms": 940_000,
         "confirmation": {
             "close_time_ms": confirmation_close,
             "timeframe": "1",
