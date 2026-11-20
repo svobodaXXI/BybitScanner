@@ -216,6 +216,11 @@ def observe_broadening(symbol, candles, *, timeframe, wedge_result=None, chart_d
     os.makedirs(os.path.dirname(chart), exist_ok=True)
     render_broadening_chart(closed, formation, chart, symbol=symbol, timeframe=timeframe)
     observation["formation"] = formation
+    # Owner Editor must reopen the exact CLOSED detector frame, never refetch
+    # current symbol candles or infer geometry from the rendered PNG. Keep this
+    # private in-process only: the durable event above contains paths/indices,
+    # not a second unbounded candle serialization.
+    observation["_frozen_geometry_candles"] = closed.copy(deep=True)
     return observation
 
 
@@ -244,10 +249,27 @@ def send_broadening_observation(symbol, observation, *, timeframe, test_mode=Fal
     owner_id = get_telegram_owner_chat_id()
     source_token = None
     if owner_id and not test_mode:
+        frozen = observation.get("_frozen_geometry_candles")
+        geometry = None
+        if hasattr(frozen, "itertuples"):
+            try:
+                geometry = {
+                    side + "_line": {
+                        "model": "anchor",
+                        "anchor_index": int(observation[side + "_line"]["anchor_index"]),
+                        "second_index": int(observation[side + "_line"]["second_index"]),
+                        "anchor_price": float(observation[side + "_line"]["anchor_price"]),
+                        "second_price": float(observation[side + "_line"]["second_price"]),
+                    }
+                    for side in ("upper", "lower")
+                }
+            except (KeyError, TypeError, ValueError, OverflowError):
+                geometry = None
         source_token, _ = archive_source_chart(
             symbol=symbol, timeframe=timeframe, pattern="Broadening",
             text=caption, chart_path=observation["chart_path"],
             formation_id=observation.get("identity"),
+            geometry=geometry, frozen_candles=frozen,
         )
 
     all_ok, sent_new = True, False
@@ -259,7 +281,17 @@ def send_broadening_observation(symbol, observation, *, timeframe, test_mode=Fal
         try:
             is_owner = bool(owner_id and chat_id == owner_id)
             markup = build_tradingview_keyboard(
-                symbol, timeframe, include_review_actions=is_owner)
+                symbol, timeframe, include_review_actions=is_owner,
+                signal_id=(f"source-original:{source_token}" if is_owner and source_token else None),
+            )
+            if is_owner and not source_token:
+                # No exact verified OHLC/rays means no Editor action: a
+                # symbol-only link would misleadingly show today's candles.
+                markup["inline_keyboard"] = [
+                    [button for button in row if button.get("text") != "✏️ Редактор"]
+                    for row in markup["inline_keyboard"]
+                ]
+                markup["inline_keyboard"] = [row for row in markup["inline_keyboard"] if row]
             if is_owner and source_token:
                 markup["inline_keyboard"].insert(0, [{
                     "text": "↩️ К сигналу",
