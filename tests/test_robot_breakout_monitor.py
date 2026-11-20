@@ -478,9 +478,13 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertEqual(self.store.get_robot_candidate(candidate.candidate_id).status,
                          "APPROVED")
 
-        # Missing flow observation falls back to the exact same protected
-        # ordinary Box entry preparation, not a new impulse strategy.
+        # With flow opt-in bound, an unknown source cannot submit an entry.
+        # Removing the opt-in observer restores the original canonical Box
+        # order owner without constructing a new impulse strategy.
         self.monitor._get_pattern_flow_evidence = lambda _: None
+        self.assertEqual(self.monitor.tick(), ())
+        self.assertEqual(self.store.load_box_order_ownership(source.candidate_id), ())
+        self.monitor._get_pattern_flow_evidence = None
         self.assertEqual(self.monitor.tick(), (candidate.candidate_id,))
         planned = self.store.get_robot_candidate(candidate.candidate_id)
         self.assertIn("box_catchup", planned.robot_state["execution"])
@@ -1345,10 +1349,15 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertEqual(self.executor.limit_calls, [])
         self.assertEqual(self.store.get_robot_candidate(record.candidate_id).status, "APPROVED")
 
-        # The next original tick without extra observation preserves the
-        # initial Wedge LIMIT identity, geometry, risk and normal protection.
+        # A missing certified observation cannot restore an old-pattern
+        # entry while flow opt-in is active. A valid SAME-ID receipt admits
+        # the original LIMIT owner, not a new IMPULSE_FLOW strategy.
         self.monitor._get_pattern_flow_evidence = lambda _: None
         self.feed.push(SYMBOL, _candle_at(105, high=99, low=97, close=98))
+        self.assertEqual(self.monitor.tick(), ())
+        self.assertEqual(self.executor.limit_calls, [])
+        self.monitor._get_pattern_flow_evidence = lambda _: receipt
+        self.feed.push(SYMBOL, _candle_at(106, high=99, low=97, close=98))
         self.assertEqual(self.monitor.tick(), (record.candidate_id,))
         self.assertEqual(len(self.executor.limit_calls), 1)
         self.assertEqual(self.executor.limit_calls[0].symbol, SYMBOL)
@@ -1422,6 +1431,14 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertEqual(self.store.get_robot_candidate(record.candidate_id).status,
                          "APPROVED")
         self.monitor._get_pattern_flow_evidence = lambda _: None
+        self.assertEqual(self.monitor.tick(), ())
+        self.assertEqual(self.executor.limit_calls, [])
+        # Only the bound original L-shape receipt may unlock the existing
+        # protected 1-WV LIMIT and its ordinary STOP/TAKE lifecycle.
+        from dataclasses import replace
+        self.monitor._get_pattern_flow_evidence = lambda _: replace(
+            bad, candidate_id=record.candidate_id,
+        )
         self.assertEqual(self.monitor.tick(), (record.candidate_id,))
         self.assertEqual(len(self.executor.limit_calls), 1)
 
