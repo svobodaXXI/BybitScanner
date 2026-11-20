@@ -377,6 +377,51 @@ class SignalRepostTests(unittest.TestCase):
 
     @patch("telegram_monitoring._send_text")
     @patch("telegram_monitoring.telegram_bot.send_photo_by_file_id")
+    def test_missing_candidate_copy_uses_exact_scanner_formation_origin(self, by_id, text):
+        origin = "origin:ENAUSDT:5:1792337000000:1792336700000"
+        self._archive(origin, text="ORIGINAL signal", file_id="ORIGIN-PHOTO")
+        by_id.return_value = {"ok": True}
+        self._press([_record("candidate-without-copy", snapshot={
+            "symbol": "ENAUSDT", "timeframe": "5", "pattern": "Falling Wedge",
+            "scanner_formation_id": "1792337000000:1792336700000",
+        })])
+        self.assertEqual(by_id.call_args.args[2], "ORIGIN-PHOTO")
+        self.assertIn("ORIGINAL signal", by_id.call_args.kwargs["caption"])
+        text.assert_not_called()
+
+    @patch("telegram_monitoring._send_text")
+    @patch("telegram_monitoring.telegram_bot.send_photo_by_file_id")
+    def test_scanner_origin_fallback_rejects_wrong_pattern_or_formation(self, by_id, text):
+        self._archive("origin:ENAUSDT:5:other", file_id="NOT-THE-SIGNAL")
+        self._press([_record("missing-copy", snapshot={
+            "symbol": "ENAUSDT", "timeframe": "5", "pattern": "Rising Wedge",
+            "scanner_formation_id": "other",
+        })])
+        by_id.assert_not_called()
+        self.assertIn("не сохранён", text.call_args.args[1])
+        text.reset_mock()
+        self._press([_record("missing-copy", snapshot={
+            "symbol": "ENAUSDT", "timeframe": "5", "pattern": "Falling Wedge",
+            "scanner_formation_id": "different",
+        })])
+        by_id.assert_not_called()
+        self.assertIn("не сохранён", text.call_args.args[1])
+
+    @patch("telegram_monitoring._send_text")
+    @patch("telegram_monitoring.telegram_bot.send_photo_by_file_id")
+    def test_candidate_archive_keeps_priority_over_origin(self, by_id, text):
+        self._archive("cand-ena", text="CANDIDATE source", file_id="CAND-PHOTO")
+        self._archive("origin:ENAUSDT:5:fid", text="ORIGIN source", file_id="ORIGIN-PHOTO")
+        by_id.return_value = {"ok": True}
+        self._press([_record(snapshot={
+            "symbol": "ENAUSDT", "timeframe": "5", "pattern": "Falling Wedge",
+            "scanner_formation_id": "fid",
+        })])
+        self.assertEqual(by_id.call_args.args[2], "CAND-PHOTO")
+        text.assert_not_called()
+
+    @patch("telegram_monitoring._send_text")
+    @patch("telegram_monitoring.telegram_bot.send_photo_by_file_id")
     def test_box_handoff_candidate_uses_its_source_plan_id(self, by_id, text):
         plan_id = "box-plan-" + "ab12" * 16
         handle = "bp-" + "ab12" * 10  # what the Box scanner puts into the owner button
