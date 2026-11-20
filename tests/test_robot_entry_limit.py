@@ -511,5 +511,158 @@ class PostBreakoutFrozenQuoteRestartTests(unittest.TestCase):
             freeze_post_breakout_impulse_quote(proposal, bad_source)
 
 
+class PostBreakoutLShapeImpulseTests(unittest.TestCase):
+    """Frozen horizontal policy; no standalone signal or new executor."""
+
+    @staticmethod
+    def host(direction="LONG"):
+        from types import SimpleNamespace
+        import robot_l_shape
+
+        long = direction == "LONG"
+        snap = {
+            "pattern": "L-shape", "symbol": "TESTUSDT",
+            "l_shape": {
+                "direction": direction, "source_timeframe": "5",
+                "breakout_time_ms": 1_800_000,
+                "reference": "100",
+                "target": "110" if long else "90",
+                "stop": "98.8" if long else "101.2",
+                "structural_stop": "98.8" if long else "101.2",
+                "stop_kind": "STRUCTURAL",
+                "potential_percent": "10", "reward_risk": "3",
+            },
+        }
+        state, _ = robot_l_shape.initialize_state({
+            "candidate_id": "l-shape-1", "status": "APPROVED",
+            "signal_snapshot": snap,
+        })
+        return SimpleNamespace(
+            candidate_id="l-shape-1", state_revision=4,
+            symbol=SimpleNamespace(value="TESTUSDT"),
+            status="APPROVED", signal_snapshot=snap, robot_state=state,
+        )
+
+    @staticmethod
+    def receipt(direction="LONG"):
+        from dataclasses import replace
+
+        w = PostBreakoutWedgeImpulseQuoteTests.receipt(direction)
+        return replace(
+            w, candidate_id="l-shape-1", closed_at_ms=2_340_000,
+            decision_ms=2_340_010,
+            transition=replace(w.transition, known_at_ms=2_340_010),
+        )
+
+    @staticmethod
+    def book(direction="LONG", bid=None, ask=None):
+        from terminal.domain.models import Price, Quantity, Symbol
+        from terminal.market_data.models import NormalizedOrderBook, BookHealth, PriceLevel
+
+        long = direction == "LONG"
+        bid = Decimal("101.0" if long else "98.9") if bid is None else bid
+        ask = Decimal("101.1" if long else "99.0") if ask is None else ask
+        return NormalizedOrderBook(
+            symbol=Symbol("TESTUSDT"),
+            bids=(PriceLevel(Price(bid), Quantity(Decimal("10"))),),
+            asks=(PriceLevel(Price(ask), Quantity(Decimal("10"))),),
+            health=BookHealth.READY,
+            received_at_ms=2_340_050, available_depth=1,
+        )
+
+    @classmethod
+    def plan(cls, direction="LONG", *, host=None, receipt=None, book=None):
+        from robot_entry_limit import build_post_breakout_l_shape_impulse_limit_research
+
+        return build_post_breakout_l_shape_impulse_limit_research(
+            cls.host(direction) if host is None else host,
+            cls.receipt(direction) if receipt is None else receipt,
+            cls.book(direction) if book is None else book,
+            tick_size=Decimal("0.1"), now_ms=2_340_100,
+        )
+
+    def test_long_and_short_quotes_use_native_protection_and_frozen_action(self):
+        from robot_entry_limit import (
+            freeze_post_breakout_impulse_quote,
+            verify_frozen_post_breakout_l_shape_quote,
+        )
+        for direction in ("LONG", "SHORT"):
+            with self.subTest(direction=direction):
+                host = self.host(direction)
+                receipt = self.receipt(direction)
+                p = self.plan(direction, host=host, receipt=receipt)
+                self.assertFalse(p.trading_authorized)
+                self.assertEqual(p.breakout_known_at_ms, 2_100_000)
+                self.assertEqual(p.quoted_price, Decimal(
+                    "101.1" if direction == "LONG" else "98.9",
+                ))
+                self.assertEqual(p.request.side, OrderSide.BUY if direction == "LONG"
+                                 else OrderSide.SELL)
+                self.assertEqual(p.request.volume.unit, VolumeUnit.WORKING_VOLUME)
+                self.assertEqual(p.request.volume.amount, Decimal("1"))
+                self.assertGreaterEqual(p.planned_net_rr, Decimal("2"))
+                self.assertGreater(p.worst_loss_per_base_usdt, Decimal("0"))
+                self.assertEqual(p.request.client_action_id,
+                                 self.plan(direction).request.client_action_id)
+                frozen = freeze_post_breakout_impulse_quote(p, receipt)
+                self.assertTrue(verify_frozen_post_breakout_l_shape_quote(host, frozen))
+                host.state_revision += 1
+                self.assertTrue(verify_frozen_post_breakout_l_shape_quote(host, frozen))
+                for key, value in (
+                    ("source_sha256", "invalid"), ("entry_side", "opposite"),
+                    ("client_action_id", "other-id"),
+                    ("take_price", "100"), ("stop_price", "150"),
+                    ("trading_authorized", True),
+                ):
+                    with self.subTest(key=key):
+                        bad = dict(frozen)
+                        bad[key] = value
+                        self.assertFalse(verify_frozen_post_breakout_l_shape_quote(
+                            host, bad,
+                        ))
+
+    def test_missing_wrong_or_stale_tape_never_builds_early_plan(self):
+        from dataclasses import replace
+
+        proof = self.receipt()
+        for bad in (
+            None,
+            replace(proof, source_complete=False),
+            replace(proof, candidate_id="not-original"),
+            replace(proof, state_revision=7),
+            replace(proof, direction="SHORT"),
+            replace(proof, closed_at_ms=2_160_000),
+            replace(proof, transition=replace(
+                proof.transition, buy_wave_accelerating=False,
+            )),
+        ):
+            with self.subTest(bad=bad):
+                with self.assertRaises(RobotEntryLimitError):
+                    self.plan(receipt=bad)
+
+    def test_no_inside_boundary_stale_book_retest_or_foreign_pattern(self):
+        from dataclasses import replace
+        from terminal.market_data.models import BookHealth
+
+        with self.assertRaises(RobotEntryLimitError):
+            self.plan(book=self.book(bid=Decimal("99.9"), ask=Decimal("100.1")))
+        with self.assertRaises(RobotEntryLimitError):
+            self.plan(book=replace(self.book(), received_at_ms=2_337_000))
+        with self.assertRaises(RobotEntryLimitError):
+            self.plan(book=replace(self.book(), health=BookHealth.DEGRADED))
+        host = self.host()
+        host.robot_state["phase"] = "RETEST_DETECTED"
+        with self.assertRaises(RobotEntryLimitError):
+            self.plan(host=host)
+        host = self.host()
+        host.robot_state["execution"] = {"limit_order_id": "already-owned"}
+        with self.assertRaises(RobotEntryLimitError):
+            self.plan(host=host)
+        host = self.host()
+        host.signal_snapshot["pattern"] = "MIRROR"
+        with self.assertRaises(RobotEntryLimitError):
+            self.plan(host=host)
+
+
 if __name__ == "__main__":
     unittest.main()
