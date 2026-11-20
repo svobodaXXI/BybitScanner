@@ -839,7 +839,7 @@ class VPSManager(tk.Tk):
         pending_id, pending_action, _ = recover_pending_request()
         if pending_id and pending_action:
             # Same local UUID, read-only status. Never replay submit on relaunch.
-            self.after(200, lambda: self.run_control("status"))
+            self.after(200, lambda: self.run_control("resume"))
 
     def update_desktop(self) -> None:
         """Update ONLY this local manager, never call owner VPS monolith."""
@@ -987,16 +987,17 @@ class VPSManager(tk.Tk):
         request = (uuid.uuid4().hex if mode in CONTROL_ACTIONS.values()
                    else self.request_id.get().strip() if mode == "status"
                    else self.last_request_id)
-        if mode == "status" and not request:
+        if mode in ("status", "resume") and not request:
             messagebox.showinfo("VPS Manager", "Введите точный ID операции (32 символа)")
             return
-        if mode == "status":
+        if mode in ("status", "resume"):
             prior_id, prior_action, prior_sha = recover_last_request_context()
             sha = prior_sha if prior_id == request and prior_action == "update" else ""
         try:
             command = control_ssh_command(
                 self.host.get(), self.user.get(), self.key.get(),
-                mode, sha=sha, request_id=request, origin=self.origin)
+                "status" if mode == "resume" else mode,
+                sha=sha, request_id=request, origin=self.origin)
         except ValueError as exc:
             messagebox.showerror("VPS Manager", str(exc))
             return
@@ -1038,7 +1039,7 @@ class VPSManager(tk.Tk):
                         timeout=35, stdin=subprocess.DEVNULL, creationflags=NO_WINDOW,
                         check=False)
                 except subprocess.TimeoutExpired:
-                    if mode != "status":
+                    if mode not in ("status", "resume"):
                         raise
                     # A timed-out status query has no side effect. Continue
                     # with the original UUID on the same SSH route only.
@@ -1060,7 +1061,7 @@ class VPSManager(tk.Tk):
                 recovery = ""
             output = result.stdout.strip()
             if mode not in CONTROL_ACTIONS.values():
-                if mode == "status":
+                if mode in ("status", "resume"):
                     state = gui_owner_status(
                         output, result.returncode, request,
                         verify_sha=update_status_target(command))
@@ -1068,7 +1069,7 @@ class VPSManager(tk.Tk):
                         # Only retry the same read-only UUID status query.
                         state, output = watch_owner_request(
                             command, request, initially_submitted=False)
-                    elif state == "submitted":
+                    elif mode == "resume" and state == "submitted":
                         state, output = watch_owner_request(
                             command, request, initially_submitted=True)
                     if state in ("success", "failed"):
