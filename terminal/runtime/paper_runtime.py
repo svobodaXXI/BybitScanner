@@ -20,6 +20,7 @@ from typing import Callable, Mapping
 
 from terminal.api.rest import TerminalCommandApi
 import robot_protection
+from robot_entry_limit import IMPULSE_ENTRY_LIMIT_MAX_AGE_MS
 from terminal.application.command_identity import CommandIdentityCandidate
 from terminal.application.robot_trade_ledger import prove_robot_open_trade_ledger
 from terminal.api.models import (
@@ -2155,6 +2156,7 @@ class PaperRuntime:
             if fenced_entry_ids is None:
                 fenced_entry_ids = self._robot_entry_limit_ids_fenced_by_admission(
                     symbol, active_orders,
+                    event_received_at_ms=book.received_at_ms,
                 )
             if order.order_id.value in fenced_entry_ids:
                 continue
@@ -2217,7 +2219,7 @@ class PaperRuntime:
         return linked
 
     def _robot_entry_limit_ids_fenced_by_admission(
-        self, symbol: Symbol, active_orders,
+        self, symbol: Symbol, active_orders, *, event_received_at_ms: int | None = None,
     ) -> frozenset[str]:
         """Robot ENTRY LIMIT ids that must not fill on this book event (#608).
 
@@ -2246,9 +2248,34 @@ class PaperRuntime:
             state is not None and state.mode == ROBOT_RUNNING and state.recovery_status == READY
         )
         fenced: set[str] = set()
+        # An old marketable impulse GTC is NOT a live momentum entry.
+        # Admission and a candidate link alone must never reauthorize
+        # price matching after the source wave's quote lifetime.
+        stale_impulse_ids: set[str] = set()
+        for candidate in self.store.load_active_robot_candidates_for_symbol(
+            self._paper_account_id, symbol,
+        ):
+            state = candidate.robot_state or {}
+            execution = state.get("execution") or {}
+            if (not isinstance(execution, Mapping)
+                    or execution.get("entry_mode") != "IMPULSE_EARLY_LIMIT"):
+                continue
+            order_id = execution.get("limit_order_id")
+            if not isinstance(order_id, str) or not order_id:
+                continue
+            intent = execution.get("impulse_entry_intent")
+            decision_ms = intent.get("decision_ms") if isinstance(intent, Mapping) else None
+            if (type(event_received_at_ms) is not int
+                    or type(decision_ms) is not int
+                    or event_received_at_ms < decision_ms
+                    or event_received_at_ms - decision_ms > IMPULSE_ENTRY_LIMIT_MAX_AGE_MS):
+                stale_impulse_ids.add(order_id)
         for order in active_orders:
             order_id = order.order_id.value
             if order_id not in robot_entries and order_id not in linked:
+                continue
+            if order_id in stale_impulse_ids:
+                fenced.add(order_id)
                 continue
             created_epoch = robot_entries.get(order_id, (None, None))[1]
             if (
