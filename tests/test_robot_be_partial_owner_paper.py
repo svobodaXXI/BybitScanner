@@ -70,6 +70,111 @@ class RobotBePartialOwnerPaperTests(unittest.TestCase):
         kwargs.update(overrides)
         return self.runtime._robot_wedge_be_partial_once(self.candidate_id, **kwargs)
 
+    def _fade_receipt(self, *, direction="LONG"):
+        """Bound original OPEN trade and two fully AFTER-entry M1 windows."""
+        from robot_entry_flow_evidence import CandidateBoundFlowEvidence, FlowTransition
+
+        candidate = self.runtime.store.get_robot_candidate(self.candidate_id)
+        close_ms = self.minute + 180_000
+        impact = FlowTransition(
+            known_at_ms=close_ms + 2_000,
+            current_delta_fraction=Decimal("0.24" if direction == "LONG" else "-0.24"),
+            current_price_change_bps=Decimal("3" if direction == "LONG" else "-3"),
+            buy_wave_accelerating=False, sell_wave_accelerating=False,
+            buy_impact_fading=direction == "LONG",
+            sell_impact_fading=direction == "SHORT",
+            bid_refill_observed=None, ask_refill_observed=None,
+            buy_absorption_candidate=None, sell_absorption_candidate=None,
+        )
+        return CandidateBoundFlowEvidence(
+            candidate_id=self.candidate_id, state_revision=candidate.state_revision,
+            symbol=self.symbol.value, direction=direction,
+            source_kind="BYBIT_TRIPLE_CLOSED_M1_CERTIFIED",
+            closed_at_ms=close_ms, decision_ms=close_ms + 2_000,
+            print_facts_sha256="b" * 64,
+            source_complete=True, receipt_cutoff_proven=True,
+            transport_generation_proven=True, transition=impact,
+        )
+
+    def test_dynamic_fade_uses_same_reduce_only_owner_and_tightens_stop_after_fill(self):
+        from unittest.mock import patch
+
+        receipt = self._fade_receipt()
+        clock_ms = receipt.closed_at_ms + 5_000
+        self.runtime._impulse_fade_paper_enabled = True
+        self.runtime._wedge_be_auto_paper_enabled = True
+        before = len(self.runtime.store.load_executions())
+        with patch("time.time", return_value=clock_ms / 1000):
+            book = _crossing_book(self.symbol.value, bid="64700", ask="64700.5")
+            result = self.runtime._robot_wedge_be_auto_step(
+                self.candidate_id, symbol=self.symbol.value, candle=None,
+                book=book, fade_receipt=receipt,
+            )
+            self.assertEqual(result.status, CommandResultStatus.COMPLETED)
+            self.assertEqual(len(self.runtime.store.load_executions()), before + 1)
+            candidate = self.runtime.store.get_robot_candidate(self.candidate_id)
+            execution = candidate.robot_state["execution"]
+            self.assertTrue(execution["wedge_be_partial_intent"]["reduce_only_required"])
+            self.assertEqual(
+                execution["wedge_be_fade_source"]["source_sha256"],
+                receipt.print_facts_sha256,
+            )
+            self.assertLess(book.bids[0].price.value, Decimal("64751.5"))
+            remaining = self.runtime.store.get_position_projection(self.key)
+            self.assertGreater(remaining.quantity.value, Decimal(0))
+            self.assertLess(remaining.quantity.value, self.initial)
+            self.assertEqual(
+                self.runtime.store.get_protection_projection(self.key).stop_loss,
+                Decimal("64000"),
+            )
+            recovered = self.runtime._robot_wedge_be_auto_step(
+                self.candidate_id, symbol=self.symbol.value, candle=None, book=book,
+            )
+            self.assertEqual(recovered.status, CommandResultStatus.COMPLETED)
+            protected = self.runtime.store.get_protection_projection(self.key)
+            self.assertGreater(protected.stop_loss, Decimal("64000"))
+            self.assertLess(protected.stop_loss, book.bids[0].price.value)
+            self.assertEqual(protected.take_profit, Decimal("65300"))
+            self.assertEqual(len(self.runtime.store.load_executions()), before + 1)
+            repeated = self.runtime._robot_wedge_be_auto_step(
+                self.candidate_id, symbol=self.symbol.value, candle=None,
+                book=book, fade_receipt=receipt,
+            )
+            self.assertEqual(repeated.status, CommandResultStatus.COMPLETED)
+            self.assertEqual(len(self.runtime.store.load_executions()), before + 1)
+
+    def test_dynamic_fade_invalid_source_cannot_dispatch_or_disarm_stop(self):
+        from dataclasses import replace
+        from unittest.mock import patch
+
+        self.runtime._impulse_fade_paper_enabled = True
+        self.runtime._wedge_be_auto_paper_enabled = True
+        receipt = self._fade_receipt()
+        before = len(self.runtime.store.load_executions())
+        with patch("time.time", return_value=(receipt.closed_at_ms + 5_000) / 1000):
+            book = _crossing_book(self.symbol.value, bid="64700", ask="64700.5")
+            for bad in (
+                replace(receipt, source_complete=False),
+                replace(receipt, candidate_id="foreign"),
+                replace(receipt, state_revision=receipt.state_revision + 1),
+                replace(receipt, transition=replace(
+                    receipt.transition, buy_impact_fading=False,
+                )),
+            ):
+                with self.subTest(candidate=bad.candidate_id, rev=bad.state_revision):
+                    outcome = self.runtime._robot_wedge_be_auto_step(
+                        self.candidate_id, symbol=self.symbol.value, candle=None,
+                        book=book, fade_receipt=bad,
+                    )
+                    self.assertEqual(outcome.status, CommandResultStatus.BLOCKED)
+                    self.assertEqual(len(self.runtime.store.load_executions()), before)
+                    record = self.runtime.store.get_robot_candidate(self.candidate_id)
+                    self.assertNotIn(
+                        "wedge_be_partial_intent", record.robot_state["execution"],
+                    )
+                    projection = self.runtime.store.get_protection_projection(self.key)
+                    self.assertEqual(projection.stop_loss, Decimal("64000"))
+
     def test_exact_reduce_only_partial_preserves_stop_take_and_trade(self):
         initial = len(self.runtime.store.load_executions())
         result = self.run_partial()
