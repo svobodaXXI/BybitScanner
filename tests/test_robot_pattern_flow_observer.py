@@ -68,7 +68,9 @@ class ObserverTests(unittest.TestCase):
         observed, recent, previous, current = PatternFlowSourceTests.fading_source()
         host = _candidate()
         host.status = "OPEN"
-        host.robot_state["pattern"] = "Falling Wedge"
+        # The real post-fill Robot persists phase OPEN, and legacy
+        # trade fixtures need not persist a duplicated state.pattern.
+        host.robot_state["phase"] = "OPEN"
         context = _Context(observed)
         rest = _REST(recent, previous, current)
         observer = PatternFlowObserver(
