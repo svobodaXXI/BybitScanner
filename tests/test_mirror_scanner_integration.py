@@ -119,7 +119,7 @@ def test_mirror_entry_rechecks_potential_on_confirmation_close(monkeypatch):
 
     monkeypatch.setattr(robot_l_shape, "net_reward_risk", lambda *a, **kw: 3)
     record = {"naked_retest": {"breakout": {
-        "campaign_direction": "LONG", "close_time_ms": 60000,
+        "campaign_direction": "LONG", "direction": "DOWN", "close_time_ms": 60000,
     }}}
     confirmation = {
         "open_time_ms": 120000, "close_time_ms": 180000,
@@ -132,7 +132,8 @@ def test_mirror_entry_rechecks_potential_on_confirmation_close(monkeypatch):
     def terms_for(price):
         level = SimpleNamespace(
             boundary=SimpleNamespace(price_at=lambda _: price),
-            level_id="frozen-level", timeframe="5", source="SWING_ZONE", pattern=None,
+            level_id="frozen-level", timeframe="5", source=SOURCE_SWING_ZONE, pattern=None,
+            side="lower",
         )
         return ms._entry_terms(level, record, confirmation, "1",
                                confirmation_kind="ENGULFING", formation=formation)
