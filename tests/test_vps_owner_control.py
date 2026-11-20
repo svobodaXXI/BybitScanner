@@ -14,6 +14,50 @@ def completed(cmd, code=0, out=""):
 
 
 class OwnerControlTests(unittest.TestCase):
+    def test_update_postcheck_is_read_only_and_fails_closed(self):
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from unittest.mock import patch
+
+        target = "b" * 40
+        identity = "a" * 64
+        data = {
+            "/api/health": {"ok": True, "component": "paper_backend",
+                            "mode": "paper", "build_sha": target,
+                            "paper_live_safe": True, "robot_admission_ready": False,
+                            "database_identity": identity},
+            "/api/scanner/status": {"ok": True, "mode": "SCANNER_STOPPED",
+                                     "worker_quiescent": True},
+            "/api/robot/autopilot": {"ok": True, "mode": "OFF"},
+            "/api/robot/protection-health": {"ok": True, "healthy": True,
+                         "covered_symbols": [], "armed_symbols": [],
+                         "coverage_roles": {}, "unhealthy_symbols": {}},
+            "/health": {"component": "telegram_monitoring",
+                         "status": "ready", "database_identity": identity},
+        }
+
+        def getter(url, timeout):
+            self.assertEqual(timeout, 3)
+            key = "/health" if ":8766" in url else url.split(":8765", 1)[1]
+            return SimpleNamespace(status=200, json=lambda: data[key])
+
+        def check():
+            out = StringIO()
+            with redirect_stdout(out):
+                result = control.verify_update(target)
+            return result, out.getvalue()
+
+        with (patch("tools.vps_release_identity.verify_release", return_value=target),
+              patch("tools.runtime_intent.http_get", side_effect=getter)):
+            self.assertEqual(check()[0], 0)
+            self.assertIn("POSTCHECK=VERIFIED_EDITOR_ONLY", check()[1])
+            data["/api/robot/protection-health"]["covered_symbols"] = ["BTCUSDT"]
+            self.assertEqual(check()[0], 2)
+            data["/api/robot/protection-health"]["covered_symbols"] = []
+            data["/health"]["database_identity"] = "c" * 64
+            self.assertEqual(check()[0], 2)
+        self.assertEqual(control.verify_update("invalid"), 2)
+
     def test_submit_detaches_exact_action_without_shell_or_runtime_bypass(self):
         calls = []
 
