@@ -217,7 +217,7 @@ def scanner_level_sources(symbol: str, *, root: Any = None) -> list[dict[str, An
     attachment defers without orders (the Scanner itself never overwrites such a file).
     """
 
-    from mirror_levels.levels import LevelRegistry, MirrorLevelError
+    from mirror_levels.levels import LevelRegistry, MirrorLevelError, mirror_breakout_allowed
     from mirror_levels.tracker import STATUS_UNTESTED
     from mirror_scanner import LIFECYCLE_TRACKING, MirrorStateError, load_state, state_path
 
@@ -236,7 +236,8 @@ def scanner_level_sources(symbol: str, *, root: Any = None) -> list[dict[str, An
                 continue                                 # stale / weak / duplicate / retested / gap: never a source
             level = registry.levels.get(level_id)
             breakout = (record.get("naked_retest") or {}).get("breakout")
-            if (level is None or level.symbol != symbol or not isinstance(breakout, Mapping)
+            if (level is None or not mirror_breakout_allowed(level, breakout)
+                    or level.symbol != symbol or not isinstance(breakout, Mapping)
                     or breakout.get("campaign_direction") not in {CAMPAIGN_LONG, CAMPAIGN_SHORT}):
                 continue
             sources.append({"level_id": level_id, "timeframe": timeframe, "boundary": level.boundary,
@@ -290,11 +291,17 @@ def find_active_campaign(policy: MirrorRobotPolicy, wedge_records: Iterable[Any]
         snapshot, approved = record.signal_snapshot, record.approved_at_ms
         boundaries = boundaries_from_candidate_snapshot(
             candidate_id=record.candidate_id, created_at_ms=approved, signal_snapshot=snapshot)
-        for boundary in boundaries or ():
+        # The legacy direct Wedge path returns both sides: only the realization
+        # boundary and its outward breakout can originate a MIRROR campaign.
+        eligible_side = "lower" if snapshot["pattern"] == "Rising Wedge" else "upper"
+        for side, boundary in zip(("upper", "lower"), boundaries or ()):
+            if side != eligible_side:
+                continue
             state, blocked = _replay_active(policy, record.candidate_id, symbol, boundary,
                                             direction=direction, now_ms=now_ms)
             unresolved = unresolved or blocked
-            if state is not None:
+            if (state is not None
+                    and state["breakout"].get("direction") == ("UP" if side == "upper" else "DOWN")):
                 found.append({"boundary": boundary, "state": state, "parent_candidate_id": record.candidate_id})
     for source in scanner_sources:
         if source.get("campaign_direction") != direction or source["boundary"].as_of_time_ms > now_ms:
