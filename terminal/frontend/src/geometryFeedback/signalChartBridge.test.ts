@@ -65,6 +65,40 @@ describe("GFL frozen signal-to-chart bridge", () => {
 });
 
 
+describe("Box source opens as the native Fibonacci drawing tool", () => {
+  const box = [{
+    id: "box_fibonacci",
+    type: "fibonacci" as const,
+    anchors: [at(0, 8), at(2, 12)],
+  }];
+  it("projects the exact immutable A/B anchors as one editable Fibonacci grid", () => {
+    const projected = projectSignalGeometry(box, candles);
+    expect(projected.referenceDrawings).toHaveLength(1);
+    expect(projected.referenceDrawings[0]).toMatchObject({
+      id: "box_fibonacci", type: "fibonacci", locked: true,
+      anchors: [{ logical: 0, price: 8 }, { logical: 2, price: 12 }],
+    });
+    expect(projected.editableDrawings[0]).toMatchObject({
+      id: "editable:box_fibonacci", type: "fibonacci", locked: false,
+    });
+    expect(serializeReviewDrawings(projected.editableDrawings, candles)[0].type)
+      .toBe("fibonacci");
+    projected.editableDrawings[0].anchors[1].price = 13;
+    expect(projected.referenceDrawings[0].anchors[1].price).toBe(12);
+  });
+  it("restores a corrected native Fibonacci without replacing the source", () => {
+    const projected = projectSignalGeometry(box, candles);
+    const changed = [{
+      ...box[0], anchors: [box[0].anchors[0], at(2, 13)],
+    }];
+    const restored = restoreSavedSignalCorrection(projected.referenceDrawings, changed, candles);
+    expect(restored).toHaveLength(1);
+    expect(restored[0].type).toBe("fibonacci");
+    expect(restored[0].anchors[1].price).toBe(13);
+    expect(projected.referenceDrawings[0].anchors[1].price).toBe(12);
+  });
+});
+
 describe("read-only Terminal signal projection on live candles", () => {
   it("preserves immutable timestamp anchors after later live candles append", () => {
     const later = [

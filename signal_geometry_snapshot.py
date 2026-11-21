@@ -12,7 +12,7 @@ import math
 MAX_BARS = 2000
 MAX_BOUNDARIES = 16
 MAX_BYTES = 1_000_000
-ALLOWED_KINDS = {"ray": 2, "segment": 2, "horizontal": 1, "horizontal-ray": 1}
+ALLOWED_KINDS = {"ray": 2, "segment": 2, "horizontal": 1, "horizontal-ray": 1, "fibonacci": 2}
 
 
 def canonical_bytes(payload):
