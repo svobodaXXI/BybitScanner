@@ -2527,6 +2527,171 @@ def _recover_active_ingress_overflow(
         return "BLOCKED: active_PAPER_recovery_preflight_or_transition_unproven; no_replay"
 
 
+def _recover_active_take_closed(
+    target: str, *, root: Path, env_file: Path | None,
+) -> str:
+    """Owner START: exact historical PAPER TAKE → one canonical reconcile → start.
+
+    No STOP, install, new Market command or SQLite write. A failed proof does
+    not seal an intent. After a sealed intent, an unknown POST is never replayed.
+    This route is called only inside the existing owner lifecycle lock.
+    """
+    from tools.paper_take_closed_handoff_proof import (
+        PROOF_LABEL, prove_take_closed_approved,
+    )
+    from tools.runtime_intent import (
+        expected_database_identity, http_get, http_post_json,
+    )
+    from tools.stop_robot_runtime import _database_path
+    from tools.vps_release_identity import ReleaseIdentityBlocked, verify_release
+    from terminal.persistence.sqlite_store import SQLiteStore
+
+    try:
+        env = _environment(env_file)
+        db = _database_path(root, env)
+        if (verify_release(root) != target or not db.is_file() or db.is_symlink()):
+            return "BLOCKED: take_closed_installed_or_database_unproven; no_mutation"
+        identity = expected_database_identity(root, env)
+        origin = "http://127.0.0.1:8765"
+
+        def read(path: str) -> dict:
+            response = http_get(origin + path, 5)
+            body = response.json()
+            if (response.status != 200 or not isinstance(body, dict)
+                    or body.get("ok") is not True):
+                raise ValueError("take_closed_read_unproven")
+            return body
+
+        snapshot = {
+            "backend": read("/api/health"),
+            "scanner": read("/api/scanner/status"),
+            "autopilot": read("/api/robot/autopilot"),
+            "protection": read("/api/robot/protection-health"),
+        }
+        backend = snapshot["backend"]
+        instance = backend.get("process_instance_id")
+        state = read("/api/robot/state")
+        reason = state.get("reason")
+        prefix = "reconcile_robot could not prove pending Robot entry safety: "
+        if (backend.get("build_sha") != target
+                or backend.get("database_identity") != identity
+                or backend.get("paper_live_safe") is not True
+                or backend.get("robot_admission_ready") is not False
+                or not isinstance(instance, str) or not instance
+                or snapshot["scanner"].get("worker_quiescent") is not True
+                or snapshot["autopilot"].get("trading_account_id") != {"value": "paper"}
+                or state.get("mode") != "ROBOT_RUNNING"
+                or state.get("recovery_status") != "RECONCILIATION_REQUIRED"
+                or not isinstance(reason, str) or not reason.startswith(prefix)):
+            return "BLOCKED: take_closed_owner_or_backend_unproven; no_mutation"
+
+        candidate_id = reason[len(prefix):]
+        if not candidate_id or candidate_id.strip() != candidate_id:
+            return "BLOCKED: take_closed_exact_candidate_unproven; no_mutation"
+
+        with sqlite3.connect(
+            db.resolve().as_uri() + "?mode=ro", uri=True, timeout=5,
+        ) as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA query_only=ON")
+            conn.execute("BEGIN")
+            if prove_take_closed_approved(
+                conn, expected_identity=identity, expected_build_sha=target,
+                **snapshot,
+            ) != PROOF_LABEL:
+                return "BLOCKED: take_closed_immutable_proof_unproven; no_mutation"
+            store = SQLiteStore(conn, db, 5000)
+            candidate = store.get_robot_candidate(candidate_id)
+            execution = (
+                candidate.robot_state.get("execution")
+                if candidate is not None and isinstance(candidate.robot_state, dict)
+                else None
+            )
+            if (candidate is None or candidate.status != "APPROVED"
+                    or not isinstance(execution, dict)
+                    or execution.get("emergency_close_pending") is not True
+                    or execution.get("entry_mode") != "LATE_ADMISSION_MARKET"):
+                return "BLOCKED: take_closed_reason_owner_mismatch; no_mutation"
+
+        after = read("/api/health")
+        if (after.get("build_sha") != target
+                or after.get("database_identity") != identity
+                or after.get("process_instance_id") != instance
+                or after.get("paper_live_safe") is not True
+                or after.get("robot_admission_ready") is not False
+                or read("/api/scanner/status").get("mode") != "SCANNER_STOPPED"
+                or read("/api/robot/autopilot").get("mode") != "OFF"
+                or not _editor_runtime_ready(target, identity)):
+            return "BLOCKED: take_closed_runtime_changed; no_mutation"
+
+        # Re-check the entire ledger immediately before the irreversible intent.
+        with sqlite3.connect(
+            db.resolve().as_uri() + "?mode=ro", uri=True, timeout=5,
+        ) as conn:
+            conn.execute("PRAGMA query_only=ON")
+            conn.execute("BEGIN")
+            if prove_take_closed_approved(
+                conn, expected_identity=identity, expected_build_sha=target,
+                **snapshot,
+            ) != PROOF_LABEL:
+                return "BLOCKED: take_closed_proof_changed; no_mutation"
+
+        state_tuple = ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED", reason)
+        if not _record_required_reconcile_once(
+            target, identity, state_tuple, db=db,
+        ):
+            return "BLOCKED: take_closed_prior_reconcile_intent; no_replay"
+
+        # A lost HTTP reply may mean the owner already committed reconciliation.
+        # Never send the same mutable POST again, even under a new request UUID.
+        try:
+            response = http_post_json(origin + "/api/robot/reconcile", {}, 180)
+            result = response.json()
+            if (response.status != 200 or not isinstance(result, dict)
+                    or result.get("ok") is not True
+                    or result.get("success") is not True
+                    or result.get("recovery_status") != "PAUSED"):
+                return "BLOCKED: take_closed_reconcile_unproven; no_replay"
+        except Exception:
+            return "BLOCKED: take_closed_reconcile_outcome_unknown; no_replay"
+
+        if (read("/api/health").get("process_instance_id") != instance
+                or not _editor_runtime_ready(target, identity)):
+            return "BLOCKED: take_closed_backend_changed_after_reconcile; no_replay"
+        with sqlite3.connect(
+            db.resolve().as_uri() + "?mode=ro", uri=True, timeout=5,
+        ) as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA query_only=ON")
+            conn.execute("BEGIN")
+            store = SQLiteStore(conn, db, 5000)
+            candidate = store.get_robot_candidate(candidate_id)
+            trade = store.get_robot_trade("robot-trade-" + candidate_id)
+            execution = (
+                candidate.robot_state.get("execution")
+                if candidate is not None and isinstance(candidate.robot_state, dict)
+                else None
+            )
+            if (candidate is None or candidate.status != "CLOSED"
+                    or not isinstance(execution, dict)
+                    or execution.get("emergency_close_pending") is True
+                    or not isinstance(execution.get("protected_postfill_recovery"), dict)
+                    or execution["protected_postfill_recovery"].get("proof")
+                       != "SINGLE_MARKET_FILL_INTERNAL_TAKE_FLAT_V1"
+                    or trade is None or trade.exit_reason != "TAKE"
+                    or trade.exit_time_ms is None):
+                return "BLOCKED: take_closed_accounting_unproven; no_replay"
+
+        if not _paper_start_quiescent(root, env_file):
+            return "BLOCKED: take_closed_remaining_owner_unproven; START_not_attempted"
+        return start_installed_paper_from_editor(
+            target, root=root, env_file=env_file,
+            editor_status="READY: existing active Editor and Telegram independently verified",
+        )
+    except (ReleaseIdentityBlocked, OSError, ValueError, TypeError, sqlite3.Error):
+        return "BLOCKED: take_closed_proof_or_runtime_unproven; no_replay"
+
+
 def _verified_staged_module_bootstrap(
     target: str, stage: Path, modules: tuple, *,
     parent: Path = Path("/var/lib"), trusted_uid: int = 0,
@@ -3315,6 +3480,12 @@ def main(argv=None) -> int:
                                 "BLOCKED: active_exact_PAPER_not_ready; "
                                 "Robot=ROBOT_RUNNING/READY")):
                         blocked = _recover_active_ingress_overflow(
+                            args.sha, root=REPO, env_file=args.env_file,
+                        )
+                    elif blocked.startswith(
+                        "BLOCKED: active_PAPER_Robot_RECONCILIATION_REQUIRED"
+                    ):
+                        blocked = _recover_active_take_closed(
                             args.sha, root=REPO, env_file=args.env_file,
                         )
                     print(blocked)
