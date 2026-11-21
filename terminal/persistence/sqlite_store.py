@@ -3925,6 +3925,25 @@ class SQLiteStore:
         ).fetchone()
         return _command_from_row(row) if row is not None else None
 
+    def load_commands_for_symbol_since(
+        self, account: TradingAccountId, symbol: Symbol, since_ms: int,
+    ) -> tuple[CommandRecord, ...]:
+        """Exact PAPER command history for a frozen entry-ownership proof.
+
+        Historical terminal commands count too: the absence of unfinished
+        commands alone does not prove no close was dispatched.
+        """
+        self._assert_owner()
+        if account.value != "paper" or type(since_ms) is not int or since_ms < 0:
+            raise ValueError("invalid PAPER command history scope")
+        rows = self._connection.execute(
+            """SELECT * FROM trading_commands
+               WHERE trading_account_id=? AND symbol=? AND created_at_ms>=?
+               ORDER BY created_at_ms, command_id""",
+            (account.value, symbol.value, since_ms),
+        ).fetchall()
+        return tuple(_command_from_row(row) for row in rows)
+
     def load_unfinished_commands(self) -> tuple[CommandRecord, ...]:
         self._assert_owner()
         final_states = (
