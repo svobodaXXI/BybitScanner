@@ -1,6 +1,6 @@
 # Монолит: аварийные состояния, машинный журнал и сквозная автоматизация
 
-**Статус:** DESIGN / NOT IMPLEMENTED. **Дата:** 2026-11-21. **Приоритет:** продолжение ранее разрешённой PAPER-приёмки; дальнейшая автоматизация не должна задерживать восстановление. **Владелец runtime:** существующий `tools.vps_owner_control` → `tools.paper_maintenance`. Второй контроллер, агент торговли и альтернативная БД не создаются.
+**Статус:** INCIDENT RECORDED / REDACTED GITHUB PUBLISHER MERGED (#1213), HOST DELIVERY UNVERIFIED / AUTONOMOUS RECOVERY NOT IMPLEMENTED. **Дата:** 2026-11-21. **Приоритет:** продолжение ранее разрешённой PAPER-приёмки; дальнейшая автоматизация не должна задерживать восстановление. **Владелец runtime:** существующий `tools.vps_owner_control` → `tools.paper_maintenance`. Второй контроллер, агент торговли и альтернативная БД не создаются.
 
 ## 1. Зафиксированный инцидент (только проверенное)
 
@@ -23,17 +23,24 @@
 
 **Следующий доказательный барьер:** получить **один** защищённый read-only повтор `prove_take_closed_approved` на неизменённой PAPER SQLite с исходным pinned snapshot из protected one-flat journal, либо эквивалентный existing owner proof; отдельно проверить текущую backend/DB identity и защиту. Если result `ONE_APPROVED_PAPER_TAKE_FLAT_IMMUTABLE_V1`, нужен монолитный однократный reconciliation intent, а **не** повтор release/STOP/START. Если proof fails, держать admission CLOSED и сообщить **конкретный отказ** без подмены фактов.
 
-**Для будущей автоматики:** `CANDIDATE_READ_ERROR` сначала проверяет row factory; если кандидат читается и pending emergency=true, event `LEGACY_TAKE_CLOSED_OWNER_PENDING` с красным `ADMISSION_CLOSED`, не `NEVER_TRADED`. Existing protected proof → one-shot canonical reconciliation → verify `PAUSED`, terminal candidate, closed trade/net fees, no pending owners → only then ordinary owner START. GitHub получает redacted state, без exact trade/candidate ID и финансовых сведений. **Runtime-автоматизация пока не реализована**.
+**Для будущей автоматики:** `CANDIDATE_READ_ERROR` сначала проверяет row factory; если кандидат читается и pending emergency=true, event `LEGACY_TAKE_CLOSED_OWNER_PENDING` с красным `ADMISSION_CLOSED`, не `NEVER_TRADED`. Existing protected proof → one-shot canonical reconciliation → verify `PAUSED`, terminal candidate, closed trade/net fees, no pending owners → only then ordinary owner START. GitHub получает redacted state, без exact trade/candidate ID и финансовых сведений. **Publisher GitHub уже реализован в stable (#1213), однако фактическая доставка на VPS не подтверждена; автоматическое устранение аварий всё ещё не реализовано**.
 
 ## Подтверждённое завершение PAPER-восстановления — 2026-11-21
 
 **Новые доказательства из owner-terminal, не из CI:**
 - Protected read-only `prove_take_closed_approved`: `TAKE_CLOSED_PROOF=ONE_APPROVED_PAPER_TAKE_FLAT_IMMUTABLE_V1`; `CURRENT_BACKEND_MATCH=True`; `READ_ONLY_EXIT_CODE=0`.
 - Владелец выполнил одну одобренную одноразовую последовательность под существующим `_owner_action_lifecycle_guard`, с повторной проверкой exact release, protected handoff, immutable TAKE proof, Backend/DB/process identity и ingress/protection. Перед `POST /api/robot/reconcile` записана fsync-квитанция `_record_required_reconcile_once`; ответ: `ONE_SHOT_RECONCILE_INTENT_SEALED`, `CANONICAL_RECONCILE=PAUSED_TAKE_ACCOUNTED`. Исторический TAKE записан через штатный ledger, без новой Market-команды.
-- Последующий штатный `start_installed_paper_from_editor` ответил `READY: exact HEAD, PAPER-only, Robot, Scanner, PAPER_AUTO, reentry and protection confirmed`; `SSH_EXIT_CODE=0`. Это **подтверждённый host runtime outcome**, а не UI/пользовательская приёмка и не внедрение GitHub-журнала.
+- Последующий штатный `start_installed_paper_from_editor` ответил `READY: exact HEAD, PAPER-only, Robot, Scanner, PAPER_AUTO, reentry and protection confirmed`; `SSH_EXIT_CODE=0`. Это **подтверждённый host runtime outcome**, а не UI/пользовательская приёмка и не подтверждение установки, включения или фактической доставки GitHub publisher.
 - Не повторять этот reconciliation: one-shot intent уже запечатан. Не выводить торговый допуск из отдельных сообщений GitHub; фактическую runtime-готовность каждый раз подтверждает монолит.
 
-**Урок для автоматизации:** известный TAKE-closed случай должен проходить одну связку: owner UUID → read-only full-account proof → protected one-shot intent → canonical reconcile → доказательство PAUSED/CLOSED и реальных fees → existing PAPER START → READY/или fail-closed отчёт. Для восстановления не нужны многократные пользовательские PowerShell-вставки или дополнительные согласования одного и того же действия; **автоматический publisher/оркестратор пока не реализован**.
+**Урок для автоматизации:** известный TAKE-closed случай должен проходить одну связку: owner UUID → read-only full-account proof → protected one-shot intent → canonical reconcile → доказательство PAUSED/CLOSED и реальных fees → existing PAPER START → READY/или fail-closed отчёт. Для восстановления не нужны многократные пользовательские PowerShell-вставки или дополнительные согласования одного и того же действия; **publisher реализован в stable через #1213, но состояние установки/активации на VPS не доказано; автоматический recovery-оркестратор не реализован**.
+
+### 2026-11-21 — сверка с другими рабочими потоками перед пакетным релизом
+
+- **PR #1213 MERGED**: GitHub-read-only incident publisher и bounded outbox уже в stable. Повторная реализация здесь запрещена; довести только наблюдаемую VPS установку/доставку и защищённые owner receipts в отдельном этапе.
+- **PR #1210 MERGED**: адресная регрессия SHORT post-fill в stable. Наша ветка документации не содержит изменений production-кода, поэтому факт конфликта её двух текстовых файлов с тестом восстановления отсутствует. Не считать CI приемкой владельца.
+- Telegram lifecycle: **#1182 и #1184 MERGED** в stable, но исходный #1181 остаётся OPEN, меняет похожий recovery/dedup контракт. Не объединять #1181 поверх stable без доказанного полезного дополнительного delta и регрессии against latest state. #1178 (два знака Telegram) имеет отдельную UI-правку и общий тестовый файл с #1181.
+- **Ответственность**: «Охота за импульсом» полностью у рабочего потока **Scanner и Robot** по новой прямой команде владельца. Монолит/пакетная сборка не меняет импульсную логику и не включает Draft #1116 или его PAPER opt-in без отдельно подтверждённой готовности/разрешения.
 
 ## 2. Минимальная целевая схема (одна система)
 
@@ -104,12 +111,12 @@ The example contains symbolic values, **not** the actual current VPS state. No r
 
 ## 5. Этапы внедрения (не новая инфраструктурная эпопея)
 
-1. **Сейчас:** сохранить доказательства данного случая и его один следующий read-only discriminator; устранить блокер текущего PAPER START до автоматизации. Документация не подтверждает восстановление.
+1. **Выполнено для инцидента:** one-shot TAKE-closed proof → canonical reconcile → штатный PAPER START подтверждены owner output. Не повторять sealed intent, не принимать успешный historical START за непрерывную готовность без свежего host evidence.
 2. **Минимальный PR после локализации причины:** встроить единый `snapshot_incident` read-only reporter в существующий monolith action status path, включая source SHA / request ID, reason code и факт невалидного JSON; тесты на отсутствие секретов, stale/unknown, корректность owner reference, no mutation.
-3. **GitHub bridge:** append-only redacted status публикация из VPS только outbound, отдельный scoped token с минимальными правами; хранение неизменяемых полных данных только локально. Проверить транспорт, idempotency, interruption/reconnect, no retry/replay; не выдавать issue comment за receipt.
+3. **GitHub bridge (#1213 уже merged в stable):** `tools/github_status_reporter.py` и отдельный systemd timer/oneshot с bounded outbox и редактированным публичным статусом Issue #1212. Это **код**, не host acceptance: проверить в рамках отдельно разрешённого релиза точный SHA/конфигурацию scoped `Issues:write` token, timer, реальную доставку, stale/gap и независимость торговой защиты от GitHub outage. Не дублировать exporter; не выдавать issue comment за receipt.
 4. **Ограниченная автоматическая реакция:** таблица известных причин → только доказанные read-only checks и существующие идемпотентные безопасные owner transitions; запрещены обходы gate. При `UNKNOWN` автоматом публиковать состояние и прекращать торговые мутации.
 5. **Приёмка владельца:** искусственный `REQUIRED`/invalid JSON/restart/reconnect/GitHub outage в изолированном тесте → одна запись host journal и GitHub, ноль raw secrets и повторных команд, ни одного опасного START, проверенная корреляция с protected receipt; только потом наблюдать на реальном PAPER с owner approval.
 
 **Метрика успеха:** число ручных PowerShell-раундов на известный инцидент (цель 0), доля автоматической классификации известных отказов, число повторных опасных owner intents (цель 0), время от события до доступного GitHub redacted evidence и абсолютное отсутствие утечки данных. Не считать PR/CI результатом внедрения.
 
-**Граница:** текущая реализация журнала GitHub/автореакций **отсутствует**; существующие системные журналы, `vps_owner_control`, защищённые receipts и GitHub PR — переиспользуемые компоненты. Этот документ не разрешает автоматическую торговлю или LIVE.
+**Граница:** GitHub status reporter реализован в stable (#1213), но его установка/включение и сквозная доставка на VPS **не доказаны**. Автоматические управляющие реакции на инциденты отсутствуют. Существующий `vps_owner_control`, защищённые receipts и PAPER authority переиспользуются. Этот документ не разрешает автоматическую торговлю или LIVE.
