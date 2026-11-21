@@ -5,6 +5,30 @@ Date: 2026-09-27
 Purpose: compact evidence-first runbook for recurring Scanner / PAPER Robot / Telegram / desktop-launch failures.  
 Primary objective: minimize owner time. Known failure classes are diagnosed from repository authority and one bounded host snapshot before any exploratory sequence.
 
+## MONOLITH — SHA-bound handoff after Backend exit (2026-11-21)
+
+**Symptom:** prior root-owned `.one-flat-handoff-backend-exited-5630a2c6…` receipt binds an already consumed signal to original uninstalled target `872730c5…`. A new `update-take-closed` exact-SHA `e24f32a5…` would fail `one_flat_receipt_mismatch`, not replay an already known Backend exit. This should be caught from the immutable receipt before any new owner command.
+
+**Known continuation:** existing one-flat handoff may accept one *different approved successor SHA* **only after** proving the old exact-SHA `handoff-attempt` + `backend-exited` receipts and no original target install transaction; preserve original receipts, sealed snapshot, TAKE-closed type and post-shutdown DB proof. Seal a new once-only root-owned `.one-flat-handoff-retarget-<prior>` mapping `original SHA → approved SHA` before MAIN or tracked-file changes; any different second mapping fails. `handoff-proven` remains bound to the original handoff SHA; canonical successor verification requires both original and immutable mapping plus installed exact target. Never retry SIGINT, edit previous receipt bytes, create a second recovery controller or clear STOP markers.
+
+## MONOLITH — MAIN still active after proved Backend/Telegram stop (2026-11-21)
+
+**Symptom:** approved `update-take-closed` reached `backend_absence_unproven_no_retry` after sealing `.one-flat-handoff-backend-exited-5630a2c6…`; a subsequent read-only probe on the exact staged code proved `BACKEND_ABSENT=True`, Backend and Telegram failed / `MainPID=0`, but `bybitscanner-manual-main-read.service` returned `PAPER_unit_not_stopped` (the independent MAIN remains active). The earlier absence refusal may have been a settling race; it is **not** proof of a legacy drop-in defect.
+
+**Existing solution:** the canonical monolith already owns `tools.vps_manual_main_gateway.quiesce_gateway_after_paper_stop`, an exact-unit, independently protected MAIN-only quiesce after proven PAPER shutdown. PR #1220 routes exceptional TAKE-closed/Flat recovery through it **after** sealed Backend exit, Telegram absence and immutable PAPER SQLite postproof, **before** the same strict Gitless installer. MAIN must be stopped for replacement of tracked source files shared with PAPER; do not weaken `_stopped(UNITS)` or the listener port 8771 guard. The next retry uses a new owner UUID targeting the merged stable SHA; the existing `backend-exited` receipt prevents any new Backend signal. No manual `systemctl stop`, altered SQL, cleared receipts or second controller.
+
+**Refusal boundary:** unknown MAIN unit origin, unsafe drop-in, active MAIN listener after quiescence, failed PAPER proof or ambiguous previous signal remains BLOCKED. Host acceptance, full PAPER START and trading admission require fresh checks, not CI alone.
+
+## MONOLITH — failed STOP vs completed historical releases (2026-11-21)
+
+**Symptom:** owner `update-take-closed` exits `BLOCKED: proven_one_flat_recovery_unproven:PartialStopBlocked:another_unresolved_STOP_intent`, while the canonical update already selected one failed prior STOP. Do **not** submit another UUID, replay STOP, delete markers or assume a missing transaction means STOP succeeded.
+
+**Decisive host evidence:** prior target `5630a2c639a2a15c1663a0111131b6966335d0cd` failed `canonical_safe_stop_unproven` on 20 Nov because Robot reconciliation returned durable REQUIRED; installed Backend survived the intent, proved by existing read-only `_legacy_paused_backend_predates_stop`. For the later request `75b94ff0001b1f75557c434e1ae490b1` (target `c1b382bd…`), one bounded journal scan found **37 other historical STOP markers** with matching `editor-ready`, yet `_proven_prior_exceptional_completion` alone reported false. They are **not 37 new failed STOPs**: the recovery's duplicate gate omitted canonical completed transaction handling. The earlier canonical stage already accepts a trusted exact-SHA `editor-ready` receipt.
+
+**Known repair:** use the existing `tools.paper_stopped_approved_recovery.recover_one_flat_after_failed_stop` route from PR #1218, then apply the matching completed-release test in PR #1219: require trusted 40-hex STOP marker/payload; recognize only non-symlink completed transactions with owner-trusted `editor-ready` bytes exactly matching their SHA; otherwise require existing exceptional completion proof. Missing, mismatched or untrusted evidence remains BLOCKED. Preserve old STOP intent, the one-shot receipt, exact old Backend continuity, TAKE-closed immutable/Flat proof, and strict no-signal-replay boundary.
+
+**Fast path for recurrence:** read the *single failed UUID journal* first; distinguish a real unresolved prior STOP from already completed release receipts using the same canonical predicate. Search the exact failure and these two PRs before writing another bespoke recovery. **Evidence limit:** PR #1219 is source-only until CI, merge, exact-VPS release and separate PAPER-start approval; do not mistake successful tests or historical `editor-ready` for present trading readiness.
+
 ## PAPER P0 — цепочка блокировок доказательства APPROVED после незавершённого STOP (2026-11-04)
 
 **Назначение:** готовый путь повторного применения, не новый квест. Цель владельца прежняя: безопасно завершить монолитное обслуживание PAPER, установить готовый релиз и принять редактор через Telegram. **Нельзя** «лечить» инцидент последовательным разрешением всё новых ревизий, повторением STOP или обнулением одноразовых маркеров.

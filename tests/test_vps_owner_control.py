@@ -232,3 +232,46 @@ class OwnerControlTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_take_closed_update_is_one_detached_pinned_stage_owner_request(monkeypatch):
+    from pathlib import Path
+    target_stage = Path("/var/lib/bybitscanner-stage-git-" + SHA)
+    monkeypatch.setattr(control, "_verified_take_closed_stage", lambda sha: target_stage)
+    calls = []
+    def run(cmd, **_kwargs):
+        calls.append(cmd)
+        if cmd[0] == "systemctl":
+            return completed(cmd, out="LoadState=not-found\n")
+        return completed(cmd, out="Running as unit")
+    assert control.submit("update-take-closed", SHA, R, "win-PC", run=run, uid=0) == 0
+    assert len(calls) == 2
+    unit = calls[1]
+    assert unit[0] == "systemd-run"
+    assert "--remain-after-exit" in unit
+    assert "--working-directory=" + str(target_stage) in unit
+    assert unit[-5:] == ["-m", "tools.paper_maintenance", SHA,
+                         "--action", "update-take-closed"]
+    assert all("PAPER_AUTO" not in str(s) for s in unit)
+
+
+def test_take_closed_update_refuses_unverified_old_installed_source(monkeypatch):
+    from pathlib import Path
+    import pytest
+    monkeypatch.setattr(control, "__file__", "/opt/BybitScanner/tools/vps_owner_control.py")
+    def no_run(*args, **kwargs):
+        pytest.fail("old unverified source must not submit a one-shot action")
+    with pytest.raises(ValueError, match="verified_target_stage"):
+        control.submit("update-take-closed", SHA, R, "win-PC", run=no_run, uid=0)
+
+
+def test_finished_take_closed_update_requires_same_exact_postcheck():
+    from unittest.mock import patch
+    output = ("LoadState=loaded\nActiveState=active\nSubState=exited\n"
+              "Result=success\nExecMainStatus=0\n"
+              "Description=BybitScanner update-take-closed " + SHA[:12]
+              + " origin=win-PC\n")
+    run = lambda cmd, **kw: completed(cmd, out=output)
+    with patch.object(control, "verify_update", return_value=2) as checker:
+        assert control.status(R, run=run, verify_sha=SHA) == 2
+        checker.assert_called_once_with(SHA)

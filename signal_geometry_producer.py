@@ -55,7 +55,7 @@ def build_wedge_geometry_snapshot(signal_id, symbol, timeframe, geometry, candle
         return None
 
 def build_box_geometry_snapshot(signal_id, symbol, timeframe, formation, candles):
-    """Frozen FIRST-impulse/Fibonacci geometry for Box Telegram Editor.
+    """Frozen native Fibonacci grid for Box Telegram Editor.
 
     Uses the detector's actual A/B wick prices and source-time closed candles;
     no reconstruction from current market bars, PNG, or Robot trading plan.
@@ -73,22 +73,16 @@ def build_box_geometry_snapshot(signal_id, symbol, timeframe, formation, candles
             "low": float(row.low), "close": float(row.close),
         } for row in candles.iloc[:end + 1].itertuples(index=False)]
         times = [bar["open_time_ms"] for bar in rows]
+        # The terminal Editor already renders native Fibonacci coefficients,
+        # labels and shaded bands from these exact immutable FIRST-impulse
+        # detector anchors. Separate horizontal rays lose that functionality.
         boundaries = [{
-            "boundary_id": "box_first_impulse", "kind": "segment",
+            "boundary_id": "box_fibonacci", "kind": "fibonacci",
             "anchors": [
                 {"bar_open_time_ms": times[a], "price": float(formation.anchor_start_price)},
                 {"bar_open_time_ms": times[b], "price": float(formation.anchor_end_price)},
             ],
         }]
-        for name, price in (
-            ("box_fibonacci_1_0", formation.fibonacci_1_0),
-            ("box_fibonacci_1_618", formation.fibonacci_1_618),
-            ("box_fibonacci_2_618", formation.fibonacci_2_618),
-        ):
-            boundaries.append({
-                "boundary_id": name, "kind": "horizontal-ray",
-                "anchors": [{"bar_open_time_ms": times[b], "price": float(price)}],
-            })
         payload = {
             "schema_version": 1, "signal_id": str(signal_id),
             "symbol": str(symbol), "timeframe": str(timeframe),

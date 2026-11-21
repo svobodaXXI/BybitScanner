@@ -3,6 +3,7 @@
 The canonical owner must prove the original command, fill and full-position
 protection; no test directly repairs production DB or dispatches a close.
 """
+from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 import tempfile
@@ -16,10 +17,11 @@ from terminal.application.robot_late_admission_market import (
     durable_late_admission_market_intent,
 )
 from terminal.api.models import CommandResultStatus, ClientActionId, MarketCommandRequest, VolumeRequest, VolumeUnit
-from terminal.domain.models import Category, OrderSide, PositionKey, PositionSide, Symbol, TradingAccountId
+from terminal.domain.models import Category, OrderId, OrderSide, PositionKey, PositionSide, Price, Quantity, Symbol, TradingAccountId
+from terminal.market_data.models import PriceLevel
 from terminal.runtime.paper_runtime import _DirectRobotActionExecutor
 from tests.test_robot_breakout_monitor import _snapshot
-from tests.test_terminal_paper_runtime import _runtime, _set_admission, StaticBookProvider
+from tests.test_terminal_paper_runtime import _runtime, _runtime_with_provider, _set_admission, StaticBookProvider, MutableBookProvider
 
 
 ACCOUNT = TradingAccountId("paper")
@@ -27,8 +29,11 @@ SYMBOL = Symbol("BTCUSDT")
 CID = "legacy-protected-low-rr"
 
 
-def _orphan_fixture(path: Path, *, take_enabled=True, direction="LONG"):
-    runtime = _runtime(path)
+def _orphan_fixture(path: Path, *, take_enabled=True, book_provider=None, direction="LONG"):
+    runtime = (
+        _runtime_with_provider(path, book_provider)
+        if book_provider is not None else _runtime(path)
+    )
     store = runtime.store
     approved = int(time.time() * 1000) - 10_000
     short = direction == "SHORT"
@@ -117,6 +122,121 @@ def _orphan_fixture(path: Path, *, take_enabled=True, direction="LONG"):
     return runtime
 
 
+def _take_closed_orphan(path: Path):
+    """Real scratch PAPER generic TAKE, not a synthetic execution row."""
+    provider = MutableBookProvider(SYMBOL.value, StaticBookProvider().get_book(SYMBOL))
+    runtime = _orphan_fixture(path, book_provider=provider)
+    book = provider.get_book(SYMBOL)
+    take_book = replace(
+        book,
+        bids=(PriceLevel(Price(Decimal("64650")), Quantity(Decimal("10"))),),
+        asks=(PriceLevel(Price(Decimal("64655")), Quantity(Decimal("10"))),),
+    )
+    provider.set_book(SYMBOL.value, take_book)
+    assert runtime._match_symbol(
+        SYMBOL, take_book, "legacy-take-event", runtime._context,
+    ) == 1
+    position = runtime.store.get_position_projection(
+        PositionKey(ACCOUNT, Category.LINEAR, SYMBOL, 0),
+    )
+    assert position.side.value == "Flat" and position.quantity.value == 0
+    assert runtime.store.get_robot_trade("robot-trade-" + CID) is None
+    return runtime
+
+
+def test_take_closed_legacy_orphan_reconciles_atomically_without_new_order():
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _take_closed_orphan(Path(temp) / "paper.sqlite3")
+        try:
+            store = runtime.store
+            fills = store.load_executions_for_symbol(ACCOUNT, SYMBOL)
+            before_commands = store.load_commands_for_symbol_since(ACCOUNT, SYMBOL, 0)
+            assert len(fills) == 2 and len(before_commands) == 1
+            assert fills[1].dedup_key.exec_id.value.startswith("paper-take-exec-")
+            result = runtime.robot_reconcile()
+            assert result.success is True
+            assert result.recovery_status == "PAUSED"
+            assert runtime.robot_admission_ready() is False
+            record = store.get_robot_candidate(CID)
+            assert record.status == "CLOSED"
+            assert "emergency_close_pending" not in record.robot_state["execution"]
+            assert record.robot_state["execution"]["protected_postfill_recovery"]["proof"] == (
+                "SINGLE_MARKET_FILL_INTERNAL_TAKE_FLAT_V1"
+            )
+            trade = store.get_robot_trade("robot-trade-" + CID)
+            assert trade is not None
+            assert trade.exit_reason == "TAKE"
+            assert trade.exit_time_ms == fills[1].exchange_timestamp_ms
+            assert trade.exit_price == fills[1].price.value
+            expected_gross = fills[0].quantity.value * (
+                fills[1].price.value - fills[0].price.value
+            )
+            assert trade.realized_pnl_usdt == expected_gross
+            assert trade.fees_costs_usdt == fills[0].fee + fills[1].fee
+            assert trade.realized_pnl_pct == (
+                (expected_gross - trade.fees_costs_usdt)
+                / (fills[0].quantity.value * fills[0].price.value) * 100
+            )
+            assert store.load_executions_for_symbol(ACCOUNT, SYMBOL) == fills
+            assert store.load_commands_for_symbol_since(ACCOUNT, SYMBOL, 0) == before_commands
+            assert store.robot_account_quarantines(ACCOUNT) == {}
+        finally:
+            runtime.close()
+
+
+def test_take_closed_orphan_rejects_mismatch_without_candidate_repair():
+    from unittest.mock import patch
+    import pytest
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _take_closed_orphan(Path(temp) / "paper.sqlite3")
+        try:
+            store = runtime.store
+            entry, closing = store.load_executions_for_symbol(ACCOUNT, SYMBOL)
+            bad_cases = (
+                replace(closing, order_id=OrderId("foreign-close-order")),
+                replace(closing, quantity=Quantity(closing.quantity.value + Decimal("1"))),
+                replace(closing, exchange_timestamp_ms=entry.exchange_timestamp_ms),
+                replace(closing, fee=Decimal("-0.001")),
+            )
+            for bad_exit in bad_cases:
+                with patch.object(
+                    store, "load_executions_for_symbol",
+                    return_value=(entry, bad_exit),
+                ):
+                    answer = runtime.robot_reconcile()
+                assert answer.success is False
+                assert store.get_robot_trade("robot-trade-" + CID) is None
+                assert store.get_robot_candidate(CID).status == "APPROVED"
+                assert store.get_robot_runtime_state(ACCOUNT).recovery_status == "RECONCILIATION_REQUIRED"
+            # Source immutability and no synthetic orders still hold.
+            assert len(store.load_executions_for_symbol(ACCOUNT, SYMBOL)) == 2
+            assert len(store.load_commands_for_symbol_since(ACCOUNT, SYMBOL, 0)) == 1
+        finally:
+            runtime.close()
+
+
+def test_take_closed_orphan_rejects_competing_owner_before_accounting():
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _take_closed_orphan(Path(temp) / "paper.sqlite3")
+        try:
+            store = runtime.store
+            record = store.get_robot_candidate(CID)
+            store.create_robot_candidate(
+                candidate_id="competing-owner", trading_account_id=ACCOUNT,
+                symbol=SYMBOL, status="APPROVED",
+                signal_snapshot={**record.signal_snapshot, "source_case": "competing"},
+                approved_at_ms=record.approved_at_ms,
+                updated_at_ms=record.updated_at_ms,
+            )
+            answer = runtime.robot_reconcile()
+            assert answer.success is False
+            assert store.get_robot_trade("robot-trade-" + CID) is None
+            assert store.get_robot_candidate(CID).status == "APPROVED"
+        finally:
+            runtime.close()
+
+
+
 def test_exact_protected_legacy_entry_reconciles_to_paused_without_market_retry():
     with tempfile.TemporaryDirectory() as temp:
         runtime = _orphan_fixture(Path(temp) / "paper.sqlite3")
@@ -145,8 +265,6 @@ def test_exact_protected_legacy_entry_reconciles_to_paused_without_market_retry(
             assert store.load_commands_for_symbol_since(ACCOUNT, SYMBOL, 0) == before_commands
         finally:
             runtime.close()
-
-
 
 
 def test_protected_short_rising_wedge_recovers_without_replaying_market_close():

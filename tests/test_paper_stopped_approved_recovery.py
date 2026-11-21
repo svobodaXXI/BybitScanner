@@ -438,6 +438,7 @@ class OneFlatPartialStopResumeTest(unittest.TestCase):
             backend_handoff=handoff,
             backend_stopped=lambda: True,
             postproof=lambda: None,
+            gateway_quiesce=lambda **k: "READY: MAIN quiescent",
             installer=lambda *a, **k: installs.append(k) or "INSTALLED_STOPPED: test",
             resume=lambda *a, **k: "READY: EDITOR_ONLY",
         )
@@ -490,6 +491,7 @@ class OneFlatPartialStopResumeTest(unittest.TestCase):
             uid=os.geteuid(), inspect=lambda *a, **k: None,
             backend_handoff=lambda: signals.append("unsafe-replay"),
             backend_stopped=lambda: True, postproof=lambda: None,
+            gateway_quiesce=lambda **k: "READY: MAIN quiescent",
             installer=lambda *a, **k: "INSTALLED_STOPPED: resumed",
             resume=lambda *a, **k: "READY: EDITOR_ONLY",
         )
@@ -548,6 +550,291 @@ class OneFlatPartialStopResumeTest(unittest.TestCase):
             )
         self.assertEqual(signals, [])
 
+
+
+    def test_take_closed_failed_stop_uses_existing_protected_one_shot_handoff(self):
+        root, stage, journal, db, prior, target, old = self.prepare()
+        owner = self.owner()
+        precheck, completed = self.patches(root, db, old, owner, self.snapshot(old))
+        precheck.return_value = (
+            "PRECHECK_ONLY: FLAT proven under writer barrier; no process action"
+        )
+        calls = []
+        with mock.patch(
+            "tools.paper_maintenance._legacy_paused_backend_predates_stop",
+            return_value=True,
+        ):
+            ready = recovery.recover_one_flat_after_failed_stop(
+                target=target, stage=stage, prior_stop=prior,
+                expected_old_sha=old, root=root, transactions=journal,
+                uid=os.geteuid(), inspect=lambda *a, **k: None,
+                backend_handoff=lambda: calls.append("one-signal") or (
+                    "INTERRUPT_EXIT_OBSERVED: backend exit; restart not performed"
+                ),
+                backend_stopped=lambda: True, postproof=lambda: None,
+                gateway_quiesce=lambda **k: "READY: MAIN quiescent",
+            installer=lambda *a, **k: "INSTALLED_STOPPED: proven",
+                resume=lambda *a, **k: "READY: EDITOR_ONLY",
+                take_closed_approved=True,
+            )
+        self.assertEqual(ready, "READY: EDITOR_ONLY")
+        self.assertEqual(calls, ["one-signal"])
+        self.assertTrue(precheck.call_args.kwargs["take_closed_approved"])
+        self.assertFalse(precheck.call_args.kwargs["proven_one_flat_orphan"])
+        self.assertTrue(recovery._one_flat_receipt(
+            journal, prior, "take-closed-approved", target, uid=os.geteuid(),
+        ))
+        self.assertFalse((journal / (".stop-invoked-" + target)).exists())
+        completed.assert_called_once()
+
+    def test_take_closed_ignores_trusted_completed_prior_releases(self):
+        root, stage, journal, db, prior, target, old = self.prepare()
+        completed_sha = "d" * 40
+        (journal / (".stop-invoked-" + completed_sha)).write_bytes(
+            b"STOP_INVOKED; not install authorization\\n"
+        )
+        (journal / (".stop-invoked-" + completed_sha)).chmod(0o600)
+        (journal / completed_sha).mkdir(mode=0o700)
+        (journal / completed_sha / "editor-ready").write_text(completed_sha)
+        (journal / completed_sha / "editor-ready").chmod(0o600)
+        with (
+            mock.patch.object(recovery, "_environment", return_value={}),
+            mock.patch.object(recovery, "expected_database_identity",
+                              return_value="x" * 64),
+            mock.patch.object(recovery, "_database_path", return_value=db),
+            mock.patch.object(recovery, "verify_release", return_value=old),
+            mock.patch(
+                "tools.paper_maintenance._legacy_paused_backend_predates_stop",
+                return_value=False,
+            ),
+        ):
+            with self.assertRaisesRegex(
+                recovery.PartialStopBlocked, "old_backend_continuity_unproven",
+            ):
+                recovery.recover_one_flat_after_failed_stop(
+                    target=target, stage=stage, prior_stop=prior,
+                    expected_old_sha=old, root=root, transactions=journal,
+                    uid=os.geteuid(), inspect=lambda *a, **k: None,
+                    take_closed_approved=True,
+                )
+        self.assertFalse(recovery._one_flat_path(
+            journal, prior, "handoff-attempt",
+        ).exists())
+        self.assertFalse((journal / (".stop-invoked-" + target)).exists())
+
+    def test_take_closed_rejects_foreign_or_missing_editor_ready(self):
+        for sealed in (False, True):
+            with self.subTest(sealed=sealed):
+                root, stage, journal, db, prior, target, old = self.prepare()
+                completed_sha = "d" * 40
+                marker = journal / (".stop-invoked-" + completed_sha)
+                marker.write_bytes(b"STOP_INVOKED; not install authorization\\n")
+                marker.chmod(0o600)
+                (journal / completed_sha).mkdir(mode=0o700)
+                if sealed:
+                    receipt = journal / completed_sha / "editor-ready"
+                    receipt.write_text("e" * 40)
+                    receipt.chmod(0o600)
+                with self.assertRaisesRegex(
+                    recovery.PartialStopBlocked,
+                    "untrusted_completed_release_transaction"
+                    if sealed else "another_unresolved_STOP_intent",
+                ):
+                    recovery.recover_one_flat_after_failed_stop(
+                        target=target, stage=stage, prior_stop=prior,
+                        expected_old_sha=old, root=root, transactions=journal,
+                        uid=os.geteuid(), inspect=lambda *a, **k: None,
+                        take_closed_approved=True,
+                    )
+                self.assertFalse(recovery._one_flat_path(
+                    journal, prior, "handoff-attempt",
+                ).exists())
+
+    def test_main_quiescence_required_before_install_after_backend_exit(self):
+        root, stage, journal, db, prior, target, old = self.prepare()
+        owner = self.owner(telegram_active=False)
+        owner._probe_telegram.side_effect = [recovery.ABSENT] * 3
+        self.patches(root, db, old, owner, self.snapshot(old))
+        recovery._one_flat_snapshot(
+            journal, prior, uid=os.geteuid(), value=self.snapshot(old),
+        )
+        for phase in ("take-closed-approved", "handoff-attempt", "backend-exited"):
+            recovery._one_flat_record(
+                journal, prior, phase, target, uid=os.geteuid(),
+            )
+        installs = []
+        with self.assertRaisesRegex(
+            recovery.PartialStopBlocked, "main_gateway_safe_quiescence_unproven",
+        ):
+            recovery.recover_one_flat_after_failed_stop(
+                target=target, stage=stage, prior_stop=prior,
+                expected_old_sha=old, root=root, transactions=journal,
+                uid=os.geteuid(), inspect=lambda *a, **k: None,
+                backend_handoff=lambda: installs.append("UNSAFE_SIGNAL"),
+                backend_stopped=lambda: True, postproof=lambda: None,
+                gateway_quiesce=lambda **k: "BLOCKED: MAIN still active",
+                installer=lambda *a, **k: installs.append("INSTALL"),
+                take_closed_approved=True,
+            )
+        self.assertEqual(installs, [])
+        self.assertTrue(recovery._one_flat_receipt(
+            journal, prior, "backend-exited", target, uid=os.geteuid(),
+        ))
+        self.assertFalse((journal / target).exists())
+
+    def test_prior_proven_exit_retargets_only_one_release_without_signal(self):
+        root, stage, journal, db, prior, target, old = self.prepare()
+        original = "d" * 40
+        owner = self.owner(telegram_active=False)
+        owner._probe_telegram.side_effect = [recovery.ABSENT] * 4
+        self.patches(root, db, old, owner, self.snapshot(old))
+        recovery._one_flat_snapshot(
+            journal, prior, uid=os.geteuid(), value=self.snapshot(old),
+        )
+        for phase in ("take-closed-approved", "handoff-attempt", "backend-exited"):
+            recovery._one_flat_record(
+                journal, prior, phase, original, uid=os.geteuid(),
+            )
+        events = []
+        def attempt(target_sha):
+            return recovery.recover_one_flat_after_failed_stop(
+                target=target_sha, stage=stage, prior_stop=prior,
+                expected_old_sha=old, root=root, transactions=journal,
+                uid=os.geteuid(), inspect=lambda *a, **k: None,
+                backend_handoff=lambda: events.append("FORBIDDEN_SIGINT"),
+                backend_stopped=lambda: True, postproof=lambda: None,
+                gateway_quiesce=lambda **k: events.append("MAIN") or "READY: MAIN",
+                installer=lambda *a, **k: events.append("INSTALL") or "INSTALLED_STOPPED:",
+                resume=lambda *a, **k: "READY: EDITOR_ONLY",
+                take_closed_approved=True,
+            )
+        self.assertEqual(attempt(target), "READY: EDITOR_ONLY")
+        self.assertEqual(events, ["MAIN", "INSTALL"])
+        self.assertTrue(recovery._one_flat_receipt(
+            journal, prior, "handoff-proven", original, uid=os.geteuid(),
+        ))
+        self.assertEqual(
+            (journal / (".one-flat-handoff-retarget-" + prior)).read_bytes(),
+            (original + "\n" + target + "\n").encode("ascii"),
+        )
+        with self.assertRaisesRegex(
+            recovery.PartialStopBlocked,
+            "handoff_successor_already_bound_to_another_target",
+        ):
+            attempt("e" * 40)
+        self.assertEqual(events, ["MAIN", "INSTALL"])
+
+    def test_prior_ambiguous_signal_cannot_retarget(self):
+        root, stage, journal, db, prior, target, old = self.prepare()
+        original = "d" * 40
+        recovery._one_flat_record(
+            journal, prior, "handoff-attempt", original, uid=os.geteuid(),
+        )
+        signals = []
+        with self.assertRaisesRegex(
+            recovery.PartialStopBlocked, "prior_backend_exit_not_proven_no_replay",
+        ):
+            recovery.recover_one_flat_after_failed_stop(
+                target=target, stage=stage, prior_stop=prior,
+                expected_old_sha=old, root=root, transactions=journal,
+                uid=os.geteuid(), inspect=lambda *a, **k: None,
+                backend_handoff=lambda: signals.append("UNSAFE"),
+                take_closed_approved=True,
+            )
+        self.assertEqual(signals, [])
+
+    def test_take_closed_rejects_unknown_old_backend_before_signal(self):
+        root, stage, journal, db, prior, target, old = self.prepare()
+        owner = self.owner()
+        precheck, _ = self.patches(root, db, old, owner, self.snapshot(old))
+        with mock.patch(
+            "tools.paper_maintenance._legacy_paused_backend_predates_stop",
+            return_value=False,
+        ):
+            with self.assertRaisesRegex(
+                recovery.PartialStopBlocked, "old_backend_continuity_unproven",
+            ):
+                recovery.recover_one_flat_after_failed_stop(
+                    target=target, stage=stage, prior_stop=prior,
+                    expected_old_sha=old, root=root, transactions=journal,
+                    uid=os.geteuid(), inspect=lambda *a, **k: None,
+                    take_closed_approved=True,
+                )
+        precheck.assert_not_called()
+        self.assertFalse(recovery._one_flat_path(
+            journal, prior, "take-closed-approved",
+        ).exists())
+
+    def test_take_closed_cannot_reclassify_prior_untyped_signal(self):
+        root, stage, journal, db, prior, target, old = self.prepare()
+        recovery._one_flat_record(
+            journal, prior, "handoff-attempt", target, uid=os.geteuid(),
+        )
+        owner = self.owner()
+        self.patches(root, db, old, owner, self.snapshot(old))
+        with self.assertRaisesRegex(
+            recovery.PartialStopBlocked,
+            "untyped_prior_handoff_attempt_cannot_be_reclassified",
+        ):
+            recovery.recover_one_flat_after_failed_stop(
+                target=target, stage=stage, prior_stop=prior,
+                expected_old_sha=old, root=root, transactions=journal,
+                uid=os.geteuid(), inspect=lambda *a, **k: None,
+                take_closed_approved=True,
+            )
+
+    def test_take_closed_mode_cannot_fall_back_to_other_handoff(self):
+        root, stage, journal, db, prior, target, old = self.prepare()
+        recovery._one_flat_record(
+            journal, prior, "take-closed-approved", target, uid=os.geteuid(),
+        )
+        owner = self.owner()
+        self.patches(root, db, old, owner, self.snapshot(old))
+        with self.assertRaisesRegex(
+            recovery.PartialStopBlocked,
+            "prior_take_closed_mode_requires_matching_recovery",
+        ):
+            recovery.recover_one_flat_after_failed_stop(
+                target=target, stage=stage, prior_stop=prior,
+                expected_old_sha=old, root=root, transactions=journal,
+                uid=os.geteuid(), inspect=lambda *a, **k: None,
+            )
+
+    def test_take_closed_ambiguous_exit_never_replays_signal(self):
+        root, stage, journal, db, prior, target, old = self.prepare()
+        owner = self.owner(telegram_active=False)
+        precheck, _ = self.patches(root, db, old, owner, self.snapshot(old))
+        precheck.return_value = (
+            "PRECHECK_ONLY: FLAT proven under writer barrier; no process action"
+        )
+        calls = []
+        with mock.patch(
+            "tools.paper_maintenance._legacy_paused_backend_predates_stop",
+            return_value=True,
+        ):
+            with self.assertRaisesRegex(
+                recovery.PartialStopBlocked,
+                "backend_signal_exit_unproven_no_retry",
+            ):
+                recovery.recover_one_flat_after_failed_stop(
+                    target=target, stage=stage, prior_stop=prior,
+                    expected_old_sha=old, root=root, transactions=journal,
+                    uid=os.geteuid(), inspect=lambda *a, **k: None,
+                    backend_handoff=lambda: calls.append("signal") or "UNKNOWN",
+                    take_closed_approved=True,
+                )
+            with self.assertRaisesRegex(
+                recovery.PartialStopBlocked,
+                "backend_signal_outcome_unknown_no_retry",
+            ):
+                recovery.recover_one_flat_after_failed_stop(
+                    target=target, stage=stage, prior_stop=prior,
+                    expected_old_sha=old, root=root, transactions=journal,
+                    uid=os.geteuid(), inspect=lambda *a, **k: None,
+                    backend_handoff=lambda: calls.append("unsafe-replay"),
+                    take_closed_approved=True,
+                )
+        self.assertEqual(calls, ["signal"])
 
 
 if __name__ == "__main__":

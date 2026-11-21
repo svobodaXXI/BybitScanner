@@ -12,13 +12,15 @@ import re
 import subprocess
 import sys
 import uuid
+import sys
+from pathlib import Path
 
 REPO = "/opt/BybitScanner"
 PYTHON = REPO + "/venv/bin/python"
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 REQUEST = re.compile(r"[0-9a-f]{32}\Z")
 ORIGIN = re.compile(r"[A-Za-z0-9_.-]{1,64}\Z")
-ACTIONS = ("update", "start", "stop", "update-and-start", "provision-owner-pc", "telegram-recover")
+ACTIONS = ("update", "start", "stop", "update-and-start", "provision-owner-pc", "telegram-recover", "update-take-closed")
 UNIT_PREFIX = "bybitscanner-owner-"
 
 
@@ -71,13 +73,32 @@ def status(request: str, *, run=subprocess.run, verify_sha: str = "") -> int:
         # A completed UUID may refer to STOP, START or another release.
         # Bind its immutable systemd description to this approved UPDATE.
         description = fields.get("Description", "")
-        if not description.startswith(
-            "BybitScanner update " + verify_sha[:12] + " origin="
-        ):
+        if not any(description.startswith(
+            "BybitScanner " + verb + " " + verify_sha[:12] + " origin="
+        ) for verb in ("update", "update-take-closed")):
             print("POSTCHECK=BLOCKED_REQUEST_TARGET_MISMATCH")
             return 2
         return verify_update(verify_sha)
     return 0 if state == "FINISHED_OK" else 3 if state == "RUNNING" else 2
+
+
+def _verified_take_closed_stage(sha: str) -> Path:
+    """Only an exact root-owned stable target worktree may run new recovery code.
+
+    The installed old release intentionally cannot execute an unknown flag.
+    This keeps the operation on the same one-shot owner UUID/monolith path;
+    running an arbitrary local checkout or mutable Python module is forbidden.
+    """
+    from tools.paper_maintenance import _verified_staged_module_bootstrap
+
+    stage = Path("/var/lib") / ("bybitscanner-stage-git-" + sha)
+    if Path(__file__).resolve().parents[1] != stage:
+        raise ValueError("take_closed_action_requires_verified_target_stage")
+    if not _verified_staged_module_bootstrap(
+        sha, stage, ((__name__, sys.modules[__name__]),),
+    ):
+        raise ValueError("take_closed_target_stage_or_module_unproven")
+    return stage
 
 
 def submit(action: str, sha: str, request: str, origin: str,
@@ -96,6 +117,8 @@ def submit(action: str, sha: str, request: str, origin: str,
     if (os.geteuid() if uid is None else uid) != 0:
         raise ValueError("root_required_for_owner_operation")
 
+    stage = _verified_take_closed_stage(sha) if action == "update-take-closed" else None
+
     # A stable request ID is an idempotency fence. Successful one-shot units
     # remain loaded (RemainAfterExit), so an SSH retry cannot replay STOP/deploy.
     probe = run(["systemctl", "show", "--no-pager", "--property=LoadState", unit],
@@ -109,7 +132,8 @@ def submit(action: str, sha: str, request: str, origin: str,
 
     cmd = [
         "systemd-run", "--no-block", "--remain-after-exit",
-        "--property=Type=oneshot", "--working-directory=" + REPO,
+        "--property=Type=oneshot",
+        "--working-directory=" + (str(stage) if stage is not None else REPO),
         "--unit=" + unit,
         "--description=BybitScanner " + action + " " + sha[:12] + " origin=" + origin,
         PYTHON, "-m", "tools.paper_maintenance", sha, "--action", action,

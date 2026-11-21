@@ -3036,6 +3036,128 @@ class RobotBreakoutMonitor:
                 )
         self._release_entry_coverage(record.symbol.value)
 
+    def _recover_take_closed_legacy_postfill(
+        self, record, state, execution, command, position,
+    ) -> bool:
+        """Recover only an exact, already-FLAT internal PAPER TAKE, atomically.
+
+        The account must have one immutable Market entry and one matching
+        internally generated TAKE exit; no replacement command is dispatched.
+        """
+        store = self._store()
+        position_key = PositionKey(self._account_id, Category.LINEAR, record.symbol, 0)
+        if (position.side is not PositionSide.FLAT
+                or position.quantity.value != 0 or position.version != 2
+                or store.get_protection_projection(position_key) is not None):
+            return False
+        rows = store.load_executions_for_symbol(self._account_id, record.symbol)
+        if len(rows) != 2:
+            return False
+        entry, exit_fill = rows
+        owned = store.load_executions_for_order(
+            self._account_id, command.exchange_order_id,
+        )
+        direction = str(state.get("direction", "")).strip().upper()
+        expected_entry = OrderSide.SELL if direction == "SHORT" else OrderSide.BUY
+        expected_exit = OrderSide.BUY if direction == "SHORT" else OrderSide.SELL
+        suffix = exit_fill.order_id.value.removeprefix("paper-take-order-")
+        intent = execution["late_market_intent"]
+        if not (
+            len(owned) == 1 and owned[0] == entry
+            and entry.order_id == command.exchange_order_id
+            and entry.side is expected_entry and exit_fill.side is expected_exit
+            and entry.symbol == exit_fill.symbol == record.symbol
+            and entry.dedup_key.trading_account_id == self._account_id
+            and exit_fill.dedup_key.trading_account_id == self._account_id
+            and entry.dedup_key.category is Category.LINEAR
+            and exit_fill.dedup_key.category is Category.LINEAR
+            and entry.quantity.value > 0
+            and entry.quantity.value == exit_fill.quantity.value
+            and entry.quantity.value == Decimal(str(intent.get("normalized_quantity")))
+            and entry.price.value > 0 and exit_fill.price.value > 0
+            and entry.fee >= 0 and exit_fill.fee >= 0
+            and record.approved_at_ms <= entry.exchange_timestamp_ms
+                < exit_fill.exchange_timestamp_ms
+            and position.updated_at_ms == exit_fill.exchange_timestamp_ms
+            and exit_fill.order_id.value == "paper-take-order-" + suffix
+            and len(suffix) == 64
+            and all(c in "0123456789abcdef" for c in suffix)
+            and exit_fill.dedup_key.exec_id.value == "paper-take-exec-" + suffix
+        ):
+            return False
+        # Before this helper the common path has already attested the unique
+        # APPROVED candidate, original command and absence of foreign commands,
+        # working limits, unresolved obligations or competing Robot ownership.
+        structural = self._structural_extreme(record.signal_snapshot, direction)
+        reference, target = self._frozen_prices(record.signal_snapshot, direction)
+        tick = self._tick_size_provider(record.symbol.value)
+        plan = robot_protection.build_protection_plan(
+            self._candidate_payload(record), state,
+            average_entry=entry.price.value, structural_extreme=structural,
+            tick_size=tick, frozen_signal_reference_price=reference,
+            frozen_scanner_target_price=target, existing_stop=None,
+        )
+        actual_rr = robot_protection.post_fill_net_rr(
+            direction, average_entry=entry.price.value,
+            quantity=entry.quantity.value, entry_fee=entry.fee,
+            stop_price=plan.stop_price, take_price=plan.take_price,
+        )
+        try:
+            persisted_rr = Decimal(execution["protection_failure"].split(" rr=", 1)[1])
+        except (KeyError, TypeError, ValueError, IndexError):
+            return False
+        if not (persisted_rr.is_finite() and persisted_rr == actual_rr
+                and Decimal("0") < actual_rr < Decimal("2")):
+            return False
+        qty = entry.quantity.value
+        gross = qty * (
+            entry.price.value - exit_fill.price.value if direction == "SHORT"
+            else exit_fill.price.value - entry.price.value
+        )
+        fees = entry.fee + exit_fill.fee
+        pct = (gross - fees) / (qty * entry.price.value) * 100
+        now = max(self._now_ms(), record.updated_at_ms, exit_fill.exchange_timestamp_ms)
+        next_state = dict(state)
+        next_exec = dict(execution)
+        next_exec.pop("emergency_close_pending", None)
+        next_exec.pop("emergency_close_intent", None)
+        next_exec["protected_postfill_recovery"] = {
+            "proof": "SINGLE_MARKET_FILL_INTERNAL_TAKE_FLAT_V1",
+            "entry_command_id": command.command_id.value,
+            "entry_execution_id": entry.dedup_key.exec_id.value,
+            "take_execution_id": exit_fill.dedup_key.exec_id.value,
+            "take_order_id": exit_fill.order_id.value,
+            "position_version": position.version,
+            "reconciled_at_ms": now,
+        }
+        next_exec["post_fill_policy_exception"] = {
+            "reason": "POST_FILL_NET_RR_BELOW_2", "actual_net_rr": str(actual_rr),
+            "stop_price": str(plan.stop_price), "take_price": str(plan.take_price),
+        }
+        next_state["execution"] = next_exec
+        store.create_robot_trade(
+            trade_id="robot-trade-" + record.candidate_id,
+            trading_account_id=self._account_id, candidate_id=record.candidate_id,
+            symbol=record.symbol, direction=direction,
+            pattern=str(record.signal_snapshot.get("pattern", "")),
+            source_timeframe=str(record.signal_snapshot.get(
+                "scanner_source_timeframe",
+                record.signal_snapshot.get("timeframe", "1"),
+            )).strip() or "1",
+            signal_time_ms=record.approved_at_ms,
+            entry_time_ms=entry.exchange_timestamp_ms, entry_path="MARKET",
+            actual_wv=Decimal("1"), average_entry=entry.price.value,
+            stop_price=plan.stop_price, take_price=plan.take_price,
+            entry_quantity=qty, entry_position_version=1,
+            created_at_ms=now, recovery_state=next_state,
+            recovery_expected_revision=record.state_revision,
+            recovery_closed_take=(
+                exit_fill.exchange_timestamp_ms, exit_fill.price.value,
+                gross, pct, fees,
+            ),
+        )
+        return True
+
     def recover_protected_legacy_postfill(self, record: RobotCandidateRecord) -> bool:
         """Repair ONLY an exact, protected PAPER post-fill low-R/R orphan.
 
@@ -3137,6 +3259,15 @@ class RobotBreakoutMonitor:
         )
         if len(active) != 1 or active[0].candidate_id != record.candidate_id:
             return False
+
+        # A legacy internal TAKE can already have made the symbol FLAT.
+        # Do not try the OPEN-only entry-position attestation in that case.
+        position_key = PositionKey(self._account_id, Category.LINEAR, record.symbol, 0)
+        position = store.get_position_projection(position_key)
+        if position is not None and position.side is PositionSide.FLAT:
+            return self._recover_take_closed_legacy_postfill(
+                record, state, execution, command, position,
+            )
 
         entry = self._prove_entry_evidence(record, execution, entry_path="MARKET")
         if (entry is None
