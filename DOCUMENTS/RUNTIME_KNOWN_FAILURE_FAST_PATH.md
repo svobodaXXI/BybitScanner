@@ -5,9 +5,11 @@ Date: 2026-09-27
 Purpose: compact evidence-first runbook for recurring Scanner / PAPER Robot / Telegram / desktop-launch failures.  
 Primary objective: minimize owner time. Known failure classes are diagnosed from repository authority and one bounded host snapshot before any exploratory sequence.
 
-## PAPER — SOONUSDT legacy TAKE CLOSED / pending emergency (2026-11-21)
+## PAPER — protected legacy Wedge owner legacy TAKE CLOSED / pending emergency (2026-11-21)
 
 **Latest confirmed host:** correctly configured `SQLiteStore.get_robot_candidate` returned `APPROVED`, `state_revision=1278`, `RETEST_DETECTED`, `emergency_close_pending=True`, `late_market_intent`; `prove_approved_candidate_never_traded=False`. This refutes the earlier ad-hoc `SchemaError` as a data-corruption conclusion. Real historical fills are plausible, **but current FLAT is not proven by these fields**. Robot remains `RECONCILIATION_REQUIRED`; Scanner STOPPED and Autopilot OFF.
+
+**New host evidence:** protected `prove_take_closed_approved` succeeded with `ONE_APPROVED_PAPER_TAKE_FLAT_IMMUTABLE_V1` and same-release Backend/DB identity match. Canonical reconcile and START **not yet attempted** under that proof. Exact candidate IDs/symbols must stay out of public GitHub journal.
 
 **Existing code path:** `PaperRuntime.robot_reconcile` tries `recover_protected_legacy_postfill` under REQUIRED; its `_recover_take_closed_legacy_postfill` proves exact historic PAPER Market fill and internally-generated TAKE, then atomically records CLOSED/TAKE with real fees and clears pending, **without a new order**. The executable test `test_take_closed_legacy_orphan_reconciles_atomically_without_new_order` covers this. **Owner START on active REQUIRED merely reports the older durable reason; it does not call reconcile**. Avoid replay of START, STOP, direct Market, or blind reconcile.
 
