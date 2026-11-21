@@ -2064,10 +2064,10 @@ describe("Verified Wedge lineage in Statistics", () => {
     expect(await screen.findByText("candidate-42")).toBeInTheDocument();
     expect(screen.getByText(/точная цепочка Robot candidate/)).toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([url]) =>
-      String(url).startsWith("/api/workspace/signal-geometry"))).toBe(false);
+      String(url).startsWith("/api/workspace/signal-geometry"))).toBe(true);
   });
 
-  it("requests an immutable original chart only for exact Robot Wedge lineage", async () => {
+  it("requests an immutable original chart for proven Robot candidate lineage", async () => {
     const fetchMock = vi.fn().mockImplementation(async (url: string) => {
       if (url.startsWith("/api/workspace/signal-geometry")
           || url.startsWith("/api/diary/episode-facts"))
