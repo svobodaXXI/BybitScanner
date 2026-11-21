@@ -309,3 +309,13 @@ def test_owner_update_take_closed_enters_existing_global_lock(monkeypatch, capsy
         "owner-lock-released",
     ]
     assert capsys.readouterr().out == "BLOCKED: TEST_ONLY_NO_RUNTIME_ACTION\n"
+
+
+def test_take_closed_signal_cannot_be_requested_from_standalone_handoff_cli():
+    from tools.flat_paper_recovery_transition import main as standalone
+    with pytest.raises(SystemExit) as error:
+        standalone([
+            "--expected-pid", str(PID), "--expected-build-sha", SHA,
+            "--take-closed-approved", "--execute",
+        ])
+    assert error.value.code == 2
