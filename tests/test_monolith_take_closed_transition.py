@@ -216,3 +216,65 @@ def test_cli_take_closed_requires_explicit_verified_stage(monkeypatch, capsys):
         "--take-closed-approved-handoff",
     ]) == 2
     assert calls[0]["take_closed_approved_handoff"] is True
+
+
+def test_existing_stop_owner_routes_required_to_take_handoff_not_legacy_reconcile(tmp_path, monkeypatch):
+    from tools.stop_robot_runtime import RuntimeShutdown, ShutdownResult
+    events = []
+    def protected_callback():
+        events.append("proof-and-signal-once")
+        return "INTERRUPT_EXIT_OBSERVED: backend exit; restart not performed"
+
+    owner = RuntimeShutdown(
+        root=tmp_path, env={"BYBITSCANNER_PAPER_DB": str(tmp_path / "scratch.sqlite3")},
+        robot_state=lambda: ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED"),
+        take_closed_approved_handoff=protected_callback,
+        legacy_supported=False,
+    )
+    monkeypatch.setattr(owner, "_probe_backend", lambda: "present")
+    monkeypatch.setattr(owner, "_probe_telegram", lambda: "absent")
+    monkeypatch.setattr(owner, "_freeze_autopilot", lambda: False)
+    monkeypatch.setattr(owner, "_stop_scanner", lambda: False)
+    monkeypatch.setattr(owner, "_require_autopilot_off", lambda: None)
+    monkeypatch.setattr(owner, "_require_scanner_stopped", lambda: None)
+    monkeypatch.setattr(
+        owner, "_reconcile_robot",
+        lambda: pytest.fail("old incompatible reconcile must not run"),
+    )
+    result = owner.run("all")
+    assert isinstance(result, ShutdownResult)
+    assert result.ok and result.runtime_stopped
+    assert result.steps == ("backend:take-closed-approved-handoff",)
+    assert events == ["proof-and-signal-once"]
+
+
+def test_take_closed_handoff_rejects_unknown_callback_outcome(tmp_path, monkeypatch):
+    from tools.stop_robot_runtime import RuntimeShutdown
+    owner = RuntimeShutdown(
+        root=tmp_path, env={"BYBITSCANNER_PAPER_DB": str(tmp_path / "scratch.sqlite3")},
+        robot_state=lambda: ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED"),
+        take_closed_approved_handoff=lambda: "OUTCOME_UNKNOWN: no replay",
+        legacy_supported=False,
+    )
+    monkeypatch.setattr(owner, "_probe_backend", lambda: "present")
+    monkeypatch.setattr(owner, "_probe_telegram", lambda: "absent")
+    monkeypatch.setattr(owner, "_freeze_autopilot", lambda: False)
+    monkeypatch.setattr(owner, "_stop_scanner", lambda: False)
+    monkeypatch.setattr(owner, "_require_autopilot_off", lambda: None)
+    monkeypatch.setattr(owner, "_require_scanner_stopped", lambda: None)
+    result = owner.run("all")
+    assert not result.ok and not result.runtime_stopped
+    assert "do not retry or deploy" in result.message
+
+
+def test_cli_take_closed_cannot_bundle_paper_auto_start(monkeypatch, capsys):
+    from tools import paper_maintenance as maint
+    with pytest.raises(SystemExit):
+        maint.main([
+            "a" * 40,
+            "--staged-gitless-editor-only",
+            "/var/lib/bybitscanner-stage-git-" + "a" * 40,
+            "--take-closed-approved-handoff",
+            "--start-paper-after-editor",
+        ])
+    assert "no PAPER START" in capsys.readouterr().err
