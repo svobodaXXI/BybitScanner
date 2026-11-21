@@ -130,3 +130,25 @@ def test_symlink_state_is_never_followed(tmp_path):
         post=lambda *_: pytest.fail("must not post"),
         now_ms=1_800_000_000_000) == 2
     assert outer.read_text() == '{"critical":true}'
+
+
+def test_backend_safety_flag_failure_is_public_attention():
+    data = status_payload()
+    data[BACKEND + "/api/health"]["paper_live_safe"] = False
+    result = observe(lambda url: data[url])
+    assert result["backend"] == "SAFETY_FLAG_FAILED"
+    assert result["assessment"] == "ATTENTION"
+    assert result["position_count"] is None
+    assert "PRIVATE" not in json.dumps(result)
+
+
+def test_telegram_unavailable_is_attention_when_backend_known():
+    data = status_payload(positions=0, robot="READY")
+    def fetch(url):
+        if url == TELEGRAM + "/health":
+            raise OSError("private network error")
+        return data[url]
+    result = observe(fetch)
+    assert result["backend"] == "REACHABLE"
+    assert result["telegram"] == "UNAVAILABLE"
+    assert result["assessment"] == "ATTENTION"
