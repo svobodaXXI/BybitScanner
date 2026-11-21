@@ -682,6 +682,67 @@ class OneFlatPartialStopResumeTest(unittest.TestCase):
         ))
         self.assertFalse((journal / target).exists())
 
+    def test_prior_proven_exit_retargets_only_one_release_without_signal(self):
+        root, stage, journal, db, prior, target, old = self.prepare()
+        original = "d" * 40
+        owner = self.owner(telegram_active=False)
+        owner._probe_telegram.side_effect = [recovery.ABSENT] * 4
+        self.patches(root, db, old, owner, self.snapshot(old))
+        recovery._one_flat_snapshot(
+            journal, prior, uid=os.geteuid(), value=self.snapshot(old),
+        )
+        for phase in ("take-closed-approved", "handoff-attempt", "backend-exited"):
+            recovery._one_flat_record(
+                journal, prior, phase, original, uid=os.geteuid(),
+            )
+        events = []
+        def attempt(target_sha):
+            return recovery.recover_one_flat_after_failed_stop(
+                target=target_sha, stage=stage, prior_stop=prior,
+                expected_old_sha=old, root=root, transactions=journal,
+                uid=os.geteuid(), inspect=lambda *a, **k: None,
+                backend_handoff=lambda: events.append("FORBIDDEN_SIGINT"),
+                backend_stopped=lambda: True, postproof=lambda: None,
+                gateway_quiesce=lambda **k: events.append("MAIN") or "READY: MAIN",
+                installer=lambda *a, **k: events.append("INSTALL") or "INSTALLED_STOPPED:",
+                resume=lambda *a, **k: "READY: EDITOR_ONLY",
+                take_closed_approved=True,
+            )
+        self.assertEqual(attempt(target), "READY: EDITOR_ONLY")
+        self.assertEqual(events, ["MAIN", "INSTALL"])
+        self.assertTrue(recovery._one_flat_receipt(
+            journal, prior, "handoff-proven", original, uid=os.geteuid(),
+        ))
+        self.assertEqual(
+            (journal / (".one-flat-handoff-retarget-" + prior)).read_bytes(),
+            (original + "\n" + target + "\n").encode("ascii"),
+        )
+        with self.assertRaisesRegex(
+            recovery.PartialStopBlocked,
+            "handoff_successor_already_bound_to_another_target",
+        ):
+            attempt("e" * 40)
+        self.assertEqual(events, ["MAIN", "INSTALL"])
+
+    def test_prior_ambiguous_signal_cannot_retarget(self):
+        root, stage, journal, db, prior, target, old = self.prepare()
+        original = "d" * 40
+        recovery._one_flat_record(
+            journal, prior, "handoff-attempt", original, uid=os.geteuid(),
+        )
+        signals = []
+        with self.assertRaisesRegex(
+            recovery.PartialStopBlocked, "prior_backend_exit_not_proven_no_replay",
+        ):
+            recovery.recover_one_flat_after_failed_stop(
+                target=target, stage=stage, prior_stop=prior,
+                expected_old_sha=old, root=root, transactions=journal,
+                uid=os.geteuid(), inspect=lambda *a, **k: None,
+                backend_handoff=lambda: signals.append("UNSAFE"),
+                take_closed_approved=True,
+            )
+        self.assertEqual(signals, [])
+
     def test_take_closed_rejects_unknown_old_backend_before_signal(self):
         root, stage, journal, db, prior, target, old = self.prepare()
         owner = self.owner()

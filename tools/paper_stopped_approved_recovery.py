@@ -442,6 +442,31 @@ def _one_flat_receipt(transactions: Path, prior: str, phase: str, target: str,
     return True
 
 
+def _one_flat_retarget(
+    transactions: Path, prior: str, original: str, target: str, *, uid: int,
+) -> None:
+    """One immutable successor mapping; never rewrite a prior signal receipt."""
+    if original == target:
+        _demand(not _one_flat_path(transactions, prior, "retarget").exists()
+                and not _one_flat_path(transactions, prior, "retarget").is_symlink(),
+                "handoff_successor_already_bound_to_another_target")
+        return
+    _demand(all(len(sha) == 40 and all(c in "0123456789abcdef" for c in sha)
+                for sha in (original, target)), "invalid_handoff_successor")
+    path = _one_flat_path(transactions, prior, "retarget")
+    payload = (original + "\n" + target + "\n").encode("ascii")
+    if not path.exists() and not path.is_symlink():
+        with os.fdopen(os.open(
+            path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600,
+        ), "wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        _sync_directory(transactions)
+    _demand(_trusted_file(path, uid) == payload,
+            "handoff_successor_already_bound_to_another_target")
+
+
 def _one_flat_record(transactions: Path, prior: str, phase: str, target: str,
                      *, uid: int) -> None:
     path = _one_flat_path(transactions, prior, phase)
@@ -572,17 +597,46 @@ def recover_one_flat_after_failed_stop(
         (inspect or inspect_staged_release)(target, stage=stage, root=root,
                                              manifest=manifest, uid=uid)
     phases = ("handoff-attempt", "backend-exited", "telegram-attempt", "handoff-proven")
+    original_target = target
+    attempt = _one_flat_path(transactions, prior_stop, "handoff-attempt")
+    if attempt.exists() or attempt.is_symlink():
+        raw = _trusted_file(attempt, uid)
+        _demand(len(raw) == 41 and raw.endswith(b"\n")
+                and all(c in b"0123456789abcdef" for c in raw[:-1]),
+                "prior_handoff_target_untrusted")
+        original_target = raw[:-1].decode("ascii")
+        if original_target != target:
+            _demand(
+                _one_flat_receipt(
+                    transactions, prior_stop, "backend-exited",
+                    original_target, uid=uid,
+                ), "prior_backend_exit_not_proven_no_replay",
+            )
+            # The old target must not already own a completed handoff/install.
+            _demand(not (transactions / original_target).exists()
+                    and not (transactions / original_target).is_symlink(),
+                    "original_handoff_already_installed")
     observed = {
-        name: _one_flat_receipt(transactions, prior_stop, name, target, uid=uid)
-        for name in phases
+        phase: _one_flat_receipt(
+            transactions, prior_stop, phase, original_target, uid=uid,
+        ) for phase in phases
     }
+    # A previously selected successor is immutable. Refuse any different SHA
+    # before MAIN-only quiescence or other service/process action.
+    chosen = _one_flat_path(transactions, prior_stop, "retarget")
+    if chosen.exists() or chosen.is_symlink():
+        _demand(original_target != target
+                and _trusted_file(chosen, uid)
+                == (original_target + "\n" + target + "\n").encode("ascii"),
+                "handoff_successor_already_bound_to_another_target")
     # Bind the proof kind before an irreversible signal. An ambiguous older
     # Flat/OPEN invocation cannot be relabelled as TAKE-closed on retry.
     mode_receipt = _one_flat_path(transactions, prior_stop, "take-closed-approved")
     if take_closed_approved:
         if mode_receipt.exists() or mode_receipt.is_symlink():
             _demand(_one_flat_receipt(
-                transactions, prior_stop, "take-closed-approved", target, uid=uid,
+                transactions, prior_stop, "take-closed-approved",
+                original_target, uid=uid,
             ), "take_closed_mode_receipt_mismatch")
         else:
             _demand(not observed["handoff-attempt"],
@@ -685,7 +739,9 @@ def recover_one_flat_after_failed_stop(
             )
         _demand(owner._probe_telegram() == ABSENT,
                 "telegram_absence_unproven_no_retry")
-        _one_flat_record(transactions, prior_stop, "handoff-proven", target, uid=uid)
+        _one_flat_record(
+            transactions, prior_stop, "handoff-proven", original_target, uid=uid,
+        )
     else:
         _demand(observed["backend-exited"], "hand_off_missing_exit_proof")
 
@@ -719,6 +775,12 @@ def recover_one_flat_after_failed_stop(
                 )
     else:
         postproof()
+
+    # Seal the approved new SHA before any MAIN or tracked-file change.
+    # A second successor is forbidden even after a failed install attempt.
+    _one_flat_retarget(
+        transactions, prior_stop, original_target, target, uid=uid,
+    )
 
     # The original PAPER owner is now gone, with immutable post-exit
     # STOP/TAKE/Flat evidence checked. MAIN shares the tracked source tree,

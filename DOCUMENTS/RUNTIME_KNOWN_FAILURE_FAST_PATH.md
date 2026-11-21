@@ -5,6 +5,12 @@ Date: 2026-09-27
 Purpose: compact evidence-first runbook for recurring Scanner / PAPER Robot / Telegram / desktop-launch failures.  
 Primary objective: minimize owner time. Known failure classes are diagnosed from repository authority and one bounded host snapshot before any exploratory sequence.
 
+## MONOLITH — SHA-bound handoff after Backend exit (2026-11-21)
+
+**Symptom:** prior root-owned `.one-flat-handoff-backend-exited-5630a2c6…` receipt binds an already consumed signal to original uninstalled target `872730c5…`. A new `update-take-closed` exact-SHA `e24f32a5…` would fail `one_flat_receipt_mismatch`, not replay an already known Backend exit. This should be caught from the immutable receipt before any new owner command.
+
+**Known continuation:** existing one-flat handoff may accept one *different approved successor SHA* **only after** proving the old exact-SHA `handoff-attempt` + `backend-exited` receipts and no original target install transaction; preserve original receipts, sealed snapshot, TAKE-closed type and post-shutdown DB proof. Seal a new once-only root-owned `.one-flat-handoff-retarget-<prior>` mapping `original SHA → approved SHA` before MAIN or tracked-file changes; any different second mapping fails. `handoff-proven` remains bound to the original handoff SHA; canonical successor verification requires both original and immutable mapping plus installed exact target. Never retry SIGINT, edit previous receipt bytes, create a second recovery controller or clear STOP markers.
+
 ## MONOLITH — MAIN still active after proved Backend/Telegram stop (2026-11-21)
 
 **Symptom:** approved `update-take-closed` reached `backend_absence_unproven_no_retry` after sealing `.one-flat-handoff-backend-exited-5630a2c6…`; a subsequent read-only probe on the exact staged code proved `BACKEND_ABSENT=True`, Backend and Telegram failed / `MainPID=0`, but `bybitscanner-manual-main-read.service` returned `PAPER_unit_not_stopped` (the independent MAIN remains active). The earlier absence refusal may have been a settling race; it is **not** proof of a legacy drop-in defect.
