@@ -165,7 +165,7 @@ def test_extra_market_command_retains_required_without_replay():
         try:
             extra = runtime.api.market(MarketCommandRequest(
                 ClientActionId("foreign-after-entry"), SYMBOL.value, OrderSide.BUY,
-                VolumeRequest(VolumeUnit.USDT, Decimal("100")), Decimal("64250"),
+                VolumeRequest(VolumeUnit.WORKING_VOLUME, Decimal("1")), Decimal("64250.5"),
                 "Percent", Decimal("0.5"),
             ))
             assert extra.status is CommandResultStatus.COMPLETED
