@@ -17,7 +17,7 @@ from terminal.application.robot_late_admission_market import (
     durable_late_admission_market_intent,
 )
 from terminal.api.models import CommandResultStatus, ClientActionId, MarketCommandRequest, VolumeRequest, VolumeUnit
-from terminal.domain.models import Category, OrderId, OrderSide, PositionKey, Price, Quantity, Symbol, TradingAccountId
+from terminal.domain.models import Category, OrderId, OrderSide, PositionKey, PositionSide, Price, Quantity, Symbol, TradingAccountId
 from terminal.market_data.models import PriceLevel
 from terminal.runtime.paper_runtime import _DirectRobotActionExecutor
 from tests.test_robot_breakout_monitor import _snapshot
@@ -29,16 +29,19 @@ SYMBOL = Symbol("BTCUSDT")
 CID = "legacy-protected-low-rr"
 
 
-def _orphan_fixture(path: Path, *, take_enabled=True, book_provider=None):
+def _orphan_fixture(path: Path, *, take_enabled=True, book_provider=None, direction="LONG"):
     runtime = (
         _runtime_with_provider(path, book_provider)
         if book_provider is not None else _runtime(path)
     )
     store = runtime.store
     approved = int(time.time() * 1000) - 10_000
+    short = direction == "SHORT"
+    assert direction in ("LONG", "SHORT")
     snapshot = _snapshot(
-        symbol=SYMBOL.value, pattern="Falling Wedge",
+        symbol=SYMBOL.value, pattern="Rising Wedge" if short else "Falling Wedge",
         lower_touch_prices=(64100.0, 64120.0),
+        upper_touch_prices=(64500.0, 64520.0) if short else (150.0, 152.0),
         reference_price=64200.0, start_width=250.0,
     )
     candidate, _ = store.create_robot_candidate(
@@ -48,7 +51,7 @@ def _orphan_fixture(path: Path, *, take_enabled=True, book_provider=None):
     )
     state = {
         "phase": "RETEST_DETECTED",
-        "direction": "LONG",
+        "direction": direction,
         "execution": {"entry_mode": LATE_ADMISSION_MARKET},
     }
     book = StaticBookProvider().get_book(SYMBOL)
@@ -62,9 +65,9 @@ def _orphan_fixture(path: Path, *, take_enabled=True, book_provider=None):
     tick = runtime._instrument_provider(SYMBOL.value).tick_size
     stop = robot_protection.build_protection_plan(
         payload, state, average_entry=book.asks[0].price.value,
-        structural_extreme=Decimal("64100"), tick_size=tick,
+        structural_extreme=Decimal("64520" if short else "64100"), tick_size=tick,
         frozen_signal_reference_price=Decimal("64200"),
-        frozen_scanner_target_price=Decimal("64450"),
+        frozen_scanner_target_price=Decimal("63950" if short else "64450"),
     )
     intent = durable_late_admission_market_intent(
         plan, normalized_quantity=preflight.normalized_quantity,
@@ -85,9 +88,9 @@ def _orphan_fixture(path: Path, *, take_enabled=True, book_provider=None):
     assert position is not None and position.average_entry is not None
     expected = robot_protection.build_protection_plan(
         payload, state, average_entry=position.average_entry.value,
-        structural_extreme=Decimal("64100"), tick_size=tick,
+        structural_extreme=Decimal("64520" if short else "64100"), tick_size=tick,
         frozen_signal_reference_price=Decimal("64200"),
-        frozen_scanner_target_price=Decimal("64450"),
+        frozen_scanner_target_price=Decimal("63950" if short else "64450"),
     )
     executor = _DirectRobotActionExecutor(runtime)
     assert executor.create_stop(expected.stop_request).status is CommandResultStatus.COMPLETED
@@ -98,7 +101,7 @@ def _orphan_fixture(path: Path, *, take_enabled=True, book_provider=None):
     fills = store.load_executions_for_order(ACCOUNT, order.exchange_order_id)
     assert len(fills) == 1
     rr = robot_protection.post_fill_net_rr(
-        "LONG", average_entry=position.average_entry.value,
+        direction, average_entry=position.average_entry.value,
         quantity=position.quantity.value, entry_fee=fills[0].fee,
         stop_price=expected.stop_price, take_price=expected.take_price,
     )
@@ -263,6 +266,67 @@ def test_exact_protected_legacy_entry_reconciles_to_paused_without_market_retry(
         finally:
             runtime.close()
 
+
+def test_protected_short_rising_wedge_recovers_without_replaying_market_close():
+    # SOONUSDT-like shape: post-fill protected SHORT, legacy emergency pending,
+    # no Robot trade yet. The owner must restore accounting, not send a new order.
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _orphan_fixture(Path(temp) / "paper.sqlite3", direction="SHORT")
+        try:
+            store = runtime.store
+            before_commands = store.load_commands_for_symbol_since(ACCOUNT, SYMBOL, 0)
+            before_fills = store.load_executions_for_symbol(ACCOUNT, SYMBOL)
+            position_before = store.get_position_projection(
+                PositionKey(ACCOUNT, Category.LINEAR, SYMBOL, 0),
+            )
+            assert position_before.side is PositionSide.SHORT
+            assert len(before_commands) == len(before_fills) == 1
+
+            result = runtime.robot_reconcile()
+
+            assert result.success is True
+            assert result.recovery_status == "PAUSED"
+            assert runtime.robot_admission_ready() is False
+            trade = store.get_robot_trade("robot-trade-" + CID)
+            assert trade is not None and trade.direction == "SHORT"
+            assert trade.exit_time_ms is None
+            assert trade.entry_quantity == position_before.quantity.value
+            candidate = store.get_robot_candidate(CID)
+            assert candidate.status == "OPEN"
+            assert "emergency_close_pending" not in candidate.robot_state["execution"]
+            assert candidate.robot_state["execution"]["protected_postfill_recovery"]["proof"] == (
+                "SINGLE_MARKET_FILL_NO_EXIT_COMMAND_PROTECTED_V1"
+            )
+            position_after = store.get_position_projection(
+                PositionKey(ACCOUNT, Category.LINEAR, SYMBOL, 0),
+            )
+            assert position_after == position_before
+            assert store.load_commands_for_symbol_since(ACCOUNT, SYMBOL, 0) == before_commands
+            assert store.load_executions_for_symbol(ACCOUNT, SYMBOL) == before_fills
+        finally:
+            runtime.close()
+
+
+def test_unproven_short_take_keeps_required_and_never_creates_trade_or_close():
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _orphan_fixture(
+            Path(temp) / "paper.sqlite3", direction="SHORT", take_enabled=False,
+        )
+        try:
+            store = runtime.store
+            commands = store.load_commands_for_symbol_since(ACCOUNT, SYMBOL, 0)
+            fills = store.load_executions_for_symbol(ACCOUNT, SYMBOL)
+            result = runtime.robot_reconcile()
+            assert result.success is False
+            assert result.recovery_status == "RECONCILIATION_REQUIRED"
+            assert store.get_robot_trade("robot-trade-" + CID) is None
+            candidate = store.get_robot_candidate(CID)
+            assert candidate.status == "APPROVED"
+            assert candidate.robot_state["execution"]["emergency_close_pending"] is True
+            assert store.load_commands_for_symbol_since(ACCOUNT, SYMBOL, 0) == commands
+            assert store.load_executions_for_symbol(ACCOUNT, SYMBOL) == fills
+        finally:
+            runtime.close()
 
 def test_unconfirmed_take_retains_required_and_no_trade():
     with tempfile.TemporaryDirectory() as temp:
