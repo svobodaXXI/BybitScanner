@@ -318,10 +318,15 @@ def test_take_closed_update_refuses_unverified_old_installed_source(monkeypatch)
     from pathlib import Path
     import pytest
     monkeypatch.setattr(control, "__file__", "/opt/BybitScanner/tools/vps_owner_control.py")
-    def no_run(*args, **kwargs):
-        pytest.fail("old unverified source must not submit a one-shot action")
+    calls = []
+    def read_only_probe(cmd, **kwargs):
+        calls.append(cmd)
+        assert cmd[0] == "systemctl"  # UUID status is safe even on old source.
+        return completed(cmd, out="LoadState=not-found\nDescription=\n")
     with pytest.raises(ValueError, match="verified_target_stage"):
-        control.submit("update-take-closed", SHA, R, "win-PC", run=no_run, uid=0)
+        control.submit("update-take-closed", SHA, R, "win-PC",
+                       run=read_only_probe, uid=0)
+    assert len(calls) == 1  # Never submit a new stage from an old checkout.
 
 
 def test_finished_take_closed_update_requires_same_exact_postcheck():
