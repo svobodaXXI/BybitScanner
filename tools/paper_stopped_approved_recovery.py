@@ -193,35 +193,15 @@ def _record(transactions: Path, phase: str, uid: int, *, target: str) -> None:
 
 
 def _backend_stopped() -> bool:
-    """Only attest post-SIGINT process absence, not future unit install policy.
-
-    The installer/release resume separately verifies exact systemd fragments,
-    reviewed drop-ins, all service states and listener ownership. The old
-    installed unit may have legitimate legacy metadata before that switch.
-    """
-    import subprocess
     from tools.legacy_runtime_process import probe_listener_pids
     try:
-        reply = subprocess.run(
-            ["systemctl", "show", BACKEND_UNIT,
-             "--property=LoadState,ActiveState,MainPID", "--no-pager"],
-            capture_output=True, text=True, timeout=10, check=False,
-        )
-        if reply.returncode != 0:
-            return False
-        rows = [line.split("=", 1) for line in reply.stdout.splitlines()
-                if "=" in line]
-        if len(rows) != 3 or len({row[0] for row in rows}) != 3:
-            return False
-        state = dict(rows)
+        state = _systemd_state(BACKEND_UNIT)
         return (
-            state.get("LoadState") == "loaded"
-            and state.get("ActiveState") in ("inactive", "failed")
-            and state.get("MainPID") == "0"
+            state.get("ActiveState") in ("inactive", "failed")
+            and str(state.get("MainPID")) == "0"
             and not probe_listener_pids("127.0.0.1", 8765)
         )
-    except (OSError, ValueError, TypeError, AttributeError,
-            subprocess.TimeoutExpired):
+    except (OSError, ValueError, TypeError, AttributeError):
         return False
 
 
@@ -520,7 +500,7 @@ def recover_one_flat_after_failed_stop(
     root: Path = ROOT, transactions: Path = TRANSACTIONS,
     manifest: Path = MANIFEST, uid: int = 0,
     inspect=None, backend_handoff=None, installer=None, resume=None,
-    backend_stopped=None, postproof=None,
+    backend_stopped=None, postproof=None, gateway_quiesce=None,
     take_closed_approved: bool = False,
 ) -> str:
     """At-most-once continuation of one failed canonical STOP, not a STOP retry.
@@ -739,6 +719,24 @@ def recover_one_flat_after_failed_stop(
                 )
     else:
         postproof()
+
+    # The original PAPER owner is now gone, with immutable post-exit
+    # STOP/TAKE/Flat evidence checked. MAIN shares the tracked source tree,
+    # so its independent read-only worker must quiesce before any file switch.
+    # Reuse the canonical MAIN-only gateway action; never replay PAPER STOP.
+    from tools.vps_manual_main_gateway import (
+        MainGatewayBlocked, quiesce_gateway_after_paper_stop,
+    )
+    try:
+        main_ready = (gateway_quiesce or quiesce_gateway_after_paper_stop)(
+            root=root, uid=uid,
+        )
+    except (MainGatewayBlocked, OSError, ValueError) as exc:
+        raise PartialStopBlocked(
+            "main_gateway_safe_quiescence_unproven:" + type(exc).__name__
+        ) from exc
+    _demand(isinstance(main_ready, str) and main_ready.startswith("READY:"),
+            "main_gateway_safe_quiescence_unproven")
 
     receipt = (installer or activate_staged_release)(
         target, stage=stage, root=root, manifest=manifest,
