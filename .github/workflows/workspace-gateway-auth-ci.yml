@@ -1,0 +1,27 @@
+name: Workspace Gateway offline authentication
+
+on:
+  pull_request:
+    paths:
+      - "workspace_auth.py"
+      - "workspace_gateway.py"
+      - "tests/test_workspace_gateway.py"
+      - ".github/workflows/workspace-gateway-auth-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gateway-offline-auth:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile offline gateway sources
+        run: python -m py_compile workspace_auth.py workspace_gateway.py tests/test_workspace_gateway.py
+      - name: Verify session, origin, route, cookie and WS boundaries on loopback
+        run: python -m unittest -v tests.test_workspace_gateway
