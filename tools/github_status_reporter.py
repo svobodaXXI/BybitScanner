@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import re
 import stat
+import subprocess
 import sys
 import tempfile
 import time
@@ -268,6 +269,93 @@ def report_once(*, token_file: Path = TOKEN_FILE, state_dir: Path = STATE_DIR,
     except Exception:
         # Deliberately do not print arbitrary error strings, URLs or credentials.
         return 2
+
+
+def enable_observer(expected_sha: str, *, root: Path = Path("/opt/BybitScanner"),
+                    unit_dir: Path = Path("/etc/systemd/system"),
+                    token_file: Path = TOKEN_FILE, manifest_path=None,
+                    uid: int = 0, run=subprocess.run) -> str:
+    """Explicit owner opt-in; never stop/start trading or manage credentials."""
+    from tools.vps_release_identity import MANIFEST, verify_release, git_blob_hash, _safe_file
+    from tools.vps_gitless_release_activate import _trusted_file, _atomic_new_file, _manifest
+
+    names = ("bybitscanner-github-status.service", "bybitscanner-github-status.timer")
+    try:
+        if os.geteuid() != uid:
+            return "BLOCKED: observer_owner_required"
+        _token(token_file)
+    except (OSError, ValueError):
+        return "BLOCKED: observer_token_missing_or_unprotected"
+
+    try:
+        manifest_path = MANIFEST if manifest_path is None else manifest_path
+        if verify_release(root, manifest_path) != expected_sha:
+            return "BLOCKED: observer_release_mismatch"
+        manifest = _manifest(_trusted_file(manifest_path, uid))
+        if manifest["build_sha"] != expected_sha:
+            return "BLOCKED: observer_release_mismatch"
+        meta = unit_dir.lstat()
+        if not stat.S_ISDIR(meta.st_mode) or meta.st_uid != uid or meta.st_mode & 0o022:
+            return "BLOCKED: observer_unit_directory_unprotected"
+
+        def command(*args):
+            result = run(["systemctl", *args], capture_output=True, text=True,
+                         timeout=20, check=False)
+            if result.returncode:
+                raise ValueError("observer_systemd_unproven")
+            return result.stdout
+
+        def properties(name):
+            return dict(line.split("=", 1) for line in command(
+                "show", name, "--property=LoadState,FragmentPath,DropInPaths,ActiveState,UnitFileState,NeedDaemonReload"
+            ).splitlines() if "=" in line)
+
+        def exact_unit(name, values):
+            return (values.get("LoadState") == "loaded"
+                    and values.get("FragmentPath") == str(unit_dir / name)
+                    and values.get("DropInPaths") == ""
+                    and values.get("NeedDaemonReload") == "no")
+
+        # Verify all sources and existing destinations before any file mutation.
+        sources = {}
+        for rel in ("tools/github_status_reporter.py", *("deploy/systemd/" + n for n in names)):
+            data = _trusted_file(_safe_file(root, rel), uid)
+            if manifest["blobs"].get(rel) != git_blob_hash(data):
+                return "BLOCKED: observer_source_not_pinned"
+            sources[rel] = data
+        pending = []
+        for name in names:
+            path = unit_dir / name
+            data = sources["deploy/systemd/" + name]
+            values = properties(name)
+            if os.path.lexists(path):
+                if _trusted_file(path, uid) != data:
+                    return "BLOCKED: observer_existing_unit_conflict"
+                if (values.get("FragmentPath") not in ("", str(path))
+                        or values.get("DropInPaths") != ""):
+                    return "BLOCKED: observer_effective_unit_conflict"
+            else:
+                if (values.get("LoadState") != "not-found"
+                        or values.get("FragmentPath") != ""
+                        or values.get("DropInPaths") != ""):
+                    return "BLOCKED: observer_effective_unit_conflict"
+                pending.append((path, data))
+
+        for path, data in pending:
+            _atomic_new_file(path, data)
+        command("daemon-reload")
+        if not all(exact_unit(name, properties(name)) for name in names):
+            return "BLOCKED: observer_effective_unit_unproven"
+        command("enable", "--now", names[1])
+        values = properties(names[1])
+        if (not exact_unit(names[1], values)
+                or values.get("UnitFileState") != "enabled"
+                or values.get("ActiveState") != "active"):
+            return "BLOCKED: observer_timer_activation_unproven; no retry"
+        return "READY: GitHub observer timer enabled and active; delivery unverified"
+    except Exception:
+        # Never print credentials, subprocess stderr or arbitrary unit contents.
+        return "BLOCKED: observer_setup_unproven; no automatic retry"
 
 
 def main() -> int:
