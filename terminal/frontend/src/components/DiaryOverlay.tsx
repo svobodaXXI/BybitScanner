@@ -1346,10 +1346,10 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, pnlFilter, sideF
             : "Источник при наличии D2-связи: отдельные наблюдения Trading Diary D2, не полный журнал решений Робота."}</small>
         </section>
         <OriginalEpisodeSignalChart
-          candidateId={verifiedWedgeSignal(selected, report)?.candidateId ?? null}
+          candidateId={verifiedRobotSignal(selected, report)?.candidateId ?? null}
           symbol={selected.symbol}
-          timeframe={verifiedWedgeSignal(selected, report)?.timeframe ?? null}
-          pattern={verifiedWedgeSignal(selected, report)?.pattern ?? null}
+          timeframe={verifiedRobotSignal(selected, report)?.timeframe ?? null}
+          pattern={verifiedRobotSignal(selected, report)?.pattern ?? null}
           side={selected.side} openedAtMs={selected.opened_at_ms}
           closedAtMs={selected.closed_at_ms} executions={executionPoints} />
         <TradeExecutionPriceChart points={executionPoints} />
@@ -1471,12 +1471,10 @@ function formatFinrezPnl(value: string): string {
   if (amount === 0) return "0 USDT";
   const sign = amount > 0 ? "+" : "-";
   const magnitude = Math.abs(amount);
-  const digits = magnitude < 0.01 ? 6 : 4;
-  if (magnitude < 10 ** -digits) {
-    return `${sign}<${new Intl.NumberFormat("ru-RU", { minimumFractionDigits: digits }).format(10 ** -digits)} USDT`;
-  }
+  // Never display a tiny nonzero loss/profit as zero after cent rounding.
+  if (magnitude < 0.005) return `${sign}<0,01 USDT`;
   return `${sign}${new Intl.NumberFormat("ru-RU", {
-    minimumFractionDigits: 2, maximumFractionDigits: digits,
+    minimumFractionDigits: 2, maximumFractionDigits: 2,
   }).format(magnitude)} USDT`;
 }
 
