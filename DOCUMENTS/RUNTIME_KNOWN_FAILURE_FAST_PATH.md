@@ -21,7 +21,7 @@ Primary objective: minimize owner time. Known failure classes are diagnosed from
 
 **Single discriminator:** with `conn.row_factory = sqlite3.Row` set **before** construction of `SQLiteStore`, read the exact candidate using `get_robot_candidate` and existing `prove_approved_candidate_never_traded`. Only a residual `SchemaError` from a properly configured reader merits `load_active_robot_candidate_states(TradingAccountId("paper"))` to distinguish a state JSON failure from a signal snapshot failure. Keep original DB/evidence, do not manually write SQL or synthesize JSON; do not repeat START or reconcile while ownership is unresolved.
 
-**Automation requirement:** [single monolith incident/GitHub observability contract](MONOLITH_INCIDENT_AUTOMATION_CONTRACT.md). Public GitHub contains only redacted reason codes and receipt reference; exact candidate/trade/position details remain protected on VPS. The described exporter is **not implemented**. Existing owner control, protected receipts and no-replay safeguards remain authoritative.
+**Automation requirement:** [single monolith incident/GitHub observability contract](MONOLITH_INCIDENT_AUTOMATION_CONTRACT.md). Public GitHub contains only redacted reason codes and receipt reference; exact candidate/trade/position details remain protected on VPS. The dedicated redacted GitHub status publisher was **merged into stable in PR #1213**; actual VPS installation, activation and successful GitHub issue delivery remain **unverified**. Autonomous recovery orchestration is still **not implemented**. Existing owner control, protected receipts and no-replay safeguards remain authoritative.
 
 ## MONOLITH — SHA-bound handoff after Backend exit (2026-11-21)
 
