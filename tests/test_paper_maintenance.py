@@ -4778,3 +4778,101 @@ def test_active_stopped_paper_unhealthy_protection_never_posts(
         target, root=tmp_path, env_file=None, trusted_uid=os.geteuid(),
     )
     assert status.startswith("BLOCKED: active_stopped_PAPER_protection")
+
+def test_known_required_nonflat_is_identified_before_any_stop_intent(monkeypatch, tmp_path):
+    """Only a verified running REQUIRED owner triggers the early isolation."""
+    import tools.paper_maintenance as maintenance
+    import tools.stop_robot_runtime as shutdown
+
+    monkeypatch.setattr(
+        maintenance, "_active_exact_paper_blocker",
+        lambda *_a, **_kw: (
+            "BLOCKED: active_PAPER_Robot_RECONCILIATION_REQUIRED; "
+            "admission_closed; protection_preserved"
+        ),
+    )
+    monkeypatch.setattr(maintenance, "_environment", lambda _env: {})
+    monkeypatch.setattr(shutdown, "_database_path", lambda *_: tmp_path / "db")
+    monkeypatch.setattr(maintenance, "_active_required_flat_proof", lambda _db: None)
+    observed = maintenance._pre_stop_required_nonflat_blocker(
+        "b" * 40, root=tmp_path, env_file=None,
+    )
+    assert observed.startswith("BLOCKED: protected_REQUIRED_nonflat_or_unknown_before_STOP")
+    assert "no STOP intent" in observed
+
+    # A durable all-FLAT proof preserves the existing canonical STOP route.
+    monkeypatch.setattr(
+        maintenance, "_active_required_flat_proof",
+        lambda _db: ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED", "recoverable"),
+    )
+    assert maintenance._pre_stop_required_nonflat_blocker(
+        "b" * 40, root=tmp_path, env_file=None,
+    ) is None
+    # READY or PAUSED is not broadened into a new pre-stop prohibition.
+    monkeypatch.setattr(maintenance, "_active_exact_paper_blocker", lambda *_a, **_k: None)
+    assert maintenance._pre_stop_required_nonflat_blocker(
+        "b" * 40, root=tmp_path, env_file=None,
+    ) is None
+
+    # A missing HTTP reply does not claim REQUIRED exposure and does not
+    # supplant the canonical STOP controller's established identity checks.
+    from tools.runtime_intent import Unreachable
+    def backend_unreachable(*_a, **_kw):
+        raise Unreachable("no HTTP")
+    monkeypatch.setattr(maintenance, "_active_exact_paper_blocker", backend_unreachable)
+    assert maintenance._pre_stop_required_nonflat_blocker(
+        "b" * 40, root=tmp_path, env_file=None,
+    ) is None
+
+
+def test_deferred_protected_required_leaves_no_stop_marker_and_can_retry_when_flat(
+    monkeypatch, tmp_path,
+):
+    """Known protected failure cannot poison a future exact authorized release."""
+    import tools.paper_maintenance as maintenance
+    import tools.vps_release_identity as release
+
+    target, previous = "a" * 40, "b" * 40
+    root, stage, transactions = (
+        tmp_path / "installed", tmp_path / "stage", tmp_path / "transactions"
+    )
+    root.mkdir()
+    stage.mkdir()
+    monkeypatch.setattr(release, "verify_release", lambda *_a, **_k: previous)
+    allowed = {"flat": False}
+    steps = []
+    def gate(*_a, **_kw):
+        return None if allowed["flat"] else (
+            "BLOCKED: protected_REQUIRED_nonflat_or_unknown_before_STOP; "
+            "no STOP intent, no reconcile, no deploy"
+        )
+    monkeypatch.setattr(maintenance, "_pre_stop_required_nonflat_blocker", gate)
+
+    class Owner:
+        def __init__(self, **_kw):
+            pass
+        def run(self, scope):
+            assert scope == "all"
+            steps.append("stop")
+            return SimpleNamespace(ok=True, runtime_stopped=True)
+
+    monkeypatch.setattr(maintenance, "RuntimeShutdown", Owner)
+    def installer(*_a, **_kw):
+        steps.append("install")
+        return "INSTALLED_STOPPED: exact"
+    options = dict(
+        root=root, stage=stage, transactions=transactions,
+        trusted_uid=os.geteuid(),
+        preflight=lambda *_a, **_kw: steps.append("preflight"),
+        installer=installer,
+        resume=lambda *_a, **_kw: (steps.append("resume"), "READY: EDITOR_ONLY")[1],
+    )
+    refused = maintenance.deploy_staged_editor_only(target, **options)
+    assert refused.startswith("BLOCKED: protected_REQUIRED_nonflat_or_unknown_before_STOP")
+    assert steps == ["preflight"]
+    assert not (transactions / (".stop-invoked-" + target)).exists()
+
+    allowed["flat"] = True  # independently proven durable FLAT, not a bypass
+    accepted = maintenance.deploy_staged_editor_only(target, **options)
+    assert accepted == "READY: EDITOR_ONLY"
+    assert steps == ["preflight", "preflight", "stop", "install", "resume"]

@@ -1258,6 +1258,18 @@ def deploy_staged_editor_only(
                 # Ordinary STOP is a single mutating action. The exact dual-orphan
                 # fallback requires its own explicit opt-in, never implied by update.
                 if stop is None:
+                    # A known, live REQUIRED owner with non-FLAT/unknown
+                    # durable obligations must not poison the entire release
+                    # queue with a fresh one-shot STOP intent. Do not change
+                    # the canonical STOP/reconcile/position safety contracts.
+                    if (isinstance(current, str)
+                            and not dual_orphan_handoff
+                            and not proven_one_flat_orphan_handoff):
+                        deferred = _pre_stop_required_nonflat_blocker(
+                            current, root=root, env_file=env_file,
+                        )
+                        if deferred is not None:
+                            return deferred
                     env = _environment(env_file)
                     if proven_one_flat_orphan_handoff and (
                         not isinstance(current, str)
@@ -2027,6 +2039,40 @@ def _start_active_stopped_paper(
     except (ReleaseIdentityBlocked, StartupBlocked, FileExistsError, OSError,
             ValueError, TypeError, sqlite3.Error):
         return "BLOCKED: active_stopped_PAPER_preflight_or_transition_unproven; no_replay"
+
+
+def _pre_stop_required_nonflat_blocker(
+    installed_sha: str, *, root: Path, env_file: Path | None,
+) -> str | None:
+    """Keep a known unresolved PAPER owner out of the irreversible STOP epoch.
+
+    The active, exact-SHA REQUIRED state is diagnostic; an independent read-only
+    all-FLAT ledger proof is needed before even attempting canonical STOP.
+    Unknown or active exposure cannot safely become a durable STOP-intent fence.
+    This does NOT license a release handover or turn REQUIRED into READY.
+    """
+    from tools.runtime_intent import Unreachable
+    try:
+        active = _active_exact_paper_blocker(
+            installed_sha, root=root, env_file=env_file,
+        )
+    except Unreachable:
+        # An unreachable backend is not proof of protected REQUIRED exposure.
+        # Preserve the existing canonical shutdown's ownership checks.
+        return None
+    if not (isinstance(active, str) and active.startswith(
+        "BLOCKED: active_PAPER_Robot_RECONCILIATION_REQUIRED;"
+    )):
+        return None
+    from tools.stop_robot_runtime import _database_path
+
+    db = _database_path(root, _environment(env_file))
+    if _active_required_flat_proof(db) is not None:
+        return None  # Canonical STOP must still prove its own safe transition.
+    return (
+        "BLOCKED: protected_REQUIRED_nonflat_or_unknown_before_STOP; "
+        "no STOP intent, no reconcile, no deploy; existing backend retained"
+    )
 
 
 def _active_exact_paper_blocker(
