@@ -2051,9 +2051,15 @@ def _pre_stop_required_nonflat_blocker(
     Unknown or active exposure cannot safely become a durable STOP-intent fence.
     This does NOT license a release handover or turn REQUIRED into READY.
     """
-    active = _active_exact_paper_blocker(
-        installed_sha, root=root, env_file=env_file,
-    )
+    from tools.runtime_intent import Unreachable
+    try:
+        active = _active_exact_paper_blocker(
+            installed_sha, root=root, env_file=env_file,
+        )
+    except Unreachable:
+        # An unreachable backend is not proof of protected REQUIRED exposure.
+        # Preserve the existing canonical shutdown's ownership checks.
+        return None
     if not (isinstance(active, str) and active.startswith(
         "BLOCKED: active_PAPER_Robot_RECONCILIATION_REQUIRED;"
     )):
