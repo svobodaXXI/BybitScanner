@@ -2688,7 +2688,8 @@ def _recover_active_take_closed(
             target, root=root, env_file=env_file,
             editor_status="READY: existing active Editor and Telegram independently verified",
         )
-    except (ReleaseIdentityBlocked, OSError, ValueError, TypeError, sqlite3.Error):
+    except Exception:
+        # Unknown SQLite/HTTP/proof/postcondition outcomes never authorize replay.
         return "BLOCKED: take_closed_proof_or_runtime_unproven; no_replay"
 
 
