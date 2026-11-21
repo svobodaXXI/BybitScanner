@@ -146,7 +146,12 @@ def test_one_take_closed_plus_one_independently_never_traded_box_proves():
                 Symbol("BTCUSDT"),
             )
             result = runtime.robot_reconcile()
-            assert result.success is True
+            # This scratch fixture does NOT warm STBL's candle cache. The
+            # owner may account the immutable TAKE but must leave admission
+            # blocked rather than invent geometry evidence for the Box.
+            assert result.success is False
+            assert "closed candle cache unavailable: STBLUSDT" in result.reason
+            assert runtime.robot_admission_ready() is False
             assert runtime.store.get_robot_candidate(
                 "legacy-protected-low-rr"
             ).status == "CLOSED"
