@@ -21,6 +21,7 @@ import subprocess
 import time
 
 from tools.flat_paper_recovery_gate import (FlatRecoveryBlocked, prove_flat_recovery, prove_one_flat_orphan)
+from tools.paper_take_closed_handoff_proof import PROOF_LABEL as TAKE_CLOSED_PROOF, prove_take_closed_approved
 from tools.jasmy_flat_handoff_proof import (
     OLD_SHA as JASMY_OLD_SHA, PROOF_LABEL as JASMY_PROOF_LABEL,
     prove_jasmy_legacy_flat,
@@ -183,6 +184,7 @@ def execute_flat_handoff(
     jasmy_incident_20261102: bool = False,
     dual_orphan_incident_20261103: bool = False,
     proven_one_flat_orphan: bool = False,
+    take_closed_approved: bool = False,
     service_pid=_service_pid, start_token=_process_start_token,
     send_interrupt=None, is_alive=None, writer_guard=_frozen_snapshot,
     listener_owner=_has_exact_local_listener,
@@ -192,13 +194,14 @@ def execute_flat_handoff(
     _assert(expected_pid > 1, "expected_pid_invalid")
     _assert(
         sum((bool(jasmy_incident_20261102), bool(dual_orphan_incident_20261103),
-             bool(proven_one_flat_orphan), bool(legacy_unversioned))) <= 1,
+             bool(proven_one_flat_orphan), bool(take_closed_approved),
+             bool(legacy_unversioned))) <= 1,
         "mutually_exclusive_flat_incident_proofs",
     )
     if jasmy_incident_20261102 or dual_orphan_incident_20261103:
         _assert(not legacy_unversioned and expected_build_sha == JASMY_OLD_SHA,
                 "incident_old_sha_mismatch")
-    if dual_orphan_incident_20261103:
+    if dual_orphan_incident_20261103 or take_closed_approved:
         _assert(expected_database_identity(ROOT, {"BYBITSCANNER_PAPER_DB": str(db_path)})
                 == expected_identity, "dual_orphan_database_identity_mismatch")
     _assert(len(expected_build_sha) == 40 and
@@ -279,6 +282,26 @@ def execute_flat_handoff(
             )
             _assert(proof == TWO_ORPHAN_PROOF_LABEL,
                     "dual_orphan_flat_evidence_missing")
+        elif take_closed_approved:
+            # Attest immutable entry + actual internal TAKE, all PAPER Flat,
+            # and no competing pending ownership. Bind the opened database
+            # under BEGIN IMMEDIATE before one PID-pinned graceful SIGINT.
+            opened = conn.execute("PRAGMA database_list").fetchall()
+            main_paths = [str(row[2]) for row in opened if row[1] == "main"]
+            _assert(
+                len(main_paths) == 1 and bool(main_paths[0])
+                and Path(main_paths[0]).resolve() == db_path.resolve()
+                and expected_database_identity(
+                    ROOT, {"BYBITSCANNER_PAPER_DB": str(Path(main_paths[0]).resolve())}
+                ) == expected_identity,
+                "take_closed_open_database_identity_mismatch",
+            )
+            proof = prove_take_closed_approved(
+                conn, expected_identity=expected_identity,
+                expected_build_sha=expected_build_sha, **snapshots,
+            )
+            _assert(proof == TAKE_CLOSED_PROOF,
+                    "take_closed_approved_proof_missing")
         elif proven_one_flat_orphan:
             # The generic policy verifies the exact running build, one fully
             # attributed manual close and all other candidate/position ledgers.
@@ -361,6 +384,10 @@ def main(argv=None) -> int:
         help="Only verified JASMY+FLOW Flat/OPEN ownership on exact f100ef3 backend",
     )
     parser.add_argument(
+        "--take-closed-approved", action="store_true",
+        help="Exact immutable PAPER TAKE + APPROVED owner, never generic STOP bypass",
+    )
+    parser.add_argument(
         "--proven-one-flat-orphan", action="store_true",
         help="Only a frozen, fully verified manual Flat/OPEN Robot lot; no generic STOP bypass",
     )
@@ -379,6 +406,7 @@ def main(argv=None) -> int:
             jasmy_incident_20261102=args.jasmy_incident_20261102,
             dual_orphan_incident_20261103=args.dual_orphan_incident_20261103,
             proven_one_flat_orphan=args.proven_one_flat_orphan,
+            take_closed_approved=args.take_closed_approved,
         )
     except (FlatRecoveryBlocked, OSError, ValueError, subprocess.TimeoutExpired) as exc:
         print(f"BLOCKED: {exc}; no new signal is authorized")
