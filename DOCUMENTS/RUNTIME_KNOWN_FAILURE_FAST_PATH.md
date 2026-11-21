@@ -5,6 +5,14 @@ Date: 2026-09-27
 Purpose: compact evidence-first runbook for recurring Scanner / PAPER Robot / Telegram / desktop-launch failures.  
 Primary objective: minimize owner time. Known failure classes are diagnosed from repository authority and one bounded host snapshot before any exploratory sequence.
 
+## PAPER — REQUIRED + candidate JSON decode blocked (2026-11-21)
+
+**Confirmed:** exact Gitless release `96d13840…` completed EDITOR_ONLY, but PAPER START owner UUID `67ae92671491baac21de6e02d8e855e8` failed with `active_PAPER_Robot_RECONCILIATION_REQUIRED`. Subsequent read-only `_active_required_flat_proof=None`, `_paper_start_quiescent=False`, `Scanner=STOPPED`, `Autopilot=OFF`; reading the **correct exact** pending Robot candidate via `SQLiteStore.get_robot_candidate` raised `SchemaError("persisted Robot candidate JSON is corrupt")`. Code in `terminal/persistence/sqlite_store.py` decodes both `signal_snapshot_json` and `robot_state_json` in the same exception handler: field and physical corruption **not proven**. An earlier `NOT_FOUND` result used an incorrectly typed ID and is **not** evidence of missing candidate.
+
+**Single discriminator:** read active Robot candidate states through existing `SQLiteStore.load_active_robot_candidate_states(TradingAccountId("paper"))`, which omits signal snapshots. If this succeeds with exact-ID match, examine signal snapshot provenance/hash only via read-only approved diagnostic; if it fails, classify active state JSON corruption. Either branch requires original DB/evidence preservation and no manual SQL writes or synthetic JSON repair. Do **not** repeat START or canonical reconcile on unknown pending entry ownership.
+
+**Automation requirement:** [single monolith incident/GitHub observability contract](MONOLITH_INCIDENT_AUTOMATION_CONTRACT.md). Public GitHub contains only redacted reason codes and receipt reference; exact candidate/trade/position details remain protected on VPS. The described exporter is **not implemented**. Existing owner control, protected receipts and no-replay safeguards remain authoritative.
+
 ## MONOLITH — SHA-bound handoff after Backend exit (2026-11-21)
 
 **Symptom:** prior root-owned `.one-flat-handoff-backend-exited-5630a2c6…` receipt binds an already consumed signal to original uninstalled target `872730c5…`. A new `update-take-closed` exact-SHA `e24f32a5…` would fail `one_flat_receipt_mismatch`, not replay an already known Backend exit. This should be caught from the immutable receipt before any new owner command.
