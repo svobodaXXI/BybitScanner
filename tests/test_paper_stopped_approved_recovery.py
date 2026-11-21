@@ -329,6 +329,49 @@ class JournalTest(unittest.TestCase):
 
 
 
+class BackendExitedReceiptTest(unittest.TestCase):
+    """Post-exit service absence must not require a future installed unit."""
+
+    @mock.patch("tools.legacy_runtime_process.probe_listener_pids", return_value=[])
+    @mock.patch("subprocess.run")
+    def test_legacy_metadata_does_not_reject_stopped_backend(self, run, listeners):
+        from types import SimpleNamespace
+        run.return_value = SimpleNamespace(
+            returncode=0,
+            stdout="LoadState=loaded\\nActiveState=failed\\nMainPID=0\\n",
+        )
+        with mock.patch.object(
+            recovery, "_systemd_state", side_effect=ValueError("unexpected_systemd_dropin")
+        ):
+            self.assertTrue(recovery._backend_stopped())
+        listeners.assert_called_once_with("127.0.0.1", 8765)
+
+    @mock.patch("tools.legacy_runtime_process.probe_listener_pids", return_value=[])
+    @mock.patch("subprocess.run")
+    def test_running_or_ambiguous_systemd_remains_blocked(self, run, _listeners):
+        from types import SimpleNamespace
+        for output in (
+            "LoadState=loaded\\nActiveState=active\\nMainPID=123\\n",
+            "LoadState=loaded\\nActiveState=failed\\nMainPID=123\\n",
+            "LoadState=not-found\\nActiveState=failed\\nMainPID=0\\n",
+            "ActiveState=failed\\nMainPID=0\\n",
+            "LoadState=loaded\\nActiveState=failed\\nMainPID=0\\nMainPID=0\\n",
+        ):
+            with self.subTest(output=output):
+                run.return_value = SimpleNamespace(returncode=0, stdout=output)
+                self.assertFalse(recovery._backend_stopped())
+
+    @mock.patch("tools.legacy_runtime_process.probe_listener_pids", return_value=[123])
+    @mock.patch("subprocess.run")
+    def test_live_listener_blocks_even_when_systemd_is_stopped(self, run, _listeners):
+        from types import SimpleNamespace
+        run.return_value = SimpleNamespace(
+            returncode=0,
+            stdout="LoadState=loaded\\nActiveState=failed\\nMainPID=0\\n",
+        )
+        self.assertFalse(recovery._backend_stopped())
+
+
 class OneFlatPartialStopResumeTest(unittest.TestCase):
     """The already-consumed canonical STOP must never run a second time."""
 
