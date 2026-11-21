@@ -1796,7 +1796,10 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.executor.fill_resting_limit(
             order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81")
         )
-        original = self.store.get_protection_projection
+        # The monitor owns a distinct thread-local SQLiteStore connection;
+        # patching the fixture writer connection does not affect its reads.
+        monitor_store = self.monitor._store()
+        original = monitor_store.get_protection_projection
 
         def unconfirmed_after_submit(key):
             projection = original(key)
@@ -1809,7 +1812,7 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
             RobotBreakoutMonitor, "_frozen_prices",
             return_value=(Decimal("80"), Decimal("82")),
         ), patch.object(
-            self.store, "get_protection_projection",
+            monitor_store, "get_protection_projection",
             side_effect=unconfirmed_after_submit,
         ):
             self.monitor.tick()
