@@ -5,6 +5,14 @@ Date: 2026-09-27
 Purpose: compact evidence-first runbook for recurring Scanner / PAPER Robot / Telegram / desktop-launch failures.  
 Primary objective: minimize owner time. Known failure classes are diagnosed from repository authority and one bounded host snapshot before any exploratory sequence.
 
+## PAPER — SOONUSDT legacy TAKE CLOSED / pending emergency (2026-11-21)
+
+**Latest confirmed host:** correctly configured `SQLiteStore.get_robot_candidate` returned `APPROVED`, `state_revision=1278`, `RETEST_DETECTED`, `emergency_close_pending=True`, `late_market_intent`; `prove_approved_candidate_never_traded=False`. This refutes the earlier ad-hoc `SchemaError` as a data-corruption conclusion. Real historical fills are plausible, **but current FLAT is not proven by these fields**. Robot remains `RECONCILIATION_REQUIRED`; Scanner STOPPED and Autopilot OFF.
+
+**Existing code path:** `PaperRuntime.robot_reconcile` tries `recover_protected_legacy_postfill` under REQUIRED; its `_recover_take_closed_legacy_postfill` proves exact historic PAPER Market fill and internally-generated TAKE, then atomically records CLOSED/TAKE with real fees and clears pending, **without a new order**. The executable test `test_take_closed_legacy_orphan_reconciles_atomically_without_new_order` covers this. **Owner START on active REQUIRED merely reports the older durable reason; it does not call reconcile**. Avoid replay of START, STOP, direct Market, or blind reconcile.
+
+**Next narrow proof:** read-only `prove_take_closed_approved` against sealed prior one-flat snapshot and current DB, preserving original identity and entire account-level ownership checks. A proved FLAT/TAKE allows consideration of only the existing protected one-shot canonical reconcile action; failure remains BLOCKED. See [unified incident automation contract](MONOLITH_INCIDENT_AUTOMATION_CONTRACT.md).
+
 ## PAPER — REQUIRED + candidate JSON decode blocked (2026-11-21)
 
 **Confirmed:** exact Gitless release `96d13840…` completed EDITOR_ONLY, but PAPER START owner UUID `67ae92671491baac21de6e02d8e855e8` failed with `active_PAPER_Robot_RECONCILIATION_REQUIRED`. Subsequent read-only `_active_required_flat_proof=None`, `_paper_start_quiescent=False`, `Scanner=STOPPED`, `Autopilot=OFF`. **Diagnostic false positive:** reading the correct pending Robot candidate through an ad-hoc `SQLiteStore.get_robot_candidate` returned `SchemaError("persisted Robot candidate JSON is corrupt")` **because the inspecting connection omitted `conn.row_factory = sqlite3.Row`**. Store row decoder indexes columns by key and catches the resulting tuple `TypeError` under the same JSON-corrupt message. The original `NOT_FOUND` used a mistyped candidate ID. **Neither result establishes missing or corrupt persisted JSON.** Correctly configured authoritative proof uses `sqlite3.Row`; real ownership remains unresolved.
