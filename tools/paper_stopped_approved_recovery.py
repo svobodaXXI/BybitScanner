@@ -501,6 +501,7 @@ def recover_one_flat_after_failed_stop(
     manifest: Path = MANIFEST, uid: int = 0,
     inspect=None, backend_handoff=None, installer=None, resume=None,
     backend_stopped=None, postproof=None,
+    take_closed_approved: bool = False,
 ) -> str:
     """At-most-once continuation of one failed canonical STOP, not a STOP retry.
 
@@ -513,6 +514,9 @@ def recover_one_flat_after_failed_stop(
         resume_installed_release,
     )
     from tools.flat_paper_recovery_gate import prove_one_flat_orphan
+    from tools.paper_take_closed_handoff_proof import (
+        PROOF_LABEL as TAKE_CLOSED_PROOF, prove_take_closed_approved,
+    )
     from tools.flat_paper_recovery_transition import (
         execute_flat_handoff, get_snapshots, _service_pid,
     )
@@ -556,13 +560,29 @@ def recover_one_flat_after_failed_stop(
         name: _one_flat_receipt(transactions, prior_stop, name, target, uid=uid)
         for name in phases
     }
+    # Bind the proof kind before an irreversible signal. An ambiguous older
+    # Flat/OPEN invocation cannot be relabelled as TAKE-closed on retry.
+    mode_receipt = _one_flat_path(transactions, prior_stop, "take-closed-approved")
+    if take_closed_approved:
+        if mode_receipt.exists() or mode_receipt.is_symlink():
+            _demand(_one_flat_receipt(
+                transactions, prior_stop, "take-closed-approved", target, uid=uid,
+            ), "take_closed_mode_receipt_mismatch")
+        else:
+            _demand(not observed["handoff-attempt"],
+                    "untyped_prior_handoff_attempt_cannot_be_reclassified")
+    else:
+        _demand(not mode_receipt.exists() and not mode_receipt.is_symlink(),
+                "prior_take_closed_mode_requires_matching_recovery")
     _demand(not observed["backend-exited"] or observed["handoff-attempt"],
             "backend_receipt_without_signal_intent")
     _demand(not observed["handoff-proven"] or observed["backend-exited"],
             "completion_without_backend_exit")
     if not observed["handoff-attempt"]:
         _demand(not any(observed.values()), "partial_attempt_without_intent")
-    from tools.stop_robot_runtime import build_proven_one_flat_orphan_handoff
+    from tools.stop_robot_runtime import (
+        build_proven_one_flat_orphan_handoff, build_take_closed_approved_handoff,
+    )
     from tools.runtime_intent import expected_database_identity
 
     env = _environment(ENV_FILE)
@@ -584,6 +604,12 @@ def recover_one_flat_after_failed_stop(
     _demand(old == expected_old_sha,
             "old_release_identity_not_pinned_to_partial_STOP")
     if not observed["handoff-attempt"]:
+        if take_closed_approved:
+            # Prove the same Backend survived the earlier rejected STOP.
+            from tools.paper_maintenance import _legacy_paused_backend_predates_stop
+            _demand(_legacy_paused_backend_predates_stop(
+                transactions / (".stop-invoked-" + prior_stop),
+            ), "old_backend_continuity_unproven")
         owner = RuntimeShutdown(root=root, env=env)
         _demand(owner._probe_backend() == PRESENT, "backend_not_proven_active")
         owner._probe_telegram()
@@ -593,16 +619,28 @@ def recover_one_flat_after_failed_stop(
                 ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED"),
                 "robot_not_frozen_required")
         snapshots = get_snapshots()
-        _demand(execute_flat_handoff(
+        prechecked = execute_flat_handoff(
             db_path=db, expected_identity=identity, expected_pid=_service_pid(),
             expected_build_sha=old, execute=False, snapshots=snapshots,
-            proven_one_flat_orphan=True,
-        ).startswith("PRECHECK_ONLY:"), "pre_signal_flat_proof_unproven")
+            proven_one_flat_orphan=not take_closed_approved,
+            take_closed_approved=take_closed_approved,
+        )
+        _demand(
+            prechecked == "PRECHECK_ONLY: FLAT proven under writer barrier; no process action"
+            if take_closed_approved else prechecked.startswith("PRECHECK_ONLY:"),
+            "pre_signal_flat_proof_unproven",
+        )
         _one_flat_snapshot(transactions, prior_stop, uid=uid, value=snapshots)
+        if take_closed_approved and not (mode_receipt.exists() or mode_receipt.is_symlink()):
+            _one_flat_record(transactions, prior_stop, "take-closed-approved", target, uid=uid)
         _one_flat_record(transactions, prior_stop, "handoff-attempt", target, uid=uid)
         try:
             result = (
-                backend_handoff or build_proven_one_flat_orphan_handoff(env, old)
+                backend_handoff or (
+                    build_take_closed_approved_handoff(env, old)
+                    if take_closed_approved
+                    else build_proven_one_flat_orphan_handoff(env, old)
+                )
             )()
         except Exception as exc:
             raise PartialStopBlocked(
@@ -645,13 +683,24 @@ def recover_one_flat_after_failed_stop(
         with sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=5) as conn:
             conn.execute("PRAGMA query_only=ON")
             conn.execute("BEGIN")
-            _demand(
-                prove_one_flat_orphan(conn, expected_identity=identity,
-                                      expected_build_sha=snapshots["backend"]["build_sha"],
-                                      **snapshots)
-                == "ONE_FLAT_ORPHAN_IMMUTABLE_CLOSE_EVIDENCE_ONLY",
-                "post_handoff_flat_evidence_changed",
-            )
+            if take_closed_approved:
+                _demand(
+                    prove_take_closed_approved(
+                        conn, expected_identity=identity,
+                        expected_build_sha=snapshots["backend"]["build_sha"],
+                        **snapshots,
+                    ) == TAKE_CLOSED_PROOF,
+                    "post_handoff_take_closed_evidence_changed",
+                )
+            else:
+                _demand(
+                    prove_one_flat_orphan(
+                        conn, expected_identity=identity,
+                        expected_build_sha=snapshots["backend"]["build_sha"],
+                        **snapshots,
+                    ) == "ONE_FLAT_ORPHAN_IMMUTABLE_CLOSE_EVIDENCE_ONLY",
+                    "post_handoff_flat_evidence_changed",
+                )
     else:
         postproof()
 

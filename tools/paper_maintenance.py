@@ -1210,15 +1210,16 @@ def deploy_staged_editor_only(
                         )
                 elif (len(pending) == 1
                         and pending[0].name != ".stop-invoked-" + target
-                        and proven_one_flat_orphan_handoff
+                        and (proven_one_flat_orphan_handoff
+                             or take_closed_approved_handoff)
                         and not dual_orphan_handoff and stop is None
                         and isinstance(current, str) and len(current) == 40
                         and all(ch in "0123456789abcdef" for ch in current)
                         and pending[0].name.removeprefix(".stop-invoked-")
                             not in (current, target)):
-                    # Existing owner opt-in covers one proven Flat/OPEN
-                    # exceptional continuation. Route by the sealed old STOP
-                    # intent, never by a guessed incident/date or a new STOP.
+                    # A previously failed canonical STOP can continue through
+                    # the existing Flat/OPEN or TAKE-closed protected handoff,
+                    # with no second canonical STOP or inferred old success.
                     # The existing recovery owns exact receipt, running release,
                     # immutable lot, PID/listener, snapshot and at-most-once
                     # handoff checks. An unknown outcome remains BLOCKED.
@@ -1232,6 +1233,7 @@ def deploy_staged_editor_only(
                             expected_old_sha=current, root=root,
                             transactions=journal_root, manifest=manifest_path,
                             uid=trusted_uid,
+                            take_closed_approved=take_closed_approved_handoff,
                         )
                     except (PartialStopBlocked, ActivationBlocked,
                             ReleaseIdentityBlocked, OSError, ValueError) as exc:
