@@ -9,6 +9,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 import re
 import subprocess
+import time
 
 ROOT = Path("/opt/BybitScanner")
 UNIT = "bybitscanner-telegram.service"
@@ -150,19 +151,32 @@ def recover(target: str) -> str:
     result = subprocess.run(["systemctl", "start", UNIT], cwd=ROOT,
                             capture_output=True, text=True, check=False, timeout=180)
     _require(result.returncode == 0, "telegram_start_failed_no_retry")
+
+    # systemctl can return before Telegram has proven polling ownership.
+    # Wait for readiness, never repeat the irreversible service-start request.
+    from tools.runtime_intent import Unreachable, http_get
+    deadline = time.monotonic() + 8
+    health = None
+    while True:
+        try:
+            response = http_get("http://127.0.0.1:8766/health", 2)
+            if response.status == 200:
+                health = response.json()
+                if (isinstance(health, dict)
+                        and health.get("component") == "telegram_monitoring"
+                        and health.get("status") == "ready"):
+                    break
+        except (Unreachable, ValueError):
+            pass
+        remaining = deadline - time.monotonic()
+        _require(remaining > 0, "telegram_readiness_unproven_no_retry")
+        time.sleep(min(0.5, remaining))
+
     _require(_proof(target, expected_pid=pid) == pid,
              "backend_postcondition_unproven")
-
-    from tools.runtime_intent import http_get
-    response = http_get("http://127.0.0.1:8766/health", 3)
-    _require(response.status == 200, "telegram_health_unavailable")
-    health = response.json()
     backend = _read_json("/api/health")
-    _require(isinstance(health, dict)
-             and health.get("component") == "telegram_monitoring"
-             and health.get("status") == "ready"
-             and health.get("database_identity") == backend.get("database_identity"),
-             "telegram_readiness_unproven")
+    _require(health.get("database_identity") == backend.get("database_identity"),
+             "telegram_database_identity_unproven")
     return "TELEGRAM_ONLY_RECOVERED"
 
 
