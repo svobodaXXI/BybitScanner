@@ -550,5 +550,133 @@ class OneFlatPartialStopResumeTest(unittest.TestCase):
 
 
 
+    def test_take_closed_failed_stop_uses_existing_protected_one_shot_handoff(self):
+        root, stage, journal, db, prior, target, old = self.prepare()
+        owner = self.owner()
+        precheck, completed = self.patches(root, db, old, owner, self.snapshot(old))
+        precheck.return_value = (
+            "PRECHECK_ONLY: FLAT proven under writer barrier; no process action"
+        )
+        calls = []
+        with mock.patch(
+            "tools.paper_maintenance._legacy_paused_backend_predates_stop",
+            return_value=True,
+        ):
+            ready = recovery.recover_one_flat_after_failed_stop(
+                target=target, stage=stage, prior_stop=prior,
+                expected_old_sha=old, root=root, transactions=journal,
+                uid=os.geteuid(), inspect=lambda *a, **k: None,
+                backend_handoff=lambda: calls.append("one-signal") or (
+                    "INTERRUPT_EXIT_OBSERVED: backend exit; restart not performed"
+                ),
+                backend_stopped=lambda: True, postproof=lambda: None,
+                installer=lambda *a, **k: "INSTALLED_STOPPED: proven",
+                resume=lambda *a, **k: "READY: EDITOR_ONLY",
+                take_closed_approved=True,
+            )
+        self.assertEqual(ready, "READY: EDITOR_ONLY")
+        self.assertEqual(calls, ["one-signal"])
+        self.assertTrue(precheck.call_args.kwargs["take_closed_approved"])
+        self.assertFalse(precheck.call_args.kwargs["proven_one_flat_orphan"])
+        self.assertTrue(recovery._one_flat_receipt(
+            journal, prior, "take-closed-approved", target, uid=os.geteuid(),
+        ))
+        self.assertFalse((journal / (".stop-invoked-" + target)).exists())
+        completed.assert_called_once()
+
+    def test_take_closed_rejects_unknown_old_backend_before_signal(self):
+        root, stage, journal, db, prior, target, old = self.prepare()
+        owner = self.owner()
+        precheck, _ = self.patches(root, db, old, owner, self.snapshot(old))
+        with mock.patch(
+            "tools.paper_maintenance._legacy_paused_backend_predates_stop",
+            return_value=False,
+        ):
+            with self.assertRaisesRegex(
+                recovery.PartialStopBlocked, "old_backend_continuity_unproven",
+            ):
+                recovery.recover_one_flat_after_failed_stop(
+                    target=target, stage=stage, prior_stop=prior,
+                    expected_old_sha=old, root=root, transactions=journal,
+                    uid=os.geteuid(), inspect=lambda *a, **k: None,
+                    take_closed_approved=True,
+                )
+        precheck.assert_not_called()
+        self.assertFalse(recovery._one_flat_path(
+            journal, prior, "take-closed-approved",
+        ).exists())
+
+    def test_take_closed_cannot_reclassify_prior_untyped_signal(self):
+        root, stage, journal, db, prior, target, old = self.prepare()
+        recovery._one_flat_record(
+            journal, prior, "handoff-attempt", target, uid=os.geteuid(),
+        )
+        owner = self.owner()
+        self.patches(root, db, old, owner, self.snapshot(old))
+        with self.assertRaisesRegex(
+            recovery.PartialStopBlocked,
+            "untyped_prior_handoff_attempt_cannot_be_reclassified",
+        ):
+            recovery.recover_one_flat_after_failed_stop(
+                target=target, stage=stage, prior_stop=prior,
+                expected_old_sha=old, root=root, transactions=journal,
+                uid=os.geteuid(), inspect=lambda *a, **k: None,
+                take_closed_approved=True,
+            )
+
+    def test_take_closed_mode_cannot_fall_back_to_other_handoff(self):
+        root, stage, journal, db, prior, target, old = self.prepare()
+        recovery._one_flat_record(
+            journal, prior, "take-closed-approved", target, uid=os.geteuid(),
+        )
+        owner = self.owner()
+        self.patches(root, db, old, owner, self.snapshot(old))
+        with self.assertRaisesRegex(
+            recovery.PartialStopBlocked,
+            "prior_take_closed_mode_requires_matching_recovery",
+        ):
+            recovery.recover_one_flat_after_failed_stop(
+                target=target, stage=stage, prior_stop=prior,
+                expected_old_sha=old, root=root, transactions=journal,
+                uid=os.geteuid(), inspect=lambda *a, **k: None,
+            )
+
+    def test_take_closed_ambiguous_exit_never_replays_signal(self):
+        root, stage, journal, db, prior, target, old = self.prepare()
+        owner = self.owner(telegram_active=False)
+        precheck, _ = self.patches(root, db, old, owner, self.snapshot(old))
+        precheck.return_value = (
+            "PRECHECK_ONLY: FLAT proven under writer barrier; no process action"
+        )
+        calls = []
+        with mock.patch(
+            "tools.paper_maintenance._legacy_paused_backend_predates_stop",
+            return_value=True,
+        ):
+            with self.assertRaisesRegex(
+                recovery.PartialStopBlocked,
+                "backend_signal_exit_unproven_no_retry",
+            ):
+                recovery.recover_one_flat_after_failed_stop(
+                    target=target, stage=stage, prior_stop=prior,
+                    expected_old_sha=old, root=root, transactions=journal,
+                    uid=os.geteuid(), inspect=lambda *a, **k: None,
+                    backend_handoff=lambda: calls.append("signal") or "UNKNOWN",
+                    take_closed_approved=True,
+                )
+            with self.assertRaisesRegex(
+                recovery.PartialStopBlocked,
+                "backend_signal_outcome_unknown_no_retry",
+            ):
+                recovery.recover_one_flat_after_failed_stop(
+                    target=target, stage=stage, prior_stop=prior,
+                    expected_old_sha=old, root=root, transactions=journal,
+                    uid=os.geteuid(), inspect=lambda *a, **k: None,
+                    backend_handoff=lambda: calls.append("unsafe-replay"),
+                    take_closed_approved=True,
+                )
+        self.assertEqual(calls, ["signal"])
+
+
 if __name__ == "__main__":
     unittest.main()
