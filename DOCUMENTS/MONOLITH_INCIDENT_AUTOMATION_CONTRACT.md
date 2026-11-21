@@ -11,6 +11,18 @@
 - Следующий **один read-only этап**: установить `conn.row_factory = sqlite3.Row`, вызвать `SQLiteStore.get_robot_candidate` для **точного** ID и `prove_approved_candidate_never_traded`. Если после корректной конфигурации остаётся `SchemaError`, дополнительно использовать штатный `load_active_robot_candidate_states` (читает состояние без снимка) для разделения ошибок; не делать вывод из некорректно сконфигурированного клиента. Для остальных владельцев потребуется один агрегированный источник категорий, а не серия ручных команд и новых START.
 - В ходе релиза также возникали однократный SHA-bound Backend handoff, MAIN quiescence и запрет повтора STOP. PR #1220/#1221 и release receipts описаны в `RUNTIME_KNOWN_FAILURE_FAST_PATH.md`; они **не** доказательство PAPER торговой готовности.
 
+## 2026-11-21 — точный SOONUSDT кандидат: корректное чтение и защищённый путь
+
+**Host READ-ONLY после исправления row factory:** точный pending candidate `dc51636f18cf7e926f8dbf5a` = `SOONUSDT`, `APPROVED`, `state_revision=1278`, `phase=RETEST_DETECTED`, `robot_state=dict`; `execution` содержит `emergency_close_attempted_at_ms`, `emergency_close_pending=True`, `entry_mode`, `late_market_intent`, `protection_failure`; `prove_approved_candidate_never_traded=False`. Это ожидаемо для **уже исполненного входа** и НЕ даёт права считать кандидата «инертным», а также само по себе не доказывает текущую позицию.
+
+**Source-proof, not host-proof:** установленный `terminal.runtime.paper_runtime.PaperRuntime.robot_reconcile` имеет точный `recover_protected_legacy_postfill` для `POST_FILL_NET_RR_BELOW_2 rr=` и `emergency_close_pending`. В `robot_breakout_monitor` есть `_recover_take_closed_legacy_postfill`: проверяет `FLAT`/version 2, ровно original Market fill + internal TAKE fill, отсутствие другого владельца, команд, pending limits, открытых сделок и обязательств, идентичность плана, qty/fees/RR; **только после proof** атомарно добавляет исторический CLOSED trade и очищает pending marker без новой Market-команды. Регрессионный тест `test_take_closed_legacy_orphan_reconciles_atomically_without_new_order` проверяет `REQUIRED → PAUSED`, CLOSED / TAKE, отсутствие дополнительных executions/commands.
+
+**Почему текущий START не решил это:** `tools.paper_maintenance` для уже активного exact-SHA Backend с `ROBOT_RUNNING/RECONCILIATION_REQUIRED` не вызывает `robot_reconcile`; возвращает сохранённый reason, если это не особо разрешённый ingress overflow. Исторический reason кандидата имеет timestamp от 20.11; сообщение в failed START 21.11 — **не новая попытка reconciliation**. Не повторять `start` или `POST /api/robot/reconcile` вслепую.
+
+**Следующий доказательный барьер:** получить **один** защищённый read-only повтор `prove_take_closed_approved` на неизменённой PAPER SQLite с исходным pinned snapshot из protected one-flat journal, либо эквивалентный existing owner proof; отдельно проверить текущую backend/DB identity и защиту. Если result `ONE_APPROVED_PAPER_TAKE_FLAT_IMMUTABLE_V1`, нужен монолитный однократный reconciliation intent, а **не** повтор release/STOP/START. Если proof fails, держать admission CLOSED и сообщить **конкретный отказ** без подмены фактов.
+
+**Для будущей автоматики:** `CANDIDATE_READ_ERROR` сначала проверяет row factory; если кандидат читается и pending emergency=true, event `LEGACY_TAKE_CLOSED_OWNER_PENDING` с красным `ADMISSION_CLOSED`, не `NEVER_TRADED`. Existing protected proof → one-shot canonical reconciliation → verify `PAUSED`, terminal candidate, closed trade/net fees, no pending owners → only then ordinary owner START. GitHub получает redacted state, без exact trade/candidate ID и финансовых сведений. **Runtime-автоматизация пока не реализована**.
+
 ## 2. Минимальная целевая схема (одна система)
 
 ```text
