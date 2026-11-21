@@ -74,8 +74,9 @@ def status(request: str, *, run=subprocess.run, verify_sha: str = "") -> int:
         # Bind its immutable systemd description to this approved UPDATE.
         description = fields.get("Description", "")
         if not any(description.startswith(
-            "BybitScanner " + verb + " " + verify_sha[:12] + " origin="
-        ) for verb in ("update", "update-take-closed")):
+            "BybitScanner " + verb + " " + pinned + " origin="
+        ) for verb in ("update", "update-take-closed")
+          for pinned in (verify_sha, verify_sha[:12])):
             print("POSTCHECK=BLOCKED_REQUEST_TARGET_MISMATCH")
             return 2
         return verify_update(verify_sha)
