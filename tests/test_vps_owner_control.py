@@ -242,7 +242,7 @@ def test_take_closed_update_is_one_detached_pinned_stage_owner_request(monkeypat
     def run(cmd, **_kwargs):
         calls.append(cmd)
         if cmd[0] == "systemctl":
-            return completed(cmd, out="LoadState=not-found\\n")
+            return completed(cmd, out="LoadState=not-found\n")
         return completed(cmd, out="Running as unit")
     assert control.submit("update-take-closed", SHA, R, "win-PC", run=run, uid=0) == 0
     assert len(calls) == 2
@@ -267,10 +267,10 @@ def test_take_closed_update_refuses_unverified_old_installed_source(monkeypatch)
 
 def test_finished_take_closed_update_requires_same_exact_postcheck():
     from unittest.mock import patch
-    output = ("LoadState=loaded\\nActiveState=active\\nSubState=exited\\n"
-              "Result=success\\nExecMainStatus=0\\n"
+    output = ("LoadState=loaded\nActiveState=active\nSubState=exited\n"
+              "Result=success\nExecMainStatus=0\n"
               "Description=BybitScanner update-take-closed " + SHA[:12]
-              + " origin=win-PC\\n")
+              + " origin=win-PC\n")
     run = lambda cmd, **kw: completed(cmd, out=output)
     with patch.object(control, "verify_update", return_value=2) as checker:
         assert control.status(R, run=run, verify_sha=SHA) == 2
