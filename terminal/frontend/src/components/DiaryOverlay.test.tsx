@@ -678,6 +678,70 @@ describe("Closed deals / exact episode index", () => {
     }
   });
 
+  it.each([
+    [503, "simulator_bridge_disabled", "Мост сопряжения отключён на сервере (HTTP 503)"],
+    [503, "simulator_pairing_device_not_configured", "Это устройство не настроено на сервере (HTTP 503)"],
+    [403, "simulator_bridge_unauthorized", "Сервер отклонил авторизацию или источник Telegram Mini App (HTTP 403)"],
+    [400, "invalid_simulator_bridge_request", "Сервер отклонил формат запроса (HTTP 400)"],
+    [502, "PRIVATE_ERROR_TOKEN", "Сервер отклонил сопряжение (HTTP 502)"],
+  ])("shows only safe in-app pairing error for HTTP %i %s", async (status, error, expected) => {
+    const secret = "SECRET_PAIRING_TOKEN_MUST_NOT_RENDER";
+    vi.stubGlobal("navigator", { userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" });
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+      if (url.endsWith("/simulator-bridge/pair"))
+        return new Response(JSON.stringify({ ok: false, error, token: secret }), { status });
+      return new Response(JSON.stringify({
+        ...finrezResponse, closed_episodes: [robotDeal],
+      }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<DiaryOverlay accountKey="paper:pair-error" initialSection="DEALS"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: /BTCUSDT/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Связать ПК" }));
+    const notice = await screen.findByText(/Подключение пока недоступно:/);
+    expect(notice).toHaveTextContent(expected);
+    expect(notice).not.toHaveTextContent(secret);
+    expect(notice).not.toHaveTextContent("PRIVATE_ERROR_TOKEN");
+    expect(screen.queryByRole("button", { name: "Подтвердить подключение" }))
+      .not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith("/api/diary/simulator-bridge/pair", {
+      method: "POST", credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ device_id: "owner-pc" }),
+    });
+  });
+
+  it("distinguishes network failure and invalid success without leaking server payloads", async () => {
+    const secret = "SECRET_PAIRING_TOKEN_MUST_NOT_RENDER";
+    const scenarios = [
+      { failure: "Нет ответа сервера (сеть или шлюз)", payload: null },
+      { failure: "Ответ сервера не прошёл проверку (HTTP 200)", payload: { ok: true, device_id: "owner-laptop", token: secret } },
+    ];
+    for (const scenario of scenarios) {
+      vi.stubGlobal("navigator", { userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" });
+      vi.stubGlobal("fetch", vi.fn().mockImplementation(async (url: string) => {
+        if (url.endsWith("/simulator-bridge/pair")) {
+          if (!scenario.payload) throw new TypeError("network " + secret);
+          return new Response(JSON.stringify(scenario.payload), { status: 200 });
+        }
+        return new Response(JSON.stringify({
+          ...finrezResponse, closed_episodes: [robotDeal],
+        }), { status: 200 });
+      }));
+      const view = render(<DiaryOverlay accountKey="paper:pair-unknown" initialSection="DEALS"
+        statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+      fireEvent.click(await screen.findByRole("button", { name: /BTCUSDT/ }));
+      fireEvent.click(screen.getByRole("button", { name: "Связать ПК" }));
+      const notice = await screen.findByText(/Подключение пока недоступно:/);
+      expect(notice).toHaveTextContent(scenario.failure);
+      expect(notice).not.toHaveTextContent(secret);
+      expect(screen.queryByRole("button", { name: "Подтвердить подключение" }))
+        .not.toBeInTheDocument();
+      view.unmount();
+    }
+  });
+
   it("on phone requests paired adapter and reports acknowledged local utility opening", async () => {
     const episodeId = "te_" + "c".repeat(24);
     const requestId = "d".repeat(32);
