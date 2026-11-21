@@ -4814,6 +4814,16 @@ def test_known_required_nonflat_is_identified_before_any_stop_intent(monkeypatch
         "b" * 40, root=tmp_path, env_file=None,
     ) is None
 
+    # A missing HTTP reply does not claim REQUIRED exposure and does not
+    # supplant the canonical STOP controller's established identity checks.
+    from tools.runtime_intent import Unreachable
+    def backend_unreachable(*_a, **_kw):
+        raise Unreachable("no HTTP")
+    monkeypatch.setattr(maintenance, "_active_exact_paper_blocker", backend_unreachable)
+    assert maintenance._pre_stop_required_nonflat_blocker(
+        "b" * 40, root=tmp_path, env_file=None,
+    ) is None
+
 
 def test_deferred_protected_required_leaves_no_stop_marker_and_can_retry_when_flat(
     monkeypatch, tmp_path,
