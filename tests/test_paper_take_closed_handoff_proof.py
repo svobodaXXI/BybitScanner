@@ -9,6 +9,7 @@ from pathlib import Path
 from copy import deepcopy
 
 import pytest
+from terminal.domain.models import TradingAccountId, Symbol
 
 from tests.test_robot_protected_postfill_recovery import _take_closed_orphan
 from tools.flat_paper_recovery_gate import FlatRecoveryBlocked
@@ -138,6 +139,25 @@ def test_one_take_closed_plus_one_independently_never_traded_box_proves():
             assert runtime.store.get_robot_candidate(
                 "legacy-protected-low-rr"
             ).status == "APPROVED"
+            # The new owner must reconcile the actual TAKE without opening
+            # the unrelated Box or inventing an execution for it.
+            original_fills = runtime.store.load_executions_for_symbol(
+                TradingAccountId("paper"),
+                Symbol("BTCUSDT"),
+            )
+            result = runtime.robot_reconcile()
+            assert result.success is True
+            assert runtime.store.get_robot_candidate(
+                "legacy-protected-low-rr"
+            ).status == "CLOSED"
+            assert runtime.store.get_robot_candidate(other.candidate_id) == before
+            assert runtime.store.load_executions_for_symbol(
+                TradingAccountId("paper"),
+                Symbol("BTCUSDT"),
+            ) == original_fills
+            assert runtime.store.prove_approved_candidate_never_traded(
+                runtime.store.get_robot_candidate(other.candidate_id)
+            )
         finally:
             runtime.close()
 
