@@ -5,6 +5,14 @@ Date: 2026-09-27
 Purpose: compact evidence-first runbook for recurring Scanner / PAPER Robot / Telegram / desktop-launch failures.  
 Primary objective: minimize owner time. Known failure classes are diagnosed from repository authority and one bounded host snapshot before any exploratory sequence.
 
+## MONOLITH — Backend exit receipt but legacy unit metadata blocks post-exit (2026-11-21)
+
+**Symptom:** `update-take-closed` / `recover_one_flat_after_failed_stop` returns `backend_absence_unproven_no_retry` after a durable `backend-exited` receipt. Host read-only evidence: Backend and Telegram `ActiveState=failed`, `MainPID=0`, no observed listener on 8765, sealed snapshot and TAKE-closed mode receipts; original installed release not switched. This does **not** authorize resending SIGINT or assuming the full PAPER installation is ready.
+
+**Code boundary:** recovery's `_backend_stopped` called `vps_release_resume._systemd_state`, a *future-unit provenance/drop-in validator* in addition to a stopped-process check. Legacy systemd unit metadata can make it return false although the already attested Backend has exited. Root cause of the specific rejected metadata remains unverified; do not infer it from `MainPID=0` alone.
+
+**Known repair / fast path:** PR #1220 separates a strict read-only Backend absence predicate (`systemctl show`: loaded, inactive/failed, `MainPID=0`, no owned listener) from the *unchanged stricter* Gitless installer + unit/drop-in + port checks. If any state is missing/ambiguous or a listener is present, BLOCKED. Previous `backend-exited` receipt is required to resume the same one-shot flow; do not remove or rewrite it. Treat the original failed owner UUID as terminal and only use a separately approved exact-SHA continuation. Deploy/PAPER START remain separate verified outcomes.
+
 ## MONOLITH — failed STOP vs completed historical releases (2026-11-21)
 
 **Symptom:** owner `update-take-closed` exits `BLOCKED: proven_one_flat_recovery_unproven:PartialStopBlocked:another_unresolved_STOP_intent`, while the canonical update already selected one failed prior STOP. Do **not** submit another UUID, replay STOP, delete markers or assume a missing transaction means STOP succeeded.
