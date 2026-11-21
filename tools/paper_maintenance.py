@@ -2955,7 +2955,7 @@ def _stop_exact_installed_paper_once(
 def main(argv=None) -> int:
     parser = _MaintenanceParser(description="Fail-closed one-action PAPER maintenance")
     parser.add_argument("sha")
-    parser.add_argument("--action", choices=("stop", "start", "update", "update-and-start", "provision-owner-pc", "telegram-recover"),
+    parser.add_argument("--action", choices=("stop", "start", "update", "update-and-start", "provision-owner-pc", "telegram-recover", "update-take-closed"),
                         help="single owner action: canonical STOP, PAPER START, or exact stable UPDATE")
     parser.add_argument("--env-file", type=Path, default=Path("/etc/bybitscanner/paper.env"))
     parser.add_argument("--wait-seconds", type=float, default=0)
@@ -3028,6 +3028,26 @@ def main(argv=None) -> int:
                     status = provision_owner_pc(args.sha, env_file=args.env_file)
                     print(status)
                     return 0 if status.startswith("READY:") else 2
+                if args.action == "update-take-closed":
+                    # One exceptional owner UUID, not a second SSH recovery
+                    # controller. Only the fully verified exact stable target
+                    # stage may execute code missing from the old Backend.
+                    stage = Path("/var/lib") / ("bybitscanner-stage-git-" + args.sha)
+                    project_modules = tuple(
+                        (name, mod) for name, mod in sys.modules.items()
+                        if name in ("tools", "terminal")
+                        or name.startswith(("tools.", "terminal."))
+                    )
+                    if not _verified_staged_module_bootstrap(
+                        args.sha, stage, (("__main__", sys.modules[__name__]),) + project_modules,
+                    ):
+                        print("BLOCKED: take_closed_owner_stage_unproven; no STOP")
+                        return 2
+                    return main([
+                        args.sha, "--env-file", str(args.env_file),
+                        "--staged-gitless-editor-only", str(stage),
+                        "--take-closed-approved-handoff",
+                    ])
                 owner_flags = (
                     ["--update-editor-only-from-stable"] if args.action.startswith("update")
                     else ["--resume-installed-editor-only"]
