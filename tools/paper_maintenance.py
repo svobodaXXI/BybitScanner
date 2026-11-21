@@ -3135,6 +3135,8 @@ def main(argv=None) -> int:
         or args.resume_one_flat_from_prior_stop or args.expected_old_backend
     ):
         parser.error("confirmed STOP continuation requires only exact Gitless staging")
+    if args.take_closed_approved_handoff and args.start_paper_after_editor:
+        parser.error("TAKE-closed handoff only installs frozen EDITOR_ONLY; no PAPER START")
     if args.staged_gitless_editor_only and REPO.is_dir():
         # Source must be consistently loaded from the installed release OR
         # from the exact root-owned/stable target worktree. The latter allows
