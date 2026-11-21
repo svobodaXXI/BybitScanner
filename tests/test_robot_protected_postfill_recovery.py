@@ -221,7 +221,7 @@ def test_take_closed_orphan_rejects_competing_owner_before_accounting():
             store.create_robot_candidate(
                 candidate_id="competing-owner", trading_account_id=ACCOUNT,
                 symbol=SYMBOL, status="APPROVED",
-                signal_snapshot=record.signal_snapshot,
+                signal_snapshot={**record.signal_snapshot, "source_case": "competing"},
                 approved_at_ms=record.approved_at_ms,
                 updated_at_ms=record.updated_at_ms,
             )
