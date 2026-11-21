@@ -3192,7 +3192,7 @@ class RobotBreakoutMonitor:
                 and Decimal("0") < actual_rr < Decimal("2")):
             return False
 
-        now = self._now_ms()
+        now = max(self._now_ms(), record.updated_at_ms)
         recovered = dict(state)
         updated = dict(execution)
         updated.pop("emergency_close_pending", None)
