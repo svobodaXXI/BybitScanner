@@ -25,6 +25,16 @@
 
 **Для будущей автоматики:** `CANDIDATE_READ_ERROR` сначала проверяет row factory; если кандидат читается и pending emergency=true, event `LEGACY_TAKE_CLOSED_OWNER_PENDING` с красным `ADMISSION_CLOSED`, не `NEVER_TRADED`. Existing protected proof → one-shot canonical reconciliation → verify `PAUSED`, terminal candidate, closed trade/net fees, no pending owners → only then ordinary owner START. GitHub получает redacted state, без exact trade/candidate ID и финансовых сведений. **Runtime-автоматизация пока не реализована**.
 
+## Подтверждённое завершение PAPER-восстановления — 2026-11-21
+
+**Новые доказательства из owner-terminal, не из CI:**
+- Protected read-only `prove_take_closed_approved`: `TAKE_CLOSED_PROOF=ONE_APPROVED_PAPER_TAKE_FLAT_IMMUTABLE_V1`; `CURRENT_BACKEND_MATCH=True`; `READ_ONLY_EXIT_CODE=0`.
+- Владелец выполнил одну одобренную одноразовую последовательность под существующим `_owner_action_lifecycle_guard`, с повторной проверкой exact release, protected handoff, immutable TAKE proof, Backend/DB/process identity и ingress/protection. Перед `POST /api/robot/reconcile` записана fsync-квитанция `_record_required_reconcile_once`; ответ: `ONE_SHOT_RECONCILE_INTENT_SEALED`, `CANONICAL_RECONCILE=PAUSED_TAKE_ACCOUNTED`. Исторический TAKE записан через штатный ledger, без новой Market-команды.
+- Последующий штатный `start_installed_paper_from_editor` ответил `READY: exact HEAD, PAPER-only, Robot, Scanner, PAPER_AUTO, reentry and protection confirmed`; `SSH_EXIT_CODE=0`. Это **подтверждённый host runtime outcome**, а не UI/пользовательская приёмка и не внедрение GitHub-журнала.
+- Не повторять этот reconciliation: one-shot intent уже запечатан. Не выводить торговый допуск из отдельных сообщений GitHub; фактическую runtime-готовность каждый раз подтверждает монолит.
+
+**Урок для автоматизации:** известный TAKE-closed случай должен проходить одну связку: owner UUID → read-only full-account proof → protected one-shot intent → canonical reconcile → доказательство PAUSED/CLOSED и реальных fees → existing PAPER START → READY/или fail-closed отчёт. Для восстановления не нужны многократные пользовательские PowerShell-вставки или дополнительные согласования одного и того же действия; **автоматический publisher/оркестратор пока не реализован**.
+
 ## 2. Минимальная целевая схема (одна система)
 
 ```text
