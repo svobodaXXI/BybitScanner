@@ -2926,11 +2926,15 @@ def main(argv=None) -> int:
                     )
                     try:
                         result = recover(args.sha)
-                    except (TelegramRecoveryBlocked, OSError, ValueError,
-                            subprocess.TimeoutExpired) as exc:
+                    except TelegramRecoveryBlocked as exc:
                         print("BLOCKED: telegram_only_recovery:"
-                              + type(exc).__name__ + ":" + str(exc)[:160]
-                              + "; no retry")
+                              + str(exc)[:160] + "; no retry")
+                        return 2
+                    except Exception as exc:
+                        # Transport, release identity, JSON and other unknown
+                        # errors must never trigger a full resume fallback.
+                        print("BLOCKED: telegram_only_recovery_unproven:"
+                              + type(exc).__name__ + "; no retry")
                         return 2
                     print("READY: " + result)
                     return 0
