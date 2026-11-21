@@ -384,10 +384,6 @@ def main(argv=None) -> int:
         help="Only verified JASMY+FLOW Flat/OPEN ownership on exact f100ef3 backend",
     )
     parser.add_argument(
-        "--take-closed-approved", action="store_true",
-        help="Exact immutable PAPER TAKE + APPROVED owner, never generic STOP bypass",
-    )
-    parser.add_argument(
         "--proven-one-flat-orphan", action="store_true",
         help="Only a frozen, fully verified manual Flat/OPEN Robot lot; no generic STOP bypass",
     )
@@ -406,7 +402,6 @@ def main(argv=None) -> int:
             jasmy_incident_20261102=args.jasmy_incident_20261102,
             dual_orphan_incident_20261103=args.dual_orphan_incident_20261103,
             proven_one_flat_orphan=args.proven_one_flat_orphan,
-            take_closed_approved=args.take_closed_approved,
         )
     except (FlatRecoveryBlocked, OSError, ValueError, subprocess.TimeoutExpired) as exc:
         print(f"BLOCKED: {exc}; no new signal is authorized")
