@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodic read-only public VPS/PAPER incident status
+
+[Timer]
+OnBootSec=45s
+OnUnitInactiveSec=30s
+AccuracySec=5s
+Unit=bybitscanner-github-status.service
+
+[Install]
+WantedBy=timers.target

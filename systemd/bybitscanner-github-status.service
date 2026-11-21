@@ -1,0 +1,20 @@
+[Unit]
+Description=BybitScanner public read-only GitHub incident status (no trading authority)
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/bybitscanner/github-status.token
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/BybitScanner
+ExecStart=/opt/BybitScanner/venv/bin/python -m tools.github_status_reporter
+StateDirectory=bybitscanner-github-status
+StateDirectoryMode=0700
+Environment=BYBITSCANNER_PUBLIC_STATUS_ONLY=1
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/bybitscanner-github-status
+TimeoutStartSec=60
