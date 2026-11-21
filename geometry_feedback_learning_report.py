@@ -105,18 +105,22 @@ def _analyze_case(example: dict) -> dict:
 
 
 
-def _pivot_provenance(example: dict) -> list[dict]:
-    """Trace owner-corrected rays through the *existing* 3x3 pivot pipeline.
+def _pivot_provenance(example: dict, *, source_time_only: bool = False) -> list[dict]:
+    """Trace corrected rays without mixing original and retrospective cutoffs.
 
-    Frozen candles are the only market input. Never supplement with later candles,
-    promote a hand-edited wick to a pivot, or change detector thresholds.
+    The review-time diagnosis may use a server-verified closed-bar continuation.
+    The separate source-time diagnosis must use ONLY original frozen candles:
+    future anchors are explicitly unavailable and later 3x3 confirmations
+    cannot retroactively become pivots known to Scanner at signal time.
+    Neither perspective alters detector thresholds or promotes a training label.
     """
     import pandas as pd
     from geometry.candidate import build_candidate_lines
     from geometry.filter import filter_candidates
     from pivots import find_pivots
 
-    bars = example.get("review_bars", example["frozen_bars"])
+    bars = (example["frozen_bars"] if source_time_only
+            else example.get("review_bars", example["frozen_bars"]))
     indexes = {bar["open_time_ms"]: i for i, bar in enumerate(bars)}
     frame = pd.DataFrame(
         [{"high": bar["high"], "low": bar["low"]} for bar in bars]
@@ -144,7 +148,29 @@ def _pivot_provenance(example: dict) -> list[dict]:
         pivots = highs if upper else lows
         report_anchors = []
         for n, anchor in enumerate(line["anchors"], start=1):
-            index = indexes[anchor["bar_open_time_ms"]]
+            index = indexes.get(anchor["bar_open_time_ms"])
+            if index is None:
+                # A verified retrospective review can legitimately move an
+                # anchor to a later candle. That candle was NOT observable at
+                # the original signal cutoff; never infer its pivot status.
+                review_times = {
+                    bar["open_time_ms"]
+                    for bar in example.get("review_bars", example["frozen_bars"])
+                }
+                if (not source_time_only
+                        or anchor["bar_open_time_ms"] not in review_times
+                        or anchor["bar_open_time_ms"] <= bars[-1]["open_time_ms"]):
+                    raise GeometryLearningReportError("invalid_review_anchor_time")
+                report_anchors.append({
+                    "anchor_number": n,
+                    "candle_index": None,
+                    "price_on_wick": None,
+                    "local_3x3": None,
+                    "in_scanner_pivots": False,
+                    "blocking_neighbor_bar_offsets": [],
+                    "status": "AFTER_SOURCE_CUTOFF",
+                })
+                continue
             wick = bars[index][side]
             on_wick = math.isclose(float(anchor["price"]), float(wick),
                                    rel_tol=1e-8, abs_tol=1e-12)
@@ -184,7 +210,12 @@ def _pivot_provenance(example: dict) -> list[dict]:
                 "status": status,
             })
 
-        if not all(anchor["in_scanner_pivots"] for anchor in report_anchors):
+        if any(anchor["status"] == "AFTER_SOURCE_CUTOFF"
+               for anchor in report_anchors):
+            stage = "NOT_KNOWABLE_AT_SOURCE_TIME"
+            raw_pair = None
+            filtered_pair = None
+        elif not all(anchor["in_scanner_pivots"] for anchor in report_anchors):
             stage = "PIVOT_IDENTIFICATION"
             raw_pair = None
             filtered_pair = None
@@ -275,6 +306,13 @@ def build_geometry_learning_report(
             raise GeometryLearningReportError("prepartitioned_evidence_not_allowed")
         case = _analyze_case(example)
         case["pivot_provenance"] = _pivot_provenance(example) if case["label"] == "GEOMETRY_CORRECTED" else []
+        if (case["label"] == "GEOMETRY_CORRECTED"
+                and case["review_context"] == "RETROSPECTIVE_CLOSED_BARS"):
+            # Distinct temporal interpretations. No post-signal bars may be
+            # used to call a historical source-time Scanner detection "missed".
+            case["source_time_pivot_provenance"] = _pivot_provenance(
+                example, source_time_only=True,
+            )
         cases.append(case)
     by_pattern = defaultdict(Counter)
     labels = Counter()
