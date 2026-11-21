@@ -306,9 +306,18 @@ def enable_observer(expected_sha: str, *, root: Path = Path("/opt/BybitScanner")
             return result.stdout
 
         def properties(name):
-            return dict(line.split("=", 1) for line in command(
-                "show", name, "--property=LoadState,FragmentPath,DropInPaths,ActiveState,UnitFileState,NeedDaemonReload"
-            ).splitlines() if "=" in line)
+            result = run(["systemctl", "show", "--all", name,
+                          "--property=LoadState,FragmentPath,DropInPaths,ActiveState,UnitFileState,NeedDaemonReload"],
+                         capture_output=True, text=True, timeout=20, check=False)
+            values = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+            # systemctl versions can return 1 for a genuinely absent unit.
+            # Do not interpret arbitrary probe failures as absence.
+            if result.returncode and not (result.returncode == 1
+                    and values.get("LoadState") == "not-found"
+                    and values.get("FragmentPath") == ""
+                    and values.get("DropInPaths") == ""):
+                raise ValueError("observer_systemd_unproven")
+            return values
 
         def exact_unit(name, values):
             return (values.get("LoadState") == "loaded"
