@@ -5,12 +5,10 @@ Requires explicit operator invocation and the exact installed release SHA.
 """
 from __future__ import annotations
 
-import argparse
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 import re
 import subprocess
-import sys
 
 ROOT = Path("/opt/BybitScanner")
 UNIT = "bybitscanner-telegram.service"
@@ -168,18 +166,3 @@ def recover(target: str) -> str:
     return "TELEGRAM_ONLY_RECOVERED"
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Protected Telegram-only recovery")
-    parser.add_argument("--installed-sha", required=True)
-    args = parser.parse_args(argv)
-    try:
-        print(recover(args.installed_sha))
-        return 0
-    except (TelegramRecoveryBlocked, OSError, ValueError,
-            subprocess.TimeoutExpired) as exc:
-        print("BLOCKED: " + str(exc)[:180] + "; no retry", file=sys.stderr)
-        return 2
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
