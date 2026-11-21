@@ -5,6 +5,16 @@ Date: 2026-09-27
 Purpose: compact evidence-first runbook for recurring Scanner / PAPER Robot / Telegram / desktop-launch failures.  
 Primary objective: minimize owner time. Known failure classes are diagnosed from repository authority and one bounded host snapshot before any exploratory sequence.
 
+## MONOLITH — failed STOP vs completed historical releases (2026-11-21)
+
+**Symptom:** owner `update-take-closed` exits `BLOCKED: proven_one_flat_recovery_unproven:PartialStopBlocked:another_unresolved_STOP_intent`, while the canonical update already selected one failed prior STOP. Do **not** submit another UUID, replay STOP, delete markers or assume a missing transaction means STOP succeeded.
+
+**Decisive host evidence:** prior target `5630a2c639a2a15c1663a0111131b6966335d0cd` failed `canonical_safe_stop_unproven` on 20 Nov because Robot reconciliation returned durable REQUIRED; installed Backend survived the intent, proved by existing read-only `_legacy_paused_backend_predates_stop`. For the later request `75b94ff0001b1f75557c434e1ae490b1` (target `c1b382bd…`), one bounded journal scan found **37 other historical STOP markers** with matching `editor-ready`, yet `_proven_prior_exceptional_completion` alone reported false. They are **not 37 new failed STOPs**: the recovery's duplicate gate omitted canonical completed transaction handling. The earlier canonical stage already accepts a trusted exact-SHA `editor-ready` receipt.
+
+**Known repair:** use the existing `tools.paper_stopped_approved_recovery.recover_one_flat_after_failed_stop` route from PR #1218, then apply the matching completed-release test in PR #1219: require trusted 40-hex STOP marker/payload; recognize only non-symlink completed transactions with owner-trusted `editor-ready` bytes exactly matching their SHA; otherwise require existing exceptional completion proof. Missing, mismatched or untrusted evidence remains BLOCKED. Preserve old STOP intent, the one-shot receipt, exact old Backend continuity, TAKE-closed immutable/Flat proof, and strict no-signal-replay boundary.
+
+**Fast path for recurrence:** read the *single failed UUID journal* first; distinguish a real unresolved prior STOP from already completed release receipts using the same canonical predicate. Search the exact failure and these two PRs before writing another bespoke recovery. **Evidence limit:** PR #1219 is source-only until CI, merge, exact-VPS release and separate PAPER-start approval; do not mistake successful tests or historical `editor-ready` for present trading readiness.
+
 ## PAPER P0 — цепочка блокировок доказательства APPROVED после незавершённого STOP (2026-11-04)
 
 **Назначение:** готовый путь повторного применения, не новый квест. Цель владельца прежняя: безопасно завершить монолитное обслуживание PAPER, установить готовый релиз и принять редактор через Telegram. **Нельзя** «лечить» инцидент последовательным разрешением всё новых ревизий, повторением STOP или обнулением одноразовых маркеров.

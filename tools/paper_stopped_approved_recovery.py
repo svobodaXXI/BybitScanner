@@ -542,14 +542,30 @@ def recover_one_flat_after_failed_stop(
     )
     _demand(not (transactions / (".stop-invoked-" + target)).exists(),
             "target_has_other_STOP_intent")
-    _demand(
-        all(marker.name == ".stop-invoked-" + prior_stop
-            or _proven_prior_exceptional_completion(
-                transactions, marker.name.removeprefix(".stop-invoked-"),
-                root=root, uid=uid,
-            ) for marker in transactions.glob(".stop-invoked-*")),
-        "another_unresolved_STOP_intent",
-    )
+    def prior_intent_resolved(marker: Path) -> bool:
+        sha = marker.name.removeprefix(".stop-invoked-")
+        _demand(len(sha) == 40 and all(ch in "0123456789abcdef" for ch in sha)
+                and _trusted_file(marker, uid)
+                == b"STOP_INVOKED; not install authorization\\n",
+                "untrusted_prior_STOP_intent")
+        if sha == prior_stop:
+            return True
+        # Match the canonical release STOP fence: a sealed editor-ready
+        # transaction is a completed release, not another pending STOP.
+        transaction = transactions / sha
+        completed = transaction / "editor-ready"
+        if completed.exists() or completed.is_symlink():
+            _demand(not transaction.is_symlink()
+                    and _trusted_file(completed, uid) == sha.encode("ascii"),
+                    "untrusted_completed_release_transaction")
+            return True
+        return _proven_prior_exceptional_completion(
+            transactions, sha, root=root, uid=uid,
+        )
+
+    _demand(all(prior_intent_resolved(marker)
+                for marker in transactions.glob(".stop-invoked-*")),
+            "another_unresolved_STOP_intent")
     # A partially committed Gitless transaction cannot pass pre-install
     # collision checks a second time. Only the existing installer may resume it.
     if not (transactions / target).is_dir():
