@@ -521,13 +521,6 @@ function verifiedRobotSignal(
   };
 }
 
-function verifiedWedgeSignal(
-  deal: ClosedEpisodeLocator, report: FinrezResponse,
-): Extract<VerifiedEpisodePattern, { source: "WEDGE" }> | null {
-  const signal = verifiedRobotSignal(deal, report);
-  return signal?.source === "WEDGE" ? signal : null;
-}
-
 function verifiedIndexedPattern(deal: ClosedEpisodeLocator, report: FinrezResponse): VerifiedEpisodePattern | null {
   if (deal.opening_controller === "ROBOT" || deal.opening_controller === "MANUAL") {
     const setup = exactD2Setup({
@@ -1346,10 +1339,10 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, pnlFilter, sideF
             : "Источник при наличии D2-связи: отдельные наблюдения Trading Diary D2, не полный журнал решений Робота."}</small>
         </section>
         <OriginalEpisodeSignalChart
-          candidateId={verifiedWedgeSignal(selected, report)?.candidateId ?? null}
+          candidateId={verifiedRobotSignal(selected, report)?.candidateId ?? null}
           symbol={selected.symbol}
-          timeframe={verifiedWedgeSignal(selected, report)?.timeframe ?? null}
-          pattern={verifiedWedgeSignal(selected, report)?.pattern ?? null}
+          timeframe={verifiedRobotSignal(selected, report)?.timeframe ?? null}
+          pattern={verifiedRobotSignal(selected, report)?.pattern ?? null}
           side={selected.side} openedAtMs={selected.opened_at_ms}
           closedAtMs={selected.closed_at_ms} executions={executionPoints} />
         <TradeExecutionPriceChart points={executionPoints} />
@@ -1401,8 +1394,8 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, pnlFilter, sideF
       ) : null}
       {report.attribution_coverage.status === "PARTIAL" ? (
         <p className="diary-finrez-coverage" role="status">
-          История неполная: исключено {report.attribution_coverage.excluded_unattributed_episode_count} эпизодов
-          с неизвестным источником исполнений.
+          Часть истории не включена: у {report.attribution_coverage.excluded_unattributed_episode_count}
+          { " " }закрытых сделок не подтверждено, кто ими управлял.
         </p>
       ) : null}
       <OutcomeSplitBar kind="deals" wins={wins} losses={losses} breakeven={breakeven}
@@ -1471,12 +1464,10 @@ function formatFinrezPnl(value: string): string {
   if (amount === 0) return "0 USDT";
   const sign = amount > 0 ? "+" : "-";
   const magnitude = Math.abs(amount);
-  const digits = magnitude < 0.01 ? 6 : 4;
-  if (magnitude < 10 ** -digits) {
-    return `${sign}<${new Intl.NumberFormat("ru-RU", { minimumFractionDigits: digits }).format(10 ** -digits)} USDT`;
-  }
+  // Never display a tiny nonzero loss/profit as zero after cent rounding.
+  if (magnitude < 0.005) return `${sign}<0,01 USDT`;
   return `${sign}${new Intl.NumberFormat("ru-RU", {
-    minimumFractionDigits: 2, maximumFractionDigits: digits,
+    minimumFractionDigits: 2, maximumFractionDigits: 2,
   }).format(magnitude)} USDT`;
 }
 
@@ -1596,12 +1587,12 @@ function PatternsView({ report, symbolFilter, onSelectPattern }: {
       <OutcomeSplitBar kind="patterns" wins={wins} losses={losses} breakeven={breakeven}
         filter={resultFilter} onFilter={setResultFilter} />
       <p className="diary-finrez-basis">
-        Только точные D2-связи и доказанные цепочки Robot candidate → entry order → execution → episode. Эти данные не заменяют D2, журнал решений или исходную геометрию.
-        Категории управления не объединяются; суммы ниже — только по подтверждённым эпизодам.
+        Здесь показаны только паттерны, которые удалось достоверно связать с закрытой сделкой Робота.
+        Сделка без подтверждённой связи с паттерном не включается в эту вкладку.
       </p>
       <p className="diary-finrez-coverage" role="status">
-        Паттерн подтверждён для {provenCount} из {episodes.length} закрытых сделок по выбранному тикеру и периоду.
-        Остальные сделки не считаются нулевыми или убыточными.
+        С подтверждённым паттерном: {provenCount} из {episodes.length} закрытых сделок за период.
+        Остальные сделки не считаются убыточными или нулевыми.
         {report.attribution_coverage.status === "PARTIAL"
           ? " Сам финансовый отчёт также имеет неполное покрытие атрибуции."
           : ""}
@@ -1669,9 +1660,11 @@ function FinrezMoneyBar({ report, filter, onFilter }: {
   onFilter: (next: FinrezPnlFilter) => void;
 }) {
   const totals = verifiedFinrezMoneyTotals(report);
-  if (totals === null) return <p className="diary-finrez-coverage">
-    Суммарный результат недоступен: невозможно сверить подтверждённые закрытые сделки с итогами по тикерам.
-    Непроверенные суммы не выдаются за ноль.
+  if (totals === null) return <p className="diary-finrez-coverage" role="status">
+    {report.tickers.length === 0
+      ? "Нет подтверждённого результата для финансовой полосы за этот период."
+      : "Полоса прибыли и убытка пока недоступна: суммы сделок и тикеров не удалось подтвердить как одинаковые."}
+    {" "}Это не нулевой результат.
   </p>;
   const gross = Number(totals.profit) + Number(totals.loss);
   const profitPct = gross > 0 ? Number(totals.profit) / gross * 100 : 0;
@@ -1738,10 +1731,9 @@ function FinrezView({ report, symbolFilter, onSelectTicker }: {
       </p>
       {report.attribution_coverage.status === "PARTIAL" ? (
         <p className="diary-finrez-coverage" role="status">
-          История неполная: исключено {report.attribution_coverage.excluded_unattributed_episode_count} закрытых
-          { " " }эпизодов ({report.attribution_coverage.excluded_unattributed_execution_count} исполнений
-          { " " }без подтверждённого происхождения). Показанный PnL — только по достоверно
-          атрибутированным сделкам, не полный результат за период.
+          Не все сделки учтены: у {report.attribution_coverage.excluded_unattributed_episode_count}
+          { " " }закрытых сделок ({report.attribution_coverage.excluded_unattributed_execution_count} исполнений)
+          не подтверждено, кто ими управлял. Показанная прибыль — только по проверенным сделкам.
         </p>
       ) : null}
       {visibleTickers.length === 0 ? (
@@ -1752,7 +1744,11 @@ function FinrezView({ report, symbolFilter, onSelectTicker }: {
               : "По заданному тикеру результатов нет"
             : report.attribution_coverage.status === "PARTIAL"
               ? "Нет достоверно атрибутированных закрытых сделок этого типа за выбранный период"
-              : "Нет закрытых сделок этого типа за выбранный период"}
+              : report.period === "DAY"
+                ? report.owner === "ROBOT"
+                  ? "Сегодня с 00:00 МСК нет подтверждённых закрытых сделок Робота"
+                  : "Сегодня с 00:00 МСК нет подтверждённых закрытых ручных сделок"
+                : "Нет закрытых сделок этого типа за выбранный период"}
         </p>
       ) : (
         <div className="diary-finrez-list">

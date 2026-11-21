@@ -448,7 +448,7 @@ describe("Closed deals / exact episode index", () => {
     expect(loss).toHaveAttribute("aria-pressed", "true");
     expect(orderedSymbols()).toEqual(["ADAUSDT", "BTCUSDT", "XRPUSDT"]);
     expect(screen.getByRole("button", { name: /ADAUSDT/ })).toHaveTextContent("PnL: -12,30 USDT");
-    expect(screen.getByRole("button", { name: /XRPUSDT/ })).toHaveTextContent("PnL: -<0,000001 USDT");
+    expect(screen.getByRole("button", { name: /XRPUSDT/ })).toHaveTextContent("PnL: -<0,01 USDT");
 
     fireEvent.click(long);
     expect(orderedSymbols()).toEqual(["BTCUSDT"]);
@@ -515,17 +515,17 @@ describe("Closed deals / exact episode index", () => {
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
 
     const row = await screen.findByRole("button", { name: /BTCUSDT/ });
-    expect(row).toHaveTextContent("PnL: -0,002614 USDT");
+    expect(row).toHaveTextContent("PnL: -<0,01 USDT");
     expect(screen.getByTitle("-0.0026140884")).toBeInTheDocument();
     const tinyRow = screen.getByRole("button", { name: /XRPUSDT/ });
-    expect(tinyRow).toHaveTextContent("PnL: -<0,000001 USDT");
+    expect(tinyRow).toHaveTextContent("PnL: -<0,01 USDT");
     expect(screen.getByTitle("-0.0000000004")).toBeInTheDocument();
 
     fireEvent.click(row);
-    expect(screen.getByText("-0,002614 USDT")).toHaveAttribute("title", "-0.0026140884");
+    expect(screen.getByText("-<0,01 USDT")).toHaveAttribute("title", "-0.0026140884");
     fireEvent.click(screen.getByRole("button", { name: /К сделкам/ }));
     fireEvent.click(await screen.findByRole("button", { name: /XRPUSDT/ }));
-    expect(screen.getByText("-<0,000001 USDT")).toHaveAttribute("title", "-0.0000000004");
+    expect(screen.getByText("-<0,01 USDT")).toHaveAttribute("title", "-0.0000000004");
   });
 
   it("displays exact robot episode identifiers and keeps shared PnL labelled separately", async () => {
@@ -1072,13 +1072,13 @@ describe("Finrez first-screen UI", () => {
     render(<DiaryOverlay accountKey="paper:patterns" initialSection="PATTERNS"
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
     const region = await screen.findByRole("region", { name: "Паттерны по подтверждённым сделкам" });
-    expect(region).toHaveTextContent("Паттерн подтверждён для 4 из 5");
+    expect(region).toHaveTextContent("С подтверждённым паттерном: 4 из 5");
     expect(region).toHaveTextContent("Робот · сделок: 2 · прибыльных: 1 · убыточных: 1");
-    expect(screen.getByTitle("-1.4012345678 USDT")).toHaveTextContent("-1,4012 USDT");
+    expect(screen.getByTitle("-1.4012345678 USDT")).toHaveTextContent("-1,40 USDT");
     expect(screen.getByTitle("20.2 USDT")).toHaveTextContent("+20,20 USDT");
     const rankedCards = Array.from(region.querySelectorAll(".diary-pattern-card"));
     expect(rankedCards.map((card) => card.querySelector("span[title$='USDT']")?.textContent?.trim()))
-      .toEqual(["+20,20 USDT", "+3,00 USDT", "-1,4012 USDT"]);
+      .toEqual(["+20,20 USDT", "+3,00 USDT", "-1,40 USDT"]);
     const patternDistribution = screen.getByRole("group", { name: "Распределение результатов паттернов" });
     expect(patternDistribution).toHaveTextContent("Прибыльных: 2");
     expect(patternDistribution).toHaveTextContent("Убыточных: 1");
@@ -1089,7 +1089,7 @@ describe("Finrez first-screen UI", () => {
     expect(patternDistribution).toHaveTextContent("Всего: 3");
     fireEvent.click(screen.getByRole("button", { name: "Убыточные паттерны" }));
     expect(region.querySelectorAll(".diary-pattern-card")).toHaveLength(1);
-    expect(region.querySelector(".diary-pattern-card")).toHaveTextContent("-1,4012 USDT");
+    expect(region.querySelector(".diary-pattern-card")).toHaveTextContent("-1,40 USDT");
     fireEvent.click(screen.getByRole("button", { name: "Показать все паттерны" }));
     expect(region.querySelectorAll(".diary-pattern-card")).toHaveLength(3);
     expect(screen.queryByTitle("-999 USDT")).not.toBeInTheDocument();
@@ -1248,7 +1248,7 @@ describe("Finrez first-screen UI", () => {
     render(<DiaryOverlay accountKey="paper:unverified-patterns" initialSection="PATTERNS"
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
     const region = await screen.findByRole("region", { name: "Паттерны по подтверждённым сделкам" });
-    expect(region).toHaveTextContent("Паттерн подтверждён для 0 из 1");
+    expect(region).toHaveTextContent("С подтверждённым паттерном: 0 из 1");
     expect(region).toHaveTextContent("неполное покрытие атрибуции");
     expect(region).toHaveTextContent("Нет сделок с подтверждённым паттерном");
     expect(region).not.toHaveTextContent("0 USDT");
@@ -1260,7 +1260,7 @@ describe("Finrez first-screen UI", () => {
     fireEvent.change(screen.getByRole("searchbox", { name: "Поиск по тикеру" }), {
       target: { value: "ETH" },
     });
-    expect(region).toHaveTextContent("Паттерн подтверждён для 0 из 0");
+    expect(region).toHaveTextContent("С подтверждённым паттерном: 0 из 0");
   });
 
   it("shows the ticker ranking with five periods, reuses the Diary modal and defers other sections", async () => {
@@ -1391,8 +1391,8 @@ describe("Finrez first-screen UI", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<DiaryOverlay accountKey="paper:finrez-filter" initialSection="FINREZ"
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
-    expect(await screen.findByText("+7,2012 USDT")).toBeInTheDocument();
-    expect(screen.getByText("-2,5012 USDT")).toBeInTheDocument();
+    expect(await screen.findByText("+7,20 USDT")).toBeInTheDocument();
+    expect(screen.getByText("-2,50 USDT")).toBeInTheDocument();
     expect(screen.queryByText(/2\.5012345678/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Показать сделки по BTCUSDT" }));
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
@@ -1522,7 +1522,7 @@ describe("Finrez first-screen UI", () => {
     }), { status: 200 })));
     render(<DiaryOverlay accountKey="paper:finrez-unreconciled" initialSection="FINREZ"
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
-    expect(await screen.findByText(/Суммарный результат недоступен/)).toBeInTheDocument();
+    expect(await screen.findByText(/Полоса прибыли и убытка пока недоступна/)).toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Финрез: прибыль и убыток в USDT" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Показать все тикеры" })).not.toBeInTheDocument();
     expect(screen.getByText("ETHUSDT")).toBeInTheDocument();
@@ -1546,11 +1546,11 @@ describe("Finrez first-screen UI", () => {
     render(<DiaryOverlay accountKey="paper:compact" initialSection="FINREZ"
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
     expect(await screen.findByTitle("GIGADEVICEUSDT")).toHaveTextContent("GIGADEVICEUSDT");
-    expect(screen.getByTitle("4.3583303660000000000004 USDT")).toHaveTextContent("+4,3583 USDT");
-    expect(screen.getByTitle("0.0000000004 USDT")).toHaveTextContent("+<0,000001 USDT");
+    expect(screen.getByTitle("4.3583303660000000000004 USDT")).toHaveTextContent("+4,36 USDT");
+    expect(screen.getByTitle("0.0000000004 USDT")).toHaveTextContent("+<0,01 USDT");
     expect(screen.getByTitle("0 USDT")).toHaveTextContent("0 USDT");
-    expect(screen.getByTitle("-0.0026140884 USDT")).toHaveTextContent("-0,002614 USDT");
-    expect(screen.getByTitle("-1.8162218600000000000000 USDT")).toHaveTextContent("-1,8162 USDT");
+    expect(screen.getByTitle("-0.0026140884 USDT")).toHaveTextContent("-<0,01 USDT");
+    expect(screen.getByTitle("-1.8162218600000000000000 USDT")).toHaveTextContent("-1,82 USDT");
   });
 
   it("never shows foreign-account ranking or silently falls back to manual", async () => {
@@ -1574,7 +1574,7 @@ describe("Finrez first-screen UI", () => {
     expect(await screen.findByRole("region", { name: "Ручные закрытия сделок робота" })).toBeInTheDocument();
     expect(screen.getByText("Робот · ручное вмешательство")).toBeInTheDocument();
     expect(screen.getByText("-4,50 USDT")).toBeInTheDocument();
-    expect(screen.getByText("Нет закрытых сделок этого типа за выбранный период")).toBeInTheDocument();
+    expect(screen.getByText("Сегодня с 00:00 МСК нет подтверждённых закрытых сделок Робота")).toBeInTheDocument();
     expect(screen.getByText(/В PnL полностью роботизированных сделок не включён/)).toBeInTheDocument();
   });
 
@@ -1605,16 +1605,16 @@ describe("Finrez first-screen UI", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<DiaryOverlay accountKey="paper:4" initialSection="FINREZ"
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
-    expect(await screen.findByText("Нет закрытых сделок этого типа за выбранный период")).toBeInTheDocument();
+    expect(await screen.findByText("Сегодня с 00:00 МСК нет подтверждённых закрытых сделок Робота")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Всё время" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=ALL"));
-    const coverage = await screen.findByRole("status");
-    expect(coverage).toHaveTextContent("История неполная");
-    expect(coverage).toHaveTextContent("исключено 3 закрытых");
+    const coverage = await screen.findByText(/Не все сделки учтены/);
+    expect(coverage).toHaveTextContent("Не все сделки учтены");
+    expect(coverage).toHaveTextContent("у 3 закрытых");
     expect(coverage).toHaveTextContent("11 исполнений");
-    expect(coverage).toHaveTextContent("не полный результат за период");
+    expect(coverage).toHaveTextContent("только по проверенным сделкам");
     expect(screen.getByText(/Нет достоверно атрибутированных закрытых сделок/)).toBeInTheDocument();
-    expect(screen.queryByText("Нет закрытых сделок этого типа за выбранный период")).not.toBeInTheDocument();
+    expect(screen.queryByText("Сегодня с 00:00 МСК нет подтверждённых закрытых сделок Робота")).not.toBeInTheDocument();
   });
 
   it("shows the same shared economic episode in both scopes without claiming either owned it", async () => {
@@ -1631,7 +1631,7 @@ describe("Finrez first-screen UI", () => {
     const section = await screen.findByRole("region", { name: "Совместно управляемые сделки" });
     expect(section).toHaveTextContent("-11,40 USDT");
     expect(section).toHaveTextContent("не складывайте его дважды");
-    expect(screen.getByText("Нет закрытых сделок этого типа за выбранный период")).toBeInTheDocument();
+    expect(screen.getByText("Сегодня с 00:00 МСК нет подтверждённых закрытых сделок Робота")).toBeInTheDocument();
     current.rerender(<DiaryOverlay accountKey="paper:joint-manual" initialSection="FINREZ"
       statisticsScope={{ accountId: "paper", owner: "MANUAL" }} onClose={() => {}} />);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
@@ -1704,7 +1704,7 @@ describe("shared statistics trade action standard", () => {
     expect(longRow.querySelector(".diary-trade-heading")).toHaveTextContent("Клин ↘");
     expect(longRow.querySelector(".diary-trade-side.long")).toHaveTextContent("LONG");
     expect(longRow.querySelector(".diary-trade-meta")).toHaveTextContent(/Робот.*→/);
-    expect(longRow).toHaveTextContent("PnL: -0,2727 USDT (-0,63%)");
+    expect(longRow).toHaveTextContent("PnL: -0,27 USDT (-0,63%)");
     expect(longRow).toHaveTextContent("Исполнений: 8");
     expect(longRow).not.toHaveTextContent("Паттерн:");
 
@@ -1712,7 +1712,7 @@ describe("shared statistics trade action standard", () => {
     expect(shortRow).toHaveClass("diary-closed-deal-row", "pnl-positive");
     expect(shortRow.querySelector(".diary-trade-heading")).toHaveTextContent("Клин ↗");
     expect(shortRow.querySelector(".diary-trade-side.short")).toHaveTextContent("SHORT");
-    expect(shortRow).toHaveTextContent("PnL: +1,1684 USDT (+0,62%)");
+    expect(shortRow).toHaveTextContent("PnL: +1,17 USDT (+0,62%)");
   });
 
   it("renders source-verified entry-notional return, not guessed leveraged ROI", async () => {
@@ -1988,7 +1988,7 @@ describe("shared statistics trade action standard", () => {
       expect(filmstrip?.querySelectorAll("rect")).toHaveLength(7);
       expect(filmstrip?.querySelectorAll("path")).toHaveLength(1);
     });
-    expect(screen.getByText(/PnL: -1,8162 USDT/)).toHaveAttribute("title", "-1.81622186");
+    expect(screen.getByText(/PnL: -1,82 USDT/)).toHaveAttribute("title", "-1.81622186");
   });
 });
 
@@ -2024,7 +2024,7 @@ describe("Verified Wedge lineage in Statistics", () => {
     render(<DiaryOverlay accountKey="paper:wedge" initialSection="PATTERNS"
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
     const region = await screen.findByRole("region", { name: "Паттерны по подтверждённым сделкам" });
-    expect(region).toHaveTextContent("Паттерн подтверждён для 1 из 1");
+    expect(region).toHaveTextContent("С подтверждённым паттерном: 1 из 1");
     expect(region).toHaveTextContent("Wedge: 1");
     expect(region).toHaveTextContent("Робот · сделок: 1 · прибыльных: 0 · убыточных: 1");
     expect(screen.getByTitle("-2.5 USDT")).toHaveTextContent("-2,50 USDT");
@@ -2056,7 +2056,7 @@ describe("Verified Wedge lineage in Statistics", () => {
     render(<DiaryOverlay accountKey="paper:nonwedge-source" initialSection="PATTERNS"
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
     const region = await screen.findByRole("region", { name: "Паттерны по подтверждённым сделкам" });
-    expect(region).toHaveTextContent("Паттерн подтверждён для 1 из 1");
+    expect(region).toHaveTextContent("С подтверждённым паттерном: 1 из 1");
     expect(region).toHaveTextContent("Robot ID: 1");
     fireEvent.click(screen.getByRole("button", { name: "Показать все сделки по паттерну Double Bottom" }));
     expect(await screen.findByRole("combobox", { name: "Выбор паттерна" })).toHaveValue("Double Bottom");
@@ -2064,10 +2064,10 @@ describe("Verified Wedge lineage in Statistics", () => {
     expect(await screen.findByText("candidate-42")).toBeInTheDocument();
     expect(screen.getByText(/точная цепочка Robot candidate/)).toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([url]) =>
-      String(url).startsWith("/api/workspace/signal-geometry"))).toBe(false);
+      String(url).startsWith("/api/workspace/signal-geometry"))).toBe(true);
   });
 
-  it("requests an immutable original chart only for exact Robot Wedge lineage", async () => {
+  it("requests an immutable original chart for proven Robot candidate lineage", async () => {
     const fetchMock = vi.fn().mockImplementation(async (url: string) => {
       if (url.startsWith("/api/workspace/signal-geometry")
           || url.startsWith("/api/diary/episode-facts"))
@@ -2117,7 +2117,7 @@ describe("Verified Wedge lineage in Statistics", () => {
     render(<DiaryOverlay accountKey="paper:wedge-unproven" initialSection="PATTERNS"
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
     const region = await screen.findByRole("region", { name: "Паттерны по подтверждённым сделкам" });
-    expect(region).toHaveTextContent("Паттерн подтверждён для 0 из 7");
+    expect(region).toHaveTextContent("С подтверждённым паттерном: 0 из 7");
     expect(region).not.toHaveTextContent("-2,50 USDT");
     fireEvent.click(screen.getByRole("button", { name: "Сделки" }));
     expect(await screen.findAllByText("не установлен")).toHaveLength(7);
@@ -2130,7 +2130,7 @@ describe("Verified Wedge lineage in Statistics", () => {
     ), { status: 200 })));
     render(<DiaryOverlay accountKey="paper:manual-wedge" initialSection="PATTERNS"
       statisticsScope={{ accountId: "paper", owner: "MANUAL" }} onClose={() => {}} />);
-    expect(await screen.findByText(/Паттерн подтверждён для 0 из 1/)).toBeInTheDocument();
+    expect(await screen.findByText(/С подтверждённым паттерном: 0 из 1/)).toBeInTheDocument();
   });
 
   it("keeps an existing exact D2 setup authoritative when Wedge metadata also exists", async () => {

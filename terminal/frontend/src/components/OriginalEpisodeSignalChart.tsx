@@ -4,13 +4,14 @@ import {
   type IChartApi, type ISeriesApi, type Time, type UTCTimestamp,
 } from "lightweight-charts";
 import { editorMoscowCrosshairTime, editorMoscowTickMark } from "../chart/editorMoscowTime";
+import { fibonacciPrices } from "../chart/drawingModel";
 
 /** Read-only historical evidence in the TERMINAL Statistics view.
  * This component must NEVER import geometry feedback/review drawings.
  */
 type Bar = { open_time_ms: number; open: number; high: number; low: number; close: number };
 type Anchor = { bar_open_time_ms: number; price: number };
-type Boundary = { boundary_id: string; kind: "ray" | "segment" | "horizontal" | "horizontal-ray"; anchors: Anchor[] };
+type Boundary = { boundary_id: string; kind: "ray" | "segment" | "horizontal" | "horizontal-ray" | "fibonacci"; anchors: Anchor[] };
 type FrozenSignal = { signal_id: string; symbol: string; timeframe: string; bars: Bar[]; boundaries: Boundary[] };
 type OriginalEvidence = { snapshot: FrozenSignal; revision: string; intervalMs: number };
 
@@ -83,7 +84,7 @@ export function parseOriginalTradeSignal(
   const seenIds = new Set<string>();
   const boundaries: Boundary[] = [];
   const countByKind: Record<string, number> = {
-    ray: 2, segment: 2, horizontal: 1, "horizontal-ray": 1,
+    ray: 2, segment: 2, horizontal: 1, "horizontal-ray": 1, fibonacci: 2,
   };
   for (const raw of source.boundaries) {
     if (!raw || typeof raw !== "object") return null;
@@ -194,6 +195,24 @@ export function visibleOriginalBoundarySegments(
     const a = boundary.anchors[0];
     const b = boundary.anchors[1];
     if (!a) continue;
+    if (boundary.kind === "fibonacci") {
+      if (!b) continue;
+      // Exact original A/B prices and the terminal's native Fib coefficients.
+      // Project as horizontal source levels, never as a diagonal price trend.
+      const supported = bars.filter(bar => bar.open_time_ms >= b.bar_open_time_ms);
+      if (supported.length < 2) continue;
+      for (const level of fibonacciPrices(a.price, b.price)) {
+        if (!Number.isFinite(level.price) || level.price <= 0) continue;
+        projected.push({
+          boundaryId: `${boundary.boundary_id}:${level.level}`,
+          points: [
+            { time: utc(supported[0].open_time_ms), value: level.price },
+            { time: utc(supported[supported.length - 1].open_time_ms), value: level.price },
+          ],
+        });
+      }
+      continue;
+    }
     const start = boundary.kind === "horizontal" ? first : a.bar_open_time_ms;
     const end = boundary.kind === "segment" ? b?.bar_open_time_ms : last;
     if (end == null || end <= start) continue;
