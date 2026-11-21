@@ -1784,6 +1784,45 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.monitor.tick()  # OPEN does not retry a Market close.
         self.assertNotIn("full_close", [n for n, _ in self.executor.protection_calls])
 
+    def test_post_fill_low_rr_requires_confirmed_active_protection_not_just_prices(self):
+        """A stale/unconfirmed STOP/TAKE projection must not create OPEN ownership."""
+        from dataclasses import replace
+        self._create_candidate()
+        self._drive_to_retest_detected()
+        self.monitor.tick()
+        order_id = self.store.get_robot_candidate(
+            "candidate-1"
+        ).robot_state["execution"]["limit_order_id"]
+        self.executor.fill_resting_limit(
+            order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81")
+        )
+        original = self.store.get_protection_projection
+
+        def unconfirmed_after_submit(key):
+            projection = original(key)
+            if (projection is not None and projection.stop_loss is not None
+                    and projection.take_profit is not None):
+                return replace(projection, status="unknown")
+            return projection
+
+        with patch.object(
+            RobotBreakoutMonitor, "_frozen_prices",
+            return_value=(Decimal("80"), Decimal("82")),
+        ), patch.object(
+            self.store, "get_protection_projection",
+            side_effect=unconfirmed_after_submit,
+        ):
+            self.monitor.tick()
+        self.assertIsNone(self.store.get_robot_trade("robot-trade-candidate-1"))
+        self.assertEqual(
+            self.store.get_robot_candidate("candidate-1").status,
+            "INVALIDATED",
+        )
+        self.assertEqual(
+            [name for name, _ in self.executor.protection_calls],
+            ["create_stop", "create_take", "full_close"],
+        )
+
     def test_aioz_short_fee_aware_actual_fill_rr_regression(self):
         """Durable short fill and post-fill 1.5% fallback must not pass 2:1."""
         rr = robot_protection.post_fill_net_rr(
