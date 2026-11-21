@@ -594,9 +594,16 @@ class OneFlatPartialStopResumeTest(unittest.TestCase):
         (journal / completed_sha).mkdir(mode=0o700)
         (journal / completed_sha / "editor-ready").write_text(completed_sha)
         (journal / completed_sha / "editor-ready").chmod(0o600)
-        with mock.patch(
-            "tools.paper_maintenance._legacy_paused_backend_predates_stop",
-            return_value=False,
+        with (
+            mock.patch.object(recovery, "_environment", return_value={}),
+            mock.patch.object(recovery, "expected_database_identity",
+                              return_value="x" * 64),
+            mock.patch.object(recovery, "_database_path", return_value=db),
+            mock.patch.object(recovery, "verify_release", return_value=old),
+            mock.patch(
+                "tools.paper_maintenance._legacy_paused_backend_predates_stop",
+                return_value=False,
+            ),
         ):
             with self.assertRaisesRegex(
                 recovery.PartialStopBlocked, "old_backend_continuity_unproven",
