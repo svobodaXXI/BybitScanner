@@ -294,6 +294,10 @@ def test_owner_update_take_closed_enters_existing_global_lock(monkeypatch, capsy
     monkeypatch.setattr(maint, "_owner_action_lifecycle_guard", locked)
     monkeypatch.setattr(maint, "_verified_staged_module_bootstrap", lambda *a, **kw: True)
     monkeypatch.setattr(
+        maint, "_prepare_editor_frontend_bundle",
+        lambda *_a, **_k: events.append("frontend-prebuilt") or None,
+    )
+    monkeypatch.setattr(
         maint, "deploy_staged_editor_only",
         lambda *args, **kwargs: (
             events.append(("dispatch", kwargs["take_closed_approved_handoff"],
@@ -305,6 +309,7 @@ def test_owner_update_take_closed_enters_existing_global_lock(monkeypatch, capsy
     assert maint.main([sha, "--action", "update-take-closed"]) == 2
     assert events == [
         "global-owner-lock",
+        "frontend-prebuilt",
         ("dispatch", True, Path("/var/lib/bybitscanner-stage-git-" + sha)),
         "owner-lock-released",
     ]
