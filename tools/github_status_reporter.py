@@ -130,7 +130,7 @@ def _safe_snapshot(raw: dict) -> dict:
         elif key == "position_count":
             if value is not None and (type(value) is not int or not 0 <= value <= 100_000):
                 raise ValueError("unsafe count")
-        elif value not in _MODES[key]:
+        elif value != "UNKNOWN" and value not in _MODES[key]:
             raise ValueError("unsafe status")
         data[key] = value
     return data
