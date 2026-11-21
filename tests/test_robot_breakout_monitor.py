@@ -1742,8 +1742,11 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         position_key = PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
         self.assertEqual(self.store.get_position_projection(position_key).side, PositionSide.LONG)
 
-    def test_post_fill_rr_below_two_keeps_protection_and_closes_without_open_trade(self):
-        """A safely admitted LIMIT can fill at a price that collapses Net RR."""
+    def test_post_fill_rr_below_two_keeps_protected_owned_trade_without_emergency_close(self):
+        """Below-2R after a real fill is a recorded economics exception,
+        NEVER evidence that proven STOP/TAKE failed. The exact fill remains an
+        OPEN Robot trade (no phantom exit, no second Market command).
+        """
         self._create_candidate()
         self._drive_to_retest_detected()
         self.monitor.tick()
@@ -1759,22 +1762,27 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         ):
             self.monitor.tick()
         record = self.store.get_robot_candidate("candidate-1")
-        self.assertEqual(record.status, "INVALIDATED")
-        self.assertIsNone(self.store.get_robot_trade("robot-trade-candidate-1"))
+        self.assertEqual(record.status, "OPEN")
+        trade = self.store.get_robot_trade("robot-trade-candidate-1")
+        self.assertIsNotNone(trade)
+        self.assertEqual(trade.entry_quantity, Decimal("1"))
+        self.assertEqual(trade.average_entry, Decimal("81"))
+        self.assertIsNone(trade.exit_time_ms)
         self.assertEqual(
             [name for name, _ in self.executor.protection_calls],
-            ["create_stop", "create_take", "full_close"],
+            ["create_stop", "create_take"],
         )
-        self.assertIn(
-            "POST_FILL_NET_RR_BELOW_2",
-            record.robot_state["execution"]["protection_failure"],
-        )
+        exception = record.robot_state["execution"]["post_fill_policy_exception"]
+        self.assertEqual(exception["reason"], "POST_FILL_NET_RR_BELOW_2")
+        self.assertLess(Decimal(exception["actual_net_rr"]), Decimal("2"))
         self.assertEqual(
             self.store.get_position_projection(
                 PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
             ).side,
-            PositionSide.FLAT,
+            PositionSide.LONG,
         )
+        self.monitor.tick()  # OPEN does not retry a Market close.
+        self.assertNotIn("full_close", [n for n, _ in self.executor.protection_calls])
 
     def test_aioz_short_fee_aware_actual_fill_rr_regression(self):
         """Durable short fill and post-fill 1.5% fallback must not pass 2:1."""
