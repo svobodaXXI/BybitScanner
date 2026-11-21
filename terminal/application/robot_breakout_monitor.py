@@ -2221,6 +2221,9 @@ class RobotBreakoutMonitor:
                 PositionKey(self._account_id, Category.LINEAR, record.symbol, 0),
             )
             if (protection is None
+                    or protection.status != "confirmed_active"
+                    or protection.pending_command_id is not None
+                    or protection.evidence_at_ms < entry_evidence.first_execution_at_ms
                     or protection.stop_loss != plan.stop_price
                     or protection.take_profit != plan.take_price):
                 self._fail_closed_unprotected_fill(
