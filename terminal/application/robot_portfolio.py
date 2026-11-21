@@ -54,6 +54,18 @@ def collect_portfolio_facts(
         paper_account = store.get_paper_account(account)
         if account.value != "paper" or paper_account is None:
             raise Unavailable("PAPER account is unavailable")
+        # A persisted, potentially dispatched emergency close is NOT a bounded
+        # 250-USDT RO. It might belong to an unprotected or replaced position.
+        # Never certify aggregate portfolio capacity for unrelated candidates
+        # merely because the original Robot candidate was invalidated.
+        quarantine = store.robot_account_quarantines(account)
+        facts["quarantined_symbols"] = sorted(quarantine)
+        if quarantine:
+            facts["unproven_emergency_candidates"] = [
+                {"symbol": symbol, "candidate_ids": list(quarantine[symbol])}
+                for symbol in sorted(quarantine)
+            ]
+            raise Unavailable("unproven emergency close prevents account risk attestation")
         rows = store.load_paper_portfolio_rows(account)
         candidates = {c.candidate_id: c for c in (
             store.load_robot_candidates(account) if robot_candidates is None else robot_candidates)}
