@@ -5400,6 +5400,42 @@ class PaperRuntime:
             clock_ms=lambda: int(time.time() * 1000),
             incident_dir=self._robot_incident_dir,
         )
+        # Legacy low-R/R Market fills could receive confirmed STOP/TAKE but
+        # still be labelled "emergency_close_pending" with no Robot trade.
+        # Repair only during the existing admission-closed owner reconcile,
+        # using exact command/fill/protection proof; never dispatch a close.
+        runtime_state = self.store.get_robot_runtime_state(self._paper_account_id)
+        scanner = self.store.get_scanner_runtime_state(self._paper_account_id)
+        autopilot = self.store.get_robot_autopilot_state(self._paper_account_id)
+        if (
+            runtime_state is not None
+            and (runtime_state.mode, runtime_state.recovery_status)
+                == (ROBOT_RUNNING, RECONCILING)
+            and scanner is not None and scanner.mode == SCANNER_STOPPED
+            and autopilot is not None and autopilot.mode == "OFF"
+        ):
+            for candidate_id in before:
+                record = self.store.get_robot_candidate(candidate_id)
+                if record is None:
+                    continue
+                execution = (record.robot_state or {}).get("execution") or {}
+                if not (
+                    isinstance(execution, Mapping)
+                    and execution.get("emergency_close_pending") is True
+                    and str(execution.get("protection_failure", "")).startswith(
+                        "POST_FILL_NET_RR_BELOW_2 rr="
+                    )
+                ):
+                    continue
+                try:
+                    monitor.recover_protected_legacy_postfill(record)
+                except Exception as error:
+                    # Unknown facts must stay under the pre-existing global
+                    # fence, never trigger a Market retry or status reset.
+                    LOGGER.warning(
+                        "Protected post-fill recovery unproven candidate=%s error=%s",
+                        candidate_id, type(error).__name__,
+                    )
         monitor.tick()
 
         # Robot-created ENTRY LIMITs that no live candidate owns (link lost between
