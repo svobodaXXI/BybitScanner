@@ -374,6 +374,15 @@ button {
   overflow-wrap: anywhere;
   text-align: center;
 }
+.editor-review-layout > .editor-restore-original {
+  grid-column: 1;
+  grid-row: 2;
+  justify-self: start;
+  align-self: end;
+  margin-top: 0.4rem;
+  max-width: 100%;
+  text-align: left;
+}
 
 .drawing-tools-panel {
   grid-column: 1;
