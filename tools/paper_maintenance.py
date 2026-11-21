@@ -2613,18 +2613,27 @@ def _recover_active_take_closed(
                     or execution.get("entry_mode") != "LATE_ADMISSION_MARKET"):
                 return "BLOCKED: take_closed_reason_owner_mismatch; no_mutation"
 
-        after = read("/api/health")
+        # A fresh *full* snapshot must satisfy the proof too. Reusing the
+        # first protection snapshot could miss new exposure or pending ingress.
+        current = {
+            "backend": read("/api/health"),
+            "scanner": read("/api/scanner/status"),
+            "autopilot": read("/api/robot/autopilot"),
+            "protection": read("/api/robot/protection-health"),
+        }
+        after = current["backend"]
         if (after.get("build_sha") != target
                 or after.get("database_identity") != identity
                 or after.get("process_instance_id") != instance
                 or after.get("paper_live_safe") is not True
                 or after.get("robot_admission_ready") is not False
-                or read("/api/scanner/status").get("mode") != "SCANNER_STOPPED"
-                or read("/api/robot/autopilot").get("mode") != "OFF"
+                or current["scanner"].get("worker_quiescent") is not True
+                or read("/api/robot/state").get("reason") != reason
                 or not _editor_runtime_ready(target, identity)):
             return "BLOCKED: take_closed_runtime_changed; no_mutation"
 
-        # Re-check the entire ledger immediately before the irreversible intent.
+        # Re-prove actual account and the latest protection/ingress immediately
+        # before sealing a non-replayable intent.
         with sqlite3.connect(
             db.resolve().as_uri() + "?mode=ro", uri=True, timeout=5,
         ) as conn:
@@ -2632,7 +2641,7 @@ def _recover_active_take_closed(
             conn.execute("BEGIN")
             if prove_take_closed_approved(
                 conn, expected_identity=identity, expected_build_sha=target,
-                **snapshot,
+                **current,
             ) != PROOF_LABEL:
                 return "BLOCKED: take_closed_proof_changed; no_mutation"
 
