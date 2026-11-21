@@ -329,49 +329,6 @@ class JournalTest(unittest.TestCase):
 
 
 
-class BackendExitedReceiptTest(unittest.TestCase):
-    """Post-exit service absence must not require a future installed unit."""
-
-    @mock.patch("tools.legacy_runtime_process.probe_listener_pids", return_value=[])
-    @mock.patch("subprocess.run")
-    def test_legacy_metadata_does_not_reject_stopped_backend(self, run, listeners):
-        from types import SimpleNamespace
-        run.return_value = SimpleNamespace(
-            returncode=0,
-            stdout="LoadState=loaded\\nActiveState=failed\\nMainPID=0\\n",
-        )
-        with mock.patch.object(
-            recovery, "_systemd_state", side_effect=ValueError("unexpected_systemd_dropin")
-        ):
-            self.assertTrue(recovery._backend_stopped())
-        listeners.assert_called_once_with("127.0.0.1", 8765)
-
-    @mock.patch("tools.legacy_runtime_process.probe_listener_pids", return_value=[])
-    @mock.patch("subprocess.run")
-    def test_running_or_ambiguous_systemd_remains_blocked(self, run, _listeners):
-        from types import SimpleNamespace
-        for output in (
-            "LoadState=loaded\\nActiveState=active\\nMainPID=123\\n",
-            "LoadState=loaded\\nActiveState=failed\\nMainPID=123\\n",
-            "LoadState=not-found\\nActiveState=failed\\nMainPID=0\\n",
-            "ActiveState=failed\\nMainPID=0\\n",
-            "LoadState=loaded\\nActiveState=failed\\nMainPID=0\\nMainPID=0\\n",
-        ):
-            with self.subTest(output=output):
-                run.return_value = SimpleNamespace(returncode=0, stdout=output)
-                self.assertFalse(recovery._backend_stopped())
-
-    @mock.patch("tools.legacy_runtime_process.probe_listener_pids", return_value=[123])
-    @mock.patch("subprocess.run")
-    def test_live_listener_blocks_even_when_systemd_is_stopped(self, run, _listeners):
-        from types import SimpleNamespace
-        run.return_value = SimpleNamespace(
-            returncode=0,
-            stdout="LoadState=loaded\\nActiveState=failed\\nMainPID=0\\n",
-        )
-        self.assertFalse(recovery._backend_stopped())
-
-
 class OneFlatPartialStopResumeTest(unittest.TestCase):
     """The already-consumed canonical STOP must never run a second time."""
 
@@ -481,6 +438,7 @@ class OneFlatPartialStopResumeTest(unittest.TestCase):
             backend_handoff=handoff,
             backend_stopped=lambda: True,
             postproof=lambda: None,
+            gateway_quiesce=lambda **k: "READY: MAIN quiescent",
             installer=lambda *a, **k: installs.append(k) or "INSTALLED_STOPPED: test",
             resume=lambda *a, **k: "READY: EDITOR_ONLY",
         )
@@ -533,6 +491,7 @@ class OneFlatPartialStopResumeTest(unittest.TestCase):
             uid=os.geteuid(), inspect=lambda *a, **k: None,
             backend_handoff=lambda: signals.append("unsafe-replay"),
             backend_stopped=lambda: True, postproof=lambda: None,
+            gateway_quiesce=lambda **k: "READY: MAIN quiescent",
             installer=lambda *a, **k: "INSTALLED_STOPPED: resumed",
             resume=lambda *a, **k: "READY: EDITOR_ONLY",
         )
@@ -613,7 +572,8 @@ class OneFlatPartialStopResumeTest(unittest.TestCase):
                     "INTERRUPT_EXIT_OBSERVED: backend exit; restart not performed"
                 ),
                 backend_stopped=lambda: True, postproof=lambda: None,
-                installer=lambda *a, **k: "INSTALLED_STOPPED: proven",
+                gateway_quiesce=lambda **k: "READY: MAIN quiescent",
+            installer=lambda *a, **k: "INSTALLED_STOPPED: proven",
                 resume=lambda *a, **k: "READY: EDITOR_ONLY",
                 take_closed_approved=True,
             )
@@ -689,6 +649,38 @@ class OneFlatPartialStopResumeTest(unittest.TestCase):
                 self.assertFalse(recovery._one_flat_path(
                     journal, prior, "handoff-attempt",
                 ).exists())
+
+    def test_main_quiescence_required_before_install_after_backend_exit(self):
+        root, stage, journal, db, prior, target, old = self.prepare()
+        owner = self.owner(telegram_active=False)
+        owner._probe_telegram.side_effect = [recovery.ABSENT] * 3
+        self.patches(root, db, old, owner, self.snapshot(old))
+        recovery._one_flat_snapshot(
+            journal, prior, uid=os.geteuid(), value=self.snapshot(old),
+        )
+        for phase in ("take-closed-approved", "handoff-attempt", "backend-exited"):
+            recovery._one_flat_record(
+                journal, prior, phase, target, uid=os.geteuid(),
+            )
+        installs = []
+        with self.assertRaisesRegex(
+            recovery.PartialStopBlocked, "main_gateway_safe_quiescence_unproven",
+        ):
+            recovery.recover_one_flat_after_failed_stop(
+                target=target, stage=stage, prior_stop=prior,
+                expected_old_sha=old, root=root, transactions=journal,
+                uid=os.geteuid(), inspect=lambda *a, **k: None,
+                backend_handoff=lambda: installs.append("UNSAFE_SIGNAL"),
+                backend_stopped=lambda: True, postproof=lambda: None,
+                gateway_quiesce=lambda **k: "BLOCKED: MAIN still active",
+                installer=lambda *a, **k: installs.append("INSTALL"),
+                take_closed_approved=True,
+            )
+        self.assertEqual(installs, [])
+        self.assertTrue(recovery._one_flat_receipt(
+            journal, prior, "backend-exited", target, uid=os.geteuid(),
+        ))
+        self.assertFalse((journal / target).exists())
 
     def test_take_closed_rejects_unknown_old_backend_before_signal(self):
         root, stage, journal, db, prior, target, old = self.prepare()
