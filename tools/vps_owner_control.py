@@ -118,8 +118,6 @@ def submit(action: str, sha: str, request: str, origin: str,
     if (os.geteuid() if uid is None else uid) != 0:
         raise ValueError("root_required_for_owner_operation")
 
-    stage = _verified_take_closed_stage(sha) if action == "update-take-closed" else None
-
     # A stable request ID is an idempotency fence. Successful one-shot units
     # remain loaded (RemainAfterExit), so an SSH retry cannot replay STOP/deploy.
     # Bind an idempotency UUID to its *whole* original action, SHA and origin.
@@ -146,6 +144,10 @@ def submit(action: str, sha: str, request: str, origin: str,
     if fields.get("LoadState") != "not-found":
         print("SUBMISSION=UNPROVEN REQUEST_ID=" + request)
         return 2
+
+    # Staging is necessary only for a *new* update, never to read an
+    # already-detached operation after its verified stage has been retired.
+    stage = _verified_take_closed_stage(sha) if action == "update-take-closed" else None
 
     cmd = [
         "systemd-run", "--no-block", "--remain-after-exit",
