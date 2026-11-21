@@ -373,6 +373,63 @@ class _Clock:
 
 
 class RobotBreakoutMonitorTests(unittest.TestCase):
+    def test_market_match_does_not_fence_proven_unstarted_box(self):
+        from terminal.runtime.paper_runtime import PaperRuntime
+
+        data = box_snapshot()
+        data["identity"]["symbol"] = SYMBOL
+        source, _ = self.store.save_box_plan_only(snapshot=data, created_at_ms=3001)
+        candidate, _ = self.store.handoff_box_plan_to_robot(
+            source.candidate_id, symbol=source.symbol,
+            expected_snapshot_sha256=source.snapshot_sha256, approved_at_ms=3002,
+        )
+        runtime = PaperRuntime.__new__(PaperRuntime)
+        runtime.store = self.store
+        runtime._paper_account_id = ACCOUNT_ID
+        runtime._match_limits_only = Mock(return_value=0)
+        runtime.evaluate_robot_protection_crossing = Mock(return_value=None)
+        runtime.fence_robot_protection_continuity_loss = Mock()
+        symbol, book = Symbol(SYMBOL), _ready_book()
+
+        # Real store has a frozen handoff but no baseline or trading lineage.
+        self.assertTrue(self.store.prove_box_never_started_flat(source.candidate_id))
+        self.assertEqual(runtime._match_symbol(symbol, book, "early", None), 0)
+        runtime._match_limits_only.assert_not_called()
+        runtime.process_robot_market_event(
+            SYMBOL, book, event_id="early-event", received_at_ms=4000,
+        )
+        runtime._match_limits_only.assert_called_once_with(
+            symbol, book, "early-event", allowed_order_ids=set(),
+        )
+        runtime.fence_robot_protection_continuity_loss.assert_not_called()
+        self.assertEqual(self.store.get_robot_candidate(candidate.candidate_id), candidate)
+        self.assertEqual(self.store.get_robot_runtime_state(ACCOUNT_ID).recovery_status, "READY")
+
+        # A missing baseline must NOT be waved through if a working order
+        # exists on the symbol, even when the linked candidate looks unstarted.
+        self.store.create_paper_limit(
+            client_action_id="foreign-box-limit", request_fingerprint="foreign-box-fp",
+            order_id=OrderId("foreign-box-limit"), order_link_id="foreign-box-link",
+            trading_account_id=ACCOUNT_ID, symbol=symbol, side=OrderSide.BUY,
+            price=Decimal("94"), quantity=Decimal("2"), created_at_ms=4001,
+        )
+        runtime._match_limits_only.reset_mock()
+        self.assertEqual(runtime._match_symbol(symbol, book, "ambiguous", None), 0)
+        runtime._match_limits_only.assert_not_called()
+        runtime.fence_robot_protection_continuity_loss.assert_called_once_with(
+            SYMBOL, "box_ownership_unproven_in_match_fallback",
+        )
+        runtime.fence_robot_protection_continuity_loss.reset_mock()
+        runtime.process_robot_market_event(
+            SYMBOL, book, event_id="ambiguous-event", received_at_ms=4002,
+        )
+        runtime.fence_robot_protection_continuity_loss.assert_called_once_with(
+            SYMBOL, "box_ownership_unproven_before_limit_match",
+        )
+        runtime._match_limits_only.assert_called_once_with(
+            symbol, book, "ambiguous-event", allowed_order_ids=set(),
+        )
+
     def test_box_late_catchup_on_pristine_symbol_markets_crossed_slot_and_limits_rest(self):
         # AVNTUSDT/NEARUSDT shape: never traded on PAPER -- no projection row and
         # no executions -- is a provable FLAT base for the same catch-up path.

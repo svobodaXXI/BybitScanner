@@ -2392,6 +2392,8 @@ class PaperRuntime:
                     try:
                         self.store.prove_box_owned_position(source_id.strip())
                     except Exception:
+                        if self._box_waiting_for_first_ownership(candidate, source_id.strip()):
+                            continue  # no orders to match; monitor owns initial baseline
                         self.fence_robot_protection_continuity_loss(
                             normalized.value, "box_ownership_unproven_before_limit_match",
                         )
@@ -2893,6 +2895,53 @@ class PaperRuntime:
             and closed.exit_reason == "EMERGENCY_CLOSE"
         )
 
+    def _box_waiting_for_first_ownership(self, candidate, source_id: str) -> bool:
+        """An unstarted frozen Box is not a lost protection owner."""
+        try:
+            state = candidate.robot_state
+            if candidate.status != "APPROVED" or not isinstance(state, Mapping):
+                return False
+            execution = state.get("execution", {})
+            if (
+                not isinstance(execution, Mapping)
+                or set(execution) - {
+                    "source_box_candidate_id", "mirror", "last_execution_error",
+                    "last_attempt_at_ms", "attempt_count", "paper_candidate_error",
+                }
+                or state.get("phase") != "BOX_ENTRY_READY"
+                or state.get("execution_authorized") is not False
+                or candidate.trading_account_id != self._paper_account_id
+                or candidate.signal_snapshot.get("source_box_candidate_id") != source_id
+                or state.get("source_box_candidate_id") != source_id
+                or execution.get("source_box_candidate_id", source_id) != source_id
+            ):
+                return False
+            source = self.store.get_robot_candidate(source_id)
+            if (
+                source is None
+                or source.trading_account_id != self._paper_account_id
+                or source.symbol != candidate.symbol
+                or source.status != "BOX_PLAN_ONLY"
+            ):
+                return False
+            account, symbol = self._paper_account_id, candidate.symbol
+            if (
+                self.store.get_robot_trade(f"robot-trade-{candidate.candidate_id}") is not None
+                or self.store.get_open_robot_trade_for_symbol(account, symbol)
+                or self.store.get_protection_projection(
+                    PositionKey(account, Category.LINEAR, symbol, 0)
+                ) is not None
+                or any(item.symbol == symbol for item in
+                       self.store.load_unresolved_paper_protection_obligations(account))
+                or self.store.load_commands_for_symbol_since(account, symbol, source.updated_at_ms)
+            ):
+                return False
+            # Existing strict proof: missing baseline, no ownership, no working
+            # orders, no commands in flight, no new fills, and FLAT exposure.
+            return self.store.prove_box_never_started_flat(source_id)
+        except Exception:
+            return False
+
     def _match_symbol(
         self,
         symbol: Symbol,
@@ -2931,6 +2980,8 @@ class PaperRuntime:
             try:
                 self.store.prove_box_owned_position(source_id.strip())
             except Exception:
+                if self._box_waiting_for_first_ownership(candidate, source_id.strip()):
+                    return 0  # never submit/fill from a missing baseline
                 self.fence_robot_protection_continuity_loss(
                     symbol.value, "box_ownership_unproven_in_match_fallback",
                 )
