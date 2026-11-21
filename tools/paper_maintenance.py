@@ -865,6 +865,7 @@ def _proven_prior_exceptional_completion(
 def deploy_staged_editor_only(
     target: str, *, stage: Path, root: Path = REPO, env_file: Path | None = None,
     dual_orphan_handoff: bool = False, proven_one_flat_orphan_handoff: bool = False,
+    take_closed_approved_handoff: bool = False,
     stop=None, preflight=None,
     installer=None, resume=None, manifest=None, unit_dir=None,
     transactions=None, trusted_uid: int = 0,
@@ -889,13 +890,20 @@ def deploy_staged_editor_only(
     )
     from tools.stop_robot_runtime import (
         build_dual_orphan_handoff, build_proven_one_flat_orphan_handoff,
+        build_take_closed_approved_handoff,
     )
 
     if len(target) != 40 or any(ch not in "0123456789abcdef" for ch in target):
         return "BLOCKED: invalid_approved_target"
-    if dual_orphan_handoff and proven_one_flat_orphan_handoff:
+    if sum(bool(x) for x in (
+        dual_orphan_handoff, proven_one_flat_orphan_handoff,
+        take_closed_approved_handoff,
+    )) > 1:
         return "BLOCKED: competing_exceptional_handoff_options"
-    if confirmed_stop_only and (stop is not None or dual_orphan_handoff or proven_one_flat_orphan_handoff):
+    if take_closed_approved_handoff and stop is not None:
+        return "BLOCKED: take_closed_requires_canonical_owner_stop"
+    if confirmed_stop_only and (stop is not None or dual_orphan_handoff
+                                or proven_one_flat_orphan_handoff or take_closed_approved_handoff):
         return "BLOCKED: confirmed_stop_only_conflicting_STOP_or_handoff"
     if (not root.is_dir() or root.is_symlink() or (root / ".git").exists()
             or not stage.is_dir() or stage.is_symlink()):
@@ -1132,6 +1140,7 @@ def deploy_staged_editor_only(
                         and not confirmed_stop_only
                         and not dual_orphan_handoff
                         and not proven_one_flat_orphan_handoff
+                        and not take_closed_approved_handoff
                         and stop is None):
                     # Legacy STOP intents lacked PR #1039's deferred receipt.
                     # This never infers the old STOP's outcome: only when the
@@ -1264,27 +1273,49 @@ def deploy_staged_editor_only(
                     # the canonical STOP/reconcile/position safety contracts.
                     if (isinstance(current, str)
                             and not dual_orphan_handoff
-                            and not proven_one_flat_orphan_handoff):
+                            and not proven_one_flat_orphan_handoff
+                            and not take_closed_approved_handoff):
                         deferred = _pre_stop_required_nonflat_blocker(
                             current, root=root, env_file=env_file,
                         )
                         if deferred is not None:
                             return deferred
                     env = _environment(env_file)
-                    if proven_one_flat_orphan_handoff and (
+                    if (proven_one_flat_orphan_handoff or take_closed_approved_handoff) and (
                         not isinstance(current, str)
                         or len(current) != 40
                         or any(c not in "0123456789abcdef" for c in current)
                     ):
-                        return "BLOCKED: old_release_not_pinned_for_one_orphan_handoff"
+                        return "BLOCKED: old_release_not_pinned_for_exceptional_handoff"
+                    if take_closed_approved_handoff:
+                        # Before creating an irreversible STOP intent, require
+                        # exact old-release and immutable Flat+TAKE ownership
+                        # proof. Real callback re-proves under the same writer
+                        # barrier before signaling the pinned Backend PID.
+                        try:
+                            prechecked = build_take_closed_approved_handoff(
+                                env, current, execute=False,
+                            )()
+                        except Exception as exc:
+                            return ("BLOCKED: take_closed_pre_STOP_proof:"
+                                    + type(exc).__name__ + "; no STOP intent")
+                        if prechecked != (
+                            "PRECHECK_ONLY: FLAT proven under writer barrier; no process action"
+                        ):
+                            return "BLOCKED: take_closed_pre_STOP_unproven; no STOP intent"
                     callback = build_dual_orphan_handoff(env) if dual_orphan_handoff else None
                     one_orphan = (
                         build_proven_one_flat_orphan_handoff(env, current)
                         if proven_one_flat_orphan_handoff else None
                     )
+                    take_closed = (
+                        build_take_closed_approved_handoff(env, current)
+                        if take_closed_approved_handoff else None
+                    )
                     action = RuntimeShutdown(
                         root=root, env=env, dual_orphan_handoff=callback,
                         proven_one_flat_orphan_handoff=one_orphan,
+                        take_closed_approved_handoff=take_closed,
                     ).run
                 else:
                     action = stop
@@ -2924,7 +2955,7 @@ def _stop_exact_installed_paper_once(
 def main(argv=None) -> int:
     parser = _MaintenanceParser(description="Fail-closed one-action PAPER maintenance")
     parser.add_argument("sha")
-    parser.add_argument("--action", choices=("stop", "start", "update", "update-and-start", "provision-owner-pc", "telegram-recover"),
+    parser.add_argument("--action", choices=("stop", "start", "update", "update-and-start", "provision-owner-pc", "telegram-recover", "update-take-closed"),
                         help="single owner action: canonical STOP, PAPER START, or exact stable UPDATE")
     parser.add_argument("--env-file", type=Path, default=Path("/etc/bybitscanner/paper.env"))
     parser.add_argument("--wait-seconds", type=float, default=0)
@@ -2948,6 +2979,8 @@ def main(argv=None) -> int:
                         help="separate explicit opt-in to exact JASMY/FLOW protected handoff")
     parser.add_argument("--proven-one-flat-orphan-handoff", action="store_true",
                         help="explicit owner opt-in: one immutable manual Flat/OPEN close, no trade replay")
+    parser.add_argument("--take-closed-approved-handoff", action="store_true",
+                        help="explicit owner opt-in: one proven legacy APPROVED+PAPER TAKE FLAT handoff")
     parser.add_argument("--resume-one-flat-from-prior-stop", metavar="SHA",
                         help="separately authorized continuation of a proven failed STOP; never replay STOP")
     parser.add_argument("--expected-old-backend", metavar="SHA",
@@ -2961,7 +2994,8 @@ def main(argv=None) -> int:
                         or args.continue_confirmed_stop_only or args.start_paper_after_editor
                         or args.publish_frontend_only or args.frontend_bundle
                         or args.frontend_current_index_sha256 or args.dual_orphan_handoff_20261103
-                        or args.proven_one_flat_orphan_handoff or args.resume_one_flat_from_prior_stop
+                        or args.proven_one_flat_orphan_handoff
+                        or args.take_closed_approved_handoff or args.resume_one_flat_from_prior_stop
                         or args.expected_old_backend):
                     parser.error("one action cannot combine with legacy lifecycle flags")
                 if args.action == "telegram-recover":
@@ -2994,6 +3028,39 @@ def main(argv=None) -> int:
                     status = provision_owner_pc(args.sha, env_file=args.env_file)
                     print(status)
                     return 0 if status.startswith("READY:") else 2
+                if args.action == "update-take-closed":
+                    # One exceptional owner UUID, not a second SSH recovery
+                    # controller. Only the fully verified exact stable target
+                    # stage may execute code missing from the old Backend.
+                    stage = Path("/var/lib") / ("bybitscanner-stage-git-" + args.sha)
+                    project_modules = tuple(
+                        (name, mod) for name, mod in sys.modules.items()
+                        if name in ("tools", "terminal")
+                        or name.startswith(("tools.", "terminal."))
+                    )
+                    if not _verified_staged_module_bootstrap(
+                        args.sha, stage, (("__main__", sys.modules[__name__]),) + project_modules,
+                    ):
+                        print("BLOCKED: take_closed_owner_stage_unproven; no STOP")
+                        return 2
+                    # This exceptional release still includes all merged UI
+                    # changes. Build the exact-SHA frontend BEFORE recording
+                    # any STOP intent, using the same canonical bundle gate.
+                    try:
+                        bundle = _prepare_editor_frontend_bundle(args.sha, stage=stage)
+                    except (OSError, ValueError) as exc:
+                        print("BLOCKED: take_closed_frontend_preflight:"
+                              + type(exc).__name__ + "; no STOP")
+                        return 2
+                    return main([
+                        args.sha, "--env-file", str(args.env_file),
+                        "--staged-gitless-editor-only", str(stage),
+                        "--take-closed-approved-handoff",
+                        *(
+                            ["--frontend-bundle", str(bundle)]
+                            if bundle is not None else []
+                        ),
+                    ])
                 owner_flags = (
                     ["--update-editor-only-from-stable"] if args.action.startswith("update")
                     else ["--resume-installed-editor-only"]
@@ -3010,6 +3077,7 @@ def main(argv=None) -> int:
                 or args.frontend_bundle or args.frontend_current_index_sha256
                 or args.dual_orphan_handoff_20261103
                 or args.proven_one_flat_orphan_handoff
+                or args.take_closed_approved_handoff
                 or args.resume_one_flat_from_prior_stop
                 or args.expected_old_backend or args.wait_seconds
                 or args.continue_confirmed_stop_only):
@@ -3076,9 +3144,12 @@ def main(argv=None) -> int:
         not args.staged_gitless_editor_only or args.resume_installed_editor_only
         or args.start_paper_after_editor or args.publish_frontend_only
         or args.dual_orphan_handoff_20261103 or args.proven_one_flat_orphan_handoff
+        or args.take_closed_approved_handoff
         or args.resume_one_flat_from_prior_stop or args.expected_old_backend
     ):
         parser.error("confirmed STOP continuation requires only exact Gitless staging")
+    if args.take_closed_approved_handoff and args.start_paper_after_editor:
+        parser.error("TAKE-closed handoff only installs frozen EDITOR_ONLY; no PAPER START")
     if args.staged_gitless_editor_only and REPO.is_dir():
         # Source must be consistently loaded from the installed release OR
         # from the exact root-owned/stable target worktree. The latter allows
@@ -3113,6 +3184,7 @@ def main(argv=None) -> int:
     if args.publish_frontend_only and (not args.frontend_bundle
             or args.resume_installed_editor_only or args.staged_gitless_editor_only
             or args.start_paper_after_editor or args.proven_one_flat_orphan_handoff
+            or args.take_closed_approved_handoff
             or args.dual_orphan_handoff_20261103
             or args.resume_one_flat_from_prior_stop
             or args.expected_old_backend):
@@ -3127,13 +3199,20 @@ def main(argv=None) -> int:
         parser.error("exceptional handoff requires staged Gitless operation")
     if args.proven_one_flat_orphan_handoff and not args.staged_gitless_editor_only:
         parser.error("one orphan handoff requires staged Gitless operation")
-    if args.proven_one_flat_orphan_handoff and args.dual_orphan_handoff_20261103:
+    if args.take_closed_approved_handoff and not args.staged_gitless_editor_only:
+        parser.error("TAKE-closed handoff requires exact staged Gitless operation")
+    if sum(bool(x) for x in (
+        args.proven_one_flat_orphan_handoff,
+        args.dual_orphan_handoff_20261103,
+        args.take_closed_approved_handoff,
+    )) > 1:
         parser.error("choose exactly one exceptional handoff policy")
     if bool(args.resume_one_flat_from_prior_stop) != bool(args.expected_old_backend):
         parser.error("partial continuation requires both exact old Backend and STOP SHA")
     if args.resume_one_flat_from_prior_stop and (
         not args.staged_gitless_editor_only
         or args.proven_one_flat_orphan_handoff
+        or args.take_closed_approved_handoff
         or args.dual_orphan_handoff_20261103
         or args.resume_installed_editor_only
         or args.start_paper_after_editor
@@ -3233,6 +3312,7 @@ def main(argv=None) -> int:
             env_file=args.env_file,
             dual_orphan_handoff=args.dual_orphan_handoff_20261103,
             proven_one_flat_orphan_handoff=args.proven_one_flat_orphan_handoff,
+            take_closed_approved_handoff=args.take_closed_approved_handoff,
             frontend_bundle=args.frontend_bundle,
             frontend_expected_index_sha256=args.frontend_current_index_sha256,
             confirmed_stop_only=args.continue_confirmed_stop_only,
