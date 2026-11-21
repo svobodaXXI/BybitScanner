@@ -6090,6 +6090,7 @@ class SQLiteStore:
         created_at_ms: int,
         recovery_state: dict[str, object] | None = None,
         recovery_expected_revision: int | None = None,
+        recovery_closed_take: tuple[int, Decimal, Decimal, Decimal, Decimal] | None = None,
     ) -> tuple[RobotTradeRecord, bool]:
         """entry_quantity/entry_position_version are the owner-frozen D2.3
         ownership attestation (CR-PAPER-PROTECTION-LIFECYCLE-001): the
@@ -6116,6 +6117,20 @@ class SQLiteStore:
             recovery_json = _canonical_json(recovery_state)
         else:
             recovery_json = None
+        # Exact already-TAKE-closed legacy recovery: trade, final economics
+        # and candidate CLOSED state must commit in the SAME CAS transaction.
+        closed_values = (None, None, None, None, None, None)
+        if recovery_closed_take is not None:
+            if not recovery or len(recovery_closed_take) != 5:
+                raise ValueError("closed TAKE recovery requires atomic CAS state")
+            exit_at, exit_price, gross, net_pct, fees = recovery_closed_take
+            if (type(exit_at) is not int or exit_at < entry_time_ms
+                    or exit_at > created_at_ms or exit_price <= 0 or fees < 0):
+                raise ValueError("invalid recovered TAKE economics")
+            closed_values = (
+                exit_at, _decimal_text(exit_price), "TAKE",
+                _decimal_text(gross), _decimal_text(net_pct), _decimal_text(fees),
+            )
         if not trade_id.strip() or direction not in ROBOT_DIRECTIONS or entry_path not in ROBOT_ENTRY_PATHS:
             raise ValueError("invalid Robot trade identity, direction or entry path")
         if (
@@ -6137,7 +6152,7 @@ class SQLiteStore:
             trade_id, trading_account_id.value, candidate_id, symbol.value, direction, pattern,
             source_timeframe, signal_time_ms, entry_time_ms, entry_path,
             *(_decimal_text(value) for value in decimals),
-            None, None, None, None, None, None, 1, created_at_ms, created_at_ms,
+            *closed_values, 1, created_at_ms, created_at_ms,
             _decimal_text(entry_quantity), entry_position_version,
         )
         with self._transaction():
@@ -6157,6 +6172,14 @@ class SQLiteStore:
                     and record.take_price == take_price
                     and record.entry_quantity == entry_quantity
                     and record.entry_position_version == entry_position_version
+                    and (recovery_closed_take is None or (
+                        record.exit_time_ms, record.exit_price, record.exit_reason,
+                        record.realized_pnl_usdt, record.realized_pnl_pct,
+                        record.fees_costs_usdt,
+                    ) == (
+                        recovery_closed_take[0], recovery_closed_take[1], "TAKE",
+                        *recovery_closed_take[2:],
+                    ))
                 )
                 if not same:
                     raise DuplicateIdentity("Robot trade identity conflicts with durable trade")
@@ -6178,13 +6201,14 @@ class SQLiteStore:
                     "INSERT INTO robot_trades VALUES (" + ",".join("?" for _ in values) + ")", values,
                 )
                 if recovery:
+                    status = "CLOSED" if recovery_closed_take is not None else "OPEN"
                     cursor = self._connection.execute(
                         """UPDATE robot_candidates
-                           SET status='OPEN', robot_state_json=?,
+                           SET status=?, robot_state_json=?,
                                state_revision=state_revision+1, updated_at_ms=?
                            WHERE candidate_id=? AND status='APPROVED'
                              AND state_revision=? AND updated_at_ms<=?""",
-                        (recovery_json, created_at_ms, candidate_id,
+                        (status, recovery_json, created_at_ms, candidate_id,
                          recovery_expected_revision, created_at_ms),
                     )
                 else:
