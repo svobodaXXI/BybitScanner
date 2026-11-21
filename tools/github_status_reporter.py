@@ -35,7 +35,7 @@ _MODES = {
     "scanner": {"SCANNER_RUNNING", "SCANNER_PAUSED", "SCANNER_STOPPED"},
     "autopilot": {"OFF", "SHADOW", "PAPER_AUTO"},
     "coverage": {"REPORTED_COVERED", "REPORTED_MISSING", "UNKNOWN", "NOT_APPLICABLE"},
-    "backend": {"REACHABLE", "UNAVAILABLE"},
+    "backend": {"REACHABLE", "UNAVAILABLE", "SAFETY_FLAG_FAILED"},
     "telegram": {"READY", "UNAVAILABLE"},
     "assessment": {"ATTENTION", "OBSERVED", "UNKNOWN"},
 }
@@ -64,8 +64,13 @@ def observe(fetch=_get) -> dict:
     try:
         health = fetch(BACKEND + "/api/health")
         if (health.get("ok") is not True or health.get("component") != "paper_backend"
-                or health.get("mode") != "paper" or health.get("paper_live_safe") is not True):
+                or health.get("mode") != "paper"):
             return unavailable
+        if health.get("paper_live_safe") is not True:
+            # The API is reachable but its explicit safety claim failed.
+            # Publish a coarse incident without trusting any further runtime fields.
+            return {**unavailable, "backend": "SAFETY_FLAG_FAILED",
+                    "assessment": "ATTENTION"}
         robot = fetch(BACKEND + "/api/robot/state")
         scanner = fetch(BACKEND + "/api/scanner/status")
         autopilot = fetch(BACKEND + "/api/robot/autopilot")
@@ -110,7 +115,8 @@ def observe(fetch=_get) -> dict:
         uncertain = any(result[k] == "UNKNOWN" for k in
                         ("robot", "recovery", "scanner", "autopilot"))
         incident = (result["recovery"] in {"RECONCILIATION_REQUIRED", "RECONCILING"}
-                    or (len(positions) > 0 and protection != "REPORTED_COVERED"))
+                    or (len(positions) > 0 and protection != "REPORTED_COVERED")
+                    or result["telegram"] == "UNAVAILABLE")
         result["assessment"] = "UNKNOWN" if uncertain else "ATTENTION" if incident else "OBSERVED"
         return result
     except Exception:
