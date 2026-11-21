@@ -146,7 +146,7 @@ def prove_take_closed_approved(
              and state.get("phase") == "RETEST_DETECTED"
              and state.get("direction") in ("LONG", "SHORT")
              and candidate.signal_snapshot.get("pattern") in ("Rising Wedge", "Falling Wedge")
-             and execution.get("entry_mode") == "MARKET"
+             and execution.get("entry_mode") == "LATE_ADMISSION_MARKET"
              and execution.get("emergency_close_pending") is True
              and execution.get("emergency_close_intent") is None
              and execution.get("emergency_close_outcome") is None
