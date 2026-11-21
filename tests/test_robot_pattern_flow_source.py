@@ -15,8 +15,9 @@ class PatternFlowSourceTests(unittest.TestCase):
     CLOSE = 1_800_000
 
     @classmethod
-    def source(cls, *, drop_ws=False, late=False, wrong_kline=False):
-        c = cls.CLOSE
+    def source(cls, *, drop_ws=False, late=False, wrong_kline=False,
+               close_ms=None, id_prefix="", sequence_offset=0):
+        c = cls.CLOSE if close_ms is None else close_ms
         trades = [
             ("pre", c - 120_100, 1, "Sell", "99", "1"),
             ("a", c - 119_000, 2, "Buy", "100", "1"),
@@ -27,7 +28,7 @@ class PatternFlowSourceTests(unittest.TestCase):
         ]
         prints = tuple(
             ObservedPrint(
-                tid, ts, seq, side, Decimal(px), Decimal(size),
+                id_prefix + tid, ts, seq + sequence_offset, side, Decimal(px), Decimal(size),
                 c + 20_000 if late and tid == "d" else ts + 50,
             )
             for tid, ts, seq, side, px, size in trades[1:5]
@@ -42,8 +43,8 @@ class PatternFlowSourceTests(unittest.TestCase):
         recent = {
             "retCode": 0, "time": c + 5,
             "result": {"category": "linear", "list": [
-                {"execId": tid, "symbol": "BTCUSDT", "time": str(ts),
-                 "seq": str(seq), "side": side, "price": px, "size": size}
+                {"execId": id_prefix + tid, "symbol": "BTCUSDT", "time": str(ts),
+                 "seq": str(seq + sequence_offset), "side": side, "price": px, "size": size}
                 for tid, ts, seq, side, px, size in trades
             ]},
         }
@@ -211,6 +212,63 @@ class PatternFlowSourceTests(unittest.TestCase):
         self.assertIsNone(certified_snapshot(
             source.snapshot(), incomplete, old_kline, new_kline, **kwargs,
         ))
+
+    def test_reconnect_requires_two_fresh_minutes_before_certifying(self):
+        """A corrupt old epoch cannot poison a new complete, causal tape."""
+        from terminal.market_data.impulse_observation import PublicTradeObservation
+        from tests.test_public_trade_impulse_observation import frame, trade
+
+        source = PublicTradeObservation("BTCUSDT")
+        source.enable_certification_buffer()
+
+        def feed(item):
+            self.assertTrue(source.observe(
+                frame(trade(
+                    item.trade_id, item.timestamp_ms, item.side,
+                    str(item.price), str(item.quantity), sequence=item.sequence,
+                )), received_at_ms=item.received_at_ms,
+            ))
+
+        old, recent, previous, current = self.source()
+        # The first minute belongs exclusively to the old source generation.
+        for item in old["prints"][:2]:
+            feed(item)
+        self.assertFalse(source.observe(frame(trade(
+            "malformed", self.CLOSE - 117_000, side="UNKNOWN",
+        )), received_at_ms=self.CLOSE - 116_950))
+        old_generation = source.snapshot()["generation"]
+        self.assertEqual(source.snapshot()["invalid_frames"], 1)
+        source.mark_gap()
+
+        # Independent REST and candle facts cannot bridge the missing WS
+        # minute across a reconnect; only post-reconnect observations count.
+        for item in old["prints"][2:]:
+            feed(item)
+        recent["time"] = self.CLOSE + 105
+        self.assertIsNone(certified_snapshot(
+            source.snapshot(), recent, previous, current,
+            closed_at_ms=self.CLOSE, decision_ms=self.CLOSE + 110,
+        ))
+
+        # Collect a wholly new two-minute window with different IDs/times,
+        # without resetting again or copying the discarded executions.
+        next_close = self.CLOSE + 120_000
+        fresh, recent, previous, current = self.source(
+            close_ms=next_close, id_prefix="fresh-", sequence_offset=10,
+        )
+        recent["time"] = next_close + 105
+        for item in fresh["prints"]:
+            feed(item)
+        result = certified_snapshot(
+            source.snapshot(), recent, previous, current,
+            closed_at_ms=next_close, decision_ms=next_close + 110,
+        )
+        self.assertIsNotNone(result)
+        self.assertEqual(result["flow_source"]["generation"], old_generation + 1)
+        self.assertTrue(result["flow_source"]["source_complete"])
+        self.assertEqual(result["flow_source"]["print_count"], 4)
+        self.assertEqual(result["flow_observation"]["direction"], "LONG")
+        self.assertFalse(is_robot_executable_signal(result, timeframe="1"))
 
     def test_receive_before_exchange_event_cannot_certify_source(self):
         """Full REST/candle parity cannot rescue impossible receipt causality."""
