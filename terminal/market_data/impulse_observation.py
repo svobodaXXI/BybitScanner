@@ -67,6 +67,7 @@ class PublicTradeObservation:
             self._prints = deque(maxlen=self._capacity)
             self._ids.clear()
             self._generation += 1  # fence any earlier source proof
+            self._invalid_frames = 0  # per-generation evidence only
             self._gap = True
             return True
 
@@ -74,6 +75,7 @@ class PublicTradeObservation:
         """A disconnect/reconnect invalidates continuity and per-generation IDs."""
         with self._lock:
             self._generation += 1
+            self._invalid_frames = 0  # old corrupt frames cannot poison a fresh epoch
             self._gap = True
             self._prints.clear()
             self._ids.clear()
