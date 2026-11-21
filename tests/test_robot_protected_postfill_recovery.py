@@ -36,7 +36,7 @@ def _orphan_fixture(path: Path, *, take_enabled=True, direction="LONG"):
     snapshot = _snapshot(
         symbol=SYMBOL.value, pattern="Rising Wedge" if short else "Falling Wedge",
         lower_touch_prices=(64100.0, 64120.0),
-        upper_touch_prices=(64500.0, 64520.0) if short else (65000.0, 65020.0),
+        upper_touch_prices=(64500.0, 64520.0) if short else (150.0, 152.0),
         reference_price=64200.0, start_width=250.0,
     )
     candidate, _ = store.create_robot_candidate(
