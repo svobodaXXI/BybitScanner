@@ -48,6 +48,110 @@ def test_exact_wedge_candidate_order_execution_episode():
     assert result["market_candles_coverage"] == "NOT_PROVIDED"
 
 
+
+def _partial_wedge_case():
+    """One canonical REDUCE between exact Robot entry and STOP/TAKE close."""
+    from decimal import Decimal
+    from terminal.diary.models import AllocationRole
+    from terminal.domain.models import (
+        ExecutionDedupKey, ExecutionId, OrderId, Origin, Price, Quantity,
+    )
+
+    snapshot, kwargs = case()
+    episode = snapshot.episodes[1]
+    opened, closed = episode.allocations
+    original_close = next(
+        execution for execution in snapshot.executions
+        if execution.dedup_key.exec_id.value == "close-2"
+    )
+    reduce_key = ExecutionDedupKey(
+        original_close.dedup_key.trading_account_id,
+        original_close.dedup_key.category, ExecutionId("reduce-2"),
+    )
+    reduced = replace(
+        original_close, dedup_key=reduce_key, order_id=OrderId("partial-2"),
+        price=Price(Decimal("102")), quantity=Quantity(Decimal("0.25")),
+        fee=Decimal("0.025"), exchange_timestamp_ms=1250,
+    )
+    final = replace(
+        original_close, price=Price(Decimal("101")),
+        quantity=Quantity(Decimal("0.75")), fee=Decimal("0.075"),
+    )
+    reduction = replace(
+        closed, execution_key=reduce_key, role=AllocationRole.REDUCE,
+        quantity=Decimal("0.25"), fee=Decimal("0.025"), occurred_at_ms=1250,
+    )
+    closing = replace(closed, quantity=Decimal("0.75"), fee=Decimal("0.075"))
+    reduced_episode = replace(
+        episode, allocations=(opened, reduction, closing),
+        realized_price_pnl=Decimal("1.25"), execution_fees=Decimal("0.2"),
+    )
+    updated = replace(
+        snapshot, source_revision=6,
+        episodes=(snapshot.episodes[0], reduced_episode),
+        origins={**snapshot.origins, reduce_key: Origin.ROBOT},
+        executions=tuple(
+            final if e.dedup_key.exec_id.value == "close-2" else e
+            for e in snapshot.executions
+        ) + (reduced,),
+    )
+    return updated, dict(kwargs, source_revision=6)
+
+
+def test_wedge_partial_reduce_is_not_mistaken_for_entry_order():
+    snapshot, kwargs = _partial_wedge_case()
+    result = project_selected_paper_wedge(
+        _wedge_with_entry_terms(snapshot), **kwargs,
+    )
+    fills = result["execution_allocations"]
+    assert [(row["allocation_role"], row["order_id"]) for row in fills] == [
+        ("OPEN", "entry-2"), ("REDUCE", "partial-2"), ("CLOSE", "exit-2"),
+    ]
+    assert result["candidate_id"] == "candidate-2"
+    assert result["entry_risk"]["status"] == "PROVEN_PERSISTED_ENTRY_TERMS"
+    assert result["realized_price_pnl_usdt"] == "1.25"
+    assert result["known_execution_fees_usdt"] == "0.2"
+    assert result["pnl_usdt"] == "1.05"
+
+
+def test_wedge_partial_reduce_requires_exact_robot_origin_and_quantity():
+    import pytest
+    from decimal import Decimal
+    from terminal.domain.models import Origin, Quantity
+    snapshot, kwargs = _partial_wedge_case()
+    reduce_exec = next(
+        e for e in snapshot.executions if e.dedup_key.exec_id.value == "reduce-2"
+    )
+    altered_origin = replace(
+        snapshot, origins={**snapshot.origins, reduce_exec.dedup_key: Origin.MANUAL},
+    )
+    with pytest.raises(WedgeLineageUnproven, match="wedge_mixed_controller"):
+        project_selected_paper_wedge(altered_origin, **kwargs)
+
+    # Even a matching immutable execution cannot attest a reduction that
+    # exceeds the outstanding Wedge quantity.
+    episode = snapshot.episodes[1]
+    oversized = replace(
+        episode.allocations[1], quantity=Decimal("2"),
+    )
+    invalid = replace(
+        snapshot,
+        episodes=(
+            snapshot.episodes[0],
+            replace(episode, allocations=(
+                episode.allocations[0], oversized, episode.allocations[2],
+            )),
+        ),
+        executions=tuple(
+            replace(e, quantity=Quantity(Decimal("2")))
+            if e.dedup_key == reduce_exec.dedup_key else e
+            for e in snapshot.executions
+        ),
+    )
+    with pytest.raises(WedgeLineageUnproven, match="wedge_quantity_lifecycle_unproven"):
+        project_selected_paper_wedge(invalid, **kwargs)
+
+
 def _wedge_with_entry_terms(snapshot, **overrides):
     evidence = dict(snapshot.wedge_evidence)
     trade = dict(
