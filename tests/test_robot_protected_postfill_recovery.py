@@ -34,7 +34,7 @@ def _orphan_fixture(path: Path, *, take_enabled=True):
     snapshot = _snapshot(
         symbol=SYMBOL.value, pattern="Falling Wedge",
         lower_touch_prices=(64100.0, 64120.0),
-        reference_price=64200.0, start_width=80.0,
+        reference_price=64200.0, start_width=250.0,
     )
     candidate, _ = store.create_robot_candidate(
         candidate_id=CID, trading_account_id=ACCOUNT, symbol=SYMBOL,
@@ -59,7 +59,7 @@ def _orphan_fixture(path: Path, *, take_enabled=True):
         payload, state, average_entry=book.asks[0].price.value,
         structural_extreme=Decimal("64100"), tick_size=tick,
         frozen_signal_reference_price=Decimal("64200"),
-        frozen_scanner_target_price=Decimal("64280"),
+        frozen_scanner_target_price=Decimal("64450"),
     )
     intent = durable_late_admission_market_intent(
         plan, normalized_quantity=preflight.normalized_quantity,
@@ -82,7 +82,7 @@ def _orphan_fixture(path: Path, *, take_enabled=True):
         payload, state, average_entry=position.average_entry.value,
         structural_extreme=Decimal("64100"), tick_size=tick,
         frozen_signal_reference_price=Decimal("64200"),
-        frozen_scanner_target_price=Decimal("64280"),
+        frozen_scanner_target_price=Decimal("64450"),
     )
     executor = _DirectRobotActionExecutor(runtime)
     assert executor.create_stop(expected.stop_request).status is CommandResultStatus.COMPLETED
@@ -165,7 +165,7 @@ def test_extra_market_command_retains_required_without_replay():
         try:
             extra = runtime.api.market(MarketCommandRequest(
                 ClientActionId("foreign-after-entry"), SYMBOL.value, OrderSide.BUY,
-                VolumeRequest(VolumeUnit.USDT, Decimal("10")), Decimal("64250"),
+                VolumeRequest(VolumeUnit.USDT, Decimal("100")), Decimal("64250"),
                 "Percent", Decimal("0.5"),
             ))
             assert extra.status is CommandResultStatus.COMPLETED
