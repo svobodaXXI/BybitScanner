@@ -236,7 +236,7 @@ def _proven_one_flat_successor(
 ) -> bool:
     """Bind a failed STOP to one independently attested successor release."""
     from tools.paper_stopped_approved_recovery import (
-        PartialStopBlocked, _one_flat_receipt, _one_flat_snapshot,
+        PartialStopBlocked, _one_flat_path, _one_flat_receipt, _one_flat_snapshot,
     )
     from tools.vps_gitless_release_activate import ActivationBlocked
     from tools.paper_interrupted_stop_recovery import _trusted_journal
@@ -253,8 +253,24 @@ def _proven_one_flat_successor(
                 or _trusted_file(journal_root / (".stop-invoked-" + prior), uid)
                 != b"STOP_INVOKED; not install authorization\\n"):
             return False
-        if not all(_one_flat_receipt(journal_root, prior, phase, target, uid=uid)
-                   for phase in ("handoff-attempt", "backend-exited", "handoff-proven")):
+        handoff = _trusted_file(
+            _one_flat_path(journal_root, prior, "handoff-proven"), uid,
+        )
+        if (len(handoff) != 41 or not handoff.endswith(b"\n")
+                or any(c not in b"0123456789abcdef" for c in handoff[:-1])):
+            return False
+        original = handoff[:-1].decode("ascii")
+        if original != target:
+            if _trusted_file(
+                _one_flat_path(journal_root, prior, "retarget"), uid,
+            ) != (original + "\n" + target + "\n").encode("ascii"):
+                return False
+        elif (_one_flat_path(journal_root, prior, "retarget").exists()
+              or _one_flat_path(journal_root, prior, "retarget").is_symlink()):
+            return False
+        if not all(_one_flat_receipt(
+            journal_root, prior, phase, original, uid=uid,
+        ) for phase in ("handoff-attempt", "backend-exited", "handoff-proven")):
             return False
         snapshot = _one_flat_snapshot(journal_root, prior, uid=uid)
         old_sha = snapshot["backend"].get("build_sha")
@@ -813,6 +829,16 @@ def _proven_prior_exceptional_completion(
             successor = _trusted_file(receipt_path, uid).decode("ascii").removesuffix("\n")
         except (OSError, ValueError, UnicodeError):
             return False
+        redirected = journal_root / (".one-flat-handoff-retarget-" + prior)
+        if redirected.exists() or redirected.is_symlink():
+            try:
+                raw = _trusted_file(redirected, uid)
+                if (len(raw) != 82 or raw[:41] != (successor + "\n").encode("ascii")
+                        or raw[81:] != b"\n"):
+                    return False
+                successor = raw[41:-1].decode("ascii")
+            except (OSError, ValueError, UnicodeError):
+                return False
         return _proven_one_flat_successor(
             journal_root, prior, successor, uid=uid, root=root, require_ready=True,
         )
