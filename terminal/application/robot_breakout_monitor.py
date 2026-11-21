@@ -3036,7 +3036,7 @@ class RobotBreakoutMonitor:
     def recover_protected_legacy_postfill(self, record: RobotCandidateRecord) -> bool:
         """Repair ONLY an exact, protected PAPER post-fill low-R/R orphan.
 
-        Called on the serialized PAPER owner during REQUIRED -> RECONCILING;
+        Called on the serialized PAPER owner while REQUIRED still holds;
         never submits STOP/TAKE/Market, changes admission, or infers FLAT.
         The legacy emergency marker predates a durable close identity, so the
         *entire* symbol command/fill lineage since approval must prove only
@@ -3049,7 +3049,7 @@ class RobotBreakoutMonitor:
         if not (
             self._account_id.value == "paper"
             and runtime is not None
-            and (runtime.mode, runtime.recovery_status) == ("ROBOT_RUNNING", "RECONCILING")
+            and (runtime.mode, runtime.recovery_status) == ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED")
             and scanner is not None and scanner.mode == "SCANNER_STOPPED"
             and autopilot is not None and autopilot.mode == "OFF"
             and record.status == "APPROVED"
