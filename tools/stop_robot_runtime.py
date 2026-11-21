@@ -393,6 +393,7 @@ class RuntimeShutdown:
         progress: Callable[[str], None] | None = None,
         dual_orphan_handoff: Callable[[], str] | None = None,
         proven_one_flat_orphan_handoff: Callable[[], str] | None = None,
+        take_closed_approved_handoff: Callable[[], str] | None = None,
         legacy_supported: bool | None = None,
     ) -> None:
         env = dict(os.environ if env is None else env)
@@ -433,11 +434,17 @@ class RuntimeShutdown:
         self._progress = progress or (lambda _message: None)
         # Preserve the existing one-shot exceptional callback slot. Normal
         # STOP never gets one, and two competing handoffs cannot be selected.
-        if dual_orphan_handoff is not None and proven_one_flat_orphan_handoff is not None:
+        if sum(
+            candidate is not None for candidate in (
+                dual_orphan_handoff, proven_one_flat_orphan_handoff,
+                take_closed_approved_handoff,
+            )
+        ) > 1:
             raise SafeStopError("ambiguous_protected_flat_handoff")
+        self._take_closed_approved_handoff = take_closed_approved_handoff
         self._dual_orphan_handoff = (
-            dual_orphan_handoff if dual_orphan_handoff is not None
-            else proven_one_flat_orphan_handoff
+            dual_orphan_handoff or proven_one_flat_orphan_handoff
+            or take_closed_approved_handoff
         )
 
     def _mark(self, message: str) -> None:
@@ -572,6 +579,14 @@ class RuntimeShutdown:
                 # not only at the final Backend shutdown preflight.
                 self._require_scanner_stopped()
                 state = self._robot_state()
+                if (state == ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED")
+                        and self._take_closed_approved_handoff is not None):
+                    # The old Backend cannot account an already TAKE-closed
+                    # legacy APPROVED owner. An explicit owner-approved
+                    # immutable FLAT proof is required before bypassing the
+                    # old reconcile that is known to fail this exact shape.
+                    # The callback re-proves under SQLite writer reservation.
+                    return self._finish_dual_orphan_handoff(telegram, steps)
                 if state == ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED"):
                     self._mark("requesting Robot reconciliation")
                     try:
@@ -989,14 +1004,18 @@ class RuntimeShutdown:
             raise SafeStopError(
                 "dual orphan handoff backend exit unproven; not retried; no deploy"
             )
-        steps.append("backend:dual-orphan-handoff")
+        steps.append(
+            "backend:take-closed-approved-handoff"
+            if self._take_closed_approved_handoff is not None
+            else "backend:dual-orphan-handoff"
+        )
         if telegram == PRESENT:
             steps.append(self._shutdown(
                 self._telegram + "/shutdown", self._telegram + "/health",
                 "Telegram monitoring", TELEGRAM, "telegram",
             ))
         return ShutdownResult(
-            SCOPE_ALL, True, "Runtime STOPPED after protected dual orphan handoff.",
+            SCOPE_ALL, True, "Runtime STOPPED after protected exceptional FLAT handoff.",
             tuple(steps), runtime_stopped=True,
         )
 
@@ -1595,6 +1614,32 @@ def build_proven_one_flat_orphan_handoff(
             expected_build_sha=expected_old_sha,
             execute=True,
             proven_one_flat_orphan=True,
+        )
+
+    return handoff
+
+
+def build_take_closed_approved_handoff(
+    env: Mapping[str, str], expected_old_sha: str, *, execute: bool = True,
+) -> Callable[[], str]:
+    """Use the existing protected exit owner; no additional controller.
+
+    execute=False is a read-only preflight before the STOP one-shot fence.
+    execute=True re-proves under BEGIN IMMEDIATE and signals only the exact
+    attested PID/listener; an ambiguous outcome is never retried.
+    """
+    from tools.flat_paper_recovery_transition import (
+        ROOT as VPS_ROOT, _service_pid, execute_flat_handoff,
+    )
+
+    def handoff() -> str:
+        return execute_flat_handoff(
+            db_path=_database_path(VPS_ROOT, env),
+            expected_identity=expected_database_identity(VPS_ROOT, env),
+            expected_pid=_service_pid(),
+            expected_build_sha=expected_old_sha,
+            execute=execute,
+            take_closed_approved=True,
         )
 
     return handoff
