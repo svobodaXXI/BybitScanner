@@ -102,7 +102,7 @@ def test_scratch_immutable_lineage_drift_blocks(sql, params):
             prove(path)
 
 
-def _append_never_traded_box(runtime, *, candidate_id="box-robot-stbl-proof", symbol="STBLUSDT"):
+def _append_never_traded_box(runtime, *, candidate_id="box-robot-stbl-proof", symbol="STBLUSDT", expected_proof=True):
     """Only the synthetic scratch fixture is mutated; no VPS/PAPER write."""
     from terminal.domain.models import TradingAccountId, Symbol
     from terminal.persistence.sqlite_store import SQLiteStore
@@ -121,7 +121,7 @@ def _append_never_traded_box(runtime, *, candidate_id="box-robot-stbl-proof", sy
         expected_revision=record.state_revision, updated_at_ms=approved_at + 1,
     )
     actual = runtime.store.get_robot_candidate(record.candidate_id)
-    assert runtime.store.prove_approved_candidate_never_traded(actual)
+    assert runtime.store.prove_approved_candidate_never_traded(actual) is expected_proof
     return actual
 
 
@@ -175,7 +175,7 @@ def test_second_owner_not_verified_as_inert_blocks(invalidity):
                     runtime, candidate_id="wedge-untraded-extra"
                 )
             elif invalidity == "same_symbol":
-                _append_never_traded_box(runtime, symbol="BTCUSDT")
+                _append_never_traded_box(runtime, symbol="BTCUSDT", expected_proof=False)
             else:
                 record = _append_never_traded_box(runtime)
                 if invalidity == "third_approved":
