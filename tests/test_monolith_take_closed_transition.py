@@ -278,3 +278,34 @@ def test_cli_take_closed_cannot_bundle_paper_auto_start(monkeypatch, capsys):
             "--start-paper-after-editor",
         ])
     assert "no PAPER START" in capsys.readouterr().err
+
+
+def test_owner_update_take_closed_enters_existing_global_lock(monkeypatch, capsys):
+    import contextlib
+    from tools import paper_maintenance as maint
+
+    events = []
+    @contextlib.contextmanager
+    def locked():
+        events.append("global-owner-lock")
+        yield
+        events.append("owner-lock-released")
+
+    monkeypatch.setattr(maint, "_owner_action_lifecycle_guard", locked)
+    monkeypatch.setattr(maint, "_verified_staged_module_bootstrap", lambda *a, **kw: True)
+    monkeypatch.setattr(
+        maint, "deploy_staged_editor_only",
+        lambda *args, **kwargs: (
+            events.append(("dispatch", kwargs["take_closed_approved_handoff"],
+                           kwargs["stage"])),
+            "BLOCKED: TEST_ONLY_NO_RUNTIME_ACTION",
+        )[1],
+    )
+    sha = "a" * 40
+    assert maint.main([sha, "--action", "update-take-closed"]) == 2
+    assert events == [
+        "global-owner-lock",
+        ("dispatch", True, Path("/var/lib/bybitscanner-stage-git-" + sha)),
+        "owner-lock-released",
+    ]
+    assert capsys.readouterr().out == "BLOCKED: TEST_ONLY_NO_RUNTIME_ACTION\\n"
