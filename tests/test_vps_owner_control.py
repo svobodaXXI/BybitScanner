@@ -83,6 +83,14 @@ class OwnerControlTests(unittest.TestCase):
         with patch.object(control, "verify_update") as check:
             self.assertEqual(control.status(R, run=run), 0)
             check.assert_not_called()
+        # New units use the full SHA while old ones remain read-only queryable.
+        full = output.replace(SHA[:12] + " origin=", SHA + " origin=")
+        with patch.object(control, "verify_update", return_value=0) as check:
+            self.assertEqual(control.status(
+                R, run=lambda cmd, **kw: completed(cmd, out=full),
+                verify_sha=SHA,
+            ), 0)
+            check.assert_called_once_with(SHA)
         unrelated = output.replace("BybitScanner update", "BybitScanner start")
         with patch.object(control, "verify_update") as check:
             with redirect_stdout(StringIO()) as receipt:
@@ -186,6 +194,29 @@ class OwnerControlTests(unittest.TestCase):
         self.assertEqual(control.submit(
             "update", SHA, R, "win-pc", run=run, uid=0,
         ), 2)
+        self.assertFalse(any(cmd[0] == "systemd-run" for cmd in calls))
+
+    def test_existing_take_closed_uuid_can_be_queried_after_stage_was_removed(self):
+        from unittest.mock import patch
+        label = f"BybitScanner update-take-closed {SHA} origin=win-pc"
+        calls = []
+
+        def run(cmd, **_kw):
+            calls.append(cmd)
+            if "--property=LoadState,Description" in cmd:
+                return completed(cmd, out=f"LoadState=loaded\nDescription={label}\n")
+            return completed(cmd, out=(
+                "LoadState=loaded\nActiveState=activating\nSubState=start\n"
+                f"Result=success\nExecMainStatus=0\nDescription={label}\n"
+            ))
+
+        # Reading an existing detached request is independent of its staging
+        # checkout; the status remains RUNNING and nothing can be re-submitted.
+        with patch.object(control, "_verified_take_closed_stage") as stage:
+            self.assertEqual(control.submit(
+                "update-take-closed", SHA, R, "win-pc", run=run, uid=0,
+            ), 3)
+            stage.assert_not_called()
         self.assertFalse(any(cmd[0] == "systemd-run" for cmd in calls))
 
     def test_unknown_submission_is_never_automatically_replayed(self):
