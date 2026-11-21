@@ -339,3 +339,19 @@ def test_finished_take_closed_update_requires_same_exact_postcheck():
     with patch.object(control, "verify_update", return_value=2) as checker:
         assert control.status(R, run=run, verify_sha=SHA) == 2
         checker.assert_called_once_with(SHA)
+
+
+
+def test_owner_github_status_enable_is_one_pinned_detached_request(monkeypatch):
+    from tools import vps_release_identity as identity
+    monkeypatch.setattr(identity, "verify_release", lambda root: SHA)
+    calls = []
+    def run(cmd, **kwargs):
+        calls.append(cmd)
+        return completed(cmd, out="LoadState=not-found\n" if cmd[0] == "systemctl" else "")
+    assert control.submit("github-status-enable", "installed", R,
+                          "win-laptop", run=run, uid=0) == 0
+    assert len(calls) == 2
+    assert calls[1][0] == "systemd-run"
+    assert calls[1][-3:] == [SHA, "--action", "github-status-enable"]
+    assert "--description=BybitScanner github-status-enable " + SHA + " origin=win-laptop" in calls[1]

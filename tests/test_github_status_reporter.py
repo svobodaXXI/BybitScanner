@@ -152,3 +152,131 @@ def test_telegram_unavailable_is_attention_when_backend_known():
     assert result["backend"] == "REACHABLE"
     assert result["telegram"] == "UNAVAILABLE"
     assert result["assessment"] == "ATTENTION"
+
+
+@pytest.fixture
+def observer_setup(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from tools import vps_release_identity as identity
+
+    root = tmp_path / "release"
+    units = tmp_path / "systemd"
+    units.mkdir()
+    names = ("bybitscanner-github-status.service", "bybitscanner-github-status.timer")
+    paths = ("terminal/runtime/paper_http_server.py", "tools/vps_release_identity.py",
+             "tools/github_status_reporter.py", *("deploy/systemd/" + n for n in names))
+    blobs = {}
+    for rel in paths:
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = ("fixture " + rel).encode()
+        path.write_bytes(data)
+        blobs[rel] = identity.git_blob_hash(data)
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps({"build_sha": "a" * 40, "blobs": blobs}))
+    verify = identity.verify_release
+    monkeypatch.setattr(identity, "verify_release",
+                        lambda r, m: verify(r, m, require_protected_manifest=False))
+    events = []
+    reloaded = False
+    enabled = False
+
+    def runner(cmd, **kwargs):
+        nonlocal reloaded, enabled
+        events.append(cmd[1:])
+        if cmd[1] == "daemon-reload":
+            reloaded = True
+        elif cmd[1:3] == ["enable", "--now"]:
+            assert cmd[3] == names[1]
+            enabled = True
+        elif cmd[1] == "show":
+            name = cmd[3]
+            present = (units / name).exists() and reloaded
+            return SimpleNamespace(
+                returncode=0 if present else 1,
+                stdout="\n".join((
+                    "LoadState=" + ("loaded" if present else "not-found"),
+                    "FragmentPath=" + (str(units / name) if present else ""),
+                    "DropInPaths=",
+                    "NeedDaemonReload=no",
+                    "UnitFileState=" + ("enabled" if enabled and name == names[1] else ""),
+                    "ActiveState=" + ("active" if enabled and name == names[1] else "inactive"),
+                )))
+        else:
+            pytest.fail("unexpected systemd command")
+        return SimpleNamespace(returncode=0, stdout="")
+
+    return SimpleNamespace(root=root, units=units, names=names, manifest=manifest,
+                           events=events, kwargs=dict(root=root, unit_dir=units,
+                           token_file=_token_file(tmp_path), manifest_path=manifest,
+                           uid=os.geteuid(), run=runner))
+
+
+def test_observer_enable_only_installs_pinned_observer_and_starts_timer(observer_setup):
+    from tools.github_status_reporter import enable_observer
+    setup = observer_setup
+    result = enable_observer("a" * 40, **setup.kwargs)
+    assert result == "READY: GitHub observer timer enabled and active; delivery unverified"
+    assert sorted(p.name for p in setup.units.iterdir()) == sorted(setup.names)
+    for name in setup.names:
+        assert (setup.units / name).read_bytes() == (setup.root / "deploy/systemd" / name).read_bytes()
+    assert [e for e in setup.events if e[0] != "show"] == [
+        ["daemon-reload"], ["enable", "--now", setup.names[1]]]
+    # The explicit operation is idempotent; never overwrite existing units.
+    assert enable_observer("a" * 40, **setup.kwargs) == result
+
+
+@pytest.mark.parametrize("obstacle", ["token", "release", "untracked", "conflict", "symlink"])
+def test_observer_enable_blocks_before_mutation(observer_setup, obstacle):
+    from tools.github_status_reporter import enable_observer
+    setup = observer_setup
+    sha = "a" * 40
+    unit = setup.units / setup.names[1]
+    if obstacle == "token":
+        setup.kwargs["token_file"].chmod(0o644)
+    elif obstacle == "release":
+        sha = "b" * 40
+    elif obstacle == "untracked":
+        manifest = json.loads(setup.manifest.read_text())
+        del manifest["blobs"]["deploy/systemd/" + setup.names[1]]
+        setup.manifest.write_text(json.dumps(manifest))
+    elif obstacle == "conflict":
+        unit.write_text("owner configuration")
+    else:
+        unit.symlink_to(setup.root / "deploy/systemd" / setup.names[1])
+    before = list(setup.units.iterdir())
+    assert enable_observer(sha, **setup.kwargs).startswith("BLOCKED:")
+    assert list(setup.units.iterdir()) == before
+    assert all(e[0] == "show" for e in setup.events)
+    if obstacle == "conflict":
+        assert unit.read_text() == "owner configuration"
+
+
+def test_observer_enable_rejects_effective_dropin(observer_setup):
+    from tools.github_status_reporter import enable_observer
+    setup = observer_setup
+    runner = setup.kwargs["run"]
+    def with_dropin(cmd, **kwargs):
+        result = runner(cmd, **kwargs)
+        if cmd[1] == "show" and cmd[3] == setup.names[1]:
+            result.stdout = result.stdout.replace("DropInPaths=", "DropInPaths=/etc/override.conf")
+        return result
+    setup.kwargs["run"] = with_dropin
+    assert enable_observer("a" * 40, **setup.kwargs).startswith("BLOCKED:")
+    assert not list(setup.units.iterdir())
+    assert all(e[0] == "show" for e in setup.events)
+
+
+def test_observer_enable_does_not_retry_unknown_activation(observer_setup):
+    from tools.github_status_reporter import enable_observer
+    setup = observer_setup
+    runner = setup.kwargs["run"]
+    def fail_enable(cmd, **kwargs):
+        result = runner(cmd, **kwargs)
+        if cmd[1] == "enable":
+            raise TimeoutError("unknown outcome")
+        return result
+    setup.kwargs["run"] = fail_enable
+    assert enable_observer("a" * 40, **setup.kwargs).startswith("BLOCKED:")
+    assert [e for e in setup.events if e[0] != "show"] == [
+        ["daemon-reload"], ["enable", "--now", setup.names[1]]]
