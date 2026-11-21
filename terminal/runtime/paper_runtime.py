@@ -2235,6 +2235,13 @@ class PaperRuntime:
         ready = (
             state is not None and state.mode == ROBOT_RUNNING and state.recovery_status == READY
         )
+        # An admission epoch does not override durable symbol isolation.
+        # Query only for otherwise-ready Robot entries; protection/EXIT orders
+        # never pass through this fence.
+        if ready and self.store.robot_symbol_quarantine_candidate_ids(
+            self._paper_account_id, symbol,
+        ):
+            ready = False
         fenced: set[str] = set()
         for order in active_orders:
             order_id = order.order_id.value

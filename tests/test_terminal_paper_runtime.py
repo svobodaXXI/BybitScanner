@@ -2539,6 +2539,67 @@ def _set_admission(runtime, *, mode, recovery_status):
     )
 
 
+def test_emergency_symbol_quarantine_fences_only_its_robot_entry_limits():
+    """A still-READY account cannot match a quarantined symbol's entry,
+    even after its faulty candidate was made terminal; peers keep their own
+    independently-stamped admission checks. No live fills are submitted."""
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime(Path(temp) / "paper.sqlite3")
+        account = TradingAccountId("paper")
+        try:
+            for symbol, candidate_id, order_id in (
+                ("BTCUSDT", "btc-live", "btc-entry"),
+                ("ETHUSDT", "eth-live", "eth-entry"),
+            ):
+                _seed_pending_candidate_with_resting_limit(
+                    runtime, candidate_id=candidate_id,
+                    order_id=order_id, symbol=symbol,
+                )
+            ready = _set_admission(
+                runtime, mode="ROBOT_RUNNING", recovery_status="READY",
+            )
+            for candidate_id in ("btc-live", "eth-live"):
+                current = runtime.store.get_robot_candidate(candidate_id)
+                state = dict(current.robot_state)
+                execution = dict(state["execution"])
+                execution["entry_admission_version"] = ready.version
+                state["execution"] = execution
+                runtime.store.save_robot_candidate_state(
+                    candidate_id, status="APPROVED", robot_state=state,
+                    expected_revision=current.state_revision,
+                    updated_at_ms=int(__import__("time").time() * 1000),
+                )
+            btc, eth = Symbol("BTCUSDT"), Symbol("ETHUSDT")
+            def fenced(symbol):
+                return runtime._robot_entry_limit_ids_fenced_by_admission(
+                    symbol, runtime.store.load_active_paper_limits(account, symbol),
+                )
+            assert fenced(btc) == frozenset()
+            assert fenced(eth) == frozenset()
+
+            old, _ = runtime.store.create_robot_candidate(
+                candidate_id="btc-unknown-close", trading_account_id=account,
+                symbol=btc, status="APPROVED",
+                signal_snapshot={"symbol": btc.value, "pattern": "Falling Wedge",
+                                 "source": "unresolved"},
+                approved_at_ms=1005, updated_at_ms=1005,
+            )
+            runtime.store.save_robot_candidate_state(
+                old.candidate_id, status="INVALIDATED",
+                robot_state={"execution": {
+                    "emergency_close_pending": True,
+                    "emergency_close_intent": {"dispatch_outcome": "UNKNOWN"},
+                }},
+                expected_revision=0, updated_at_ms=1006,
+            )
+            assert fenced(btc) == frozenset({"btc-entry"})
+            assert fenced(eth) == frozenset()
+            assert runtime.store.get_paper_limit("btc-entry", account).status == "open"
+            assert runtime.store.get_paper_limit("eth-entry", account).status == "open"
+        finally:
+            runtime.close()
+
+
 def test_entry_limit_admission_ignores_terminal_history_without_weakening_fence():
     """Every protected LIMIT event reads only active Robot candidate ownership."""
     with tempfile.TemporaryDirectory() as temp:

@@ -2571,6 +2571,29 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
             reason=None, expected_version=current.version, updated_at_ms=self.clock(),
         )
 
+    def test_pre_entry_guard_fences_unproven_emergency_symbol_not_sibling(self):
+        self._create_candidate()
+        self._create_candidate(candidate_id="candidate-peer", symbol="SOLUSDT")
+        record = self.store.get_robot_candidate("candidate-1")
+        old, _ = self.store.create_robot_candidate(
+            candidate_id="old-uncertain", trading_account_id=ACCOUNT_ID,
+            symbol=Symbol(SYMBOL), status="APPROVED",
+            signal_snapshot={"symbol": SYMBOL, "pattern": "Falling Wedge", "old": True},
+            approved_at_ms=1001, updated_at_ms=1001,
+        )
+        self.store.save_robot_candidate_state(
+            old.candidate_id, status="INVALIDATED",
+            robot_state={"execution": {"emergency_close_intent": {
+                "candidate_id": old.candidate_id, "dispatch_outcome": "UNKNOWN",
+            }}},
+            expected_revision=0, updated_at_ms=1002,
+        )
+        reason = self.monitor._pre_entry_block_reason(record)
+        self.assertIn("ROBOT_SYMBOL_QUARANTINED", reason)
+        self.assertIn("old-uncertain", reason)
+        peer = self.store.get_robot_candidate("candidate-peer")
+        self.assertIsNone(self.monitor._pre_entry_block_reason(peer))
+
     def test_pre_entry_guard_allows_multiple_owned_limits_but_blocks_foreign(self):
         self._create_candidate()
         record = self.store.get_robot_candidate("candidate-1")

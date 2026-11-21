@@ -1217,6 +1217,14 @@ class SQLiteStore:
         ("robot_candidates_active_symbol",
          "robot_candidates(trading_account_id, symbol, approved_at_ms, candidate_id) "
          "WHERE status IN ('APPROVED', 'OPEN')"),
+        # Partial index prevents each protected-book event from parsing all
+        # historical candidates on a symbol. Only anomalous recovery markers
+        # enter this tiny index; exact candidate evidence stays in the main row.
+        ("robot_candidates_emergency_quarantine",
+         "robot_candidates(trading_account_id, symbol) "
+         "WHERE robot_state_json IS NOT NULL AND ("
+         "json_type(robot_state_json, '$.execution.emergency_close_pending') IS NOT NULL "
+         "OR json_type(robot_state_json, '$.execution.emergency_close_intent') IS NOT NULL)"),
     )
 
     @staticmethod
@@ -5816,6 +5824,51 @@ class SQLiteStore:
             (trading_account_id.value,),
         )
         return tuple(_robot_candidate_state_from_row(row) for row in rows)
+
+    def robot_symbol_quarantine_candidate_ids(
+        self, trading_account_id: TradingAccountId, symbol: Symbol,
+    ) -> tuple[str, ...]:
+        """Prove the durable scope of an unresolved post-fill emergency close.
+
+        A legacy pending marker and a newer persisted dispatch intent both fence
+        the symbol. Terminal history is included: changing candidate status
+        cannot erase an ambiguous close. A completed recovery releases this
+        *derived* quarantine only after its same-call FLAT proof was persisted
+        with terminal INVALIDATED state. Missing or corrupt reads fail closed.
+        This is an entry fence, NOT evidence permitting account-wide admission.
+        """
+        self._assert_owner()
+        rows = self._connection.execute(
+            """SELECT candidate_id, status, robot_state_json FROM robot_candidates
+               WHERE trading_account_id=? AND symbol=? AND robot_state_json IS NOT NULL
+                 AND (
+                    json_type(robot_state_json, '$.execution.emergency_close_pending') IS NOT NULL
+                    OR json_type(robot_state_json, '$.execution.emergency_close_intent') IS NOT NULL
+                 )
+               ORDER BY candidate_id""",
+            (trading_account_id.value, symbol.value),
+        )
+        blocked = []
+        for row in rows:
+            state = json.loads(row["robot_state_json"])
+            execution = state.get("execution") if isinstance(state, dict) else None
+            if not isinstance(execution, dict):
+                raise PersistenceError("Robot emergency close evidence is malformed")
+            pending = execution.get("emergency_close_pending")
+            if pending is not None and type(pending) is not bool:
+                raise PersistenceError("Robot emergency close pending marker is malformed")
+            intent = execution.get("emergency_close_intent")
+            if intent is not None and not isinstance(intent, dict):
+                raise PersistenceError("Robot emergency close intent is malformed")
+            confirmed_closed = (
+                row["status"] == "INVALIDATED"
+                and pending is not True
+                and execution.get("emergency_close_outcome")
+                    == "CLOSED_EMERGENCY_PROTECTION_FAILURE"
+            )
+            if (pending is True or intent is not None) and not confirmed_closed:
+                blocked.append(str(row["candidate_id"]))
+        return tuple(blocked)
 
     def load_robot_candidates_for_symbol(
         self, trading_account_id: TradingAccountId, symbol: Symbol,
