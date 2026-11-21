@@ -638,9 +638,8 @@ class BoxFrozenEditorSourceTests(unittest.TestCase):
                 self.assertEqual(snapshot["bars"][-1]["open_time_ms"],
                                  int(frame.iloc[formation.as_of_index]["time"]))
                 self.assertEqual(
-                    [b["boundary_id"] for b in snapshot["boundaries"]],
-                    ["box_first_impulse", "box_fibonacci_1_0",
-                     "box_fibonacci_1_618", "box_fibonacci_2_618"],
+                    [(b["boundary_id"], b["kind"]) for b in snapshot["boundaries"]],
+                    [("box_fibonacci", "fibonacci")],
                 )
                 self.assertEqual(
                     snapshot["boundaries"][0]["anchors"][0]["price"],
