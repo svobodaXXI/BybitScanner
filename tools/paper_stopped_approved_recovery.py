@@ -193,15 +193,35 @@ def _record(transactions: Path, phase: str, uid: int, *, target: str) -> None:
 
 
 def _backend_stopped() -> bool:
+    """Only attest post-SIGINT process absence, not future unit install policy.
+
+    The installer/release resume separately verifies exact systemd fragments,
+    reviewed drop-ins, all service states and listener ownership. The old
+    installed unit may have legitimate legacy metadata before that switch.
+    """
+    import subprocess
     from tools.legacy_runtime_process import probe_listener_pids
     try:
-        state = _systemd_state(BACKEND_UNIT)
+        reply = subprocess.run(
+            ["systemctl", "show", BACKEND_UNIT,
+             "--property=LoadState,ActiveState,MainPID", "--no-pager"],
+            capture_output=True, text=True, timeout=10, check=False,
+        )
+        if reply.returncode != 0:
+            return False
+        rows = [line.split("=", 1) for line in reply.stdout.splitlines()
+                if "=" in line]
+        if len(rows) != 3 or len({row[0] for row in rows}) != 3:
+            return False
+        state = dict(rows)
         return (
-            state.get("ActiveState") in ("inactive", "failed")
-            and str(state.get("MainPID")) == "0"
+            state.get("LoadState") == "loaded"
+            and state.get("ActiveState") in ("inactive", "failed")
+            and state.get("MainPID") == "0"
             and not probe_listener_pids("127.0.0.1", 8765)
         )
-    except (OSError, ValueError, TypeError, AttributeError):
+    except (OSError, ValueError, TypeError, AttributeError,
+            subprocess.TimeoutExpired):
         return False
 
 
