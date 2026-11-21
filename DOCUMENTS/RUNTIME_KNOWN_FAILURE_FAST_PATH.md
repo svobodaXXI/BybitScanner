@@ -5,6 +5,14 @@ Date: 2026-09-27
 Purpose: compact evidence-first runbook for recurring Scanner / PAPER Robot / Telegram / desktop-launch failures.  
 Primary objective: minimize owner time. Known failure classes are diagnosed from repository authority and one bounded host snapshot before any exploratory sequence.
 
+## MONOLITH — MAIN still active after proved Backend/Telegram stop (2026-11-21)
+
+**Symptom:** approved `update-take-closed` reached `backend_absence_unproven_no_retry` after sealing `.one-flat-handoff-backend-exited-5630a2c6…`; a subsequent read-only probe on the exact staged code proved `BACKEND_ABSENT=True`, Backend and Telegram failed / `MainPID=0`, but `bybitscanner-manual-main-read.service` returned `PAPER_unit_not_stopped` (the independent MAIN remains active). The earlier absence refusal may have been a settling race; it is **not** proof of a legacy drop-in defect.
+
+**Existing solution:** the canonical monolith already owns `tools.vps_manual_main_gateway.quiesce_gateway_after_paper_stop`, an exact-unit, independently protected MAIN-only quiesce after proven PAPER shutdown. PR #1220 routes exceptional TAKE-closed/Flat recovery through it **after** sealed Backend exit, Telegram absence and immutable PAPER SQLite postproof, **before** the same strict Gitless installer. MAIN must be stopped for replacement of tracked source files shared with PAPER; do not weaken `_stopped(UNITS)` or the listener port 8771 guard. The next retry uses a new owner UUID targeting the merged stable SHA; the existing `backend-exited` receipt prevents any new Backend signal. No manual `systemctl stop`, altered SQL, cleared receipts or second controller.
+
+**Refusal boundary:** unknown MAIN unit origin, unsafe drop-in, active MAIN listener after quiescence, failed PAPER proof or ambiguous previous signal remains BLOCKED. Host acceptance, full PAPER START and trading admission require fresh checks, not CI alone.
+
 ## MONOLITH — failed STOP vs completed historical releases (2026-11-21)
 
 **Symptom:** owner `update-take-closed` exits `BLOCKED: proven_one_flat_recovery_unproven:PartialStopBlocked:another_unresolved_STOP_intent`, while the canonical update already selected one failed prior STOP. Do **not** submit another UUID, replay STOP, delete markers or assume a missing transaction means STOP succeeded.

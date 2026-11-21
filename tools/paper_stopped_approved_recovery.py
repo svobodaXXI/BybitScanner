@@ -500,7 +500,7 @@ def recover_one_flat_after_failed_stop(
     root: Path = ROOT, transactions: Path = TRANSACTIONS,
     manifest: Path = MANIFEST, uid: int = 0,
     inspect=None, backend_handoff=None, installer=None, resume=None,
-    backend_stopped=None, postproof=None,
+    backend_stopped=None, postproof=None, gateway_quiesce=None,
     take_closed_approved: bool = False,
 ) -> str:
     """At-most-once continuation of one failed canonical STOP, not a STOP retry.
@@ -719,6 +719,24 @@ def recover_one_flat_after_failed_stop(
                 )
     else:
         postproof()
+
+    # The original PAPER owner is now gone, with immutable post-exit
+    # STOP/TAKE/Flat evidence checked. MAIN shares the tracked source tree,
+    # so its independent read-only worker must quiesce before any file switch.
+    # Reuse the canonical MAIN-only gateway action; never replay PAPER STOP.
+    from tools.vps_manual_main_gateway import (
+        MainGatewayBlocked, quiesce_gateway_after_paper_stop,
+    )
+    try:
+        main_ready = (gateway_quiesce or quiesce_gateway_after_paper_stop)(
+            root=root, uid=uid,
+        )
+    except (MainGatewayBlocked, OSError, ValueError) as exc:
+        raise PartialStopBlocked(
+            "main_gateway_safe_quiescence_unproven:" + type(exc).__name__
+        ) from exc
+    _demand(isinstance(main_ready, str) and main_ready.startswith("READY:"),
+            "main_gateway_safe_quiescence_unproven")
 
     receipt = (installer or activate_staged_release)(
         target, stage=stage, root=root, manifest=manifest,
