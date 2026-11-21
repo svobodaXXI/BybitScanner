@@ -15,6 +15,7 @@ import pytest
 from terminal.application.command_identity import CommandIdentityFactory
 from terminal.application.models import ReconciliationResult, TrustState
 from terminal.application.pretrade_guard import (
+    ExactQuantityIntent,
     IntentClassification,
     MutationGate,
     NotionalIntent,
@@ -221,6 +222,55 @@ class MarketAmountVerifierTests(unittest.TestCase):
         test_notional_market_midpoint_tie_uses_floor()
         test_notional_market_rejects_nearest_ceil_above_five_percent_overshoot()
         test_working_volume_limit_keeps_floor_semantics()
+
+
+@pytest.mark.parametrize("step", ["1", "10"])
+def test_exact_short_full_close_preserves_step_aligned_quantity_with_repeating_price(step) -> None:
+    # SOONUSDT post-fill quantity 990, average entry 0.252301515...:
+    # notional/price round-trip can become 989.9999999999999999999999998.
+    price = Decimal("0.2523015151515151515151515152")
+    qty = Decimal("990")
+    assert qty * price / price < qty
+    ctx = context(
+        position_side=PositionSide.SHORT,
+        confirmed_position_quantity=qty,
+        instrument=instrument(
+            min_price=Decimal("0.00001"),
+            tick_size=Decimal("0.00001"),
+            min_order_quantity=Decimal(step),
+            max_order_quantity=Decimal("100000"),
+            max_market_order_quantity=Decimal("100000"),
+            quantity_step=Decimal(step),
+        ),
+    )
+    request = admitted(market(OrderSide.BUY, ExactQuantityIntent(qty), price=price), ctx)
+    assert request.raw_quantity == qty
+    assert request.normalized_quantity == qty
+    assert request.final_quantity == qty
+    assert request.classification is IntentClassification.CLOSE
+    assert request.reduce_only is True
+
+
+def test_exact_full_close_still_rejects_off_step_quantity_without_rounding():
+    ctx = context(
+        position_side=PositionSide.SHORT,
+        confirmed_position_quantity=Decimal("995"),
+        instrument=instrument(
+            min_price=Decimal("0.00001"),
+            tick_size=Decimal("0.00001"),
+            min_order_quantity=Decimal("10"),
+            max_order_quantity=Decimal("100000"),
+            max_market_order_quantity=Decimal("100000"),
+            quantity_step=Decimal("10"),
+        ),
+    )
+    decision = enabled_guard().evaluate(
+        market(OrderSide.BUY, ExactQuantityIntent(Decimal("995")),
+               price=Decimal("0.2523015151515151515151515152")),
+        ctx,
+    )
+    assert decision.reason_code is RejectionCode.INVALID_REFERENCE_PRICE
+    assert decision.request is None
 
 
 def test_opposite_working_volume_market_nearest_step_is_capped_at_flat() -> None:
