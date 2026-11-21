@@ -93,22 +93,72 @@ def prove_take_closed_approved(
                  and amount == 0 and sync in ("synced", "synchronized"),
                  "take_closed_account_not_flat")
 
-    # Exactly one nonterminal candidate, and no OPEN Robot trade. A second
-    # pending owner anywhere on the PAPER account blocks this handoff.
+    # Prove EVERY active candidate, without a fixed count. Exactly one
+    # immutable TAKE-closed owner may cross the exceptional handoff. Every
+    # other owner must be independently proven never traded by the existing
+    # durable ledger predicate. Unknown evidence blocks the WHOLE release;
+    # neither admission nor a candidate status is changed here.
     active = conn.execute(
         "SELECT candidate_id,symbol,status,approved_at_ms "
         "FROM robot_candidates WHERE trading_account_id='paper' "
         "AND (status IS NULL OR status NOT IN "
         "('BOX_PLAN_ONLY','CLOSED','EXPIRED','INVALIDATED'))"
     ).fetchall()
-    _require(len(active) == 1 and active[0][2] == "APPROVED"
-             and isinstance(active[0][0], str) and bool(active[0][0])
-             and isinstance(active[0][1], str) and bool(active[0][1])
-             and type(active[0][3]) is int and active[0][3] > 0,
-             "take_closed_owner_not_unique")
-    cid, name, _, approved = active[0]
+    _require(bool(active)
+             and all(status == "APPROVED"
+                     and isinstance(cid, str) and bool(cid)
+                     and isinstance(name, str) and bool(name)
+                     and type(approved) is int and approved > 0
+                     for cid, name, status, approved in active),
+             "take_closed_owner_set_unproven")
+
+    conn.row_factory = sqlite3.Row
+    store = SQLiteStore(conn, Path("/readonly-take-closed-proof"), 5000)
+    account = TradingAccountId("paper")
+    candidates = []
+    for owner_id, owner_symbol, _, owner_approved in active:
+        record = store.get_robot_candidate(owner_id)
+        _require(record is not None
+                 and record.trading_account_id == account
+                 and record.symbol.value == owner_symbol
+                 and record.status == "APPROVED"
+                 and record.approved_at_ms == owner_approved,
+                 "take_closed_active_owner_identity_unproven")
+        candidates.append(record)
+
+    def _is_legacy_take_owner(record) -> bool:
+        state = record.robot_state
+        execution = state.get("execution") if isinstance(state, Mapping) else None
+        return (isinstance(execution, Mapping)
+                and execution.get("entry_mode") == "LATE_ADMISSION_MARKET"
+                and execution.get("emergency_close_pending") is True)
+
+    take_owners = [record for record in candidates if _is_legacy_take_owner(record)]
+    _require(len(take_owners) == 1, "take_closed_original_owner_not_unique")
+    candidate = take_owners[0]
+    cid, name, approved = (
+        candidate.candidate_id, candidate.symbol.value, candidate.approved_at_ms
+    )
     _require(sum(item[0] == name for item in positions) == 1,
              "take_closed_symbol_projection_ambiguous")
+
+    for other in candidates:
+        if other.candidate_id == cid:
+            continue
+        other_state = other.robot_state
+        other_execution = (other_state.get("execution")
+                           if isinstance(other_state, Mapping) else None)
+        _require(
+            other.symbol != candidate.symbol
+            and (other_execution is None
+                 or (isinstance(other_execution, Mapping)
+                     and other_execution.get("emergency_close_pending") is not True
+                     and other_execution.get("emergency_close_intent") is None
+                     and other_execution.get("emergency_close_outcome") is None
+                     and other_execution.get("protected_postfill_recovery") is None))
+            and store.prove_approved_candidate_never_traded(other),
+            "take_closed_other_owner_not_proven_never_traded",
+        )
     for table, condition in (
         ("robot_trades", "exit_time_ms IS NULL"),
         ("paper_limit_orders", "status IS NULL OR status NOT IN ('filled','cancelled')"),
@@ -126,11 +176,7 @@ def prove_take_closed_approved(
         "AND candidate_id=? LIMIT 1", (cid,),
     ).fetchone() is None, "take_closed_duplicate_trade")
 
-    conn.row_factory = sqlite3.Row
-    store = SQLiteStore(conn, Path("/readonly-take-closed-proof"), 5000)
-    account = TradingAccountId("paper")
     symbol = Symbol(name)
-    candidate = store.get_robot_candidate(cid)
     position = store.get_position_projection(PositionKey(account, Category.LINEAR, symbol, 0))
     _require(candidate is not None and candidate.trading_account_id == account
              and candidate.status == "APPROVED" and candidate.symbol == symbol

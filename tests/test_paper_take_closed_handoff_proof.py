@@ -9,6 +9,7 @@ from pathlib import Path
 from copy import deepcopy
 
 import pytest
+from terminal.domain.models import TradingAccountId, Symbol
 
 from tests.test_robot_protected_postfill_recovery import _take_closed_orphan
 from tools.flat_paper_recovery_gate import FlatRecoveryBlocked
@@ -100,3 +101,169 @@ def test_scratch_immutable_lineage_drift_blocks(sql, params):
             conn.execute(sql, params)
         with pytest.raises(FlatRecoveryBlocked):
             prove(path)
+
+
+def _append_never_traded_box(
+    runtime, *, candidate_id="box-robot-stbl-proof", symbol="STBLUSDT",
+    expected_proof=True, pattern="Box", phase="BOX_ENTRY_READY",
+):
+    """Only the synthetic scratch fixture is mutated; no VPS/PAPER write."""
+    from terminal.domain.models import TradingAccountId, Symbol
+    account = TradingAccountId("paper")
+    approved_at = 1795168251149
+    record, created = runtime.store.create_robot_candidate(
+        candidate_id=candidate_id, trading_account_id=account, symbol=Symbol(symbol),
+        status="APPROVED",
+        signal_snapshot={"pattern": pattern, "symbol": symbol, "timeframe": "5"},
+        approved_at_ms=approved_at, updated_at_ms=approved_at,
+    )
+    assert created
+    runtime.store.save_robot_candidate_state(
+        record.candidate_id, status="APPROVED",
+        robot_state={"phase": phase, "direction": "LONG"},
+        expected_revision=record.state_revision, updated_at_ms=approved_at + 1,
+    )
+    actual = runtime.store.get_robot_candidate(record.candidate_id)
+    assert runtime.store.prove_approved_candidate_never_traded(actual) is expected_proof
+    return actual
+
+
+def test_one_take_closed_plus_one_independently_never_traded_box_proves():
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "paper.sqlite3"
+        runtime = _take_closed_orphan(path)
+        try:
+            other = _append_never_traded_box(runtime)
+            before = runtime.store.get_robot_candidate(other.candidate_id)
+            assert prove(path) == PROOF_LABEL
+            assert prove(path) == PROOF_LABEL
+            assert runtime.store.get_robot_candidate(other.candidate_id) == before
+            assert runtime.store.get_robot_candidate(
+                "legacy-protected-low-rr"
+            ).status == "APPROVED"
+            # The new owner must reconcile the actual TAKE without opening
+            # the unrelated Box or inventing an execution for it.
+            original_fills = runtime.store.load_executions_for_symbol(
+                TradingAccountId("paper"),
+                Symbol("BTCUSDT"),
+            )
+            result = runtime.robot_reconcile()
+            # This scratch fixture does NOT warm STBL's candle cache. The
+            # owner may account the immutable TAKE but must leave admission
+            # blocked rather than invent geometry evidence for the Box.
+            assert result.success is False
+            assert "closed candle cache unavailable: STBLUSDT" in result.reason
+            assert runtime.robot_admission_ready() is False
+            assert runtime.store.get_robot_candidate(
+                "legacy-protected-low-rr"
+            ).status == "CLOSED"
+            assert runtime.store.get_robot_candidate(other.candidate_id) == before
+            assert runtime.store.load_executions_for_symbol(
+                TradingAccountId("paper"),
+                Symbol("BTCUSDT"),
+            ) == original_fills
+            assert runtime.store.prove_approved_candidate_never_traded(
+                runtime.store.get_robot_candidate(other.candidate_id)
+            )
+        finally:
+            runtime.close()
+
+
+def test_second_approved_box_without_no_execution_proof_blocks(monkeypatch):
+    from terminal.persistence.sqlite_store import SQLiteStore
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "paper.sqlite3"
+        runtime = _take_closed_orphan(path)
+        try:
+            _append_never_traded_box(runtime)
+            monkeypatch.setattr(
+                SQLiteStore, "prove_approved_candidate_never_traded",
+                lambda self, record: False,
+            )
+            with pytest.raises(
+                FlatRecoveryBlocked, match="take_closed_other_owner_not_proven_never_traded"
+            ):
+                prove(path)
+        finally:
+            runtime.close()
+
+
+@pytest.mark.parametrize("count", [0, 1, 2, 4, 8])
+def test_every_never_traded_candidate_is_proven_without_count_limit(count):
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "paper.sqlite3"
+        runtime = _take_closed_orphan(path)
+        try:
+            for index in range(count):
+                _append_never_traded_box(
+                    runtime, candidate_id=f"independent-untraded-{index}",
+                    symbol=f"TST{index}USDT",
+                    pattern="Box" if index % 2 == 0 else "Falling Wedge",
+                    phase="BOX_ENTRY_READY" if index % 2 == 0 else "RETEST_DETECTED",
+                )
+            assert prove(path) == PROOF_LABEL
+            assert prove(path) == PROOF_LABEL
+            assert len(runtime.store.load_active_robot_candidate_states(
+                TradingAccountId("paper")
+            )) == count + 1
+        finally:
+            runtime.close()
+
+
+@pytest.mark.parametrize("invalidity", [
+    "same_symbol", "postfill_emergency", "additional_take_owner",
+])
+def test_nonterminal_owner_with_ambiguous_exposure_blocks(invalidity):
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "paper.sqlite3"
+        runtime = _take_closed_orphan(path)
+        try:
+            record = _append_never_traded_box(
+                runtime, symbol=("BTCUSDT" if invalidity == "same_symbol"
+                                else "STBLUSDT"),
+                expected_proof=(invalidity != "same_symbol"),
+            )
+            if invalidity != "same_symbol":
+                state = dict(record.robot_state)
+                state["execution"] = {
+                    "emergency_close_pending": True,
+                }
+                if invalidity == "additional_take_owner":
+                    state["execution"]["entry_mode"] = "LATE_ADMISSION_MARKET"
+                runtime.store.save_robot_candidate_state(
+                    record.candidate_id, status="APPROVED", robot_state=state,
+                    expected_revision=record.state_revision,
+                    updated_at_ms=record.updated_at_ms + 1,
+                )
+            with pytest.raises(FlatRecoveryBlocked):
+                prove(path)
+        finally:
+            runtime.close()
+
+
+def test_any_unproven_candidate_blocks_even_among_many(monkeypatch):
+    from terminal.persistence.sqlite_store import SQLiteStore
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "paper.sqlite3"
+        runtime = _take_closed_orphan(path)
+        try:
+            for index in range(5):
+                _append_never_traded_box(
+                    runtime, candidate_id=f"independent-untraded-{index}",
+                    symbol=f"TST{index}USDT",
+                )
+            original = SQLiteStore.prove_approved_candidate_never_traded
+            monkeypatch.setattr(
+                SQLiteStore, "prove_approved_candidate_never_traded",
+                lambda self, record: (
+                    False if record.symbol.value == "TST3USDT"
+                    else original(self, record)
+                ),
+            )
+            with pytest.raises(
+                FlatRecoveryBlocked,
+                match="take_closed_other_owner_not_proven_never_traded",
+            ):
+                prove(path)
+        finally:
+            runtime.close()
