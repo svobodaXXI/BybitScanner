@@ -1072,7 +1072,7 @@ describe("Finrez first-screen UI", () => {
     render(<DiaryOverlay accountKey="paper:patterns" initialSection="PATTERNS"
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
     const region = await screen.findByRole("region", { name: "Паттерны по подтверждённым сделкам" });
-    expect(region).toHaveTextContent("Паттерн подтверждён для 4 из 5");
+    expect(region).toHaveTextContent("С подтверждённым паттерном: 4 из 5");
     expect(region).toHaveTextContent("Робот · сделок: 2 · прибыльных: 1 · убыточных: 1");
     expect(screen.getByTitle("-1.4012345678 USDT")).toHaveTextContent("-1,4012 USDT");
     expect(screen.getByTitle("20.2 USDT")).toHaveTextContent("+20,20 USDT");
@@ -1248,7 +1248,7 @@ describe("Finrez first-screen UI", () => {
     render(<DiaryOverlay accountKey="paper:unverified-patterns" initialSection="PATTERNS"
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
     const region = await screen.findByRole("region", { name: "Паттерны по подтверждённым сделкам" });
-    expect(region).toHaveTextContent("Паттерн подтверждён для 0 из 1");
+    expect(region).toHaveTextContent("С подтверждённым паттерном: 0 из 1");
     expect(region).toHaveTextContent("неполное покрытие атрибуции");
     expect(region).toHaveTextContent("Нет сделок с подтверждённым паттерном");
     expect(region).not.toHaveTextContent("0 USDT");
@@ -1260,7 +1260,7 @@ describe("Finrez first-screen UI", () => {
     fireEvent.change(screen.getByRole("searchbox", { name: "Поиск по тикеру" }), {
       target: { value: "ETH" },
     });
-    expect(region).toHaveTextContent("Паттерн подтверждён для 0 из 0");
+    expect(region).toHaveTextContent("С подтверждённым паттерном: 0 из 0");
   });
 
   it("shows the ticker ranking with five periods, reuses the Diary modal and defers other sections", async () => {
@@ -1522,7 +1522,7 @@ describe("Finrez first-screen UI", () => {
     }), { status: 200 })));
     render(<DiaryOverlay accountKey="paper:finrez-unreconciled" initialSection="FINREZ"
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
-    expect(await screen.findByText(/Суммарный результат недоступен/)).toBeInTheDocument();
+    expect(await screen.findByText(/Полоса прибыли и убытка пока недоступна/)).toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Финрез: прибыль и убыток в USDT" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Показать все тикеры" })).not.toBeInTheDocument();
     expect(screen.getByText("ETHUSDT")).toBeInTheDocument();
@@ -1574,7 +1574,7 @@ describe("Finrez first-screen UI", () => {
     expect(await screen.findByRole("region", { name: "Ручные закрытия сделок робота" })).toBeInTheDocument();
     expect(screen.getByText("Робот · ручное вмешательство")).toBeInTheDocument();
     expect(screen.getByText("-4,50 USDT")).toBeInTheDocument();
-    expect(screen.getByText("Нет закрытых сделок этого типа за выбранный период")).toBeInTheDocument();
+    expect(screen.getByText("Сегодня с 00:00 МСК нет подтверждённых закрытых сделок Робота")).toBeInTheDocument();
     expect(screen.getByText(/В PnL полностью роботизированных сделок не включён/)).toBeInTheDocument();
   });
 
@@ -1605,16 +1605,16 @@ describe("Finrez first-screen UI", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<DiaryOverlay accountKey="paper:4" initialSection="FINREZ"
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
-    expect(await screen.findByText("Нет закрытых сделок этого типа за выбранный период")).toBeInTheDocument();
+    expect(await screen.findByText("Сегодня с 00:00 МСК нет подтверждённых закрытых сделок Робота")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Всё время" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=ALL"));
     const coverage = await screen.findByRole("status");
-    expect(coverage).toHaveTextContent("История неполная");
-    expect(coverage).toHaveTextContent("исключено 3 закрытых");
+    expect(coverage).toHaveTextContent("Не все сделки учтены");
+    expect(coverage).toHaveTextContent("у 3 закрытых");
     expect(coverage).toHaveTextContent("11 исполнений");
-    expect(coverage).toHaveTextContent("не полный результат за период");
+    expect(coverage).toHaveTextContent("только по проверенным сделкам");
     expect(screen.getByText(/Нет достоверно атрибутированных закрытых сделок/)).toBeInTheDocument();
-    expect(screen.queryByText("Нет закрытых сделок этого типа за выбранный период")).not.toBeInTheDocument();
+    expect(screen.queryByText("Сегодня с 00:00 МСК нет подтверждённых закрытых сделок Робота")).not.toBeInTheDocument();
   });
 
   it("shows the same shared economic episode in both scopes without claiming either owned it", async () => {
@@ -1631,7 +1631,7 @@ describe("Finrez first-screen UI", () => {
     const section = await screen.findByRole("region", { name: "Совместно управляемые сделки" });
     expect(section).toHaveTextContent("-11,40 USDT");
     expect(section).toHaveTextContent("не складывайте его дважды");
-    expect(screen.getByText("Нет закрытых сделок этого типа за выбранный период")).toBeInTheDocument();
+    expect(screen.getByText("Сегодня с 00:00 МСК нет подтверждённых закрытых сделок Робота")).toBeInTheDocument();
     current.rerender(<DiaryOverlay accountKey="paper:joint-manual" initialSection="FINREZ"
       statisticsScope={{ accountId: "paper", owner: "MANUAL" }} onClose={() => {}} />);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
@@ -2024,7 +2024,7 @@ describe("Verified Wedge lineage in Statistics", () => {
     render(<DiaryOverlay accountKey="paper:wedge" initialSection="PATTERNS"
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
     const region = await screen.findByRole("region", { name: "Паттерны по подтверждённым сделкам" });
-    expect(region).toHaveTextContent("Паттерн подтверждён для 1 из 1");
+    expect(region).toHaveTextContent("С подтверждённым паттерном: 1 из 1");
     expect(region).toHaveTextContent("Wedge: 1");
     expect(region).toHaveTextContent("Робот · сделок: 1 · прибыльных: 0 · убыточных: 1");
     expect(screen.getByTitle("-2.5 USDT")).toHaveTextContent("-2,50 USDT");
@@ -2056,7 +2056,7 @@ describe("Verified Wedge lineage in Statistics", () => {
     render(<DiaryOverlay accountKey="paper:nonwedge-source" initialSection="PATTERNS"
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
     const region = await screen.findByRole("region", { name: "Паттерны по подтверждённым сделкам" });
-    expect(region).toHaveTextContent("Паттерн подтверждён для 1 из 1");
+    expect(region).toHaveTextContent("С подтверждённым паттерном: 1 из 1");
     expect(region).toHaveTextContent("Robot ID: 1");
     fireEvent.click(screen.getByRole("button", { name: "Показать все сделки по паттерну Double Bottom" }));
     expect(await screen.findByRole("combobox", { name: "Выбор паттерна" })).toHaveValue("Double Bottom");
@@ -2117,7 +2117,7 @@ describe("Verified Wedge lineage in Statistics", () => {
     render(<DiaryOverlay accountKey="paper:wedge-unproven" initialSection="PATTERNS"
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
     const region = await screen.findByRole("region", { name: "Паттерны по подтверждённым сделкам" });
-    expect(region).toHaveTextContent("Паттерн подтверждён для 0 из 7");
+    expect(region).toHaveTextContent("С подтверждённым паттерном: 0 из 7");
     expect(region).not.toHaveTextContent("-2,50 USDT");
     fireEvent.click(screen.getByRole("button", { name: "Сделки" }));
     expect(await screen.findAllByText("не установлен")).toHaveLength(7);
@@ -2130,7 +2130,7 @@ describe("Verified Wedge lineage in Statistics", () => {
     ), { status: 200 })));
     render(<DiaryOverlay accountKey="paper:manual-wedge" initialSection="PATTERNS"
       statisticsScope={{ accountId: "paper", owner: "MANUAL" }} onClose={() => {}} />);
-    expect(await screen.findByText(/Паттерн подтверждён для 0 из 1/)).toBeInTheDocument();
+    expect(await screen.findByText(/С подтверждённым паттерном: 0 из 1/)).toBeInTheDocument();
   });
 
   it("keeps an existing exact D2 setup authoritative when Wedge metadata also exists", async () => {
