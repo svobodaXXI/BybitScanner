@@ -5,13 +5,13 @@ Date: 2026-09-27
 Purpose: compact evidence-first runbook for recurring Scanner / PAPER Robot / Telegram / desktop-launch failures.  
 Primary objective: minimize owner time. Known failure classes are diagnosed from repository authority and one bounded host snapshot before any exploratory sequence.
 
-## MONOLITH — Backend exit receipt but legacy unit metadata blocks post-exit (2026-11-21)
+## MONOLITH — MAIN still active after proved Backend/Telegram stop (2026-11-21)
 
-**Symptom:** `update-take-closed` / `recover_one_flat_after_failed_stop` returns `backend_absence_unproven_no_retry` after a durable `backend-exited` receipt. Host read-only evidence: Backend and Telegram `ActiveState=failed`, `MainPID=0`, no observed listener on 8765, sealed snapshot and TAKE-closed mode receipts; original installed release not switched. This does **not** authorize resending SIGINT or assuming the full PAPER installation is ready.
+**Symptom:** approved `update-take-closed` reached `backend_absence_unproven_no_retry` after sealing `.one-flat-handoff-backend-exited-5630a2c6…`; a subsequent read-only probe on the exact staged code proved `BACKEND_ABSENT=True`, Backend and Telegram failed / `MainPID=0`, but `bybitscanner-manual-main-read.service` returned `PAPER_unit_not_stopped` (the independent MAIN remains active). The earlier absence refusal may have been a settling race; it is **not** proof of a legacy drop-in defect.
 
-**Code boundary:** recovery's `_backend_stopped` called `vps_release_resume._systemd_state`, a *future-unit provenance/drop-in validator* in addition to a stopped-process check. Legacy systemd unit metadata can make it return false although the already attested Backend has exited. Root cause of the specific rejected metadata remains unverified; do not infer it from `MainPID=0` alone.
+**Existing solution:** the canonical monolith already owns `tools.vps_manual_main_gateway.quiesce_gateway_after_paper_stop`, an exact-unit, independently protected MAIN-only quiesce after proven PAPER shutdown. PR #1220 routes exceptional TAKE-closed/Flat recovery through it **after** sealed Backend exit, Telegram absence and immutable PAPER SQLite postproof, **before** the same strict Gitless installer. MAIN must be stopped for replacement of tracked source files shared with PAPER; do not weaken `_stopped(UNITS)` or the listener port 8771 guard. The next retry uses a new owner UUID targeting the merged stable SHA; the existing `backend-exited` receipt prevents any new Backend signal. No manual `systemctl stop`, altered SQL, cleared receipts or second controller.
 
-**Known repair / fast path:** PR #1220 separates a strict read-only Backend absence predicate (`systemctl show`: loaded, inactive/failed, `MainPID=0`, no owned listener) from the *unchanged stricter* Gitless installer + unit/drop-in + port checks. If any state is missing/ambiguous or a listener is present, BLOCKED. Previous `backend-exited` receipt is required to resume the same one-shot flow; do not remove or rewrite it. Treat the original failed owner UUID as terminal and only use a separately approved exact-SHA continuation. Deploy/PAPER START remain separate verified outcomes.
+**Refusal boundary:** unknown MAIN unit origin, unsafe drop-in, active MAIN listener after quiescence, failed PAPER proof or ambiguous previous signal remains BLOCKED. Host acceptance, full PAPER START and trading admission require fresh checks, not CI alone.
 
 ## MONOLITH — failed STOP vs completed historical releases (2026-11-21)
 
