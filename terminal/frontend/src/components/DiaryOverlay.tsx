@@ -521,13 +521,6 @@ function verifiedRobotSignal(
   };
 }
 
-function verifiedWedgeSignal(
-  deal: ClosedEpisodeLocator, report: FinrezResponse,
-): Extract<VerifiedEpisodePattern, { source: "WEDGE" }> | null {
-  const signal = verifiedRobotSignal(deal, report);
-  return signal?.source === "WEDGE" ? signal : null;
-}
-
 function verifiedIndexedPattern(deal: ClosedEpisodeLocator, report: FinrezResponse): VerifiedEpisodePattern | null {
   if (deal.opening_controller === "ROBOT" || deal.opening_controller === "MANUAL") {
     const setup = exactD2Setup({
