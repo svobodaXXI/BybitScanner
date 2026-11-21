@@ -3188,8 +3188,6 @@ def main(argv=None) -> int:
         parser.error("one orphan handoff requires staged Gitless operation")
     if args.take_closed_approved_handoff and not args.staged_gitless_editor_only:
         parser.error("TAKE-closed handoff requires exact staged Gitless operation")
-    if args.take_closed_approved_handoff and args.start_paper_after_editor:
-        parser.error("TAKE-closed handoff only installs frozen EDITOR_ONLY; no PAPER START")
     if sum(bool(x) for x in (
         args.proven_one_flat_orphan_handoff,
         args.dual_orphan_handoff_20261103,
