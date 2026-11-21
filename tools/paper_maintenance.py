@@ -3043,10 +3043,23 @@ def main(argv=None) -> int:
                     ):
                         print("BLOCKED: take_closed_owner_stage_unproven; no STOP")
                         return 2
+                    # This exceptional release still includes all merged UI
+                    # changes. Build the exact-SHA frontend BEFORE recording
+                    # any STOP intent, using the same canonical bundle gate.
+                    try:
+                        bundle = _prepare_editor_frontend_bundle(args.sha, stage=stage)
+                    except (OSError, ValueError) as exc:
+                        print("BLOCKED: take_closed_frontend_preflight:"
+                              + type(exc).__name__ + "; no STOP")
+                        return 2
                     return main([
                         args.sha, "--env-file", str(args.env_file),
                         "--staged-gitless-editor-only", str(stage),
                         "--take-closed-approved-handoff",
+                        *(
+                            ["--frontend-bundle", str(bundle)]
+                            if bundle is not None else []
+                        ),
                     ])
                 owner_flags = (
                     ["--update-editor-only-from-stable"] if args.action.startswith("update")
