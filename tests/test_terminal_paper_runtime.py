@@ -39,8 +39,10 @@ from terminal.application.trading_accounts import (
 from terminal.exchange.events import InstrumentSnapshot
 from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
 from terminal.runtime.paper_runtime import (
-    PaperRuntime, RobotPaperActionExecutor, _robot_protection_crossing_leg,
+    PaperRuntime, RobotPaperActionExecutor, _DirectRobotActionExecutor,
+    _robot_protection_crossing_leg,
 )
+from terminal.application.command_identity import robot_emergency_close_identity
 from terminal.paper.ikigai_box_plan import IkigaiBoxPlanRejected
 from terminal.persistence.sqlite_store import DuplicateIdentity
 
@@ -2132,6 +2134,83 @@ def test_full_close_closes_short_without_flipping_long():
             )
             assert closed.status is CommandResultStatus.COMPLETED
             assert runtime.paper_state("BTCUSDT")["position_side"] == "Flat"
+        finally:
+            runtime.close()
+
+
+def test_robot_emergency_close_identity_reaches_both_owner_adapters():
+    """Both Robot monitor entrypoints must pass the SAME deterministic identity.
+    A shared action label by itself is not TradingApplication deduplication.
+    """
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime(Path(temp) / "paper.sqlite3")
+        request = FullCloseCommandRequest(
+            ClientActionId("robot-test-emergency-1"), "BTCUSDT",
+        )
+        identity = robot_emergency_close_identity(
+            request.client_action_id.value, request.symbol,
+        )
+        expected = CommandResult(
+            request.client_action_id.value, CommandResultStatus.COMPLETED,
+            "closed", "test only",
+        )
+        try:
+            assert identity == robot_emergency_close_identity(
+                request.client_action_id.value, request.symbol,
+            )
+            assert len(identity.order_link_id) == 36
+            assert identity != robot_emergency_close_identity(
+                request.client_action_id.value, "ETHUSDT",
+            )
+            with patch.object(runtime, "_robot_full_close", return_value=expected) as close:
+                assert _DirectRobotActionExecutor(runtime).full_close(request) is expected
+                assert close.call_args.kwargs["identity"] == identity
+
+            with (
+                patch.object(runtime, "_dispatch_robot_market_book", return_value=None),
+                patch.object(
+                    runtime, "_dispatch_robot_command",
+                    side_effect=lambda callback: callback(runtime),
+                ),
+                patch.object(runtime, "_robot_full_close", return_value=expected) as close,
+            ):
+                assert RobotPaperActionExecutor(runtime).full_close(request) is expected
+                assert close.call_args.kwargs["identity"] == identity
+        finally:
+            runtime.close()
+
+
+def test_robot_emergency_close_persists_exact_market_command_and_replay_is_noop():
+    """PAPER close is owned by the exact command_id/order_link_id rather than
+    just the response action label; no replacement market fill on retry.
+    """
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime(Path(temp) / "paper.sqlite3")
+        request = FullCloseCommandRequest(
+            ClientActionId("robot-test-emergency-2"), "BTCUSDT",
+        )
+        identity = robot_emergency_close_identity(
+            request.client_action_id.value, request.symbol,
+        )
+        try:
+            opened = runtime.api.market(MarketCommandRequest(
+                ClientActionId("open-before-robot-emergency"), "BTCUSDT", OrderSide.SELL,
+                VolumeRequest(VolumeUnit.USDT, Decimal("321")), Decimal("64250"),
+                "Percent", Decimal("0.5"),
+            ))
+            assert opened.status is CommandResultStatus.COMPLETED
+            closed = _DirectRobotActionExecutor(runtime).full_close(request)
+            assert closed.status is CommandResultStatus.COMPLETED
+            assert closed.command_id == identity.command_id.value
+            durable = runtime.store.get_command(identity.command_id)
+            assert durable is not None
+            assert durable.order_link_id == identity.order_link_id
+            assert runtime.paper_state("BTCUSDT")["position_side"] == "Flat"
+            count = len(runtime.store.load_executions())
+            repeated = _DirectRobotActionExecutor(runtime).full_close(request)
+            assert repeated.status is CommandResultStatus.COMPLETED
+            assert repeated.reason_code == "already_flat"
+            assert len(runtime.store.load_executions()) == count
         finally:
             runtime.close()
 

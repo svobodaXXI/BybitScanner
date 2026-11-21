@@ -20,7 +20,9 @@ from typing import Callable, Mapping
 
 from terminal.api.rest import TerminalCommandApi
 import robot_protection
-from terminal.application.command_identity import CommandIdentityCandidate
+from terminal.application.command_identity import (
+    CommandIdentityCandidate, robot_emergency_close_identity,
+)
 from terminal.application.robot_trade_ledger import prove_robot_open_trade_ledger
 from terminal.api.models import (
     ClientActionId, CloseAllCommandRequest, CloseAllCommandResponse, CommandResult, CommandResultStatus,
@@ -314,9 +316,16 @@ class RobotPaperActionExecutor:
         return self._runtime._dispatch_robot_command(lambda runtime: runtime._robot_amend_take(request))
 
     def full_close(self, request):
+        # A stable API ClientActionId does NOT deduplicate TradingApplication
+        # Market commands. Bind the monitor's precommitted command identity.
+        identity = robot_emergency_close_identity(
+            request.client_action_id.value, request.symbol,
+        )
         evidence = self._runtime._dispatch_robot_market_book(request.symbol)
         return self._runtime._dispatch_robot_command(
-            lambda runtime: runtime._robot_full_close(request, evidence=evidence)
+            lambda runtime: runtime._robot_full_close(
+                request, evidence=evidence, identity=identity,
+            )
         )
 
     def wedge_be_step(self, candidate_id: str, symbol: str, candle):
@@ -380,7 +389,10 @@ class _DirectRobotActionExecutor:
         return self._runtime._robot_amend_take(request)
 
     def full_close(self, request):
-        return self._runtime._robot_full_close(request)
+        identity = robot_emergency_close_identity(
+            request.client_action_id.value, request.symbol,
+        )
+        return self._runtime._robot_full_close(request, identity=identity)
 
 
 SCANNER_STOPPED = "SCANNER_STOPPED"
@@ -5778,6 +5790,50 @@ class PaperRuntime:
         def fail(reason: str) -> RobotReconcileResponse:
             state = self._robot_reconciliation_required_state(reason)
             return response(False, state, state.reason or reason)
+
+        # An already FILLED, protected legacy Market entry does not need a
+        # newly fetched closed candle to establish its past execution.
+        # Restore its accounting while the original REQUIRED fence is held,
+        # then let the normal reconcile prove the entire OPEN-trade ledger.
+        # No trading command, STOP/TAKE mutation or admission transition here.
+        protected_orphans = []
+        for item in self.store.load_active_robot_candidate_states(self._paper_account_id):
+            if item.status != "APPROVED" or not isinstance(item.robot_state, Mapping):
+                continue
+            execution = item.robot_state.get("execution")
+            if (isinstance(execution, Mapping)
+                    and execution.get("emergency_close_pending") is True
+                    and str(execution.get("protection_failure", "")).startswith(
+                        "POST_FILL_NET_RR_BELOW_2 rr="
+                    )):
+                protected_orphans.append(item.candidate_id)
+        if protected_orphans:
+            monitor = RobotBreakoutMonitor(
+                lambda: self.store,
+                self._paper_account_id,
+                get_closed_candle=self._owner_closed_candle,
+                action_executor=_DirectRobotActionExecutor(self),
+                tick_size_provider=lambda symbol: self._instrument_provider(symbol).tick_size,
+                clock_ms=lambda: int(time.time() * 1000),
+            )
+            for candidate_id in protected_orphans:
+                record = self.store.get_robot_candidate(candidate_id)
+                try:
+                    restored = (
+                        record is not None
+                        and monitor.recover_protected_legacy_postfill(record)
+                    )
+                except Exception as error:
+                    LOGGER.warning(
+                        "Legacy protected orphan proof blocked candidate=%s error=%s",
+                        candidate_id, type(error).__name__,
+                    )
+                    restored = False
+                if not restored:
+                    return response(
+                        False, source,
+                        "PROTECTED_POSTFILL_OWNER_PROOF_UNPROVEN: " + candidate_id,
+                    )
 
         prepared = self._robot_recovery.reconcile_required()
         if prepared.runtime_state.recovery_status != RECONCILING:

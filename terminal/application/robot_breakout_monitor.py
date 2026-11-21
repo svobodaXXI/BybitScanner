@@ -46,7 +46,9 @@ from terminal.api.models import (
     ClientActionId, CommandResultStatus, MarketCommandRequest, PaperLimitCancelRequest,
     PaperStopMutationRequest,
 )
-from terminal.application.command_identity import CommandIdentityCandidate
+from terminal.application.command_identity import (
+    CommandIdentityCandidate, robot_emergency_close_identity,
+)
 from terminal.application.ikigai_box_first_grid import build_box_first_grid_specs
 from terminal.application.ikigai_box_catchup import (
     build_box_emergency_close_market_plan,
@@ -2183,9 +2185,6 @@ class RobotBreakoutMonitor:
             )
             return False
 
-        # The admitted LIMIT price is not the actual fill price. Keep the
-        # confirmed STOP/TAKE live while validating actual fee-aware RR.
-        # Reuse idempotent emergency-close recovery until authoritative FLAT.
         try:
             fills = tuple(
                 fill
@@ -2206,15 +2205,80 @@ class RobotBreakoutMonitor:
                 stop_price=plan.stop_price,
                 take_price=plan.take_price,
             )
-            if actual_rr < Decimal("2"):
-                raise robot_protection.RobotProtectionError(
-                    f"POST_FILL_NET_RR_BELOW_2 rr={actual_rr}"
-                )
         except Exception as error:
             self._fail_closed_unprotected_fill(
                 record, error, entry_path=entry_path, entry_evidence=entry_evidence,
             )
             return False
+
+        if actual_rr < Decimal("2"):
+            # A post-fill R/R shortfall is an ECONOMICS exception, not an
+            # INITIAL_PROTECTION_FAILURE. Both STOP/TAKE submit receipts and the
+            # current full-position protection projection must agree before a
+            # below-minimum fill may remain managed as an actual Robot trade.
+            # Missing/contradictory protection still takes the emergency path.
+            protection = self._store().get_protection_projection(
+                PositionKey(self._account_id, Category.LINEAR, record.symbol, 0),
+            )
+            if (protection is None
+                    or protection.status != "confirmed_active"
+                    or protection.pending_command_id is not None
+                    or protection.evidence_at_ms < entry_evidence.first_execution_at_ms
+                    or protection.stop_loss != plan.stop_price
+                    or protection.take_profit != plan.take_price):
+                self._fail_closed_unprotected_fill(
+                    record,
+                    robot_protection.RobotProtectionError(
+                        "initial STOP/TAKE projection does not match submitted plan"
+                    ),
+                    entry_path=entry_path, entry_evidence=entry_evidence,
+                )
+                return False
+
+            # No competing exit obligation/unfinished command may masquerade as
+            # fully protected ownership; unresolved ambiguity keeps Admission
+            # closed without issuing a second aggregate Market close.
+            if any(
+                obligation.symbol == record.symbol
+                for obligation in self._store().load_unresolved_paper_protection_obligations(
+                    self._account_id
+                )
+            ) or any(
+                cmd.trading_account_id == self._account_id and cmd.symbol == record.symbol
+                for cmd in self._store().load_unfinished_commands()
+            ):
+                self._escalate_reconciliation(
+                    "ROBOT_POST_FILL_PROTECTED_STATE_UNPROVEN "
+                    f"symbol={record.symbol.value} candidate_id={record.candidate_id}"
+                )
+                return False
+
+            # Preserve the immutable entry/fill economics and record the
+            # policy violation BEFORE atomically creating the real OPEN trade.
+            # The candidate cannot re-enter; its exact STOP/TAKE remain active.
+            state = dict(record.robot_state)
+            execution_state = dict(state.get("execution") or {})
+            execution_state["post_fill_policy_exception"] = {
+                "reason": "POST_FILL_NET_RR_BELOW_2",
+                "actual_net_rr": str(actual_rr),
+                "stop_price": str(plan.stop_price),
+                "take_price": str(plan.take_price),
+            }
+            state["execution"] = execution_state
+            try:
+                record = self._store().save_robot_candidate_state(
+                    record.candidate_id,
+                    status=record.status,
+                    robot_state=state,
+                    expected_revision=record.state_revision,
+                    updated_at_ms=self._now_ms(),
+                )
+            except Exception:
+                self._escalate_reconciliation(
+                    "ROBOT_POST_FILL_POLICY_EXCEPTION_NOT_DURABLE "
+                    f"symbol={record.symbol.value} candidate_id={record.candidate_id}"
+                )
+                return False
 
         now_ms = self._now_ms()
         self._store().create_robot_trade(
@@ -2972,6 +3036,207 @@ class RobotBreakoutMonitor:
                 )
         self._release_entry_coverage(record.symbol.value)
 
+    def recover_protected_legacy_postfill(self, record: RobotCandidateRecord) -> bool:
+        """Repair ONLY an exact, protected PAPER post-fill low-R/R orphan.
+
+        Called on the serialized PAPER owner while REQUIRED still holds;
+        never submits STOP/TAKE/Market, changes admission, or infers FLAT.
+        The legacy emergency marker predates a durable close identity, so the
+        *entire* symbol command/fill lineage since approval must prove only
+        the original filled Market entry. Unknown evidence stays quarantined.
+        """
+        store = self._store()
+        runtime = store.get_robot_runtime_state(self._account_id)
+        scanner = store.get_scanner_runtime_state(self._account_id)
+        autopilot = store.get_robot_autopilot_state(self._account_id)
+        if not (
+            self._account_id.value == "paper"
+            and runtime is not None
+            and (runtime.mode, runtime.recovery_status) == ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED")
+            and scanner is not None and scanner.mode == "SCANNER_STOPPED"
+            and autopilot is not None and autopilot.mode == "OFF"
+            and record.status == "APPROVED"
+            and record.signal_snapshot.get("pattern") in ("Rising Wedge", "Falling Wedge")
+            and type(record.approved_at_ms) is int and record.approved_at_ms > 0
+        ):
+            return False
+        state = record.robot_state or {}
+        execution = state.get("execution")
+        if not isinstance(execution, Mapping):
+            return False
+        failure = execution.get("protection_failure")
+        attempted = execution.get("emergency_close_attempted_at_ms")
+        if not (
+            state.get("phase") == "RETEST_DETECTED"
+            and execution.get("entry_mode") == LATE_ADMISSION_MARKET
+            and execution.get("emergency_close_pending") is True
+            and execution.get("emergency_close_intent") is None
+            and execution.get("emergency_close_outcome") is None
+            and "emergency_closed_at_ms" not in execution
+            and "post_fill_policy_exception" not in execution
+            and isinstance(failure, str)
+            and failure.startswith("POST_FILL_NET_RR_BELOW_2 rr=")
+            and type(attempted) is int and attempted > record.approved_at_ms
+            and isinstance(execution.get("late_market_intent"), Mapping)
+        ):
+            return False
+
+        # Restore validates the original candidate-domain identity rather than
+        # trusting a syntactically plausible command ID in candidate JSON.
+        plan = restore_late_admission_market_plan(execution["late_market_intent"])
+        direction = state.get("direction")
+        expected_side = (
+            OrderSide.SELL if direction == "SHORT" else
+            OrderSide.BUY if direction == "LONG" else None
+        )
+        if (plan.candidate_id != record.candidate_id
+                or plan.request.symbol != record.symbol.value
+                or plan.direction != direction
+                or expected_side is None
+                or plan.request.side is not expected_side):
+            return False
+        command = store.get_command(plan.identity.command_id)
+        if not (
+            command is not None
+            and command.trading_account_id == self._account_id
+            and command.symbol == record.symbol
+            and command.category is Category.LINEAR and command.position_idx == 0
+            and command.command_kind == "create_market"
+            and command.current_state.value == "filled"
+            and command.side is expected_side
+            and command.exchange_order_id is not None
+            and command.order_link_id == plan.identity.order_link_id
+            and record.approved_at_ms <= command.created_at_ms
+            and command.updated_at_ms <= attempted
+        ):
+            return False
+
+        # Zero unfinished commands is not enough: a previously executed
+        # emergency close would be terminal in that query. Require the one
+        # exact entry command, and no other commands since candidate approval.
+        commands = store.load_commands_for_symbol_since(
+            self._account_id, record.symbol, record.approved_at_ms,
+        )
+        if len(commands) != 1 or commands[0].command_id != command.command_id:
+            return False
+        if (store.load_active_robot_entry_orders(self._account_id, record.symbol)
+                or store.load_active_paper_limits(self._account_id, record.symbol)
+                or any(item.trading_account_id == self._account_id
+                       and item.symbol == record.symbol
+                       for item in store.load_unfinished_commands())
+                or any(item.symbol == record.symbol
+                       for item in store.load_unresolved_paper_protection_obligations(
+                           self._account_id
+                       ))
+                or any(trade.symbol == record.symbol
+                       for trade in store.load_open_robot_trades(self._account_id))
+                or store.get_robot_trade("robot-trade-" + record.candidate_id) is not None):
+            return False
+        active = store.load_active_robot_candidates_for_symbol(
+            self._account_id, record.symbol,
+        )
+        if len(active) != 1 or active[0].candidate_id != record.candidate_id:
+            return False
+
+        entry = self._prove_entry_evidence(record, execution, entry_path="MARKET")
+        if (entry is None
+                or len(entry.order_ids) != 1
+                or entry.order_ids[0] != command.exchange_order_id
+                or entry.first_execution_at_ms > attempted
+                or entry.quantity != Decimal(str(
+                    execution["late_market_intent"].get("normalized_quantity")
+                ))):
+            return False
+        fills = store.load_executions_for_order(
+            self._account_id, command.exchange_order_id,
+        )
+        if (len(fills) != 1 or fills[0].symbol != record.symbol
+                or fills[0].side is not expected_side
+                or fills[0].fee < 0):
+            return False
+        position_key = PositionKey(self._account_id, Category.LINEAR, record.symbol, 0)
+        protection = store.get_protection_projection(position_key)
+        if not (
+            protection is not None
+            and protection.status == "confirmed_active"
+            and protection.pending_command_id is None
+            and protection.trailing_stop is None
+            and protection.evidence_at_ms >= entry.first_execution_at_ms
+            and protection.stop_loss is not None
+            and protection.take_profit is not None
+        ):
+            return False
+
+        # Reconstruct exactly the normal filled-Wedge protection from the
+        # immutable snapshot and the actual fill; never accept an unrelated
+        # manually attached STOP/TAKE merely because both fields are present.
+        structural = self._structural_extreme(record.signal_snapshot, direction)
+        reference, target = self._frozen_prices(record.signal_snapshot, direction)
+        tick_size = self._tick_size_provider(record.symbol.value)
+        expected = robot_protection.build_protection_plan(
+            self._candidate_payload(record), state,
+            average_entry=entry.average_entry, structural_extreme=structural,
+            tick_size=tick_size, frozen_signal_reference_price=reference,
+            frozen_scanner_target_price=target, existing_stop=None,
+        )
+        from terminal.application.normalization import normalize_limit_price
+        closing_side = OrderSide.BUY if direction == "SHORT" else OrderSide.SELL
+        stop = normalize_limit_price(expected.stop_price, tick_size, closing_side)
+        take = normalize_limit_price(expected.take_price, tick_size, closing_side)
+        if protection.stop_loss != stop or protection.take_profit != take:
+            return False
+        actual_rr = robot_protection.post_fill_net_rr(
+            direction, average_entry=entry.average_entry, quantity=entry.quantity,
+            entry_fee=fills[0].fee, stop_price=expected.stop_price,
+            take_price=expected.take_price,
+        )
+        persisted_rr = Decimal(failure.split(" rr=", 1)[1])
+        if not (persisted_rr.is_finite() and persisted_rr == actual_rr
+                and Decimal("0") < actual_rr < Decimal("2")):
+            return False
+
+        now = max(self._now_ms(), record.updated_at_ms)
+        recovered = dict(state)
+        updated = dict(execution)
+        updated.pop("emergency_close_pending", None)
+        updated["post_fill_policy_exception"] = {
+            "reason": "POST_FILL_NET_RR_BELOW_2",
+            "actual_net_rr": str(actual_rr),
+            "stop_price": str(expected.stop_price),
+            "take_price": str(expected.take_price),
+        }
+        updated["protected_postfill_recovery"] = {
+            "proof": "SINGLE_MARKET_FILL_NO_EXIT_COMMAND_PROTECTED_V1",
+            "entry_command_id": command.command_id.value,
+            "entry_order_id": command.exchange_order_id.value,
+            "entry_execution_id": fills[0].dedup_key.exec_id.value,
+            "position_version": entry.position_version,
+            "protection_version": protection.version,
+            "reconciled_at_ms": now,
+        }
+        recovered["execution"] = updated
+        # One transaction inserts the actual OPEN trade and CAS-clears the
+        # legacy pending marker. Any failure rolls both writes back.
+        store.create_robot_trade(
+            trade_id="robot-trade-" + record.candidate_id,
+            trading_account_id=self._account_id,
+            candidate_id=record.candidate_id,
+            symbol=record.symbol, direction=direction,
+            pattern=str(record.signal_snapshot.get("pattern", "")),
+            source_timeframe=str(record.signal_snapshot.get(
+                "scanner_source_timeframe",
+                record.signal_snapshot.get("timeframe", "1"),
+            )).strip() or "1",
+            signal_time_ms=record.approved_at_ms,
+            entry_time_ms=entry.first_execution_at_ms, entry_path="MARKET",
+            actual_wv=Decimal("1"), average_entry=entry.average_entry,
+            stop_price=expected.stop_price, take_price=expected.take_price,
+            entry_quantity=entry.quantity, entry_position_version=entry.position_version,
+            created_at_ms=max(now, entry.first_execution_at_ms),
+            recovery_state=recovered, recovery_expected_revision=record.state_revision,
+        )
+        return True
+
     def _hold_unproven_emergency_close(
         self, record: RobotCandidateRecord, execution: Mapping[str, object],
     ) -> bool:
@@ -3045,6 +3310,9 @@ class RobotBreakoutMonitor:
         request = robot_protection.emergency_close_request(
             record.candidate_id, record.symbol.value,
         )
+        identity = robot_emergency_close_identity(
+            request.client_action_id.value, record.symbol.value,
+        )
         now_ms = self._now_ms()
         execution["protection_failure"] = str(error)
         execution["emergency_close_pending"] = True
@@ -3061,6 +3329,8 @@ class RobotBreakoutMonitor:
             "average_entry": str(confirmed.average_entry),
             "entry_position_version": confirmed.position_version,
             "client_action_id": request.client_action_id.value,
+            "command_id": identity.command_id.value,
+            "order_link_id": identity.order_link_id,
             # A committed intent is considered possibly dispatched, even if
             # the process dies immediately after this transaction.
             "dispatch_outcome": "UNKNOWN",

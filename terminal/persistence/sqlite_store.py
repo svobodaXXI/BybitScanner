@@ -3925,6 +3925,25 @@ class SQLiteStore:
         ).fetchone()
         return _command_from_row(row) if row is not None else None
 
+    def load_commands_for_symbol_since(
+        self, account: TradingAccountId, symbol: Symbol, since_ms: int,
+    ) -> tuple[CommandRecord, ...]:
+        """Exact PAPER command history for a frozen entry-ownership proof.
+
+        Historical terminal commands count too: the absence of unfinished
+        commands alone does not prove no close was dispatched.
+        """
+        self._assert_owner()
+        if account.value != "paper" or type(since_ms) is not int or since_ms < 0:
+            raise ValueError("invalid PAPER command history scope")
+        rows = self._connection.execute(
+            """SELECT * FROM trading_commands
+               WHERE trading_account_id=? AND symbol=? AND created_at_ms>=?
+               ORDER BY created_at_ms, command_id""",
+            (account.value, symbol.value, since_ms),
+        ).fetchall()
+        return tuple(_command_from_row(row) for row in rows)
+
     def load_unfinished_commands(self) -> tuple[CommandRecord, ...]:
         self._assert_owner()
         final_states = (
@@ -6069,6 +6088,8 @@ class SQLiteStore:
         average_entry: Decimal, stop_price: Decimal, take_price: Decimal,
         entry_quantity: Decimal, entry_position_version: int,
         created_at_ms: int,
+        recovery_state: dict[str, object] | None = None,
+        recovery_expected_revision: int | None = None,
     ) -> tuple[RobotTradeRecord, bool]:
         """entry_quantity/entry_position_version are the owner-frozen D2.3
         ownership attestation (CR-PAPER-PROTECTION-LIFECYCLE-001): the
@@ -6078,6 +6099,23 @@ class SQLiteStore:
         attestation existed may lack them, and D2.3 dispatch fails closed on
         that absence rather than guessing."""
         self._assert_owner()
+        # Legacy protected post-fill recovery is atomic: do not leave an OPEN
+        # trade with a still-pending emergency marker, or vice versa, on crash.
+        recovery = recovery_state is not None or recovery_expected_revision is not None
+        if recovery:
+            if (not isinstance(recovery_state, dict)
+                    or type(recovery_expected_revision) is not int
+                    or recovery_expected_revision < 0):
+                raise ValueError("protected post-fill recovery needs state and CAS revision")
+            execution = recovery_state.get("execution")
+            if (not isinstance(execution, dict)
+                    or "emergency_close_pending" in execution
+                    or "emergency_close_intent" in execution
+                    or not isinstance(execution.get("protected_postfill_recovery"), dict)):
+                raise ValueError("protected post-fill recovery state is not terminalized")
+            recovery_json = _canonical_json(recovery_state)
+        else:
+            recovery_json = None
         if not trade_id.strip() or direction not in ROBOT_DIRECTIONS or entry_path not in ROBOT_ENTRY_PATHS:
             raise ValueError("invalid Robot trade identity, direction or entry path")
         if (
@@ -6139,11 +6177,22 @@ class SQLiteStore:
                 self._connection.execute(
                     "INSERT INTO robot_trades VALUES (" + ",".join("?" for _ in values) + ")", values,
                 )
-                cursor = self._connection.execute(
-                    """UPDATE robot_candidates SET status='OPEN', updated_at_ms=?
-                       WHERE candidate_id=? AND status='APPROVED' AND updated_at_ms<=?""",
-                    (created_at_ms, candidate_id, created_at_ms),
-                )
+                if recovery:
+                    cursor = self._connection.execute(
+                        """UPDATE robot_candidates
+                           SET status='OPEN', robot_state_json=?,
+                               state_revision=state_revision+1, updated_at_ms=?
+                           WHERE candidate_id=? AND status='APPROVED'
+                             AND state_revision=? AND updated_at_ms<=?""",
+                        (recovery_json, created_at_ms, candidate_id,
+                         recovery_expected_revision, created_at_ms),
+                    )
+                else:
+                    cursor = self._connection.execute(
+                        """UPDATE robot_candidates SET status='OPEN', updated_at_ms=?
+                           WHERE candidate_id=? AND status='APPROVED' AND updated_at_ms<=?""",
+                        (created_at_ms, candidate_id, created_at_ms),
+                    )
                 if cursor.rowcount != 1:
                     raise ConcurrentUpdate("Robot candidate changed before trade creation")
             except sqlite3.IntegrityError as exc:

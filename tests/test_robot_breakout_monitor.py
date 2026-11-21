@@ -1742,8 +1742,11 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         position_key = PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
         self.assertEqual(self.store.get_position_projection(position_key).side, PositionSide.LONG)
 
-    def test_post_fill_rr_below_two_keeps_protection_and_closes_without_open_trade(self):
-        """A safely admitted LIMIT can fill at a price that collapses Net RR."""
+    def test_post_fill_rr_below_two_keeps_protected_owned_trade_without_emergency_close(self):
+        """Below-2R after a real fill is a recorded economics exception,
+        NEVER evidence that proven STOP/TAKE failed. The exact fill remains an
+        OPEN Robot trade (no phantom exit, no second Market command).
+        """
         self._create_candidate()
         self._drive_to_retest_detected()
         self.monitor.tick()
@@ -1759,21 +1762,68 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         ):
             self.monitor.tick()
         record = self.store.get_robot_candidate("candidate-1")
-        self.assertEqual(record.status, "INVALIDATED")
-        self.assertIsNone(self.store.get_robot_trade("robot-trade-candidate-1"))
+        self.assertEqual(record.status, "OPEN")
+        trade = self.store.get_robot_trade("robot-trade-candidate-1")
+        self.assertIsNotNone(trade)
+        self.assertEqual(trade.entry_quantity, Decimal("1"))
+        self.assertEqual(trade.average_entry, Decimal("81"))
+        self.assertIsNone(trade.exit_time_ms)
         self.assertEqual(
             [name for name, _ in self.executor.protection_calls],
-            ["create_stop", "create_take", "full_close"],
+            ["create_stop", "create_take"],
         )
-        self.assertIn(
-            "POST_FILL_NET_RR_BELOW_2",
-            record.robot_state["execution"]["protection_failure"],
-        )
+        exception = record.robot_state["execution"]["post_fill_policy_exception"]
+        self.assertEqual(exception["reason"], "POST_FILL_NET_RR_BELOW_2")
+        self.assertLess(Decimal(exception["actual_net_rr"]), Decimal("2"))
         self.assertEqual(
             self.store.get_position_projection(
                 PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
             ).side,
-            PositionSide.FLAT,
+            PositionSide.LONG,
+        )
+        self.monitor.tick()  # OPEN does not retry a Market close.
+        self.assertNotIn("full_close", [n for n, _ in self.executor.protection_calls])
+
+    def test_post_fill_low_rr_requires_confirmed_active_protection_not_just_prices(self):
+        """A stale/unconfirmed STOP/TAKE projection must not create OPEN ownership."""
+        from dataclasses import replace
+        self._create_candidate()
+        self._drive_to_retest_detected()
+        self.monitor.tick()
+        order_id = self.store.get_robot_candidate(
+            "candidate-1"
+        ).robot_state["execution"]["limit_order_id"]
+        self.executor.fill_resting_limit(
+            order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81")
+        )
+        # The monitor owns a distinct thread-local SQLiteStore connection;
+        # patching the fixture writer connection does not affect its reads.
+        monitor_store = self.monitor._store()
+        original = monitor_store.get_protection_projection
+
+        def unconfirmed_after_submit(key):
+            projection = original(key)
+            if (projection is not None and projection.stop_loss is not None
+                    and projection.take_profit is not None):
+                return replace(projection, status="unknown")
+            return projection
+
+        with patch.object(
+            RobotBreakoutMonitor, "_frozen_prices",
+            return_value=(Decimal("80"), Decimal("82")),
+        ), patch.object(
+            monitor_store, "get_protection_projection",
+            side_effect=unconfirmed_after_submit,
+        ):
+            self.monitor.tick()
+        self.assertIsNone(self.store.get_robot_trade("robot-trade-candidate-1"))
+        self.assertEqual(
+            self.store.get_robot_candidate("candidate-1").status,
+            "INVALIDATED",
+        )
+        self.assertEqual(
+            [name for name, _ in self.executor.protection_calls],
+            ["create_stop", "create_take", "full_close"],
         )
 
     def test_aioz_short_fee_aware_actual_fill_rr_regression(self):
@@ -2015,6 +2065,12 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
             self.assertTrue(execution["emergency_close_pending"])
             intent = execution["emergency_close_intent"]
             self.assertEqual(intent["client_action_id"], request.client_action_id.value)
+            from terminal.application.command_identity import robot_emergency_close_identity
+            identity = robot_emergency_close_identity(
+                request.client_action_id.value, request.symbol,
+            )
+            self.assertEqual(intent["command_id"], identity.command_id.value)
+            self.assertEqual(intent["order_link_id"], identity.order_link_id)
             self.assertEqual(intent["entry_order_ids"], [order_id])
             self.assertEqual(intent["entry_position_version"],
                              self.store.get_position_projection(

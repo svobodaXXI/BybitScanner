@@ -71,6 +71,7 @@ on:
       - "tests/test_terminal_paper_runtime.py"
       - "tests/test_robot_be_partial_owner_paper.py"
       - "tests/test_robot_breakout_monitor.py"
+      - "tests/test_robot_protected_postfill_recovery.py"
       - "tests/test_robot_recovery_coordinator.py"
       - "tests/test_terminal_paper_http.py"
       - "tests/test_terminal_persistence.py"
@@ -146,6 +147,12 @@ jobs:
           matplotlib==3.11.1
           mplfinance==0.12.10b0
           six==1.17.0
+      - name: Verify real PAPER emergency command identity and idempotent replay
+        run: >-
+          python -m pytest -q tests/test_terminal_paper_runtime.py
+          -k "robot_emergency_close_identity_reaches_both_owner_adapters or robot_emergency_close_persists_exact_market_command_and_replay_is_noop"
+      - name: Verify legacy protected post-fill reconciliation (no Market replay)
+        run: python -m pytest -q tests/test_robot_protected_postfill_recovery.py
       - name: Verify shared causal Impulse Flow rules without order runtime
         run: python -m unittest tests.test_robot_entry_flow_evidence -v
       - name: Verify publicTrade observation without order runtime
