@@ -1608,7 +1608,7 @@ describe("Finrez first-screen UI", () => {
     expect(await screen.findByText("Сегодня с 00:00 МСК нет подтверждённых закрытых сделок Робота")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Всё время" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=ALL"));
-    const coverage = await screen.findByRole("status");
+    const coverage = await screen.findByText(/Не все сделки учтены/);
     expect(coverage).toHaveTextContent("Не все сделки учтены");
     expect(coverage).toHaveTextContent("у 3 закрытых");
     expect(coverage).toHaveTextContent("11 исполнений");
