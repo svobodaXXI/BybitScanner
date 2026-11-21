@@ -4876,3 +4876,16 @@ def test_deferred_protected_required_leaves_no_stop_marker_and_can_retry_when_fl
     accepted = maintenance.deploy_staged_editor_only(target, **options)
     assert accepted == "READY: EDITOR_ONLY"
     assert steps == ["preflight", "preflight", "stop", "install", "resume"]
+
+
+
+def test_owner_github_status_enable_dispatch_is_isolated(monkeypatch):
+    from tools import paper_maintenance as maintenance
+    from tools import github_status_reporter as reporter
+    calls = []
+    monkeypatch.setattr(reporter, "enable_observer",
+                        lambda sha: calls.append(sha) or "READY: observer timer")
+    assert maintenance.main(["a" * 40, "--action", "github-status-enable"]) == 0
+    assert calls == ["a" * 40]
+    monkeypatch.setattr(reporter, "enable_observer", lambda sha: "BLOCKED: no token")
+    assert maintenance.main(["a" * 40, "--action", "github-status-enable"]) == 2
