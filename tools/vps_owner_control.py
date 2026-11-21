@@ -74,8 +74,9 @@ def status(request: str, *, run=subprocess.run, verify_sha: str = "") -> int:
         # Bind its immutable systemd description to this approved UPDATE.
         description = fields.get("Description", "")
         if not any(description.startswith(
-            "BybitScanner " + verb + " " + verify_sha[:12] + " origin="
-        ) for verb in ("update", "update-take-closed")):
+            "BybitScanner " + verb + " " + pinned + " origin="
+        ) for verb in ("update", "update-take-closed")
+          for pinned in (verify_sha, verify_sha[:12])):
             print("POSTCHECK=BLOCKED_REQUEST_TARGET_MISMATCH")
             return 2
         return verify_update(verify_sha)
@@ -117,25 +118,43 @@ def submit(action: str, sha: str, request: str, origin: str,
     if (os.geteuid() if uid is None else uid) != 0:
         raise ValueError("root_required_for_owner_operation")
 
-    stage = _verified_take_closed_stage(sha) if action == "update-take-closed" else None
-
     # A stable request ID is an idempotency fence. Successful one-shot units
     # remain loaded (RemainAfterExit), so an SSH retry cannot replay STOP/deploy.
-    probe = run(["systemctl", "show", "--no-pager", "--property=LoadState", unit],
-                capture_output=True, text=True, timeout=12, check=False)
+    # Bind an idempotency UUID to its *whole* original action, SHA and origin.
+    # Never treat a completed update as the result of another action/target.
+    # Legacy units with 12-digit descriptions remain queryable by status()
+    # but cannot silently accept a new submission under the same UUID.
+    description = "BybitScanner " + action + " " + sha + " origin=" + origin
+    probe = run(
+        ["systemctl", "show", "--no-pager",
+         "--property=LoadState,Description", unit],
+        capture_output=True, text=True, timeout=12, check=False,
+    )
     if probe.returncode != 0:
         print("SUBMISSION=UNPROVEN REQUEST_ID=" + request)
         return 2
-    if "LoadState=loaded" in probe.stdout.splitlines():
+    fields = dict(line.split("=", 1) for line in probe.stdout.splitlines()
+                  if "=" in line)
+    if fields.get("LoadState") == "loaded":
+        if fields.get("Description") != description:
+            print("SUBMISSION=BLOCKED_REQUEST_IDENTITY_MISMATCH REQUEST_ID=" + request)
+            return 2
         print("SUBMISSION=EXISTS REQUEST_ID=" + request)
         return status(request, run=run)
+    if fields.get("LoadState") != "not-found":
+        print("SUBMISSION=UNPROVEN REQUEST_ID=" + request)
+        return 2
+
+    # Staging is necessary only for a *new* update, never to read an
+    # already-detached operation after its verified stage has been retired.
+    stage = _verified_take_closed_stage(sha) if action == "update-take-closed" else None
 
     cmd = [
         "systemd-run", "--no-block", "--remain-after-exit",
         "--property=Type=oneshot",
         "--working-directory=" + (str(stage) if stage is not None else REPO),
         "--unit=" + unit,
-        "--description=BybitScanner " + action + " " + sha[:12] + " origin=" + origin,
+        "--description=" + description,
         PYTHON, "-m", "tools.paper_maintenance", sha, "--action", action,
     ]
     result = run(cmd, capture_output=True, text=True, timeout=20, check=False)

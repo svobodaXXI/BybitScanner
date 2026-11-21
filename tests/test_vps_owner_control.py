@@ -83,6 +83,14 @@ class OwnerControlTests(unittest.TestCase):
         with patch.object(control, "verify_update") as check:
             self.assertEqual(control.status(R, run=run), 0)
             check.assert_not_called()
+        # New units use the full SHA while old ones remain read-only queryable.
+        full = output.replace(SHA[:12] + " origin=", SHA + " origin=")
+        with patch.object(control, "verify_update", return_value=0) as check:
+            self.assertEqual(control.status(
+                R, run=lambda cmd, **kw: completed(cmd, out=full),
+                verify_sha=SHA,
+            ), 0)
+            check.assert_called_once_with(SHA)
         unrelated = output.replace("BybitScanner update", "BybitScanner start")
         with patch.object(control, "verify_update") as check:
             with redirect_stdout(StringIO()) as receipt:
@@ -124,6 +132,7 @@ class OwnerControlTests(unittest.TestCase):
         self.assertIn("--remain-after-exit", started)
         self.assertIn("--property=Type=oneshot", started)
         self.assertIn("--unit=" + control.unit_name(R), started)
+        self.assertIn("--description=BybitScanner update " + SHA + " origin=win-DESKTOP", started)
         self.assertEqual(started[-5:], ["-m", "tools.paper_maintenance", SHA,
                                          "--action", "update"])
         self.assertNotIn("systemctl stop", " ".join(started))
@@ -147,17 +156,67 @@ class OwnerControlTests(unittest.TestCase):
 
     def test_duplicate_request_never_restarts_release(self):
         calls = []
+        description = f"BybitScanner stop {SHA} origin=vps-console"
 
         def run(cmd, **_kw):
             calls.append(cmd)
-            if "--property=LoadState" in cmd:
-                return completed(cmd, out="LoadState=loaded\n")
+            if "--property=LoadState,Description" in cmd:
+                return completed(cmd, out=f"LoadState=loaded\nDescription={description}\n")
             return completed(cmd, out=(
                 "LoadState=loaded\nActiveState=active\nSubState=exited\n"
-                "Result=success\nExecMainStatus=0\n"))
+                f"Result=success\nExecMainStatus=0\nDescription={description}\n"))
 
         self.assertEqual(control.submit("stop", SHA, R, "vps-console",
                                         run=run, uid=0), 0)
+        self.assertFalse(any(cmd[0] == "systemd-run" for cmd in calls))
+
+    def test_same_uuid_different_action_sha_origin_or_legacy_unit_fails_closed(self):
+        calls = []
+        stored = f"BybitScanner update {SHA} origin=win-pc"
+
+        def run(cmd, **_kw):
+            calls.append(cmd)
+            return completed(cmd, out="LoadState=loaded\nDescription=" + stored + "\n")
+
+        for action, sha, origin in (
+            ("start", SHA, "win-pc"),
+            ("update", "c" * 40, "win-pc"),
+            ("update", SHA, "win-laptop"),
+        ):
+            with self.subTest(action=action, sha=sha, origin=origin):
+                self.assertEqual(
+                    control.submit(action, sha, R, origin, run=run, uid=0), 2,
+                )
+
+        # The old short SHA is not a whole-payload identity. It can still be
+        # examined through read-only status(), but cannot authorize a submit.
+        stored = f"BybitScanner update {SHA[:12]} origin=win-pc"
+        self.assertEqual(control.submit(
+            "update", SHA, R, "win-pc", run=run, uid=0,
+        ), 2)
+        self.assertFalse(any(cmd[0] == "systemd-run" for cmd in calls))
+
+    def test_existing_take_closed_uuid_can_be_queried_after_stage_was_removed(self):
+        from unittest.mock import patch
+        label = f"BybitScanner update-take-closed {SHA} origin=win-pc"
+        calls = []
+
+        def run(cmd, **_kw):
+            calls.append(cmd)
+            if "--property=LoadState,Description" in cmd:
+                return completed(cmd, out=f"LoadState=loaded\nDescription={label}\n")
+            return completed(cmd, out=(
+                "LoadState=loaded\nActiveState=activating\nSubState=start\n"
+                f"Result=success\nExecMainStatus=0\nDescription={label}\n"
+            ))
+
+        # Reading an existing detached request is independent of its staging
+        # checkout; the status remains RUNNING and nothing can be re-submitted.
+        with patch.object(control, "_verified_take_closed_stage") as stage:
+            self.assertEqual(control.submit(
+                "update-take-closed", SHA, R, "win-pc", run=run, uid=0,
+            ), 3)
+            stage.assert_not_called()
         self.assertFalse(any(cmd[0] == "systemd-run" for cmd in calls))
 
     def test_unknown_submission_is_never_automatically_replayed(self):
@@ -259,10 +318,15 @@ def test_take_closed_update_refuses_unverified_old_installed_source(monkeypatch)
     from pathlib import Path
     import pytest
     monkeypatch.setattr(control, "__file__", "/opt/BybitScanner/tools/vps_owner_control.py")
-    def no_run(*args, **kwargs):
-        pytest.fail("old unverified source must not submit a one-shot action")
+    calls = []
+    def read_only_probe(cmd, **kwargs):
+        calls.append(cmd)
+        assert cmd[0] == "systemctl"  # UUID status is safe even on old source.
+        return completed(cmd, out="LoadState=not-found\nDescription=\n")
     with pytest.raises(ValueError, match="verified_target_stage"):
-        control.submit("update-take-closed", SHA, R, "win-PC", run=no_run, uid=0)
+        control.submit("update-take-closed", SHA, R, "win-PC",
+                       run=read_only_probe, uid=0)
+    assert len(calls) == 1  # Never submit a new stage from an old checkout.
 
 
 def test_finished_take_closed_update_requires_same_exact_postcheck():
