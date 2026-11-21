@@ -124,6 +124,7 @@ class OwnerControlTests(unittest.TestCase):
         self.assertIn("--remain-after-exit", started)
         self.assertIn("--property=Type=oneshot", started)
         self.assertIn("--unit=" + control.unit_name(R), started)
+        self.assertIn("--description=BybitScanner update " + SHA + " origin=win-DESKTOP", started)
         self.assertEqual(started[-5:], ["-m", "tools.paper_maintenance", SHA,
                                          "--action", "update"])
         self.assertNotIn("systemctl stop", " ".join(started))
@@ -147,17 +148,44 @@ class OwnerControlTests(unittest.TestCase):
 
     def test_duplicate_request_never_restarts_release(self):
         calls = []
+        description = f"BybitScanner stop {SHA} origin=vps-console"
 
         def run(cmd, **_kw):
             calls.append(cmd)
-            if "--property=LoadState" in cmd:
-                return completed(cmd, out="LoadState=loaded\n")
+            if "--property=LoadState,Description" in cmd:
+                return completed(cmd, out=f"LoadState=loaded\nDescription={description}\n")
             return completed(cmd, out=(
                 "LoadState=loaded\nActiveState=active\nSubState=exited\n"
-                "Result=success\nExecMainStatus=0\n"))
+                f"Result=success\nExecMainStatus=0\nDescription={description}\n"))
 
         self.assertEqual(control.submit("stop", SHA, R, "vps-console",
                                         run=run, uid=0), 0)
+        self.assertFalse(any(cmd[0] == "systemd-run" for cmd in calls))
+
+    def test_same_uuid_different_action_sha_origin_or_legacy_unit_fails_closed(self):
+        calls = []
+        stored = f"BybitScanner update {SHA} origin=win-pc"
+
+        def run(cmd, **_kw):
+            calls.append(cmd)
+            return completed(cmd, out="LoadState=loaded\nDescription=" + stored + "\n")
+
+        for action, sha, origin in (
+            ("start", SHA, "win-pc"),
+            ("update", "c" * 40, "win-pc"),
+            ("update", SHA, "win-laptop"),
+        ):
+            with self.subTest(action=action, sha=sha, origin=origin):
+                self.assertEqual(
+                    control.submit(action, sha, R, origin, run=run, uid=0), 2,
+                )
+
+        # The old short SHA is not a whole-payload identity. It can still be
+        # examined through read-only status(), but cannot authorize a submit.
+        stored = f"BybitScanner update {SHA[:12]} origin=win-pc"
+        self.assertEqual(control.submit(
+            "update", SHA, R, "win-pc", run=run, uid=0,
+        ), 2)
         self.assertFalse(any(cmd[0] == "systemd-run" for cmd in calls))
 
     def test_unknown_submission_is_never_automatically_replayed(self):
