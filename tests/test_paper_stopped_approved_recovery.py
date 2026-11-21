@@ -584,6 +584,62 @@ class OneFlatPartialStopResumeTest(unittest.TestCase):
         self.assertFalse((journal / (".stop-invoked-" + target)).exists())
         completed.assert_called_once()
 
+    def test_take_closed_ignores_trusted_completed_prior_releases(self):
+        root, stage, journal, db, prior, target, old = self.prepare()
+        completed_sha = "d" * 40
+        (journal / (".stop-invoked-" + completed_sha)).write_bytes(
+            b"STOP_INVOKED; not install authorization\\n"
+        )
+        (journal / (".stop-invoked-" + completed_sha)).chmod(0o600)
+        (journal / completed_sha).mkdir(mode=0o700)
+        (journal / completed_sha / "editor-ready").write_text(completed_sha)
+        (journal / completed_sha / "editor-ready").chmod(0o600)
+        with mock.patch(
+            "tools.paper_maintenance._legacy_paused_backend_predates_stop",
+            return_value=False,
+        ):
+            with self.assertRaisesRegex(
+                recovery.PartialStopBlocked, "old_backend_continuity_unproven",
+            ):
+                recovery.recover_one_flat_after_failed_stop(
+                    target=target, stage=stage, prior_stop=prior,
+                    expected_old_sha=old, root=root, transactions=journal,
+                    uid=os.geteuid(), inspect=lambda *a, **k: None,
+                    take_closed_approved=True,
+                )
+        self.assertFalse(recovery._one_flat_path(
+            journal, prior, "handoff-attempt",
+        ).exists())
+        self.assertFalse((journal / (".stop-invoked-" + target)).exists())
+
+    def test_take_closed_rejects_foreign_or_missing_editor_ready(self):
+        for sealed in (False, True):
+            with self.subTest(sealed=sealed):
+                root, stage, journal, db, prior, target, old = self.prepare()
+                completed_sha = "d" * 40
+                marker = journal / (".stop-invoked-" + completed_sha)
+                marker.write_bytes(b"STOP_INVOKED; not install authorization\\n")
+                marker.chmod(0o600)
+                (journal / completed_sha).mkdir(mode=0o700)
+                if sealed:
+                    receipt = journal / completed_sha / "editor-ready"
+                    receipt.write_text("e" * 40)
+                    receipt.chmod(0o600)
+                with self.assertRaisesRegex(
+                    recovery.PartialStopBlocked,
+                    "untrusted_completed_release_transaction"
+                    if sealed else "another_unresolved_STOP_intent",
+                ):
+                    recovery.recover_one_flat_after_failed_stop(
+                        target=target, stage=stage, prior_stop=prior,
+                        expected_old_sha=old, root=root, transactions=journal,
+                        uid=os.geteuid(), inspect=lambda *a, **k: None,
+                        take_closed_approved=True,
+                    )
+                self.assertFalse(recovery._one_flat_path(
+                    journal, prior, "handoff-attempt",
+                ).exists())
+
     def test_take_closed_rejects_unknown_old_backend_before_signal(self):
         root, stage, journal, db, prior, target, old = self.prepare()
         owner = self.owner()
