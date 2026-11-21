@@ -308,4 +308,4 @@ def test_owner_update_take_closed_enters_existing_global_lock(monkeypatch, capsy
         ("dispatch", True, Path("/var/lib/bybitscanner-stage-git-" + sha)),
         "owner-lock-released",
     ]
-    assert capsys.readouterr().out == "BLOCKED: TEST_ONLY_NO_RUNTIME_ACTION\\n"
+    assert capsys.readouterr().out == "BLOCKED: TEST_ONLY_NO_RUNTIME_ACTION\n"
