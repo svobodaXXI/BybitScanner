@@ -572,6 +572,27 @@ function Value({ value }: { value: string | null | undefined }) {
   return <span>{value ?? "—"}</span>;
 }
 
+/** Present only reviewed pairing failures; raw replies may contain device secrets. */
+async function pairingFailureReason(response: Response): Promise<string> {
+  let code: unknown = null;
+  try {
+    const payload: unknown = await response.json();
+    if (payload && typeof payload === "object" && "error" in payload)
+      code = (payload as { error: unknown }).error;
+  } catch {
+    // Gateway HTML or malformed JSON: retain HTTP status, never echo body.
+  }
+  if (response.status === 503 && code === "simulator_bridge_disabled")
+    return "Мост сопряжения отключён на сервере (HTTP 503)";
+  if (response.status === 503 && code === "simulator_pairing_device_not_configured")
+    return "Это устройство не настроено на сервере (HTTP 503)";
+  if (response.status === 403 && code === "simulator_bridge_unauthorized")
+    return "Сервер отклонил авторизацию или источник Telegram Mini App (HTTP 403)";
+  if (response.status === 400 && code === "invalid_simulator_bridge_request")
+    return "Сервер отклонил формат запроса (HTTP 400)";
+  return "Сервер отклонил сопряжение (HTTP " + response.status + ")";
+}
+
 /** Owner click routes only a typed ID: local Windows link or paired VPS relay.
  * Neither path transfers PAPER facts or implies a complete historical replay.
  */
@@ -604,6 +625,7 @@ function SimulatorLaunchAction({ episodeId, allowLocalLaunch, owner = null, sour
   async function preparePairing(deviceId: "owner-pc" | "owner-laptop") {
     if (pairingBusy || !allowLocalLaunch) return;
     setPairingBusy(true); setPairingUrl(null); setPairingNotice("");
+    let failure = "Нет ответа сервера (сеть или шлюз)";
     try {
       // Owner-authenticated HTTPS request, never an unauthenticated device
       // endpoint. Existing provisioned device slot; no new enrollment state.
@@ -612,18 +634,25 @@ function SimulatorLaunchAction({ episodeId, allowLocalLaunch, owner = null, sour
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ device_id: deviceId }),
       });
-      if (!response.ok) throw new Error("pairing_unavailable");
+      if (!response.ok) {
+        failure = await pairingFailureReason(response);
+        throw new Error("pairing_rejected");
+      }
+      failure = "Ответ сервера не удалось прочитать (HTTP 200)";
       const raw: unknown = await response.json();
       const pair = raw as Record<string, unknown>;
       if (!raw || typeof raw !== "object" || pair.ok !== true
           || pair.device_id !== deviceId || typeof pair.token !== "string"
-          || !/^[A-Za-z0-9_-]{48,256}$/.test(pair.token))
+          || !/^[A-Za-z0-9_-]{48,256}$/.test(pair.token)) {
+        failure = "Ответ сервера не прошёл проверку (HTTP 200)";
         throw new Error("pairing_invalid_response");
+      }
       setPairingUrl("bybitscanner-simulator://pair?device_id="
         + encodeURIComponent(deviceId) + "&token=" + encodeURIComponent(pair.token));
       setPairingNotice("Ключ подготовлен. Нажмите «Подтвердить подключение» на этом компьютере.");
     } catch {
-      setPairingNotice("Подключение пока недоступно. Обычный запуск Симулятора и копирование ID работают.");
+      setPairingNotice("Подключение пока недоступно: " + failure
+        + ". Запуск Симулятора и копирование ID остаются доступны.");
     } finally {
       setPairingBusy(false);
     }
