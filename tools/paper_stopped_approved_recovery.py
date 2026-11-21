@@ -447,6 +447,9 @@ def _one_flat_retarget(
 ) -> None:
     """One immutable successor mapping; never rewrite a prior signal receipt."""
     if original == target:
+        _demand(not _one_flat_path(transactions, prior, "retarget").exists()
+                and not _one_flat_path(transactions, prior, "retarget").is_symlink(),
+                "handoff_successor_already_bound_to_another_target")
         return
     _demand(all(len(sha) == 40 and all(c in "0123456789abcdef" for c in sha)
                 for sha in (original, target)), "invalid_handoff_successor")
@@ -618,6 +621,14 @@ def recover_one_flat_after_failed_stop(
             transactions, prior_stop, phase, original_target, uid=uid,
         ) for phase in phases
     }
+    # A previously selected successor is immutable. Refuse any different SHA
+    # before MAIN-only quiescence or other service/process action.
+    chosen = _one_flat_path(transactions, prior_stop, "retarget")
+    if chosen.exists() or chosen.is_symlink():
+        _demand(original_target != target
+                and _trusted_file(chosen, uid)
+                == (original_target + "\n" + target + "\n").encode("ascii"),
+                "handoff_successor_already_bound_to_another_target")
     # Bind the proof kind before an irreversible signal. An ambiguous older
     # Flat/OPEN invocation cannot be relabelled as TAKE-closed on retry.
     mode_receipt = _one_flat_path(transactions, prior_stop, "take-closed-approved")
