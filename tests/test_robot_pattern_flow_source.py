@@ -212,6 +212,21 @@ class PatternFlowSourceTests(unittest.TestCase):
             source.snapshot(), incomplete, old_kline, new_kline, **kwargs,
         ))
 
+    def test_receive_before_exchange_event_cannot_certify_source(self):
+        """Full REST/candle parity cannot rescue impossible receipt causality."""
+        from dataclasses import replace
+
+        observed, recent, previous, current = self.source()
+        observed["prints"] = tuple(
+            replace(item, received_at_ms=item.timestamp_ms - 1)
+            if item.trade_id == "d" else item
+            for item in observed["prints"]
+        )
+        self.assertIsNone(certified_snapshot(
+            observed, recent, previous, current,
+            closed_at_ms=self.CLOSE, decision_ms=self.CLOSE + 10,
+        ))
+
     def test_partial_missing_late_or_mismatched_source_stays_unknown(self):
         for fault in ("drop_ws", "late", "wrong_kline"):
             with self.subTest(fault=fault):
