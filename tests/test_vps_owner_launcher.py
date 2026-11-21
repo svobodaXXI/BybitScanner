@@ -1,12 +1,23 @@
 """Offline tests only; no VPS, SSH, market connection or runtime mutation."""
 import unittest
 from types import SimpleNamespace
+from pathlib import Path
 from unittest import mock
 
 from tools import vps_owner_launcher as launcher
 
 
 class VpsOwnerLauncherTests(unittest.TestCase):
+    def test_windows_owner_shortcut_vps_first_opt_in_is_fail_closed(self):
+        script = (Path(__file__).resolve().parents[1] / "start_robot_runtime.bat").read_text()
+        self.assertIn("if defined BYBITSCANNER_VPS_SSH_TARGET", script)
+        self.assertIn('if /i "%~1"=="ALL" goto vpsstart', script)
+        self.assertIn("-m tools.vps_owner_launcher", script)
+        self.assertIn("exit /b %errorlevel%", script)
+        self.assertIn(":localintent", script)
+        self.assertLess(script.index("-m tools.vps_owner_launcher"), script.index(":localintent"))
+        self.assertNotIn("call start_robot_runtime.bat", script)
+
     def test_ssh_command_is_batch_only_and_trusted_host_only(self):
         argv = launcher.ssh_argv("root@vps.example", "C:/keys/vps")
         self.assertEqual(argv[0], "ssh")
