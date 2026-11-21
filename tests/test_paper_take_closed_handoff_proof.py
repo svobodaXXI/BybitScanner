@@ -100,3 +100,107 @@ def test_scratch_immutable_lineage_drift_blocks(sql, params):
             conn.execute(sql, params)
         with pytest.raises(FlatRecoveryBlocked):
             prove(path)
+
+
+def _append_never_traded_box(runtime, *, candidate_id="box-robot-stbl-proof", symbol="STBLUSDT"):
+    """Only the synthetic scratch fixture is mutated; no VPS/PAPER write."""
+    from terminal.domain.models import TradingAccountId, Symbol
+    from terminal.persistence.sqlite_store import SQLiteStore
+    account = TradingAccountId("paper")
+    approved_at = 1795168251149
+    record, created = runtime.store.create_robot_candidate(
+        candidate_id=candidate_id, trading_account_id=account, symbol=Symbol(symbol),
+        status="APPROVED",
+        signal_snapshot={"pattern": "Box", "symbol": symbol, "timeframe": "5"},
+        approved_at_ms=approved_at, updated_at_ms=approved_at,
+    )
+    assert created
+    runtime.store.save_robot_candidate_state(
+        record.candidate_id, status="APPROVED",
+        robot_state={"phase": "BOX_ENTRY_READY", "direction": "LONG"},
+        expected_revision=record.state_revision, updated_at_ms=approved_at + 1,
+    )
+    actual = runtime.store.get_robot_candidate(record.candidate_id)
+    assert runtime.store.prove_approved_candidate_never_traded(actual)
+    return actual
+
+
+def test_one_take_closed_plus_one_independently_never_traded_box_proves():
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "paper.sqlite3"
+        runtime = _take_closed_orphan(path)
+        try:
+            other = _append_never_traded_box(runtime)
+            before = runtime.store.get_robot_candidate(other.candidate_id)
+            assert prove(path) == PROOF_LABEL
+            assert prove(path) == PROOF_LABEL
+            assert runtime.store.get_robot_candidate(other.candidate_id) == before
+            assert runtime.store.get_robot_candidate(
+                "legacy-protected-low-rr"
+            ).status == "APPROVED"
+        finally:
+            runtime.close()
+
+
+def test_second_approved_box_without_no_execution_proof_blocks(monkeypatch):
+    from terminal.persistence.sqlite_store import SQLiteStore
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "paper.sqlite3"
+        runtime = _take_closed_orphan(path)
+        try:
+            _append_never_traded_box(runtime)
+            monkeypatch.setattr(
+                SQLiteStore, "prove_approved_candidate_never_traded",
+                lambda self, record: False,
+            )
+            with pytest.raises(
+                FlatRecoveryBlocked, match="take_closed_other_box_never_traded_unproven"
+            ):
+                prove(path)
+        finally:
+            runtime.close()
+
+
+@pytest.mark.parametrize("invalidity", [
+    "third_approved", "foreign_pattern", "same_symbol",
+    "unexpected_phase", "postfill_emergency", "additional_take_owner",
+])
+def test_second_owner_not_verified_as_inert_blocks(invalidity):
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "paper.sqlite3"
+        runtime = _take_closed_orphan(path)
+        try:
+            if invalidity == "foreign_pattern":
+                _append_never_traded_box(
+                    runtime, candidate_id="wedge-untraded-extra"
+                )
+            elif invalidity == "same_symbol":
+                _append_never_traded_box(runtime, symbol="BTCUSDT")
+            else:
+                record = _append_never_traded_box(runtime)
+                if invalidity == "third_approved":
+                    _append_never_traded_box(
+                        runtime, candidate_id="box-robot-third", symbol="XRPUSDT"
+                    )
+                elif invalidity in (
+                    "unexpected_phase", "postfill_emergency", "additional_take_owner"
+                ):
+                    state = dict(record.robot_state)
+                    if invalidity == "unexpected_phase":
+                        state["phase"] = "BOX_ORDER_ACTIVE"
+                    elif invalidity == "postfill_emergency":
+                        state["execution"] = {"emergency_close_pending": True}
+                    else:
+                        state["execution"] = {
+                            "entry_mode": "LATE_ADMISSION_MARKET",
+                            "emergency_close_pending": True,
+                        }
+                    runtime.store.save_robot_candidate_state(
+                        record.candidate_id, status="APPROVED", robot_state=state,
+                        expected_revision=record.state_revision,
+                        updated_at_ms=record.updated_at_ms + 1,
+                    )
+            with pytest.raises(FlatRecoveryBlocked):
+                prove(path)
+        finally:
+            runtime.close()
