@@ -7,8 +7,8 @@
 - VPS установил точный Gitless релиз `96d13840550d7892825413a5ef4eeaea89b0a875`; `update-take-closed` owner UUID `610682ab587552ccd5773ef0245de514` завершён `FINISHED_OK`, журнал сообщил `READY: exact installed PAPER release, Telegram and EDITOR_ONLY proven; no Scanner/PAPER_AUTO start`.
 - Дополнительный **read-only** `verify_update` остановился на `BLOCKED_DURABLE_OWNERS`. Это **не откат установки** и **не разрешение на START**.
 - Штатный PAPER START owner UUID `67ae92671491baac21de6e02d8e855e8` завершён `FAILED`/exit 2: `active_PAPER_Robot_RECONCILIATION_REQUIRED`. START **не повторять**. `Scanner=SCANNER_STOPPED`, `Autopilot=OFF`, `Robot=ROBOT_RUNNING/RECONCILIATION_REQUIRED`; причиной назван один pending entry candidate (точный идентификатор держать в защищённом host journal).
-- `_active_required_flat_proof` вернул `None`, `_paper_start_quiescent=False`: это **не указывает**, какой предикат отказал. При чтении точного кандидата через `SQLiteStore.get_robot_candidate` получен `SchemaError("persisted Robot candidate JSON is corrupt")`. В `terminal/persistence/sqlite_store.py` это сообщение выдаётся при JSON decode ошибки `signal_snapshot_json` или `robot_state_json`. Повреждение всей SQLite, тип ошибочного поля и наличие реальной экспозиции **ещё не доказаны**.
-- Остался следующий **read-only** этап: штатный `load_active_robot_candidate_states` для разграничения повреждённого `robot_state_json` и сигнального снимка. Если падает, нужен один агрегированный источник безопасных категорий, а не серия ручных команд и новых START.
+- `_active_required_flat_proof` вернул `None`, `_paper_start_quiescent=False`: это **не указывает**, какой предикат отказал. Предыдущая самостоятельная read-only проверка `SQLiteStore.get_robot_candidate` вернула `SchemaError("persisted Robot candidate JSON is corrupt")`, **но проверяющий скрипт не установил `conn.row_factory = sqlite3.Row`**. `_robot_candidate_from_row` обращается к строке по именам полей; на стандартном tuple возникает `TypeError`, который тот же обработчик ошибочно сообщает как `SchemaError`. Поэтому наблюдение **не подтверждает порчу JSON ни одного поля**. Исправление диагностики — требовать `sqlite3.Row`, как в штатном `prove_take_closed_approved`, и только после этого классифицировать исключение. Фактические владельцы/экспозиция всё ещё не доказаны безопасными.
+- Следующий **один read-only этап**: установить `conn.row_factory = sqlite3.Row`, вызвать `SQLiteStore.get_robot_candidate` для **точного** ID и `prove_approved_candidate_never_traded`. Если после корректной конфигурации остаётся `SchemaError`, дополнительно использовать штатный `load_active_robot_candidate_states` (читает состояние без снимка) для разделения ошибок; не делать вывод из некорректно сконфигурированного клиента. Для остальных владельцев потребуется один агрегированный источник категорий, а не серия ручных команд и новых START.
 - В ходе релиза также возникали однократный SHA-bound Backend handoff, MAIN quiescence и запрет повтора STOP. PR #1220/#1221 и release receipts описаны в `RUNTIME_KNOWN_FAILURE_FAST_PATH.md`; они **не** доказательство PAPER торговой готовности.
 
 ## 2. Минимальная целевая схема (одна система)
@@ -45,7 +45,7 @@ PAPER Backend / Scanner / Robot / Telegram / systemd
 | `RELEASE_REQUEST_ACCEPTED` | сохранить request UUID, poll status; при SSH reconnect — прочитать тот же UUID | не submit нового UUID при таймауте |
 | `STOP/START_FAILED` | read-only evidence snapshot + GitHub redacted event; искать точный known-failure fast path | повтор STOP/START и очистка receipt |
 | `BACKEND_EXIT_PROVEN` | продолжать установленный одноразовый handoff только по seal/identity | неизвестный SIGINT outcome → BLOCKED |
-| `REQUIRED + CANDIDATE_JSON_DECODE_ERROR` | оставить admission закрытым; проверить различие JSON-state/snapshot штатным read-only методом; классифицировать `MALFORMED_JSON` / `INVALID_SHAPE` / `HASH_MISMATCH` / `UNKNOWN`, затем определить earliest durable producer event | не восстанавливать JSON догадками, не менять status, не выполнять reconcile до полной доказанности владельцев |
+| REQUIRED + CANDIDATE_READ_ERROR` | оставить admission закрытым; сначала проверить правильные `sqlite3.Row` и exact-ID, затем различие JSON-state/snapshot штатным read-only методом; классифицировать `MALFORMED_JSON` / `INVALID_SHAPE` / `HASH_MISMATCH` / `UNKNOWN`, затем определить earliest durable producer event | не восстанавливать JSON догадками, не менять status, не выполнять reconcile до полной доказанности владельцев |
 | `PAPER_LEDGER_OWNER_UNRESOLVED` | read-only diff по всем pending candidates/trades/orders/commands/obligations/checkpoints/position projections через allowlisted project diagnostic; минимальный безопасный summary | нельзя считать `FLAT` по нулевой проекции или одним HTTP 200 |
 | `FLAT_AND_RECONCILIATION_PROVEN` | только уже разрешённая существующая canonical recovery в монолите, с одноразовой защищённой квитанцией | не открывать admission по GitHub записи |
 | `GITHUB_UNAVAILABLE` / `SEQUENCE_GAP` | bounded spool + degraded observability, host remains authoritative | никаких торговых действий, основанных на неполном зеркале |
@@ -68,7 +68,7 @@ PAPER Backend / Scanner / Robot / Telegram / systemd
   "robot": "READY|PAUSED|RECONCILIATION_REQUIRED|STOPPED|UNKNOWN",
   "autopilot": "OFF|ON|UNKNOWN",
   "admission": "CLOSED|OPEN|UNKNOWN",
-  "issue_code": "CANDIDATE_JSON_DECODE_ERROR",
+  "issue_code": "CANDIDATE_READ_ERROR",
   "scope": "OWNER_UNRESOLVED",
   "host_evidence_digest": "sha256-only",
   "source_complete": false,
