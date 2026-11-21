@@ -93,17 +93,18 @@ def prove_take_closed_approved(
                  and amount == 0 and sync in ("synced", "synchronized"),
                  "take_closed_account_not_flat")
 
-    # One legacy TAKE-closed owner is mandatory. At most one additional
-    # APPROVED Box candidate may coexist if the existing persisted owner
-    # predicate proves it has NEVER traded. Do not terminalize it, infer
-    # permission to admit it, or relax any account-wide exposure checks.
+    # Prove EVERY active candidate, without a fixed count. Exactly one
+    # immutable TAKE-closed owner may cross the exceptional handoff. Every
+    # other owner must be independently proven never traded by the existing
+    # durable ledger predicate. Unknown evidence blocks the WHOLE release;
+    # neither admission nor a candidate status is changed here.
     active = conn.execute(
         "SELECT candidate_id,symbol,status,approved_at_ms "
         "FROM robot_candidates WHERE trading_account_id='paper' "
         "AND (status IS NULL OR status NOT IN "
         "('BOX_PLAN_ONLY','CLOSED','EXPIRED','INVALIDATED'))"
     ).fetchall()
-    _require(len(active) in (1, 2)
+    _require(bool(active)
              and all(status == "APPROVED"
                      and isinstance(cid, str) and bool(cid)
                      and isinstance(name, str) and bool(name)
@@ -141,23 +142,22 @@ def prove_take_closed_approved(
     _require(sum(item[0] == name for item in positions) == 1,
              "take_closed_symbol_projection_ambiguous")
 
-    if len(candidates) == 2:
-        other = next(record for record in candidates if record.candidate_id != cid)
+    for other in candidates:
+        if other.candidate_id == cid:
+            continue
         other_state = other.robot_state
         other_execution = (other_state.get("execution")
                            if isinstance(other_state, Mapping) else None)
         _require(
             other.symbol != candidate.symbol
-            and other.candidate_id.startswith("box-robot-")
-            and isinstance(other_state, Mapping)
-            and other_state.get("phase") == "BOX_ENTRY_READY"
             and (other_execution is None
                  or (isinstance(other_execution, Mapping)
-                     and other_execution.get("entry_mode") is None
                      and other_execution.get("emergency_close_pending") is not True
-                     and other_execution.get("emergency_close_intent") is None))
+                     and other_execution.get("emergency_close_intent") is None
+                     and other_execution.get("emergency_close_outcome") is None
+                     and other_execution.get("protected_postfill_recovery") is None))
             and store.prove_approved_candidate_never_traded(other),
-            "take_closed_other_box_never_traded_unproven",
+            "take_closed_other_owner_not_proven_never_traded",
         )
     for table, condition in (
         ("robot_trades", "exit_time_ms IS NULL"),
