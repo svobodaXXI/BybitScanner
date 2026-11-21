@@ -394,7 +394,7 @@ def _format_quantity(value: Any) -> str:
 
 def _signed_usdt(value: Decimal) -> str:
     sign = "+" if value >= 0 else "-"
-    return f"{sign}{format_price(abs(value))} USDT"
+    return f"{sign}{abs(value):.2f} USDT"
 
 
 def format_trade_result(view: PositionView) -> str:
@@ -414,7 +414,7 @@ def format_trade_result(view: PositionView) -> str:
         if trade.entry_quantity is not None and trade.average_entry is not None else None
     )
     net_percent = f"{net / notional * 100:+.2f}%" if notional else "—"
-    return f"Итог: {_signed_usdt(net)} ({net_percent}) (комиссия: {format_price(fees)} USDT)"
+    return f"Итог: {_signed_usdt(net)} ({net_percent}) (комиссия: {fees:.2f} USDT)"
 
 
 def _signed_2dp(value: Decimal, suffix: str) -> str:

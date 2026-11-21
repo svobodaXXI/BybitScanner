@@ -130,13 +130,13 @@ class FormatPositionCardTests(unittest.TestCase):
         self.assertEqual(card.splitlines()[:3], [
             "SAGAUSDT · LONG",
             "Нисходящий клин",
-            "Итог: -0.0526 USDT (-2.07%) (комиссия: 0.0026 USDT)",
+            "Итог: -0.05 USDT (-2.07%) (комиссия: 0.00 USDT)",
         ])
         self.assertNotIn("Статус: закрыта", card)
         self.assertNotIn("Паттерн:", card)
         self.assertNotIn("Выход:", card)
         # (-0.05 - 0.0026) / (100 * 0.0254) * 100 = -2.07%.
-        self.assertIn("Итог: -0.0526 USDT (-2.07%) (комиссия: 0.0026 USDT)", card)
+        self.assertIn("Итог: -0.05 USDT (-2.07%) (комиссия: 0.00 USDT)", card)
         self.assertNotIn("до комиссий", card)
         self.assertNotIn("после комиссий", card)
         self.assertNotIn("PnL:", card)
@@ -160,7 +160,7 @@ class FormatPositionCardTests(unittest.TestCase):
                 card = format_position_card(view).splitlines()
                 self.assertEqual(card[0], "SAGAUSDT · LONG")
                 self.assertEqual(card[1], label)
-                self.assertTrue(card[2].startswith("Итог: -0.0526 USDT"))
+                self.assertTrue(card[2].startswith("Итог: -0.05 USDT"))
                 self.assertNotIn("Статус: закрыта", "\n".join(card))
                 self.assertNotIn("Паттерн:", "\n".join(card))
 
@@ -341,7 +341,7 @@ class LoadPositionViewTests(unittest.TestCase):
                 self.assertEqual([(m.side, m.filled) for m in view.markers],
                                  [("Buy", True), ("Buy", True), ("Sell", True)])
                 self.assertIn(
-                    "Итог: -0.0526 USDT (-2.07%) (комиссия: 0.0026 USDT)",
+                    "Итог: -0.05 USDT (-2.07%) (комиссия: 0.00 USDT)",
                     format_position_card(view),
                 )
 
