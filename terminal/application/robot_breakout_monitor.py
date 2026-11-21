@@ -2185,44 +2185,6 @@ class RobotBreakoutMonitor:
             )
             return False
 
-        # A post-fill R/R shortfall is an ECONOMICS exception, not an
-        # INITIAL_PROTECTION_FAILURE. Both STOP/TAKE submit receipts and the
-        # current full-position protection projection must agree before a
-        # below-minimum fill may remain managed as an actual Robot trade.
-        # Missing/contradictory protection still takes the emergency path.
-        protection = self._store().get_protection_projection(
-            PositionKey(self._account_id, Category.LINEAR, record.symbol, 0),
-        )
-        if (protection is None
-                or protection.stop_loss != plan.stop_price
-                or protection.take_profit != plan.take_price):
-            self._fail_closed_unprotected_fill(
-                record,
-                robot_protection.RobotProtectionError(
-                    "initial STOP/TAKE projection does not match submitted plan"
-                ),
-                entry_path=entry_path, entry_evidence=entry_evidence,
-            )
-            return False
-
-        # No competing exit obligation/unfinished command may masquerade as
-        # fully protected ownership; unresolved ambiguity keeps Admission
-        # closed without issuing a second aggregate Market close.
-        if any(
-            obligation.symbol == record.symbol
-            for obligation in self._store().load_unresolved_paper_protection_obligations(
-                self._account_id
-            )
-        ) or any(
-            cmd.trading_account_id == self._account_id and cmd.symbol == record.symbol
-            for cmd in self._store().load_unfinished_commands()
-        ):
-            self._escalate_reconciliation(
-                "ROBOT_POST_FILL_PROTECTED_STATE_UNPROVEN "
-                f"symbol={record.symbol.value} candidate_id={record.candidate_id}"
-            )
-            return False
-
         try:
             fills = tuple(
                 fill
@@ -2243,16 +2205,51 @@ class RobotBreakoutMonitor:
                 stop_price=plan.stop_price,
                 take_price=plan.take_price,
             )
-        except Exception:
-            # Fee/economics ambiguity does not revoke already confirmed STOP.
-            # Never mislabel it as unprotected and send a new full_close.
-            self._escalate_reconciliation(
-                "ROBOT_POST_FILL_ECONOMICS_UNPROVEN "
-                f"symbol={record.symbol.value} candidate_id={record.candidate_id}"
+        except Exception as error:
+            self._fail_closed_unprotected_fill(
+                record, error, entry_path=entry_path, entry_evidence=entry_evidence,
             )
             return False
 
         if actual_rr < Decimal("2"):
+            # A post-fill R/R shortfall is an ECONOMICS exception, not an
+            # INITIAL_PROTECTION_FAILURE. Both STOP/TAKE submit receipts and the
+            # current full-position protection projection must agree before a
+            # below-minimum fill may remain managed as an actual Robot trade.
+            # Missing/contradictory protection still takes the emergency path.
+            protection = self._store().get_protection_projection(
+                PositionKey(self._account_id, Category.LINEAR, record.symbol, 0),
+            )
+            if (protection is None
+                    or protection.stop_loss != plan.stop_price
+                    or protection.take_profit != plan.take_price):
+                self._fail_closed_unprotected_fill(
+                    record,
+                    robot_protection.RobotProtectionError(
+                        "initial STOP/TAKE projection does not match submitted plan"
+                    ),
+                    entry_path=entry_path, entry_evidence=entry_evidence,
+                )
+                return False
+
+            # No competing exit obligation/unfinished command may masquerade as
+            # fully protected ownership; unresolved ambiguity keeps Admission
+            # closed without issuing a second aggregate Market close.
+            if any(
+                obligation.symbol == record.symbol
+                for obligation in self._store().load_unresolved_paper_protection_obligations(
+                    self._account_id
+                )
+            ) or any(
+                cmd.trading_account_id == self._account_id and cmd.symbol == record.symbol
+                for cmd in self._store().load_unfinished_commands()
+            ):
+                self._escalate_reconciliation(
+                    "ROBOT_POST_FILL_PROTECTED_STATE_UNPROVEN "
+                    f"symbol={record.symbol.value} candidate_id={record.candidate_id}"
+                )
+                return False
+
             # Preserve the immutable entry/fill economics and record the
             # policy violation BEFORE atomically creating the real OPEN trade.
             # The candidate cannot re-enter; its exact STOP/TAKE remain active.
