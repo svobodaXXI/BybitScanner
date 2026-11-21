@@ -501,8 +501,11 @@ def audit_closed_m1_receipt_cutoff(
         if not isinstance(item, ObservedPrint):
             return result
         if start_ms <= item.timestamp_ms < end_ms:
+            # An impossible receive-before-exchange timestamp means clock
+            # provenance is unproven, even when REST and candle facts match.
             if (item.trade_id in seen or not isinstance(item.received_at_ms, int)
-                    or type(item.received_at_ms) is not int or item.received_at_ms < 0):
+                    or type(item.received_at_ms) is not int
+                    or item.received_at_ms < item.timestamp_ms):
                 return result
             seen.add(item.trade_id)
             selected.append(item)
