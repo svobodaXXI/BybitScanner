@@ -264,7 +264,7 @@ def test_take_closed_handoff_rejects_unknown_callback_outcome(tmp_path, monkeypa
     monkeypatch.setattr(owner, "_require_scanner_stopped", lambda: None)
     result = owner.run("all")
     assert not result.ok and not result.runtime_stopped
-    assert "do not retry or deploy" in result.message
+    assert "not retried; no deploy" in result.message
 
 
 def test_cli_take_closed_cannot_bundle_paper_auto_start(monkeypatch, capsys):
