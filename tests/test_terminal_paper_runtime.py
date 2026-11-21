@@ -2138,6 +2138,61 @@ def test_full_close_closes_short_without_flipping_long():
             runtime.close()
 
 
+def test_full_close_of_short_with_repeating_average_entry_and_whole_qty_step():
+    # Multi-level entry has a non-terminating weighted average. Its displayed
+    # decimal must not be used for qty * price / price round-tripping.
+    instrument = replace(
+        _instrument(),
+        symbol="SOONUSDT", base_coin="SOON",
+        min_price=Decimal("0.00001"), tick_size=Decimal("0.0001"),
+        min_order_quantity=Decimal("1"),
+        max_order_quantity=Decimal("2000"),
+        max_market_order_quantity=Decimal("2000"),
+        quantity_step=Decimal("1"),
+    )
+    book = NormalizedOrderBook(
+        symbol=Symbol("SOONUSDT"),
+        bids=(
+            PriceLevel(Price(Decimal("0.2524")), Quantity(Decimal("15"))),
+            PriceLevel(Price(Decimal("0.2523")), Quantity(Decimal("1000"))),
+        ),
+        asks=(PriceLevel(Price(Decimal("0.2525")), Quantity(Decimal("1000"))),),
+        health=BookHealth.READY,
+        received_at_ms=int(__import__("time").time() * 1000),
+        available_depth=2,
+    )
+    provider = MutableBookProvider("SOONUSDT", book)
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = PaperRuntime(
+            Path(temp) / "paper.sqlite3",
+            book_provider=provider,
+            instrument_snapshot=instrument,
+            instrument_provider=lambda symbol: replace(instrument, symbol=symbol),
+        )
+        try:
+            opened = runtime.api.market(MarketCommandRequest(
+                ClientActionId("short-repeating-price-entry"), "SOONUSDT", OrderSide.SELL,
+                VolumeRequest(VolumeUnit.USDT, Decimal("249.7785")),
+                Decimal("0.2523"), "Percent", Decimal("0.5"),
+            ))
+            assert opened.status is CommandResultStatus.COMPLETED, opened
+            state = runtime.paper_state("SOONUSDT")
+            assert (state["position_side"], state["position_quantity"]) == ("Short", "990")
+            entry = Decimal(state["average_entry"])
+            assert Decimal("990") * entry / entry < Decimal("990")
+            closed = runtime.api.full_close(FullCloseCommandRequest(
+                ClientActionId("short-repeating-price-close"), "SOONUSDT",
+            ))
+            assert closed.status is CommandResultStatus.COMPLETED, closed
+            assert runtime.paper_state("SOONUSDT")["position_side"] == "Flat"
+            fills = runtime.store.load_executions_for_symbol(
+                TradingAccountId("paper"), Symbol("SOONUSDT"),
+            )
+            assert [fill.side for fill in fills] == [OrderSide.SELL, OrderSide.BUY]
+        finally:
+            runtime.close()
+
+
 def test_robot_emergency_close_identity_reaches_both_owner_adapters():
     """Both Robot monitor entrypoints must pass the SAME deterministic identity.
     A shared action label by itself is not TradingApplication deduplication.
