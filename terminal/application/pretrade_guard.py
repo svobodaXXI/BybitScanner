@@ -195,13 +195,13 @@ class PreTradeGuard:
             reference_price, normalized_limit_price = _prices(intent, context.instrument)
             if isinstance(intent.volume, ExactQuantityIntent):
                 raw_quantity = require_positive_decimal(intent.volume.quantity, "exact quantity")
-                normalized_quantity = normalize_quantity(
-                    raw_quantity * reference_price,
-                    reference_price,
-                    context.instrument.quantity_step,
-                )[1]
-                if normalized_quantity != raw_quantity:
+                # Exact close quantity must not round-trip through a price.
+                # Decimal multiplication/division can lose a tiny fraction of
+                # a step for repeating average-entry prices, and floor below
+                # would falsely reject an otherwise step-aligned full close.
+                if raw_quantity % context.instrument.quantity_step != 0:
                     raise NormalizationError("exact quantity is not aligned to quantity step")
+                normalized_quantity = raw_quantity
             elif (
                 isinstance(intent.volume, WorkingVolumeIntent)
                 and intent.order_kind is OrderKind.MARKET
