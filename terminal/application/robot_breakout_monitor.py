@@ -2185,9 +2185,44 @@ class RobotBreakoutMonitor:
             )
             return False
 
-        # The admitted LIMIT price is not the actual fill price. Keep the
-        # confirmed STOP/TAKE live while validating actual fee-aware RR.
-        # Reuse idempotent emergency-close recovery until authoritative FLAT.
+        # A post-fill R/R shortfall is an ECONOMICS exception, not an
+        # INITIAL_PROTECTION_FAILURE. Both STOP/TAKE submit receipts and the
+        # current full-position protection projection must agree before a
+        # below-minimum fill may remain managed as an actual Robot trade.
+        # Missing/contradictory protection still takes the emergency path.
+        protection = self._store().get_protection_projection(
+            PositionKey(self._account_id, Category.LINEAR, record.symbol, 0),
+        )
+        if (protection is None
+                or protection.stop_loss != plan.stop_price
+                or protection.take_profit != plan.take_price):
+            self._fail_closed_unprotected_fill(
+                record,
+                robot_protection.RobotProtectionError(
+                    "initial STOP/TAKE projection does not match submitted plan"
+                ),
+                entry_path=entry_path, entry_evidence=entry_evidence,
+            )
+            return False
+
+        # No competing exit obligation/unfinished command may masquerade as
+        # fully protected ownership; unresolved ambiguity keeps Admission
+        # closed without issuing a second aggregate Market close.
+        if any(
+            obligation.symbol == record.symbol
+            for obligation in self._store().load_unresolved_paper_protection_obligations(
+                self._account_id
+            )
+        ) or any(
+            cmd.trading_account_id == self._account_id and cmd.symbol == record.symbol
+            for cmd in self._store().load_unfinished_commands()
+        ):
+            self._escalate_reconciliation(
+                "ROBOT_POST_FILL_PROTECTED_STATE_UNPROVEN "
+                f"symbol={record.symbol.value} candidate_id={record.candidate_id}"
+            )
+            return False
+
         try:
             fills = tuple(
                 fill
@@ -2208,15 +2243,42 @@ class RobotBreakoutMonitor:
                 stop_price=plan.stop_price,
                 take_price=plan.take_price,
             )
-            if actual_rr < Decimal("2"):
-                raise robot_protection.RobotProtectionError(
-                    f"POST_FILL_NET_RR_BELOW_2 rr={actual_rr}"
-                )
-        except Exception as error:
-            self._fail_closed_unprotected_fill(
-                record, error, entry_path=entry_path, entry_evidence=entry_evidence,
+        except Exception:
+            # Fee/economics ambiguity does not revoke already confirmed STOP.
+            # Never mislabel it as unprotected and send a new full_close.
+            self._escalate_reconciliation(
+                "ROBOT_POST_FILL_ECONOMICS_UNPROVEN "
+                f"symbol={record.symbol.value} candidate_id={record.candidate_id}"
             )
             return False
+
+        if actual_rr < Decimal("2"):
+            # Preserve the immutable entry/fill economics and record the
+            # policy violation BEFORE atomically creating the real OPEN trade.
+            # The candidate cannot re-enter; its exact STOP/TAKE remain active.
+            state = dict(record.robot_state)
+            execution_state = dict(state.get("execution") or {})
+            execution_state["post_fill_policy_exception"] = {
+                "reason": "POST_FILL_NET_RR_BELOW_2",
+                "actual_net_rr": str(actual_rr),
+                "stop_price": str(plan.stop_price),
+                "take_price": str(plan.take_price),
+            }
+            state["execution"] = execution_state
+            try:
+                record = self._store().save_robot_candidate_state(
+                    record.candidate_id,
+                    status=record.status,
+                    robot_state=state,
+                    expected_revision=record.state_revision,
+                    updated_at_ms=self._now_ms(),
+                )
+            except Exception:
+                self._escalate_reconciliation(
+                    "ROBOT_POST_FILL_POLICY_EXCEPTION_NOT_DURABLE "
+                    f"symbol={record.symbol.value} candidate_id={record.candidate_id}"
+                )
+                return False
 
         now_ms = self._now_ms()
         self._store().create_robot_trade(
