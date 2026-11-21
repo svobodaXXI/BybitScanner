@@ -123,7 +123,7 @@ def test_wedge_partial_reduce_requires_exact_robot_origin_and_quantity():
         e for e in snapshot.executions if e.dedup_key.exec_id.value == "reduce-2"
     )
     altered_origin = replace(
-        snapshot, origins={**snapshot.origins, reduce_exec.dedup_key: Origin.MANUAL},
+        snapshot, origins={**snapshot.origins, reduce_exec.dedup_key: Origin.TERMINAL_MANUAL},
     )
     with pytest.raises(WedgeLineageUnproven, match="wedge_mixed_controller"):
         project_selected_paper_wedge(altered_origin, **kwargs)
