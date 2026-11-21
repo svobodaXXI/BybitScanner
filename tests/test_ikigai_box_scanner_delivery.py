@@ -43,26 +43,26 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
             "source_id": "double-reversal:" + "a" * 64,
             "symbol": "TESTUSDT", "source_timeframe": "5",
             "pattern": "Double Top", "direction": "SHORT",
-            "confirmed_at_ms": 100, "expires_at_ms": 700,
+            "confirmed_at_ms": 300_000, "expires_at_ms": 900_000,
         }
         with patch.object(box, "build_auxiliary_reversal_evidence", return_value=reversal):
             note = box._box_auxiliary_note(
-                "TESTUSDT", "5", closed, "SHORT", now_ms=200,
+                "TESTUSDT", "5", closed, "SHORT", now_ms=600_000,
             )
             self.assertIn("Двойная вершина", note)
             self.assertEqual(
                 box._box_auxiliary_note(
-                    "TESTUSDT", "5", closed, "LONG", now_ms=200,
+                    "TESTUSDT", "5", closed, "LONG", now_ms=600_000,
                 ), "",
             )
             self.assertEqual(
                 box._box_auxiliary_note(
-                    "OTHERUSDT", "5", closed, "SHORT", now_ms=200,
+                    "OTHERUSDT", "5", closed, "SHORT", now_ms=600_000,
                 ), "",
             )
             self.assertEqual(
                 box._box_auxiliary_note(
-                    "TESTUSDT", "5", closed, "SHORT", now_ms=700,
+                    "TESTUSDT", "5", closed, "SHORT", now_ms=900_000,
                 ), "",
             )
         self.assertEqual(box.box_robot_formation(closed, formation), frozen_before)
@@ -615,3 +615,90 @@ class IkigaiBoxOwnerRobotAdmissionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class BoxFrozenEditorSourceTests(unittest.TestCase):
+    def test_confirmed_and_watch_snapshots_use_exact_first_impulse(self):
+        from signal_geometry_producer import build_box_geometry_snapshot
+        source = _candles()
+        closed = source.iloc[:-1]
+        confirmed = detect_ikigai_box(closed)
+        self.assertIsNotNone(confirmed)
+        frames, _ = _terminal_wick_two_impulses(second=False)
+        frames["time"] = [
+            1_790_000_000_000 + i * 3_600_000 for i in range(len(frames))
+        ]
+        watch = next(w for w in detect_ikigai_box_watches(frames)
+                     if w.anchor_identity == ("SHORT", 20, 23))
+        for frame, formation, tf in ((closed, confirmed, "5"), (frames, watch, "60")):
+            with self.subTest(phase=tf):
+                snapshot = build_box_geometry_snapshot(
+                    "source-original:" + "a" * 24, "TESTUSDT", tf, formation, frame,
+                )
+                self.assertIsNotNone(snapshot)
+                self.assertEqual(snapshot["bars"][-1]["open_time_ms"],
+                                 int(frame.iloc[formation.as_of_index]["time"]))
+                self.assertEqual(
+                    [b["boundary_id"] for b in snapshot["boundaries"]],
+                    ["box_first_impulse", "box_fibonacci_1_0",
+                     "box_fibonacci_1_618", "box_fibonacci_2_618"],
+                )
+                self.assertEqual(
+                    snapshot["boundaries"][0]["anchors"][0]["price"],
+                    formation.anchor_start_price,
+                )
+                self.assertEqual(
+                    snapshot["boundaries"][0]["anchors"][1]["price"],
+                    formation.anchor_end_price,
+                )
+
+    def test_owner_confirmed_box_editor_link_carries_archived_source(self):
+        source = _candles()
+        with tempfile.TemporaryDirectory() as root, patch.object(
+            box, "get_telegram_chat_ids", return_value=("owner", "guest"),
+        ), patch.object(box, "get_telegram_owner_chat_id", return_value="owner"), patch.object(
+            box, "load_memory", return_value={},
+        ), patch.object(box, "save_memory"), patch.object(
+            box, "render_ikigai_box_chart",
+        ), patch.object(box, "archive_source_chart",
+                         return_value=("a" * 24, b"chart")) as archive, patch.object(
+            box, "send_message", return_value={"ok": True},
+        ), patch.object(box, "send_photo", return_value={"ok": True}) as photo:
+            self.assertTrue(box.send_ikigai_box_observation(
+                "TESTUSDT", source, timeframe="5", chart_dir=root,
+            ))
+        self.assertEqual(archive.call_args.kwargs["pattern"], "Ikigai Box")
+        self.assertIsNotNone(archive.call_args.kwargs["box_formation"])
+        self.assertEqual(photo.call_count, 2)
+        owner_markup = photo.call_args_list[0].kwargs["reply_markup"]
+        guest_markup = photo.call_args_list[1].kwargs["reply_markup"]
+        owner_editor = [b for row in owner_markup["inline_keyboard"] for b in row
+                        if b.get("text") == "✏️ Редактор"]
+        self.assertEqual(len(owner_editor), 1)
+        self.assertIn("a" * 24, str(owner_editor[0]))
+        self.assertFalse(any(b.get("text") == "✏️ Редактор"
+                             for row in guest_markup["inline_keyboard"] for b in row))
+
+    def test_watch_missing_archive_omits_editor_instead_of_live_fallback(self):
+        frames, _ = _terminal_wick_two_impulses(second=False)
+        frames["time"] = [
+            1_790_000_000_000 + i * 3_600_000 for i in range(len(frames))
+        ]
+        watch = next(w for w in detect_ikigai_box_watches(frames)
+                     if w.anchor_identity == ("SHORT", 20, 23))
+        live = pd.concat([frames, frames.iloc[[-1]]], ignore_index=True)
+        with tempfile.TemporaryDirectory() as root, patch.object(
+            box, "get_telegram_chat_ids", return_value=("owner",),
+        ), patch.object(box, "get_telegram_owner_chat_id", return_value="owner"), patch.object(
+            box, "load_memory", return_value={},
+        ), patch.object(box, "save_memory"), patch.object(
+            box, "render_ikigai_box_chart",
+        ), patch.object(box, "archive_source_chart",
+                         return_value=(None, None)), patch.object(
+            box, "send_message", return_value={"ok": True},
+        ), patch.object(box, "send_photo", return_value={"ok": True}) as photo:
+            self.assertTrue(box.send_ikigai_box_watch_observation(
+                "TESTUSDT", live, watch, timeframe="60", chart_dir=root,
+            ))
+        buttons = [b for row in photo.call_args.kwargs["reply_markup"]["inline_keyboard"]
+                   for b in row]
+        self.assertFalse(any(b.get("text") == "✏️ Редактор" for b in buttons))
