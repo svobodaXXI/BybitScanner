@@ -83,6 +83,39 @@ class PublicTradeObservationTests(unittest.TestCase):
         self.assertTrue(o.observe(frame(trade("fresh", 2000, sequence=1))))
         self.assertEqual(o.snapshot()["last_cross_sequence"], 1)
 
+    def test_invalid_frame_fence_resets_only_for_new_source_generation(self):
+        """Old malformed frames cannot permanently poison a fresh source."""
+        for reset in ("mark_gap", "enable_certification_buffer"):
+            with self.subTest(reset=reset):
+                source = PublicTradeObservation("BTCUSDT")
+                self.assertTrue(source.observe(
+                    frame(trade("old", 120_000, sequence=100)),
+                    received_at_ms=120_010,
+                ))
+                self.assertFalse(source.observe(
+                    frame(trade("bad", 120_001, side="UNKNOWN", sequence=101)),
+                    received_at_ms=120_020,
+                ))
+                stale = source.snapshot()
+                self.assertEqual(stale["invalid_frames"], 1)
+                self.assertEqual(stale["observed_prints"], 1)
+                getattr(source, reset)()
+                fresh = source.snapshot()
+                self.assertEqual(fresh["generation"], stale["generation"] + 1)
+                self.assertEqual(fresh["invalid_frames"], 0)
+                self.assertEqual(fresh["observed_prints"], 0)
+                self.assertTrue(fresh["gap_or_truncation"])
+                self.assertFalse(fresh["order_authority"])
+                self.assertTrue(source.observe(
+                    frame(trade("fresh", 180_000, sequence=102)),
+                    received_at_ms=180_010,
+                ))
+                self.assertEqual(
+                    [row.trade_id for row in source.snapshot()["prints"]],
+                    ["fresh"],
+                )
+                self.assertEqual(source.snapshot()["invalid_frames"], 0)
+
     def test_missing_sequence_is_fail_closed_not_assumed_complete(self):
         o = PublicTradeObservation("BTCUSDT")
         item = trade()
