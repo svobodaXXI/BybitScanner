@@ -52,3 +52,24 @@
 Обязательный регрессионный пример: `SOONUSDT emergency_close_pending / RECONCILIATION_REQUIRED` при существующей защищённой PAPER SHORT-позиции и необходимости обновить Backend. Цель — не разовый SOONUSDT workaround, а отсутствие циклической зависимости «для восстановления нужна новая версия, но установить её запрещает старое состояние» при сохранении safety-гарантий.
 
 **Критерий результата:** локальная неисправность не останавливает независимую работу Робота и монолита; если локальность не доказана, опасные зависимые операции остаются закрытыми, а управляющий контур продолжает безопасное восстановление. Это требование, не утверждение о текущем runtime.
+
+
+## Практики зрелых систем — выборочное заимствование, не миграция платформы
+
+Это **архитектурные аналоги**, а не требование устанавливать Kubernetes, Azure или Temporal. Приоритет существующим механизмам BybitScanner и минимальному изменению их границ.
+
+| Практика и первоисточник | Что именно перенимаем | Куда встраиваем без нового стека |
+|---|---|---|
+| [Kubernetes Controllers](https://kubernetes.io/docs/concepts/architecture/controller/) — reconciliation loop | Проверяем наблюдаемое состояние против явно заданного intent; применяем только безопасную разницу; повторное выполнение сходится к тому же результату | Уже существующий Runtime Intent Reconciler; для торговых переходов — его канонические Robot/protection/ownership gates |
+| [Azure Bulkhead](https://learn.microsoft.com/en-us/azure/architecture/patterns/bulkhead) — ограничение blast radius | Локальный отказ не лишает ресурса независимые операции; явные границы отказа и общего ресурса | Существующий общий Robot runtime: логический per-symbol/per-obligation блокер, **не** второй процесс торговли/журнал/менеджер защиты; общие лимиты счёта учитываются отдельно |
+| [Temporal Durable Execution](https://docs.temporal.io/durable-execution) и [идемпотентные Activities](https://docs.temporal.io/activities) | Сохраняем прогресс операции, различаем retryable/non-retryable, повторяем по стабильному ключу без двойных побочных действий | Существующие UUID owner requests, server-side durable journal и receipt/resume в `tools.vps_owner_control` → `tools.paper_maintenance`; **не** внедряем Temporal |
+| [systemd.service](https://www.freedesktop.org/software/systemd/man/257/systemd.service.html) — bounded restart policy | Автовосстановление сервисов с ограничениями на повторы и частоту | Только для сервисов, чья безопасная перезагрузка доказана; backend с активными обязательствами **не** перезапускается слепо |
+
+### Порядок внедрения (строго по доказанным зависимостям)
+
+1. **Вычислить blast radius в существующем owner/reconciliation path.** На входе blocker identity, affected symbols/operations, перечень разделяемых зависимостей (account risk, protection, journal, worker, DB identity). На выходе — разрешённое множество действий и доказательства. Отсутствие доказательства локальности блокирует зависимые новые входы, но не независимый контроль и релизную публикацию.
+2. **Продолжать только доказанно независимое.** Для `SOONUSDT` quarantine должен запрещать связанные новые entries/retries без потери наблюдения и защиты уже открытого. Незатронутые symbols допускаются только при подтверждённых общих risk/protection invariants. Это **не** автоматическое снятие имеющегося глобального `RECONCILIATION_REQUIRED` до появления такого доказательства.
+3. **Встроить recovery и release-handover в текущий монолит.** Один durable UUID, идемпотентные этапы, сохранение прогресса при SSH disconnect и без второго владельца Backend. Публикация GitHub независимо от VPS gate; защищённый deploy отдельно и только с owner approval.
+4. **Доказать поведение узкими проверками**, прежде чем менять runtime: (а) локальный blocked symbol + независимый symbol при доказанной общей безопасности; (б) неизвестное общее exposure/ownership — новые входы закрыты; (в) protected open position + новый release — без unsafe stop/restart; (г) повторённый UUID/SSH reconnect — нет дублей; (д) сбой Telegram — не останавливает независимые допустимые компоненты. Один минимальный вертикальный кодовый slice за раз.
+
+**Отбрасываем как чрезмерное усложнение:** новый supervisor/controller, Kubernetes, Temporal server, второй Robot runtime, второй execution/protection journal, отдельную quarantine DB, универсальный retry бесконечными циклами, автоматическую торговлю без owner intent. Используем уже работающие средства и усиливаем только доказанную границу отказа.
