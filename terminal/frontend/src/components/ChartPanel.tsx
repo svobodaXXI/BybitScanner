@@ -21,6 +21,7 @@ import { DrawingClearConfirmation } from "../chart/DrawingClearConfirmation";
 import {
   DrawingHistory,
   clearDrawingHistory,
+  originalEditableDrawings,
   type DrawingObject,
   type DrawingTool,
   deserializeDrawings,
@@ -389,11 +390,22 @@ export function ChartPanel({
     }
   };
   const commit = useCallback((next: DrawingObject[]) => {
-    historyRef.current.commit(next);
-    setDrawings(next);
+    const previous = historyRef.current.current;
+    const updated = historyRef.current.commit(next);
+    if (updated === previous) return;
+    setDrawings(updated);
     if (!newSignalMode) markReviewEdited();
     else setProposalStatus("");
   }, [newSignalMode, markReviewEdited]);
+
+  const restoreOriginalGeometry = () => {
+    if (!editorMode || !signalIdentity || newSignalMode || !referenceDrawings.length ||
+        reviewPending || proposalPending) return;
+    // Changes only this local drawing history. Saving requires a separate,
+    // explicit owner action via "Передать исправление".
+    commit(originalEditableDrawings(referenceDrawings));
+    setSelectedId(null);
+  };
 
   const switchSignalDrawingMode = () => {
     if (reviewPending || proposalPending) return;
@@ -1222,6 +1234,13 @@ export function ChartPanel({
                 </button>}
               </div>
             )}
+            {!ownerChartMode && !newSignalMode && referenceDrawings.length > 0 && (
+              <button type="button" className="editor-restore-original"
+                disabled={reviewPending || proposalPending}
+                onClick={restoreOriginalGeometry}>
+                Вернуть исходную геометрию
+              </button>
+            )}
           </div>
         )}
         <DrawingToolbar
@@ -1230,6 +1249,7 @@ export function ChartPanel({
           selected={selectedId !== null}
           onTool={setTool}
           onMagnet={() => setMagnet((v) => !v)}
+          canUndo={historyRef.current.canUndo()}
           onUndo={() => {
             const previous = drawings;
             const undone = historyRef.current.undo();

@@ -122,9 +122,8 @@ def project_selected_paper_wedge(
     allocations = episode.allocations
     if (len(allocations) < 2 or allocations[0].role is not AllocationRole.OPEN
             or allocations[-1].role is not AllocationRole.CLOSE
-            or any(a.role not in {AllocationRole.OPEN, AllocationRole.INCREASE, AllocationRole.CLOSE}
-                   for a in allocations)
-            or any(a.role is AllocationRole.CLOSE for a in allocations[:-1])):
+            or any(a.role not in {AllocationRole.INCREASE, AllocationRole.REDUCE}
+                   for a in allocations[1:-1])):
         _deny("wedge_episode_allocations_unproven")
     if any(snapshot.origins.get(a.execution_key) is not Origin.ROBOT for a in allocations):
         _deny("wedge_mixed_controller")
@@ -144,7 +143,25 @@ def project_selected_paper_wedge(
                 or execution.quantity.value != a.quantity or execution.fee != a.fee):
             _deny("wedge_partial_or_unmatched_execution")
         rows.append((a, execution))
-    opening_order_ids = {e.order_id.value for a, e in rows[:-1]}
+    # A Wedge fee-aware BE partial is a REDUCE, not another ENTRY order.
+    # Prove the exact reduction against the outstanding quantity before
+    # checking candidate identity; otherwise its close order corrupts lineage.
+    remaining_quantity = Decimal(0)
+    for allocation, _ in rows:
+        if allocation.role in {AllocationRole.OPEN, AllocationRole.INCREASE}:
+            remaining_quantity += allocation.quantity
+        else:
+            remaining_quantity -= allocation.quantity
+        if (remaining_quantity < 0 or
+                (remaining_quantity == 0 and allocation.role is not AllocationRole.CLOSE)):
+            _deny("wedge_quantity_lifecycle_unproven")
+    if remaining_quantity != 0:
+        _deny("wedge_quantity_lifecycle_unproven")
+    opening_rows = [
+        (allocation, execution) for allocation, execution in rows
+        if allocation.role in {AllocationRole.OPEN, AllocationRole.INCREASE}
+    ]
+    opening_order_ids = {e.order_id.value for _, e in opening_rows}
     if not opening_order_ids:
         _deny("wedge_entry_missing")
     # Robot origin alone never proves candidate ownership. Both a persisted
@@ -230,7 +247,7 @@ def project_selected_paper_wedge(
         "pnl_usdt": str(episode.realized_price_pnl - episode.execution_fees),
         "execution_allocations": fills,
         "entry_risk": _verified_wedge_entry_risk(
-            trade, rows[:-1], direction=trade["direction"],
+            trade, opening_rows, direction=trade["direction"],
         ),
         "decisions_coverage": "NOT_PROVIDED",
         "market_candles_coverage": "NOT_PROVIDED",

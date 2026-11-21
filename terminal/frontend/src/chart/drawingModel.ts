@@ -119,27 +119,54 @@ export function rulerMeasurement(
   };
 }
 
+/** Reset only editable lines from the verified immutable Scanner reference. */
+export function originalEditableDrawings(reference: readonly DrawingObject[]): DrawingObject[] {
+  return reference.map((drawing) => ({
+    ...drawing,
+    id: `editable:${drawing.id}`,
+    anchors: drawing.anchors.map((anchor) => ({ ...anchor })),
+    style: { color: "#e0b45b", lineWidth: 1.5 },
+    locked: false,
+    hidden: false,
+    referenceStroke: undefined,
+  }));
+}
+
+const snapshotDrawings = (drawings: readonly DrawingObject[]): DrawingObject[] =>
+  drawings.map((drawing) => ({
+    ...drawing,
+    anchors: drawing.anchors.map((anchor) => ({ ...anchor })),
+    style: { ...drawing.style },
+  }));
+
 export class DrawingHistory {
   private past: DrawingObject[][] = [];
   private future: DrawingObject[][] = [];
-  constructor(public current: DrawingObject[] = []) {}
+  public current: DrawingObject[];
+  constructor(initial: DrawingObject[] = []) {
+    this.current = snapshotDrawings(initial);
+  }
+  canUndo() { return this.past.length > 0; }
   commit(next: DrawingObject[]) {
-    this.past.push(this.current);
-    this.current = next;
+    // One pointer gesture / completed drawing = one reversible step.
+    // Ignore ineffective gestures rather than inserting phantom Undo steps.
+    if (JSON.stringify(next) === JSON.stringify(this.current)) return this.current;
+    this.past.push(snapshotDrawings(this.current));
+    this.current = snapshotDrawings(next);
     this.future = [];
     return this.current;
   }
   undo() {
     const value = this.past.pop();
     if (!value) return this.current;
-    this.future.push(this.current);
+    this.future.push(snapshotDrawings(this.current));
     this.current = value;
     return this.current;
   }
   redo() {
     const value = this.future.pop();
     if (!value) return this.current;
-    this.past.push(this.current);
+    this.past.push(snapshotDrawings(this.current));
     this.current = value;
     return this.current;
   }
