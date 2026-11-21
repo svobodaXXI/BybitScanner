@@ -2878,7 +2878,7 @@ def _stop_exact_installed_paper_once(
 def main(argv=None) -> int:
     parser = _MaintenanceParser(description="Fail-closed one-action PAPER maintenance")
     parser.add_argument("sha")
-    parser.add_argument("--action", choices=("stop", "start", "update", "update-and-start", "provision-owner-pc"),
+    parser.add_argument("--action", choices=("stop", "start", "update", "update-and-start", "provision-owner-pc", "telegram-recover"),
                         help="single owner action: canonical STOP, PAPER START, or exact stable UPDATE")
     parser.add_argument("--env-file", type=Path, default=Path("/etc/bybitscanner/paper.env"))
     parser.add_argument("--wait-seconds", type=float, default=0)
@@ -2918,6 +2918,26 @@ def main(argv=None) -> int:
                         or args.proven_one_flat_orphan_handoff or args.resume_one_flat_from_prior_stop
                         or args.expected_old_backend):
                     parser.error("one action cannot combine with legacy lifecycle flags")
+                if args.action == "telegram-recover":
+                    # One owner-controlled action: no global resume, gateway, release
+                    # switch, STOP, reconcile or trading mutation.
+                    from tools.telegram_only_recover import (
+                        TelegramRecoveryBlocked, recover,
+                    )
+                    try:
+                        result = recover(args.sha)
+                    except TelegramRecoveryBlocked as exc:
+                        print("BLOCKED: telegram_only_recovery:"
+                              + str(exc)[:160] + "; no retry")
+                        return 2
+                    except Exception as exc:
+                        # Transport, release identity, JSON and other unknown
+                        # errors must never trigger a full resume fallback.
+                        print("BLOCKED: telegram_only_recovery_unproven:"
+                              + type(exc).__name__ + "; no retry")
+                        return 2
+                    print("READY: " + result)
+                    return 0
                 if args.action == "stop":
                     status = _stop_exact_installed_paper_once(args.sha, env_file=args.env_file)
                     print(status)
