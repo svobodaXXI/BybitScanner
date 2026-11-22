@@ -5323,6 +5323,8 @@ def create_configured_paper_runtime(
     robot_latest_geometry_index_provider=None,
     robot_tick_interval_s: float = DEFAULT_ROBOT_TICK_INTERVAL_S,
     wedge_be_auto_paper_enabled: bool = False,
+    impulse_early_paper_enabled: bool = False,
+    impulse_fade_paper_enabled: bool = False,
 ) -> PaperRuntime:
     return PaperRuntime(
         database_path,
@@ -5356,6 +5358,8 @@ def create_configured_paper_runtime(
         robot_latest_geometry_index_provider=robot_latest_geometry_index_provider,
         robot_tick_interval_s=robot_tick_interval_s,
         wedge_be_auto_paper_enabled=wedge_be_auto_paper_enabled,
+        impulse_early_paper_enabled=impulse_early_paper_enabled,
+        impulse_fade_paper_enabled=impulse_fade_paper_enabled,
     )
 
 
@@ -5467,6 +5471,10 @@ def main() -> None:
             rest_session=rest_session,
             hub=hub,
         )
+        # Independent opt-ins: passive source alone does NOT enable new entries.
+        from terminal.market_data.pattern_flow_observer import (
+            PatternFlowObserver, pattern_flow_enabled, impulse_early_paper_enabled,
+        )
         runtime = SerializedPaperRuntime(lambda: create_configured_paper_runtime(
             database_path,
             book_provider=book_provider,
@@ -5487,6 +5495,9 @@ def main() -> None:
             # No separate owner env flag or VPS Manager activation action.
             # Actual trading still requires canonical protected PAPER admission/start.
             wedge_be_auto_paper_enabled=True,
+            impulse_early_paper_enabled=impulse_early_paper_enabled(),
+            # Dynamic fade belongs to the same explicitly opted-in Wedge release.
+            impulse_fade_paper_enabled=impulse_early_paper_enabled(),
         ))
         initial_market.add_update_listener(
             WorkspaceMarketDataManager._WORKSPACE_LISTENER, runtime.enqueue_book_update,
@@ -5511,7 +5522,25 @@ def main() -> None:
         runtime.call(lambda owned: owned.bind_autopilot_protection_health(
             make_autopilot_protection_health(robot_protection_coverage, runtime),
         ))
+        # An internal, read-only observer of EXISTING hub subscriptions only.
+        # Zero extra WebSocket subscriptions, candidates or order authority.
+        # It reads APPROVED candidate identities from SQLite mode=ro; REST
+        # certification runs off the serialized PAPER owner. The Robot's
+        # canonical pre-entry gates remain the sole trade authority.
+        # DEFAULT OFF: even passive flow evidence can DEFER a real entry.
+        # It must never alter PAPER decisions without an independent,
+        # owner-approved activation. OFF creates no session/thread/DB reads.
+        pattern_flow_observer = None
+        if pattern_flow_enabled():
+            pattern_flow_observer = PatternFlowObserver(
+                hub, create_bybit_rest_session(), database_path,
+            )
+            runtime.call(lambda owned: owned.bind_robot_pattern_flow_observer(
+                pattern_flow_observer.get,
+            ))
         runtime.start_robot_monitor()
+        if pattern_flow_observer is not None:
+            pattern_flow_observer.start()
 
         server.operator_token = os.environ.get("BYBITSCANNER_OPERATOR_TOKEN", "").strip()
         server.autopilot_owner_token = os.environ.get(AUTOPILOT_OWNER_TOKEN_ENV, "").strip()
@@ -5538,6 +5567,8 @@ def main() -> None:
             print("Bybit public market data streams: active workspace symbol (initial ONGUSDT)")
             server.serve_forever()
         finally:
+            if pattern_flow_observer is not None:
+                pattern_flow_observer.close()
             robot_protection_coverage.close()
             market_data.close()
             runtime.close()

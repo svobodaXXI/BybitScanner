@@ -26,6 +26,7 @@ from robot_restart_recovery import (
 )
 from scanner_geometry_cursor import default_scanner_geometry_cursor_provider
 from terminal.domain.models import Category, PositionKey, PositionSide, TradingAccountId
+from terminal.application.robot_trade_ledger import prove_wedge_partial_remainder
 from terminal.persistence.sqlite_store import (
     ConcurrentUpdate,
     PersistenceError,
@@ -416,6 +417,15 @@ class RobotRecoveryCoordinator:
                 else PositionSide.SHORT if trade.direction == "SHORT"
                 else None
             )
+            execution = (candidate.robot_state or {}).get("execution") or {}
+            if (isinstance(execution, Mapping)
+                    and "wedge_be_partial_intent" in execution):
+                prove_wedge_partial_remainder(
+                    self._store, trade, position,
+                    self._store.get_protection_projection(position_key),
+                )
+                continue
+
             if (
                 expected_side is None
                 or position is None

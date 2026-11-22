@@ -96,6 +96,89 @@ amendment resolves the conflict.
 chooses a setup and creates intent. Risk admits or rejects exposure. Execution determines actual order and fill
 behavior. No detector owns sizing, STOP, TAKE or execution, and no strategy relabels geometric identity.
 
+
+## 1.3 Universal pattern-bound entry confluence — «Охота за импульсом» (owner 2026-11-19)
+
+**`ACCEPTED DESIGN` — ONLY PATTERNS EMIT SIGNALS.** The existing approved canonical
+pattern is the *only* trading signal and identity. A background Robot entry-quality
+observer evaluates optional auxiliary evidence for that **same** pattern and may
+eventually help choose a better entry moment; no auxiliary factor can produce a
+separate signal, strategy, candidate, Telegram signal card, order, position,
+independent entry path, or new Scanner → Robot handoff. This applies to all
+supported host patterns, including Wedge, Ikigai Box, L-shape, Mirror and
+Triangle, and future patterns after their own strategy contracts exist.
+Legacy Double Top/Bottom standalone execution remains prohibited (PR #1153).
+
+**`ACCEPTED DESIGN` — a common reusable evidence catalogue (independent
+arguments, not jointly mandatory gates):**
+
+* **Executed public-trade tape:** buy/sell aggressor pressure, acceleration,
+  signed imbalance, change in impact, and fading of opposing pressure; label
+  absorption/refill only from complete verified L2 events, not inference.
+* **Impulse fading/exhaustion:** observable slowdown or inability of opposing
+  movement to continue; this is directional context, not a guaranteed reversal.
+* **Exchange liquidations:** causal symbol/side/event/receipt evidence when
+  actually available, not a synthetic surrogate or proof of future direction.
+* **Open interest (OI):** rising/falling/flat open-contract count and its change
+  as known at decision time; OI cannot identify net LONG versus SHORT openings
+  on its own. Missing or stale values remain UNKNOWN.
+* **ADX/DMI and leading observations:** Wilder +DI, −DI and ADX on closed bars,
+  crossings +DI↔−DI, each DI↔ADX and each DI↔numerical 20; their directions,
+  same-bar/near-bar clusters, and *observed* convergence before a future cross
+  as a testable precursor. Do not use a future crossing before it occurs; DI
+  crossing numerical 20 differs from ADX itself exceeding 20.
+* **Reversal structures and candles:** Double Top/Bottom (auxiliary structures),
+  bullish/bearish engulfing, hammer, hanging man, Morning/Evening Star and
+  other **versioned, context-matched** reversal evidence. Doji is an added
+  **indecision-only** candle observation, never directional confirmation alone.
+  These observations enhance existing host entries only and never become
+  independent trading signal families or orders. The current Geometry exception
+  implements only bullish engulfing, Morning Star and smooth arc for a Falling
+  Wedge lower-edge case; the full initial catalog remains unresolved under
+  CR-TRADING-INTELLIGENCE-001. Reuse existing recognition before extending the
+  catalog; one underlying OHLC event has one PRICE_REVERSAL evidence group.
+
+**`ACCEPTED DESIGN` — pattern first, entry second.** Keep frozen host
+`candidate_id`, symbol, direction, geometry/realization-side breakout
+boundary or level, state revision, time, original risk, STOP/TAKE and execution
+ownership. For «Охота за импульсом», inspect these background factors **after
+price exits the relevant approved pattern boundary in its realization
+direction**, using each host family's authoritative breakout/entry lifecycle.
+A generic Wedge boundary or retest rule must not be imposed on Box/Mirror/
+L-shape/Triangle. Before any earlier entry becomes executable, separate
+versioned entry-timing rules must preserve canonical Admission, risk, protected
+entry, STOP/TAKE, fee-aware economics, no duplicate orders and current
+trade/runtime authority. Factors do not bypass any of these gates.
+
+**`ACCEPTED DESIGN` — each factor is an optional vote, not an automatic
+trigger or hard veto.** Attach each observation to the exact host candidate
+with direction (supports / contradicts / neutral / UNKNOWN), original source,
+observation/receipt/availability times, version and freshness. A single
+causally available argument can strengthen the entry case; more *independent*
+supporting arguments might improve entry quality, **but a greater count is
+not proof of higher win rate or lower STOP frequency**. Correlated events
+(same market move represented as trades, a candle and DI crossing, or repeated
+higher-TF aggregates) must not be counted as independent confirmations.
+Contradictory evidence remains visible. Do not invent factor weights, cutoffs,
+minimum votes, mandatory presence, cross lookahead or an entry score that is
+presented as a calibrated probability.
+
+**`HYPOTHESIS / NEEDS VALIDATION`:** Evaluate matched, already-approved host
+candidates and frozen boundaries under the current entry baseline versus
+candidate early post-breakout entry. Measure entry timing, misses, false
+starts, STOP rate, MFE/MAE and **after-cost** PnL/drawdown by pattern/side/
+timeframe, including ablation of each factor and its incremental value
+beyond correlated companions. Use only facts known at the time, independent
+holdouts and realistic execution. No factor may authorize trading merely
+because its computation or synthetic CI passes. Research-only until separate
+owner permission for any PAPER/robot deployment.
+
+**Existing source authority:** ADX/DMI owner hypotheses H-017/H-018 below,
+merged PRs #870/#871; time-causal publicTrade and OI research PRs #1025/#1116;
+auxiliary Double Top/Bottom non-executable correction PR #1153.
+These older research scopes do **not** independently authorize general
+Robot runtime use; this section states the owner's latest common design.
+
 ---
 
 # 2. CAPITAL AND POSITION MODEL

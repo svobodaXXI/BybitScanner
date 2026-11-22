@@ -508,6 +508,35 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         proof = self.store.prove_box_owned_position(source.candidate_id)
         self.assertEqual(proof.entry_by_slot, (Decimal("2"), Decimal(0), Decimal(0), Decimal(0)))
 
+    def test_box_native_grid_does_not_depend_on_impulse_observer(self):
+        """The Box remains on its native grid; reversal timing is research-only."""
+        data = box_snapshot()
+        data["identity"]["symbol"] = SYMBOL
+        source, _ = self.store.save_box_plan_only(snapshot=data, created_at_ms=3001)
+        candidate, _ = self.store.handoff_box_plan_to_robot(
+            source.candidate_id,
+            symbol=source.symbol,
+            expected_snapshot_sha256=source.snapshot_sha256,
+            approved_at_ms=3002,
+        )
+        self.clock.value = 4000
+        self.monitor._get_market_book = lambda symbol: _ready_book("95")
+        calls = []
+
+        def unavailable_flow(record):
+            calls.append(record.candidate_id)
+            return None
+
+        self.monitor.bind_pattern_flow_observer(unavailable_flow)
+        self.assertEqual(self.monitor.tick(), (candidate.candidate_id,))
+        planned = self.store.get_robot_candidate(candidate.candidate_id)
+        self.assertIn("box_catchup", planned.robot_state["execution"])
+        self.assertEqual(self.store.load_box_order_ownership(source.candidate_id), ())
+        self.assertEqual(self.executor.limit_calls, [])
+        self.assertEqual(self.monitor.tick(), (candidate.candidate_id,))
+        self.assertEqual(len(self.store.load_box_order_ownership(source.candidate_id)), 4)
+        self.assertEqual(calls, [])
+
     def test_box_mixed_catchup_market_then_slot_take_cancels_untouched_entries(self):
         data = box_snapshot()
         data["identity"]["symbol"] = SYMBOL
@@ -865,6 +894,384 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
             self.feed.push(SYMBOL, _candle_at(104, high=99, low=97, close=98))
         return record
 
+    def _setup_impulse_early_wedge_owner(self):
+        """Original APPROVED Wedge and real PAPER store, no retest candle."""
+        from dataclasses import replace
+        from robot_entry_flow_evidence import CandidateBoundFlowEvidence
+        from tests.test_robot_entry_limit import PostBreakoutWedgeImpulseQuoteTests
+
+        self._create_candidate()
+        self.monitor.tick()
+        self.feed.push(SYMBOL, _candle_at(101, high=96, low=94, close=95))
+        self.monitor.tick()
+        self.feed.push(SYMBOL, _candle_at(102, high=106, low=97, close=105))
+        self.monitor.tick()
+        host = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(host.robot_state["phase"], "WAITING_RETEST")
+        self.clock.value = T0_MS + 3 * 60_000 + 100
+        now = self.clock.value
+
+        template = PostBreakoutWedgeImpulseQuoteTests.receipt()
+        proof = replace(
+            template, candidate_id=host.candidate_id,
+            state_revision=host.state_revision,
+            symbol=SYMBOL, closed_at_ms=now - 100,
+            decision_ms=now - 90,
+            transition=replace(template.transition, known_at_ms=now - 90),
+        )
+        # The closed M1 proof must be minute-aligned, known AFTER breakout.
+        proof = replace(proof, closed_at_ms=(now // 60_000) * 60_000)
+        self.monitor._get_pattern_flow_evidence = lambda _record: proof
+        book = NormalizedOrderBook(
+            symbol=Symbol(SYMBOL),
+            bids=(PriceLevel(Price(Decimal("99.0")), Quantity(Decimal("10"))),),
+            asks=(PriceLevel(Price(Decimal("99.1")), Quantity(Decimal("10"))),),
+            health=BookHealth.READY, received_at_ms=now - 50,
+            available_depth=1,
+        )
+        self.monitor._get_market_book = lambda _symbol: book
+        self.monitor._impulse_early_paper_enabled = True
+
+        def robot_create_limit(req):
+            self.executor.limit_calls.append(req)
+            self.executor._order_counter += 1
+            oid = OrderId(f"test-impulse-{self.executor._order_counter}")
+            self.store.create_paper_limit(
+                client_action_id=req.client_action_id.value,
+                request_fingerprint=f"verified-early-{self.executor._order_counter}",
+                order_id=oid, order_link_id=f"test-impulse-link-{self.executor._order_counter}",
+                trading_account_id=ACCOUNT_ID,
+                symbol=Symbol(req.symbol), side=req.side,
+                price=req.limit_price, quantity=req.volume.amount,
+                created_at_ms=self.clock(), robot_entry=True,
+            )
+            return PaperLimitMutationResult(
+                req.client_action_id.value, CommandResultStatus.COMPLETED,
+                "created", oid.value,
+            )
+
+        self.executor.create_limit = robot_create_limit
+        return host, proof
+
+    def _setup_impulse_early_l_shape_owner(self):
+        """Approved L-shape, no retest yet, original PAPER execution owner."""
+        from dataclasses import replace
+        from robot_entry_flow_evidence import CandidateBoundFlowEvidence
+        from tests.test_robot_pattern_flow_overlay import certificate, transition
+
+        snapshot = _l_shape_snapshot()
+        candidate, created = self.store.create_robot_candidate(
+            candidate_id="l-shape-early-1", trading_account_id=ACCOUNT_ID,
+            symbol=Symbol(SYMBOL), status="APPROVED",
+            signal_snapshot=snapshot, approved_at_ms=1, updated_at_ms=1,
+        )
+        self.assertTrue(created)
+        self.assertEqual(self.monitor.tick(), (candidate.candidate_id,))
+        host = self.store.get_robot_candidate(candidate.candidate_id)
+        self.assertEqual(host.robot_state["phase"], "L_SHAPE_WAITING_RETEST")
+        self.clock.value = T0_MS + 9 * 60_000 + 100
+        now = self.clock.value
+        closed = (now // 60_000) * 60_000
+        proof = replace(
+            certificate(), candidate_id=host.candidate_id,
+            symbol=SYMBOL, state_revision=host.state_revision,
+            closed_at_ms=closed, decision_ms=closed + 10,
+            transition=transition(known_at_ms=closed + 10),
+        )
+        self.monitor._get_pattern_flow_evidence = lambda _: proof
+        self.monitor._get_market_book = lambda _: NormalizedOrderBook(
+            symbol=Symbol(SYMBOL),
+            bids=(PriceLevel(Price(Decimal("101.0")), Quantity(Decimal("10"))),),
+            asks=(PriceLevel(Price(Decimal("101.1")), Quantity(Decimal("10"))),),
+            health=BookHealth.READY, received_at_ms=self.clock.value - 10,
+            available_depth=1,
+        )
+        self.monitor._impulse_early_paper_enabled = True
+        self.monitor._impulse_l_shape_paper_enabled = True
+
+        def robot_create_limit(request):
+            self.executor.limit_calls.append(request)
+            self.executor._order_counter += 1
+            ordinal = self.executor._order_counter
+            oid = OrderId(f"test-lshape-impulse-{ordinal}")
+            self.store.create_paper_limit(
+                client_action_id=request.client_action_id.value,
+                request_fingerprint=f"lshape-impulse-{ordinal}",
+                order_id=oid, order_link_id=f"lshape-impulse-link-{ordinal}",
+                trading_account_id=ACCOUNT_ID, symbol=Symbol(request.symbol),
+                side=request.side, price=request.limit_price,
+                quantity=request.volume.amount, created_at_ms=self.clock(),
+                robot_entry=True,
+            )
+            return PaperLimitMutationResult(
+                request.client_action_id.value, CommandResultStatus.COMPLETED,
+                "created", oid.value,
+            )
+
+        self.executor.create_limit = robot_create_limit
+        return host
+
+    def test_first_release_does_not_submit_early_l_shape(self):
+        host = self._setup_impulse_early_l_shape_owner()
+        self.monitor._impulse_l_shape_paper_enabled = False
+        self.monitor.tick()
+        self.assertEqual(self.executor.limit_calls, [])
+        record = self.store.get_robot_candidate(host.candidate_id)
+        self.assertNotIn("impulse_entry_intent", record.robot_state.get("execution") or {})
+
+    def test_l_shape_early_impulse_owner_fills_and_protects_without_fake_retest(self):
+        host = self._setup_impulse_early_l_shape_owner()
+        self.assertEqual(self.monitor.tick(), (host.candidate_id,))
+        record = self.store.get_robot_candidate(host.candidate_id)
+        self.assertEqual(record.robot_state["phase"], "L_SHAPE_WAITING_RETEST")
+        owned = record.robot_state["execution"]
+        self.assertEqual(owned["entry_mode"], "IMPULSE_EARLY_LIMIT")
+        self.assertFalse(owned["impulse_entry_intent"]["trading_authorized"])
+        self.assertEqual(owned["impulse_entry_intent"]["quoted_price"], "101.1")
+        self.assertEqual(len(self.executor.limit_calls), 1)
+        self.assertEqual(self.monitor.tick(), ())
+        self.assertEqual(len(self.executor.limit_calls), 1)
+
+        order_id = owned["limit_order_id"]
+        self.assertEqual(
+            self.store.get_robot_paper_limit_by_create_action(
+                ACCOUNT_ID, Symbol(SYMBOL),
+                owned["impulse_entry_intent"]["client_action_id"],
+            ).order_id.value, order_id,
+        )
+        self.executor.fill_resting_limit(
+            order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("101.1"),
+        )
+        self.assertEqual(self.monitor.process_authoritative_fill(SYMBOL), (host.candidate_id,))
+        trade = self.store.get_robot_trade(f"robot-trade-{host.candidate_id}")
+        self.assertEqual(trade.pattern, "L-shape")
+        self.assertEqual(trade.entry_quantity, Decimal("1"))
+        self.assertEqual(self.store.get_robot_candidate(host.candidate_id).status, "OPEN")
+        self.assertEqual(
+            {name for name, _ in self.executor.protection_calls},
+            {"create_stop", "create_take"},
+        )
+
+    def test_l_shape_early_impulse_unknown_submit_never_retries(self):
+        host = self._setup_impulse_early_l_shape_owner()
+        attempts = []
+        def lost_ack(request):
+            attempts.append(request)
+            raise RuntimeError("lost transport acknowledgement")
+        self.executor.create_limit = lost_ack
+        self.assertEqual(self.monitor.tick(), (host.candidate_id,))
+        state = self.store.get_robot_candidate(host.candidate_id).robot_state
+        self.assertIn("impulse_entry_intent", state["execution"])
+        self.assertNotIn("limit_order_id", state["execution"])
+        self.monitor._impulse_early_paper_enabled = False
+        self.assertEqual(self.monitor.tick(), ())
+        self.assertEqual(self.monitor.tick(), ())
+        self.assertEqual(len(attempts), 1)
+        self.assertFalse(self.executor.protection_calls)
+
+    def test_l_shape_early_impulse_stale_unfilled_order_is_cancelled(self):
+        import robot_entry_limit
+        host = self._setup_impulse_early_l_shape_owner()
+        self.assertEqual(self.monitor.tick(), (host.candidate_id,))
+        order_id = self.store.get_robot_candidate(host.candidate_id).robot_state[
+            "execution"]["limit_order_id"]
+        self.clock.advance(robot_entry_limit.IMPULSE_ENTRY_LIMIT_MAX_AGE_MS + 200)
+        self.assertEqual(self.monitor.tick(), (host.candidate_id,))
+        self.assertEqual(self.store.get_paper_limit(order_id, ACCOUNT_ID).status, "cancelled")
+        self.assertEqual(self.store.get_robot_candidate(host.candidate_id).status, "INVALIDATED")
+        self.assertEqual(len(self.executor.limit_calls), 1)
+        self.assertEqual(len(self.executor.cancel_calls), 1)
+        self.assertFalse(self.executor.protection_calls)
+
+    def test_l_shape_early_owner_relinks_lost_cas_without_second_order(self):
+        from terminal.persistence.sqlite_store import ConcurrentUpdate
+
+        host = self._setup_impulse_early_l_shape_owner()
+        store = self.monitor._store()
+        original_save = store.save_robot_candidate_state
+        saves = [0]
+        def lost_order_link(*args, **kwargs):
+            saves[0] += 1
+            if saves[0] == 2:
+                raise ConcurrentUpdate("order created, candidate link CAS unavailable")
+            return original_save(*args, **kwargs)
+        store.save_robot_candidate_state = lost_order_link
+        try:
+            self.assertEqual(self.monitor.tick(), (host.candidate_id,))
+        finally:
+            store.save_robot_candidate_state = original_save
+        candidate = self.store.get_robot_candidate(host.candidate_id)
+        intent = candidate.robot_state["execution"]["impulse_entry_intent"]
+        self.assertNotIn("limit_order_id", candidate.robot_state["execution"])
+        self.assertEqual(len(self.executor.limit_calls), 1)
+        self.assertIsNotNone(self.store.get_robot_paper_limit_by_create_action(
+            ACCOUNT_ID, Symbol(SYMBOL), intent["client_action_id"],
+        ))
+        self.assertEqual(self.monitor.tick(), (host.candidate_id,))
+        candidate = self.store.get_robot_candidate(host.candidate_id)
+        self.assertIn("limit_order_id", candidate.robot_state["execution"])
+        self.assertEqual(len(self.executor.limit_calls), 1)
+
+    def test_l_shape_early_limit_uses_native_admission_epoch_and_wave_expiry(self):
+        from terminal.runtime.paper_runtime import PaperRuntime
+        import robot_entry_limit
+
+        host = self._setup_impulse_early_l_shape_owner()
+        self.assertEqual(self.monitor.tick(), (host.candidate_id,))
+        candidate = self.store.get_robot_candidate(host.candidate_id)
+        order_id = candidate.robot_state["execution"]["limit_order_id"]
+        # Native monitor records the current READY epoch before matching.
+        self.assertEqual(self.monitor.tick(), ())
+        # The real runtime keeps its account-id property read-only; exercise
+        # only the actual gate methods with an explicit PAPER test context.
+        owner = SimpleNamespace(
+            store=self.store, _account_id=ACCOUNT_ID,
+            _paper_account_id=ACCOUNT_ID,
+        )
+        owner._robot_linked_entry_limits = (
+            lambda symbol: PaperRuntime._robot_linked_entry_limits(owner, symbol)
+        )
+        symbol = Symbol(SYMBOL)
+        self.assertIn(order_id, owner._robot_linked_entry_limits(symbol))
+        active = self.store.load_active_paper_limits(ACCOUNT_ID, symbol)
+        now = self.clock.value
+        self.assertNotIn(order_id, PaperRuntime._robot_entry_limit_ids_fenced_by_admission(
+            owner, symbol, active, event_received_at_ms=now,
+        ))
+        self.assertIn(order_id, PaperRuntime._robot_entry_limit_ids_fenced_by_admission(
+            owner, symbol, active,
+            event_received_at_ms=now + robot_entry_limit.IMPULSE_ENTRY_LIMIT_MAX_AGE_MS + 1,
+        ))
+
+    def test_l_shape_early_impulse_partial_fill_gets_native_protection(self):
+        import robot_entry_limit
+        host = self._setup_impulse_early_l_shape_owner()
+        self.assertEqual(self.monitor.tick(), (host.candidate_id,))
+        order_id = self.store.get_robot_candidate(host.candidate_id).robot_state[
+            "execution"]["limit_order_id"]
+        self.executor.fill_resting_limit(
+            order_id, SYMBOL, OrderSide.BUY, Decimal("0.5"), Decimal("101.1"),
+        )
+        self.clock.advance(robot_entry_limit.IMPULSE_ENTRY_LIMIT_MAX_AGE_MS + 200)
+        self.assertEqual(self.monitor.tick(), (host.candidate_id,))
+        self.assertEqual(self.store.get_paper_limit(order_id, ACCOUNT_ID).status, "cancelled")
+        self.assertEqual(self.store.get_robot_candidate(host.candidate_id).status, "OPEN")
+        self.assertEqual(
+            {name for name, _ in self.executor.protection_calls},
+            {"create_stop", "create_take"},
+        )
+
+    def test_impulse_early_limit_executes_once_and_uses_native_stop_take(self):
+        host, proof = self._setup_impulse_early_wedge_owner()
+        self.assertEqual(self.monitor.tick(), ("candidate-1",))
+        record = self.store.get_robot_candidate(host.candidate_id)
+        self.assertEqual(record.robot_state["phase"], "WAITING_RETEST")
+        owned = record.robot_state["execution"]
+        self.assertEqual(owned["entry_mode"], "IMPULSE_EARLY_LIMIT")
+        self.assertEqual(len(self.executor.limit_calls), 1)
+        self.assertIs(owned["impulse_entry_intent"]["trading_authorized"], False)
+        order_id = owned["limit_order_id"]
+        order = self.store.get_robot_paper_limit_by_create_action(
+            ACCOUNT_ID, Symbol(SYMBOL), owned["impulse_entry_intent"]["client_action_id"],
+        )
+        self.assertEqual(order.order_id.value, order_id)
+        self.assertEqual(order.price, Decimal("99.1"))
+        self.assertEqual(order.status, "open")
+        self.assertEqual(self.monitor.tick(), ())
+        self.assertEqual(len(self.executor.limit_calls), 1)
+
+        # Authoritative PAPER fill uses original candidate / existing STOP+TAKE.
+        self.executor.fill_resting_limit(
+            order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("99.1"),
+        )
+        self.monitor.process_authoritative_fill(SYMBOL)
+        record = self.store.get_robot_candidate(host.candidate_id)
+        self.assertEqual(record.status, "OPEN")
+        self.assertTrue(any(name == "create_stop" for name, _ in self.executor.protection_calls))
+        self.assertTrue(any(name == "create_take" for name, _ in self.executor.protection_calls))
+        self.assertEqual(len(self.executor.limit_calls), 1)
+
+    def test_impulse_uncertain_dispatch_is_durable_and_never_retried(self):
+        host, _proof = self._setup_impulse_early_wedge_owner()
+        def lost_ack(_req):
+            raise RuntimeError("transport outcome unknown")
+        self.executor.create_limit = lost_ack
+        self.assertEqual(self.monitor.tick(), ("candidate-1",))
+        candidate = self.store.get_robot_candidate(host.candidate_id)
+        self.assertIn("impulse_entry_intent", candidate.robot_state["execution"])
+        self.assertNotIn("limit_order_id", candidate.robot_state["execution"])
+        self.monitor._impulse_early_paper_enabled = False
+        self.assertEqual(self.monitor.tick(), ())
+        self.assertEqual(self.monitor.tick(), ())
+        self.assertIsNone(self.store.get_robot_paper_limit_by_create_action(
+            ACCOUNT_ID, Symbol(SYMBOL),
+            candidate.robot_state["execution"]["impulse_entry_intent"]["client_action_id"],
+        ))
+
+    def test_expired_impulse_limit_is_cancelled_without_new_trade(self):
+        import robot_entry_limit
+
+        host, _proof = self._setup_impulse_early_wedge_owner()
+        self.assertEqual(self.monitor.tick(), ("candidate-1",))
+        record = self.store.get_robot_candidate(host.candidate_id)
+        order_id = record.robot_state["execution"]["limit_order_id"]
+        self.clock.advance(robot_entry_limit.IMPULSE_ENTRY_LIMIT_MAX_AGE_MS + 200)
+        self.assertEqual(self.monitor.tick(), ("candidate-1",))
+        order = self.store.get_paper_limit(order_id, ACCOUNT_ID)
+        self.assertEqual(order.status, "cancelled")
+        record = self.store.get_robot_candidate(host.candidate_id)
+        self.assertEqual(record.status, "INVALIDATED")
+        self.assertEqual(len(self.executor.limit_calls), 1)
+        self.assertEqual(len(self.executor.cancel_calls), 1)
+        self.assertFalse(self.executor.protection_calls)
+
+    def test_expired_impulse_partial_fill_is_protected_by_original_owner(self):
+        import robot_entry_limit
+
+        host, _proof = self._setup_impulse_early_wedge_owner()
+        self.assertEqual(self.monitor.tick(), ("candidate-1",))
+        row = self.store.get_robot_candidate(host.candidate_id)
+        order_id = row.robot_state["execution"]["limit_order_id"]
+        self.executor.fill_resting_limit(
+            order_id, SYMBOL, OrderSide.BUY, Decimal("0.5"), Decimal("99.1"),
+        )
+        self.clock.advance(robot_entry_limit.IMPULSE_ENTRY_LIMIT_MAX_AGE_MS + 200)
+        self.assertEqual(self.monitor.tick(), ("candidate-1",))
+        row = self.store.get_robot_candidate(host.candidate_id)
+        self.assertEqual(row.status, "OPEN")
+        self.assertEqual(
+            self.store.get_paper_limit(order_id, ACCOUNT_ID).status, "cancelled",
+        )
+        self.assertTrue(any(k == "create_stop" for k, _ in self.executor.protection_calls))
+        self.assertTrue(any(k == "create_take" for k, _ in self.executor.protection_calls))
+
+    def test_impulse_order_is_correlated_after_lost_candidate_link(self):
+        host, _proof = self._setup_impulse_early_wedge_owner()
+        native_create = self.executor.create_limit
+        self.executor.create_limit = native_create
+        normal_save = self.monitor._store().save_robot_candidate_state
+        # The durable first intent is saved; only the post-create link CAS
+        # is unavailable. Next tick must correlate action without resubmission.
+        saves = [0]
+        def intermittent_save(*args, **kwargs):
+            saves[0] += 1
+            if saves[0] == 2:
+                from terminal.persistence.sqlite_store import ConcurrentUpdate
+                raise ConcurrentUpdate("simulated link conflict")
+            return normal_save(*args, **kwargs)
+        self.monitor._store().save_robot_candidate_state = intermittent_save
+        try:
+            self.assertEqual(self.monitor.tick(), ("candidate-1",))
+        finally:
+            self.monitor._store().save_robot_candidate_state = normal_save
+        c = self.store.get_robot_candidate(host.candidate_id)
+        self.assertNotIn("limit_order_id", c.robot_state["execution"])
+        self.assertEqual(len(self.executor.limit_calls), 1)
+        self.assertEqual(self.monitor.tick(), ("candidate-1",))
+        c = self.store.get_robot_candidate(host.candidate_id)
+        self.assertIn("limit_order_id", c.robot_state["execution"])
+        self.assertEqual(len(self.executor.limit_calls), 1)
+
     def test_unsupported_pattern_without_state_is_invalidated_once_and_unblocks_recovery(self):
         from contextlib import redirect_stdout
         import io
@@ -1161,6 +1568,141 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertEqual(record.robot_state["execution"]["limit_order_id"], "test-limit-1")
         self.assertEqual(self.armed_entry_coverage, [SYMBOL])
         self.assertEqual(self.released_entry_coverage, [])
+
+    def test_existing_pattern_flow_can_defer_wedge_entry_without_new_signal(self):
+        from robot_entry_flow_evidence import (
+            CandidateBoundFlowEvidence, FlowTransition,
+        )
+        from dataclasses import replace
+        self._create_candidate()
+        record = self._drive_to_retest_detected(push_followup_candle=False)
+        receipt_time = 1_800_000
+        positive = FlowTransition(
+            known_at_ms=receipt_time, current_delta_fraction=Decimal("0.5"),
+            current_price_change_bps=Decimal("10"),
+            buy_wave_accelerating=True, sell_wave_accelerating=False,
+            sell_impact_fading=False, buy_impact_fading=False,
+            bid_refill_observed=None, ask_refill_observed=None,
+            sell_absorption_candidate=None, buy_absorption_candidate=None,
+        )
+        receipt = CandidateBoundFlowEvidence(
+            candidate_id=record.candidate_id, symbol=record.symbol.value,
+            direction="LONG", state_revision=record.state_revision,
+            source_kind="BYBIT_TRIPLE_CLOSED_M1_CERTIFIED",
+            closed_at_ms=receipt_time, decision_ms=receipt_time,
+            print_facts_sha256="a" * 64,
+            source_complete=True, receipt_cutoff_proven=True,
+            transport_generation_proven=True, transition=positive,
+        )
+        # A foreign revision cannot place the existing candidate's order.
+        self.monitor.bind_pattern_flow_observer(
+            lambda _: replace(receipt, state_revision=receipt.state_revision - 1),
+        )
+        self.feed.push(SYMBOL, _candle_at(104, high=99, low=97, close=98))
+        self.clock.value = receipt_time + 500
+        self.assertEqual(self.monitor.tick(), ())
+        self.assertEqual(self.executor.limit_calls, [])
+        self.assertEqual(self.store.get_robot_candidate(record.candidate_id).status, "APPROVED")
+
+        # A missing certified observation cannot restore an old-pattern
+        # entry while flow opt-in is active. A valid SAME-ID receipt admits
+        # the original LIMIT owner, not a new IMPULSE_FLOW strategy.
+        self.monitor._get_pattern_flow_evidence = lambda _: None
+        self.feed.push(SYMBOL, _candle_at(105, high=99, low=97, close=98))
+        self.assertEqual(self.monitor.tick(), ())
+        self.assertEqual(self.executor.limit_calls, [])
+        self.monitor._get_pattern_flow_evidence = lambda _: receipt
+        self.feed.push(SYMBOL, _candle_at(106, high=99, low=97, close=98))
+        self.assertEqual(self.monitor.tick(), (record.candidate_id,))
+        self.assertEqual(len(self.executor.limit_calls), 1)
+        self.assertEqual(self.executor.limit_calls[0].symbol, SYMBOL)
+
+    def test_compatible_pattern_flow_preserves_canonical_entry_limit(self):
+        from robot_entry_flow_evidence import CandidateBoundFlowEvidence, FlowTransition
+        self._create_candidate()
+        record = self._drive_to_retest_detected()
+        self.clock.value = 1_800_500
+        transition = FlowTransition(
+            known_at_ms=1_800_000, current_delta_fraction=Decimal("0.4"),
+            current_price_change_bps=Decimal("8"),
+            buy_wave_accelerating=True, sell_wave_accelerating=False,
+            sell_impact_fading=False, buy_impact_fading=False,
+            bid_refill_observed=None, ask_refill_observed=None,
+            sell_absorption_candidate=None, buy_absorption_candidate=None,
+        )
+        receipt = CandidateBoundFlowEvidence(
+            candidate_id=record.candidate_id, symbol=record.symbol.value,
+            direction="LONG", state_revision=record.state_revision,
+            source_kind="BYBIT_TRIPLE_CLOSED_M1_CERTIFIED",
+            closed_at_ms=1_800_000, decision_ms=1_800_000,
+            print_facts_sha256="b" * 64, source_complete=True,
+            receipt_cutoff_proven=True, transport_generation_proven=True,
+            transition=transition,
+        )
+        self.monitor.bind_pattern_flow_observer(lambda _: receipt)
+        self.assertEqual(self.monitor.tick(), (record.candidate_id,))
+        self.assertEqual(len(self.executor.limit_calls), 1)
+        record = self.store.get_robot_candidate(record.candidate_id)
+        self.assertEqual(record.robot_state["execution"]["limit_order_id"], "test-limit-1")
+
+    def test_l_shape_retest_flow_defers_only_before_first_canonical_limit(self):
+        self.monitor._impulse_l_shape_paper_enabled = True
+        snap = _l_shape_snapshot()
+        record, _ = self.store.create_robot_candidate(
+            candidate_id="lshape-flow-1", trading_account_id=ACCOUNT_ID,
+            symbol=Symbol(SYMBOL), status="APPROVED",
+            signal_snapshot=snap, approved_at_ms=1, updated_at_ms=1,
+        )
+        state, _ = robot_l_shape.initialize_state({
+            "candidate_id": record.candidate_id, "status": "APPROVED",
+            "timeframe": "5", "signal_snapshot": snap,
+        })
+        self.store.save_robot_candidate_state(
+            record.candidate_id, status="APPROVED", robot_state=state,
+            expected_revision=record.state_revision, updated_at_ms=2,
+        )
+        self.feed.push(
+            SYMBOL, {"time_ms": T0_MS + 60_000, "high": Decimal("101"),
+                     "low": Decimal("99.5"), "close": Decimal("100.4")},
+        )
+        self.monitor.tick()
+        record = self.store.get_robot_candidate(record.candidate_id)
+        self.assertEqual(record.robot_state["phase"], "RETEST_DETECTED")
+        # First-release scope leaves native L-shape timing unchanged.
+        self.monitor._impulse_l_shape_paper_enabled = False
+        self.monitor.bind_pattern_flow_observer(lambda _: None)
+        self.assertTrue(self.monitor._pattern_flow_allows_entry(record))
+        self.monitor._get_pattern_flow_evidence = None
+        self.monitor._impulse_l_shape_paper_enabled = True
+        # Exact-ID mismatch cannot create the L-shape entry order.
+        from robot_entry_flow_evidence import CandidateBoundFlowEvidence
+        from tests.test_robot_pattern_flow_overlay import transition
+        bad = CandidateBoundFlowEvidence(
+            candidate_id="wrong-owner", symbol=record.symbol.value,
+            direction="LONG", state_revision=record.state_revision,
+            source_kind="BYBIT_TRIPLE_CLOSED_M1_CERTIFIED",
+            closed_at_ms=1_800_000, decision_ms=1_800_010,
+            print_facts_sha256="a" * 64, source_complete=True,
+            receipt_cutoff_proven=True, transport_generation_proven=True,
+            transition=transition(known_at_ms=1_800_010),
+        )
+        self.clock.value = 1_800_500
+        self.monitor.bind_pattern_flow_observer(lambda _: bad)
+        self.assertEqual(self.monitor.tick(), ())
+        self.assertEqual(self.executor.limit_calls, [])
+        self.assertEqual(self.store.get_robot_candidate(record.candidate_id).status,
+                         "APPROVED")
+        self.monitor._get_pattern_flow_evidence = lambda _: None
+        self.assertEqual(self.monitor.tick(), ())
+        self.assertEqual(self.executor.limit_calls, [])
+        # Only the bound original L-shape receipt may unlock the existing
+        # protected 1-WV LIMIT and its ordinary STOP/TAKE lifecycle.
+        from dataclasses import replace
+        self.monitor._get_pattern_flow_evidence = lambda _: replace(
+            bad, candidate_id=record.candidate_id,
+        )
+        self.assertEqual(self.monitor.tick(), (record.candidate_id,))
+        self.assertEqual(len(self.executor.limit_calls), 1)
 
     def test_resting_entry_limit_is_never_created_without_armed_coverage(self):
         # RVL-R4: a refused arm, or no bound arm at all, leaves the candidate pre-LIMIT.
@@ -3405,6 +3947,194 @@ class RobotBreakoutMonitorRealThreadTests(unittest.TestCase):
             )
             self.assertEqual(record.robot_state["phase"], robot_state_machine.PHASE_WAITING_BREAKOUT)
             self.assertGreaterEqual(record.state_revision, 1)
+
+
+
+
+class ImpulseNativeMarketMatcherAgeFenceTests(unittest.TestCase):
+    """Native owner must NEVER execute a stale GTC from a completed impulse."""
+
+    def test_ready_robot_matches_only_within_exact_quote_lifetime(self):
+        import robot_entry_limit
+        from terminal.runtime.paper_runtime import PaperRuntime
+
+        order_id = OrderId("robot-impulse-order-1")
+        candidate = SimpleNamespace(
+            status="APPROVED", robot_state={
+                "phase": "WAITING_RETEST",
+                "execution": {
+                    "entry_mode": "IMPULSE_EARLY_LIMIT",
+                    "limit_order_id": order_id.value,
+                    "impulse_entry_intent": {"decision_ms": 180_000},
+                    "entry_admission_version": 5,
+                },
+            },
+        )
+        account = TradingAccountId("paper")
+        runtime = SimpleNamespace(
+            _paper_account_id=account, _account_id=account,
+            store=SimpleNamespace(
+                load_active_robot_entry_orders=lambda _account, _symbol: {
+                    order_id.value: (Symbol(SYMBOL), 5),
+                },
+                load_active_robot_candidates_for_symbol=lambda _account, _symbol: (candidate,),
+                get_robot_runtime_state=lambda _account: SimpleNamespace(
+                    mode="ROBOT_RUNNING", recovery_status="READY", version=5,
+                ),
+                robot_symbol_quarantine_candidate_ids=lambda _account, _symbol: (),
+            ),
+            _robot_linked_entry_limits=lambda _symbol: {order_id.value: 5},
+        )
+        active = (SimpleNamespace(order_id=order_id),)
+        match = lambda at: PaperRuntime._robot_entry_limit_ids_fenced_by_admission(
+            runtime, Symbol(SYMBOL), active, event_received_at_ms=at,
+        )
+        self.assertEqual(match(179_999), frozenset({order_id.value}))
+        self.assertEqual(match(180_000), frozenset())
+        runtime.store.robot_symbol_quarantine_candidate_ids = lambda _account, _symbol: ("quarantined",)
+        self.assertEqual(match(180_000), frozenset({order_id.value}))
+        runtime.store.robot_symbol_quarantine_candidate_ids = lambda _account, _symbol: ()
+        self.assertEqual(match(
+            180_000 + robot_entry_limit.IMPULSE_ENTRY_LIMIT_MAX_AGE_MS
+        ), frozenset())
+        self.assertEqual(match(
+            180_001 + robot_entry_limit.IMPULSE_ENTRY_LIMIT_MAX_AGE_MS
+        ), frozenset({order_id.value}))
+        self.assertEqual(match(None), frozenset({order_id.value}))
+        candidate.robot_state["execution"]["impulse_entry_intent"] = {}
+        self.assertEqual(match(180_001), frozenset({order_id.value}))
+
+
+class ImpulseEntryProtectionCoverageTests(unittest.TestCase):
+    """Protect the real early entry even though its phase is not RETEST_DETECTED."""
+
+    def test_native_runtime_roles_keep_early_limit_coverage(self):
+        from terminal.runtime.paper_runtime import PaperRuntime
+
+        record = SimpleNamespace(
+            status="APPROVED", symbol=Symbol(SYMBOL),
+            robot_state={
+                "phase": "WAITING_RETEST",
+                "execution": {
+                    "entry_mode": "IMPULSE_EARLY_LIMIT",
+                    "limit_order_id": "native-impulse-limit-1",
+                },
+            },
+        )
+        order = SimpleNamespace(status="open", filled_quantity=Decimal("0"))
+        runtime = object.__new__(PaperRuntime)
+        runtime._paper_account_id = ACCOUNT_ID
+        runtime.store = SimpleNamespace(
+            load_active_robot_candidate_states=lambda _acct: (record,),
+            load_unresolved_paper_protection_obligations=lambda _acct: (),
+            get_paper_limit=lambda _oid, _acct: order,
+        )
+        self.assertEqual(
+            runtime.robot_protection_coverage_roles(), {SYMBOL: "ENTRY_PENDING"},
+        )
+        order.status = "cancelled"
+        self.assertEqual(runtime.robot_protection_coverage_roles(), {})
+        order.filled_quantity = Decimal("0.5")
+        self.assertEqual(
+            runtime.robot_protection_coverage_roles(), {SYMBOL: "ENTRY_PENDING"},
+        )
+        record.status = "OPEN"
+        self.assertEqual(runtime.robot_protection_coverage_roles(), {SYMBOL: "EXPOSURE"})
+
+
+class ImpulseEarlyWedgeResearchOwnerTests(unittest.TestCase):
+    """Protected Robot's owner observes early timing but never places an order."""
+
+    @staticmethod
+    def harness(*, paper=True, with_flow=True, admitted=True):
+        from tests.test_robot_entry_limit import PostBreakoutWedgeImpulseQuoteTests
+
+        fixture = PostBreakoutWedgeImpulseQuoteTests
+        holder = object.__new__(RobotBreakoutMonitor)
+        holder._account_id = TradingAccountId("paper" if paper else "live")
+        holder._impulse_early_paper_enabled = False
+        holder._get_pattern_flow_evidence = (
+            (lambda _r: fixture.receipt()) if with_flow else None
+        )
+        holder._get_market_book = lambda _s: fixture.book()
+        holder._tick_size_provider = lambda _s: Decimal("0.01")
+        holder._clock_ms = lambda: 180_100
+        holder._late_market_max_book_age_ms = 1_000
+        holder._read_admission_gate = lambda: (admitted, False)
+        holder._active_other_owner_candidate_ids = lambda _r: ()
+        holder._pre_entry_block_reason = lambda _r: None
+        saved = []
+        holder._store = lambda: SimpleNamespace(
+            save_robot_candidate_state=lambda *args, **kwargs:
+                saved.append(dict(kwargs["robot_state"])),
+        )
+        holder._get_closed_candle = lambda _s: None
+        holder._action_executor = None  # Unexpected order dispatch must crash.
+        return holder, fixture.host(), saved
+
+    def test_wedge_monitor_persists_one_pre_retest_proposal_without_order(self):
+        from robot_entry_limit import verify_frozen_post_breakout_impulse_quote
+
+        owner, host, saved = self.harness()
+        self.assertTrue(owner._advance_one(host))
+        self.assertEqual(len(saved), 1)
+        self.assertEqual(saved[0]["phase"], "WAITING_RETEST")
+        self.assertEqual(saved[0]["breakout_index"], host.robot_state["breakout_index"])
+        self.assertNotIn("execution", saved[0])
+        quote = saved[0]["impulse_entry_research"]
+        self.assertIs(quote["trading_authorized"], False)
+        self.assertTrue(verify_frozen_post_breakout_impulse_quote(host, quote))
+        host.robot_state = saved[0]
+        host.state_revision += 1
+        self.assertTrue(verify_frozen_post_breakout_impulse_quote(host, quote))
+        self.assertFalse(owner._advance_one(host))
+        self.assertEqual(len(saved), 1)
+
+    def test_no_paper_admission_flow_or_book_never_persists_proposal(self):
+        for opts in (
+            {"paper": False},
+            {"with_flow": False},
+            {"admitted": False},
+        ):
+            with self.subTest(opts=opts):
+                owner, host, saved = self.harness(**opts)
+                self.assertFalse(owner._advance_one(host))
+                self.assertEqual(saved, [])
+        owner, host, saved = self.harness()
+        owner._get_market_book = lambda _s: None
+        self.assertFalse(owner._advance_one(host))
+        self.assertEqual(saved, [])
+
+    def test_optional_source_outage_and_cas_failure_do_not_quarantine(self):
+        owner, host, saved = self.harness()
+        def broken_source(_record):
+            raise RuntimeError("temporary ws disconnected")
+        owner._get_pattern_flow_evidence = broken_source
+        self.assertFalse(owner._advance_one(host))
+        self.assertEqual(saved, [])
+
+        owner, host, saved = self.harness()
+        def conflicting_save(**_kwargs):
+            raise RuntimeError("concurrent candidate revision")
+        owner._store = lambda: SimpleNamespace(
+            save_robot_candidate_state=conflicting_save,
+        )
+        self.assertFalse(owner._advance_one(host))
+        self.assertEqual(saved, [])
+
+    def test_foreign_position_and_book_uncertainty_never_prepare(self):
+        owner, host, saved = self.harness()
+        owner._active_other_owner_candidate_ids = lambda _r: ("foreign-owner",)
+        self.assertFalse(owner._advance_one(host))
+        self.assertEqual(saved, [])
+        owner, host, saved = self.harness()
+        owner._pre_entry_block_reason = lambda _r: "FOREIGN_POSITION"
+        self.assertFalse(owner._advance_one(host))
+        self.assertEqual(saved, [])
+        owner, host, saved = self.harness()
+        owner._get_market_book = lambda _s: None
+        self.assertFalse(owner._advance_one(host))
+        self.assertEqual(saved, [])
 
 
 if __name__ == "__main__":

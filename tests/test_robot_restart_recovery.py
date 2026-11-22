@@ -128,6 +128,46 @@ class RobotRestartRecoveryTests(unittest.TestCase):
         self.assertEqual(status, ROBOT_RUNNING)
         self.assertEqual(decisions[0].status, EXPIRED_AT_APEX)
 
+    def test_early_impulse_pending_entry_never_expires_across_apex_on_restart(self):
+        from robot_restart_recovery import RobotRestartError
+
+        candidate = _candidate_with_state()
+        state = dict(candidate["robot_state"])
+        state.update(
+            phase="WAITING_RETEST", breakout_index=102, geometry_cursor=104,
+            retest_index=None,
+            execution={
+                "entry_mode": "IMPULSE_EARLY_LIMIT",
+                "impulse_entry_intent": {
+                    "client_action_id": "test-native-owner-action",
+                    "trading_authorized": False,
+                },
+            },
+        )
+        candidate["robot_state"] = state
+        with self.assertRaisesRegex(
+            RobotRestartError, "uncertain impulse entry at apex",
+        ):
+            reconcile_restart(
+                durable_mode=ROBOT_RUNNING,
+                open_robot_positions=(),
+                approved_candidates=(candidate,),
+                latest_geometry_index_by_candidate={"candidate-1": 110},
+            )
+        # Before apex, the original candidate/intent remain unchanged.
+        status, decisions = reconcile_restart(
+            durable_mode=ROBOT_RUNNING,
+            open_robot_positions=(),
+            approved_candidates=(candidate,),
+            latest_geometry_index_by_candidate={"candidate-1": 105},
+        )
+        self.assertEqual(status, ROBOT_RUNNING)
+        self.assertEqual(decisions[0].status, RESUME_WAITING)
+        self.assertEqual(
+            decisions[0].state["execution"]["entry_mode"],
+            "IMPULSE_EARLY_LIMIT",
+        )
+
     def test_same_symbol_candidates_use_independent_cursor_spaces(self):
         first = _candidate_with_state("candidate-1")
         second = _candidate_with_state("candidate-2")

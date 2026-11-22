@@ -71,6 +71,59 @@ class RobotFlowEvidenceTests(TestCase):
         self.assertFalse(result.sell_impact_fading)
 
 
+
+class RealArchiveSolReversalFlowTests(TestCase):
+    """Time-bounded REAL archive aggregates; no Wedge, L2 or entry certificate.
+
+    User-supplied SOLUSDT 2026-10-01 00:00-01:00 UTC ZIP SHA256:
+    1187f4cccf35ae8929581866766dcf21daa857dfbf28a88b425abf37ab659d88.
+    Input rows were grouped by exchange trade timestamp into exact 30s
+    windows; price endpoints are actual first/last public trades.
+    This test checks the existing algorithm's decisions on those facts;
+    it never labels a frozen Scanner Wedge or authorizes an order.
+    """
+
+    @staticmethod
+    def half_minute(start_ms, *, buy, sell, p0, p1):
+        return FlowWindow(
+            start_ms=start_ms, end_ms=start_ms + 30_000,
+            start_price=D(p0), end_price=D(p1),
+            buy_notional_usdt=D(buy), sell_notional_usdt=D(sell),
+        )
+
+    def test_real_sell_impact_fades_before_bullish_m5_confirmation(self):
+        prev = self.half_minute(
+            1790813850000, buy="98857.180", sell="114474.005",
+            p0="117.87", p1="117.85",
+        )  # 00:17:30--00:18:00 UTC
+        now = self.half_minute(
+            1790813880000, buy="44097.577", sell="144232.700",
+            p0="117.85", p1="117.91",
+        )  # 00:18:00--00:18:30 UTC; actual turning low at 00:18:10
+        result = compare_flow_windows(prev, now, decision_ms=1790813910000)
+        self.assertTrue(result.sell_impact_fading)
+        self.assertIsNone(result.bid_refill_observed)
+        self.assertIsNone(result.sell_absorption_candidate)
+        with self.assertRaises(ValueError):
+            compare_flow_windows(prev, now, decision_ms=1790813909999)
+
+    def test_real_buy_wave_seen_before_bullish_m5_close(self):
+        prev = self.half_minute(
+            1790813970000, buy="4185.137", sell="77492.851",
+            p0="117.88", p1="117.91",
+        )  # 00:19:30--00:20:00 UTC
+        now = self.half_minute(
+            1790814000000, buy="32559.987", sell="23761.161",
+            p0="117.91", p1="117.94",
+        )  # 00:20:00--00:20:30 UTC
+        result = compare_flow_windows(prev, now, decision_ms=1790814030000)
+        self.assertTrue(result.buy_wave_accelerating)
+        self.assertIsNone(result.bid_refill_observed)
+        self.assertIsNone(result.sell_absorption_candidate)
+        # Bullish engulfing on M5 bar 00:20 is known only at 00:25.
+        self.assertLess(result.known_at_ms, 1790814300000)
+
+
 class PublicTakerBridgeTests(TestCase):
     def test_ws_and_historical_public_prints_have_identical_semantics(self):
         from robot_entry_flow_evidence import normalize_bybit_taker_print, aggregate_taker_prints

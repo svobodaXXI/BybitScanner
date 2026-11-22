@@ -3584,6 +3584,31 @@ class SQLiteStore:
         ).fetchone()
         return _paper_limit_from_row(row) if row is not None else None
 
+    def get_robot_paper_limit_by_create_action(
+        self, trading_account_id: TradingAccountId, symbol: Symbol,
+        client_action_id: str,
+    ) -> PaperLimitOrderRecord | None:
+        """Read-only correlation for an interrupted Robot LIMIT submit.
+
+        Requires both the durable create-action identity and the native
+        robot_entry_orders ownership marker; a normal/manual LIMIT must never
+        be adopted. This method never retries the action or changes PAPER.
+        """
+        self._assert_owner()
+        if not isinstance(client_action_id, str) or not client_action_id:
+            raise ValueError("Robot create action identity is required")
+        rows = self._connection.execute(
+            """SELECT p.* FROM paper_limit_actions AS a
+               JOIN paper_limit_orders AS p ON p.order_id = a.order_id
+               JOIN robot_entry_orders AS e ON e.order_id = p.order_id
+               WHERE a.client_action_id = ? AND a.operation = 'create'
+                 AND p.trading_account_id = ? AND p.symbol = ?""",
+            (client_action_id, trading_account_id.value, symbol.value),
+        ).fetchall()
+        if len(rows) > 1:
+            raise PersistenceError("Robot create-action matches several PAPER orders")
+        return _paper_limit_from_row(rows[0]) if rows else None
+
     def load_active_robot_entry_orders(
         self, trading_account_id: TradingAccountId, symbol: Symbol | None = None,
     ) -> dict[str, tuple[Symbol, int | None]]:

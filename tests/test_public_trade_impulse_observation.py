@@ -83,6 +83,39 @@ class PublicTradeObservationTests(unittest.TestCase):
         self.assertTrue(o.observe(frame(trade("fresh", 2000, sequence=1))))
         self.assertEqual(o.snapshot()["last_cross_sequence"], 1)
 
+    def test_invalid_frame_fence_resets_only_for_new_source_generation(self):
+        """Old malformed frames cannot permanently poison a fresh source."""
+        for reset in ("mark_gap", "enable_certification_buffer"):
+            with self.subTest(reset=reset):
+                source = PublicTradeObservation("BTCUSDT")
+                self.assertTrue(source.observe(
+                    frame(trade("old", 120_000, sequence=100)),
+                    received_at_ms=120_010,
+                ))
+                self.assertFalse(source.observe(
+                    frame(trade("bad", 120_001, side="UNKNOWN", sequence=101)),
+                    received_at_ms=120_020,
+                ))
+                stale = source.snapshot()
+                self.assertEqual(stale["invalid_frames"], 1)
+                self.assertEqual(stale["observed_prints"], 1)
+                getattr(source, reset)()
+                fresh = source.snapshot()
+                self.assertEqual(fresh["generation"], stale["generation"] + 1)
+                self.assertEqual(fresh["invalid_frames"], 0)
+                self.assertEqual(fresh["observed_prints"], 0)
+                self.assertTrue(fresh["gap_or_truncation"])
+                self.assertFalse(fresh["order_authority"])
+                self.assertTrue(source.observe(
+                    frame(trade("fresh", 180_000, sequence=102)),
+                    received_at_ms=180_010,
+                ))
+                self.assertEqual(
+                    [row.trade_id for row in source.snapshot()["prints"]],
+                    ["fresh"],
+                )
+                self.assertEqual(source.snapshot()["invalid_frames"], 0)
+
     def test_missing_sequence_is_fail_closed_not_assumed_complete(self):
         o = PublicTradeObservation("BTCUSDT")
         item = trade()
@@ -110,6 +143,104 @@ class PublicTradeObservationTests(unittest.TestCase):
         self.assertEqual(s["prints"][0].trade_id, "id1")
         self.assertTrue(s["gap_or_truncation"])
         self.assertEqual(s["continuity"], "UNPROVEN")
+
+    def test_opt_in_preserves_600_exact_prints_across_two_closed_minutes(self):
+        """Original 512 overflow, but bounded opt-in+REST exact parity can prove 600."""
+        from terminal.market_data.impulse_observation import (
+            audit_closed_m1_triple_parity, audit_closed_m1_receipt_cutoff,
+        )
+        source = PublicTradeObservation("BTCUSDT")
+        self.assertEqual(source.snapshot()["buffer_capacity"], 512)
+        self.assertTrue(source.enable_certification_buffer())
+        self.assertFalse(source.enable_certification_buffer())
+        self.assertEqual(source.snapshot()["buffer_capacity"], 1000)
+        prev = [
+            trade(f"p-{i}", 120_000 + i * 200, "Buy", "100", "1",
+                  sequence=100+i)
+            for i in range(300)
+        ]
+        current = [
+            trade(f"c-{i}", 180_000 + i * 200, "Buy", "101", "1",
+                  sequence=400+i)
+            for i in range(300)
+        ]
+        boundary = (
+            trade("before", 119_999, "Sell", "100", "1", sequence=90),
+            *prev, *current,
+            trade("after", 240_000, "Sell", "101", "1", sequence=700),
+        )
+        for i in range(0, len(boundary), 90):
+            self.assertTrue(source.observe(
+                frame(*boundary[i:i+90]), received_at_ms=241_000,
+            ))
+        snapshot = source.snapshot()
+        # Rolling minute retention intentionally prunes the older REST
+        # bracketing trade; it must still be present in the independent
+        # REST page, NOT in the two-minute WS proof window.
+        self.assertEqual(snapshot["observed_prints"], 601)
+        self.assertEqual(snapshot["prints"][0].trade_id, "p-0")
+        self.assertFalse(snapshot["order_authority"])
+        self.assertEqual(snapshot["continuity"], "UNPROVEN")
+        recent = recent_response(*(recent_record(x) for x in reversed(boundary)))
+        recent["time"] = 241_000
+        for start, price in ((120_000, "100"), (180_000, "101")):
+            kline = closed_m1_response(
+                start=start, open_px=price, high=price, low=price,
+                close=price, volume="300",
+                turnover="30000" if price == "100" else "30300",
+                server_time=241_000,
+            )
+            proof = audit_closed_m1_triple_parity(
+                snapshot, recent, kline,
+                start_ms=start, observed_at_ms=242_000,
+            )
+            self.assertEqual(proof.status, "EXACT_CLOSED_M1_TRIPLE_PARITY")
+            self.assertEqual(proof.matched_prints, 300)
+            receipt = audit_closed_m1_receipt_cutoff(
+                snapshot, start_ms=start, decision_ms=242_000,
+            )
+            self.assertEqual(receipt.status, "TIMELY_OBSERVED_ONLY")
+            self.assertEqual(receipt.observed_prints, 300)
+        clipped = dict(recent)
+        clipped["result"] = {
+            "category": "linear",
+            "list": [row for row in recent["result"]["list"]
+                     if row["execId"] != "p-18"],
+        }
+        self.assertEqual(audit_closed_m1_triple_parity(
+            snapshot, clipped, closed_m1_response(
+                start=120_000, open_px="100", high="100", low="100",
+                close="100", volume="300", turnover="30000",
+                server_time=241_000,
+            ), start_ms=120_000, observed_at_ms=242_000,
+        ).status, "UNPROVEN")
+        source.mark_gap()
+        self.assertEqual(source.snapshot()["observed_prints"], 0)
+        self.assertEqual(source.snapshot()["buffer_capacity"], 1000)
+
+    def test_certification_buffer_is_bounded_and_fences_old_source(self):
+        source = PublicTradeObservation("BTCUSDT")
+        self.assertTrue(source.observe(
+            frame(trade("old", 120_000)), received_at_ms=120_010,
+        ))
+        source.enable_certification_buffer()
+        self.assertEqual(source.snapshot()["observed_prints"], 0)
+        self.assertEqual(source.snapshot()["generation"], 1)
+        for index in range(1001):
+            self.assertTrue(source.observe(frame(trade(
+                f"more-{index}", 180_000 + index,
+                sequence=index + 101,
+            )), received_at_ms=181_100))
+        snapshot = source.snapshot()
+        self.assertEqual(snapshot["buffer_capacity"], 1000)
+        self.assertEqual(snapshot["observed_prints"], 1000)
+        self.assertTrue(snapshot["gap_or_truncation"])
+        self.assertEqual(snapshot["prints"][0].trade_id, "more-1")
+        # Crossing two more minute boundaries prunes older unused prints.
+        self.assertTrue(source.observe(frame(trade(
+            "new-minute", 360_000, sequence=1105,
+        )), received_at_ms=360_010))
+        self.assertEqual(source.snapshot()["prints"][0].trade_id, "new-minute")
 
     def test_existing_hub_dispatch_observes_only_applied_real_trade_topic(self):
         from terminal.market_data.hub import MarketDataHub, SymbolContext
