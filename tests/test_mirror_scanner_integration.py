@@ -468,6 +468,43 @@ def test_wick_sweep_owner_adjacent_equal_extrema_causal_plateau(
     assert [p for p in extract(sequence + [sequence[-1]]) if p["index"] == 6] == confirmed
 
 
+def test_wick_sweep_owner_formative_zone_selects_untouched_fresh_pivots(
+        root, fixed_levels):
+    # Real owner state evidence: the original two-touch swing zone becomes
+    # confirmed only AFTER a newer independent pivot has already formed.
+    # A pre-confirmation wick through its first anchor makes the original
+    # zone unfit for the later breakout; publish the unpierced later pivots.
+    original = horizontal_level(
+        symbol="TESTUSDT", timeframe="1", source=SOURCE_SWING_ZONE,
+        pattern=None, side="upper", price=100.0,
+        anchor_time_ms=5 * M, confirmed_at_ms=24 * M, touches=2,
+        provenance={"pivots": [[5 * M, 100.0], [20 * M, 100.1]],
+                    "atr_period": 14, "tolerance_atr": 0.25},
+    )
+    fixed_levels["levels"] = [original]
+    bars = flat_bars(30, price=99.2, spread=0.3)
+    bars[5] = (99.2, 100.0, 99.0, 99.2)
+    bars[12] = (99.2, 102.0, 99.0, 99.2)  # later unpierced owner pivot
+    bars[20] = (99.2, 100.1, 99.0, 99.2)  # second zone pivot confirms at 24M
+    bars.append((99.2, 103.7, 99.1, 103.5))
+    summary = observe(frame(bars), root)
+    state = ms.load_state("TESTUSDT", "1", root)
+    levels = ms.LevelRegistry.from_dict(state["registry"]).levels
+    assert state["records"][original.level_id]["candidate"] is False
+    assert state["records"][original.level_id]["rejection"] == "prior_wick_breached_level"
+    renewed = [ray for ray in levels.values()
+               if ray.provenance.get("source") == "untouched_confirmed_pivot_in_swing_zone"]
+    assert any(ray.anchors == ((12 * M, 102.0),) for ray in renewed)
+    assert all(ray.confirmed_at_ms == 24 * M for ray in renewed)
+    assert all(state["records"][ray.level_id]["candidate"] is True for ray in renewed)
+    assert summary["new_candidates"] == len(renewed)
+    observe(frame(bars), root)
+    repeated = ms.load_state("TESTUSDT", "1", root)
+    assert {key for key, row in repeated["records"].items() if row["candidate"]} == {
+        ray.level_id for ray in renewed
+    }
+
+
 def test_wick_sweep_source_formation_touches_before_confirmation_are_not_false_breaches(
         root, fixed_levels):
     # Confirmed swing zones require prior touches; those formative touches
