@@ -93,6 +93,8 @@ class ObserverTests(unittest.TestCase):
         other.signal_snapshot = {"pattern": "IKIGAI_BOX"}
         other.symbol = SimpleNamespace(value="XRPUSDT")
         wedge = _candidate(phase="WAITING_BREAKOUT")
+        wedge.updated_at_ms = 100_000
+        wedge.snapshot_sha256 = "a" * 64
         candidates = [existing_open, other, wedge]
         rest = _REST(None, None, None)
         observer = PatternFlowObserver(
