@@ -468,6 +468,31 @@ def test_wick_sweep_owner_adjacent_equal_extrema_causal_plateau(
     assert [p for p in extract(sequence + [sequence[-1]]) if p["index"] == 6] == confirmed
 
 
+def test_wick_sweep_intact_swing_zone_does_not_spawn_extra_pivot_candidates(
+        root, fixed_levels):
+    # A second and third lower local high do not invalidate the source
+    # resistance at 100.0. Do not mint independent one-pivot MIRROR rays
+    # merely because the confirmed two-touch zone contains other pivots.
+    original = horizontal_level(
+        symbol="TESTUSDT", timeframe="1", source=SOURCE_SWING_ZONE,
+        pattern=None, side="upper", price=100.0,
+        anchor_time_ms=5 * M, confirmed_at_ms=24 * M, touches=2,
+        provenance={"pivots": [[5 * M, 100.0], [20 * M, 99.9]]},
+    )
+    fixed_levels["levels"] = [original]
+    bars = flat_bars(30, price=98.7, spread=0.2)
+    bars[5] = (98.7, 100.0, 98.4, 98.7)
+    bars[12] = (98.7, 99.8, 98.4, 98.7)
+    bars[20] = (98.7, 99.9, 98.4, 98.7)
+    summary = observe(frame(bars), root)
+    state = ms.load_state("TESTUSDT", "1", root)
+    registry = ms.LevelRegistry.from_dict(state["registry"])
+    assert set(registry.levels) == {original.level_id}
+    assert set(state["records"]) == {original.level_id}
+    assert summary["new_candidates"] == 0
+    assert state["pending_notifications"] == []
+
+
 def test_wick_sweep_owner_formative_zone_selects_untouched_fresh_pivots(
         root, fixed_levels):
     # Real owner state evidence: the original two-touch swing zone becomes
