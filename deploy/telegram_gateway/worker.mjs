@@ -101,10 +101,10 @@ export default {
       params.set("allowed_updates", JSON.stringify(["callback_query","message"]));
       try {
         const remote = await fetch("https://api.telegram.org/bot" + env.TELEGRAM_BOT_TOKEN + "/getUpdates?" + params, {
-          signal: AbortSignal.timeout(38000)
+          signal: AbortSignal.timeout(38000), redirect:"error"
         });
         const payload = await remote.json();
-        if (remote.ok) await attachOwnerReleaseReceipts(payload, env);
+        if (remote.ok && !remote.redirected) await attachOwnerReleaseReceipts(payload, env);
         return reply(200, payload);
       } catch (_) { return reply(503, {ok:false,error:"telegram_poll_unavailable"}); }
     }
