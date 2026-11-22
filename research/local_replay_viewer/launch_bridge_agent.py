@@ -241,6 +241,50 @@ def _trusted_statistics_origin() -> str:
         raise AgentConfigError("invalid_trusted_statistics_origin") from exc
 
 
+def claim_one_time_pairing_code(device_id: str, code: str, *, opener=None) -> None:
+    """Redeem an owner-authenticated one-time code directly over pinned TLS.
+
+    The reusable device token is received only by this local Python adapter,
+    never by Telegram frontend, local browser JS, a URL or the clipboard.
+    """
+    if not isinstance(device_id, str) or not DEVICE_RE.fullmatch(device_id):
+        raise AgentConfigError("invalid_pairing_device")
+    if not isinstance(code, str) or not re.fullmatch(r"[A-Z2-7]{24}\Z", code):
+        raise AgentConfigError("invalid_one_time_pair_code")
+    if read_config() is not None:
+        raise AgentConfigError("existing_device_pairing_preserved")
+    origin = _trusted_statistics_origin()
+    request = Request(
+        origin + "/api/diary/simulator-bridge/pair-claim",
+        data=json.dumps({"device_id": device_id, "code": code},
+                        separators=(",", ":")).encode("ascii"),
+        headers={
+            "Content-Type": "application/json",
+            "X-BybitScanner-Local-Pair-Claim": "v1",
+            "Cache-Control": "no-store",
+        },
+        method="POST",
+    )
+    client = opener or _direct_https_opener()
+    with client.open(request, timeout=5) as response:
+        if response.status != 200:
+            raise AgentConfigError("pair_code_claim_http_not_ok")
+        raw = response.read(1025)
+    if len(raw) > 1024:
+        raise AgentConfigError("pair_claim_response_too_large")
+    try:
+        result = json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeError) as exc:
+        raise AgentConfigError("invalid_pair_claim_response") from exc
+    if (not isinstance(result, dict) or set(result) !=
+            {"ok", "device_id", "token"} or result["ok"] is not True
+            or result["device_id"] != device_id
+            or not isinstance(result["token"], str)
+            or not re.fullmatch(r"[A-Za-z0-9_-]{48,256}\Z", result["token"])):
+        raise AgentConfigError("invalid_pair_claim_response")
+    pair_device(device_id, result["token"])
+
+
 def pair_device(device_id: str, token: str) -> None:
     """One-shot opt-in; no new service, no shell, no untrusted destination.
 
