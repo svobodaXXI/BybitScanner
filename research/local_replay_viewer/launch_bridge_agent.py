@@ -326,12 +326,14 @@ def pair_device(device_id: str, token: str) -> None:
     install_if_configured()
 
 
+def _poll_executable() -> Path:
+    candidate = Path(sys.executable).with_name("pythonw.exe")
+    return candidate if candidate.is_file() else Path(sys.executable).resolve()
+
+
 def _expected_autostart_command() -> str:
     """Canonical per-user Windows Run entry for THIS installed release."""
-    path = Path(__file__).resolve()
-    candidate = Path(sys.executable).with_name("pythonw.exe")
-    executable = candidate if candidate.is_file() else Path(sys.executable).resolve()
-    return f'"{executable}" -B "{path}" --poll'
+    return f'"{_poll_executable()}" -B "{Path(__file__).resolve()}" --poll'
 
 
 def _this_release_still_registered() -> bool:
@@ -379,7 +381,7 @@ def install_if_configured() -> bool:
 
     # Known installed script only; no arguments from a remote URL.
     command = _expected_autostart_command()
-    executable = Path(command.split('"', 2)[1])
+    executable = _poll_executable()
     path = Path(__file__).resolve()
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER,
                           r"Software\Microsoft\Windows\CurrentVersion\Run") as key:
