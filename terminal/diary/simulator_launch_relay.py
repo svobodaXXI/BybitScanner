@@ -7,6 +7,7 @@ disabled by default. Device polls need an independent device-only secret.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import base64
 import hmac
 import json
 import os
@@ -23,6 +24,8 @@ MAX_CONFIG_BYTES = 8192
 ONLINE_SECONDS = 12
 REQUEST_SECONDS = 35
 STATUS_SECONDS = 90
+PAIR_SECONDS = 90
+PAIR_CODE = re.compile(r"[A-Z2-7]{24}\Z")
 
 
 class RelayUnavailable(ValueError):
@@ -82,6 +85,7 @@ class SimulatorLaunchRelay:
         # machine identity, process list, filesystem path or trading state.
         self._last_seen: dict[str, tuple[float, bool]] = {}
         self._requests: dict[str, _Request] = {}
+        self._pair_codes: dict[str, tuple[str, float]] = {}
 
     @classmethod
     def from_environment(cls) -> "SimulatorLaunchRelay | None":
@@ -115,12 +119,49 @@ class SimulatorLaunchRelay:
             raise RelayUnavailable("simulator_pairing_device_not_configured")
         return {"device_id": device_id, "token": token}
 
+    def issue_pair_code(self, *, device_id: str, request_origin: str,
+                        fetch_site: str) -> dict[str, str | int]:
+        """Owner authenticated, 90-second code; not a device credential."""
+        if request_origin != self.origin or fetch_site != "same-origin":
+            raise RelayForbidden("relay_origin_not_authorized")
+        if not isinstance(device_id, str) or not DEVICE_ID.fullmatch(device_id):
+            raise RelayInvalid("invalid_pairing_device")
+        if device_id not in self._devices:
+            raise RelayUnavailable("simulator_pairing_device_not_configured")
+        with self._lock:
+            now = self._clock()
+            self._trim(now)
+            code = base64.b32encode(secrets.token_bytes(15)).decode("ascii")
+            self._pair_codes[device_id] = (code, now)
+            return {"device_id": device_id, "code": code,
+                    "expires_in_seconds": PAIR_SECONDS}
+
+    def claim_pair_code(self, *, device_id: str, code: str,
+                        origin: str, fetch_site: str) -> dict[str, str]:
+        """One-time token handoff to a direct HTTPS non-browser client only."""
+        if origin or fetch_site:
+            raise RelayForbidden("browser_pair_claim_forbidden")
+        if not isinstance(device_id, str) or not DEVICE_ID.fullmatch(device_id):
+            raise RelayInvalid("invalid_pairing_device")
+        if not isinstance(code, str) or not PAIR_CODE.fullmatch(code):
+            raise RelayForbidden("invalid_or_expired_pair_code")
+        with self._lock:
+            self._trim(self._clock())
+            pending = self._pair_codes.get(device_id)
+            if pending is None or not hmac.compare_digest(code, pending[0]):
+                raise RelayForbidden("invalid_or_expired_pair_code")
+            self._pair_codes.pop(device_id)
+            return {"device_id": device_id, "token": self._devices[device_id]}
+
     def _authenticated(self, device: str, token: str) -> bool:
         secret = self._devices.get(device)
         return (bool(secret) and isinstance(token, str)
                 and hmac.compare_digest(secret, token))
 
     def _trim(self, now: float) -> None:
+        for device, (_, issued) in list(self._pair_codes.items()):
+            if now - issued >= PAIR_SECONDS:
+                del self._pair_codes[device]
         for key, item in list(self._requests.items()):
             if now - item.created >= REQUEST_SECONDS and item.state in {"QUEUED", "DELIVERED"}:
                 item.state = "EXPIRED"
