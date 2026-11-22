@@ -298,6 +298,42 @@ def test_mirror_png_discloses_absent_source_and_labels_exact_present_anchor(tmp_
     assert not any("Исходная опора:" in label for label in observed[-1])
 
 
+def test_long_frozen_history_has_readable_recent_pane(tmp_path, monkeypatch):
+    pytest.importorskip("matplotlib")
+    from matplotlib.figure import Figure
+    from mirror_event_chart import render_mirror_chart
+
+    snapshot = _old_mirror_source_chart()
+    history = [
+        {"open_time_ms": i * 300_000, "open": 1.0, "high": 1.2,
+         "low": 0.9, "close": 1.1}
+        for i in range(600)
+    ]
+    snapshot["geometry_candles"] = history
+    snapshot["candles"] = history[-120:]
+    snapshot["event_open_time_ms"] = history[-1]["open_time_ms"]
+    captured = {}
+    original_save = Figure.savefig
+
+    def inspect_save(fig, *args, **kwargs):
+        captured["axes"] = len(fig.axes)
+        captured["overview_bars"] = len(fig.axes[0].patches)
+        captured["recent_bars"] = len(fig.axes[1].patches)
+        captured["recent_title"] = fig.axes[1].get_title()
+        captured["origin_labels"] = [t.get_text() for t in fig.axes[0].texts]
+        return original_save(fig, *args, **kwargs)
+
+    monkeypatch.setattr(Figure, "savefig", inspect_save)
+    target = tmp_path / "long-source.png"
+    render_mirror_chart(snapshot, target)
+    assert target.read_bytes().startswith(b"\\x89PNG\\r\\n\\x1a\\n")
+    assert captured["axes"] == 2
+    assert captured["overview_bars"] == 600
+    assert captured["recent_bars"] == 120
+    assert "120" in captured["recent_title"]
+    assert any("Исходная опора:" in label for label in captured["origin_labels"])
+
+
 def test_mirror_old_source_never_accepts_conflicting_or_invented_bars():
     from mirror_event_chart import _visible_event_candles
 
