@@ -143,6 +143,41 @@ class RobotBePartialOwnerPaperTests(unittest.TestCase):
             self.assertEqual(repeated.status, CommandResultStatus.COMPLETED)
             self.assertEqual(len(self.runtime.store.load_executions()), before + 1)
 
+    def test_dynamic_fade_rejects_unprofitable_or_insufficient_depth_before_intent(self):
+        from dataclasses import replace
+        from unittest.mock import patch
+        from terminal.domain.models import Price, Quantity
+        from terminal.market_data.models import PriceLevel
+
+        receipt = self._fade_receipt()
+        clock_ms = receipt.closed_at_ms + 5_000
+        self.runtime._impulse_fade_paper_enabled = True
+        self.runtime._wedge_be_auto_paper_enabled = True
+        before = len(self.runtime.store.load_executions())
+        step = self.runtime._instrument_provider(self.symbol.value).quantity_step
+        partial = (
+            self.initial * Decimal("0.25") / step
+        ).to_integral_value(rounding="ROUND_FLOOR") * step
+        tiny_best = PriceLevel(Price(Decimal("64700")), Quantity(partial / 10))
+        loss_level = PriceLevel(Price(Decimal("64100")), Quantity(partial))
+        with patch("time.time", return_value=clock_ms / 1000):
+            book = _crossing_book(self.symbol.value, bid="64700", ask="64700.5")
+            for bids in ((tiny_best,), (tiny_best, loss_level)):
+                with self.subTest(depth=len(bids)):
+                    thin = replace(book, bids=bids, available_depth=len(bids))
+                    result = self.runtime._robot_wedge_be_auto_step(
+                        self.candidate_id, symbol=self.symbol.value, candle=None,
+                        book=thin, fade_receipt=receipt,
+                    )
+                    self.assertEqual(result.status, CommandResultStatus.BLOCKED)
+                    self.assertEqual(result.reason_code, "be_fade_unproven")
+                    self.assertEqual(len(self.runtime.store.load_executions()), before)
+                    candidate = self.runtime.store.get_robot_candidate(self.candidate_id)
+                    self.assertNotIn("wedge_be_partial_intent", candidate.robot_state["execution"])
+                    protection = self.runtime.store.get_protection_projection(self.key)
+                    self.assertEqual(protection.stop_loss, Decimal("64000"))
+                    self.assertEqual(protection.take_profit, Decimal("65300"))
+
     def test_monitor_routes_fade_to_real_owner_without_old_m1_trigger(self):
         from unittest.mock import patch
 
