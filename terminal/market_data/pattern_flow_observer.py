@@ -380,9 +380,17 @@ class PatternFlowObserver:
             tape = context.impulse_observation.snapshot()
             if (len(frames) < 2 or not tape["prints"]
                     or tape.get("invalid_frames") != 0
-                    or not context.book_frames or context.book_frames[0] is not frames[0]):
+                    or not context.book_frames or context.book_frames[0] is not frames[0]
+                    # A book's snapshot can be from an earlier APPROVED
+                    # candidate on the same symbol. Never attribute that
+                    # earlier book state to this host or keep its deltas.
+                    or type(record.updated_at_ms) is not int
+                    or frames[0][0] < record.updated_at_ms
+                    or frames[0][1].get("type") != "snapshot"
+                    or any(left[0] > right[0]
+                           for left, right in zip(frames, frames[1:]))):
                 return
-            since_ms = max(frames[0][0], record.updated_at_ms)
+            since_ms = frames[0][0]
             until_ms = frames[-1][0]
             prints = [
                 asdict(item) for item in tape["prints"]
@@ -391,6 +399,9 @@ class PatternFlowObserver:
             if not prints or not any(
                 current.candidate_id == record.candidate_id
                 and current.state_revision == record.state_revision
+                and current.updated_at_ms == record.updated_at_ms
+                and current.snapshot_sha256 == record.snapshot_sha256
+                and current.symbol.value == record.symbol.value
                 and current.status == "APPROVED"
                 and (current.robot_state or {}).get("phase") == "WAITING_BREAKOUT"
                 for current in self._get_candidates()
