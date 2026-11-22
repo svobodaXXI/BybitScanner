@@ -1,6 +1,8 @@
-## 🎯 Активный квест MONOLITH — 22.11.2026: «Двусторонний мост»
+## 🎯 Активный квест MONOLITH — 22.11.2026: «Релиз одним разрешением»
 
-Владелец поручил реализацию безопасного двустороннего канала GitHub ↔ VPS. Первый этап: изолированный signed read-only запрос → существующее наблюдение → коррелированный ответ. Контракт: [CR-MONOLITH-GITHUB-DIAGNOSTIC-001](CHANGE_REQUESTS/CR-MONOLITH-GITHUB-DIAGNOSTIC-001.md). Активация заблокирована до закрытия ворот RISK-MONOLITH-01; действующий наблюдатель не расширяем. Техническая приёмка и XP не подтверждены. #1229 merged в `fa5925b6`, VPS не обновлялся; «Релиз одним разрешением» остаётся необходимым последующим этапом.
+**Доказанный этап «Двусторонний мост»:** действующий подписанный read-only roundtrip GitHub → VPS → GitHub с исходными независимыми Ed25519 ключами, сохранённый при штатном UPDATE #1236. [Первый ответ](https://github.com/svobodaXXI/BybitScanner/issues/1212#issuecomment-7072864926), [ответ после обновления](https://github.com/svobodaXXI/BybitScanner/issues/1212#issuecomment-7073392582): exact SHA `820d5a2dd5538aac680af13fe75afadb812024ce`, 28 секунд, подписи, digest/ID/audience/TTL проверены. Владелец передал только команду UPDATE с UUID `c0da73a246bb4ae8a88e9dfc84f13a29`; ручной repin не потребовался. [Checkpoint #1077](https://github.com/svobodaXXI/BybitScanner/issues/1077#issuecomment-7073397471). Отчёт не заменяет доказательство FINISHED_OK и полный canonical postcheck конкретной операции.
+
+**Ближайший недостающий результат:** подписанное read-only чтение точного UUID существующего монолита, action, target SHA, конечного статуса/кода и существующего EDITOR_ONLY postcheck. Без новых исполнителей, произвольных команд, runtime mutation, START или LIVE. Контракт: [CR-MONOLITH-GITHUB-DIAGNOSTIC-001](CHANGE_REQUESTS/CR-MONOLITH-GITHUB-DIAGNOSTIC-001.md). Требуются CI, отдельное разрешение merge/deploy, реальный подписанный ответ после UPDATE. RISK-MONOLITH-01 не закрыт полностью; owner final acceptance и XP отдельно. #1235 — устаревший документационный checkpoint, не блокирует runtime.
 
 ---
 
