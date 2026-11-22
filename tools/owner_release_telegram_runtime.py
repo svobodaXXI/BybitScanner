@@ -89,6 +89,82 @@ def _check_sources(root, manifest_path, installed):
             raise ValueError("approval source not pinned")
 
 
+def _check_units(root, manifest_path, unit_dir, *, uid=0):
+    """Read-only exact-byte check; never install, enable or reload systemd."""
+    manifest = _manifest(_trusted_file(manifest_path, uid))
+    for name in OWNER_UNIT_NAMES:
+        rel = "deploy/systemd/" + name
+        blob = manifest["blobs"].get(rel)
+        if (blob is None
+                or blob != git_blob_hash(_trusted_file(_safe_file(root, rel), uid))
+                or blob != git_blob_hash(_trusted_file(unit_dir / name, uid))):
+            raise ValueError("approval systemd unit not pinned")
+
+
+def _check_ledger(directory, *, uid=0):
+    """Check durable one-use receipts without creating or consuming any."""
+    info = directory.lstat()
+    if (not stat.S_ISDIR(info.st_mode) or info.st_uid != uid
+            or info.st_mode & 0o077 or directory.is_symlink()):
+        raise ValueError("approval ledger unprotected")
+    fd = os.open(directory / "initialized", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != uid
+                or info.st_mode & 0o077 or info.st_nlink != 1
+                or stream.read(64) != b"owner-update-v1\n"):
+            raise ValueError("approval ledger not initialized")
+
+
+def _check_relay_inbox(inbox, relay_uid):
+    """The Telegram worker owns a courier directory, never owner credentials."""
+    parent = inbox.parent.lstat()
+    info = inbox.lstat()
+    if (not stat.S_ISDIR(parent.st_mode) or parent.st_uid != 0
+            or parent.st_mode & 0o022
+            or not stat.S_ISDIR(info.st_mode) or info.st_uid != relay_uid
+            or info.st_mode & 0o077 or inbox.is_symlink()):
+        raise ValueError("approval relay inbox untrusted")
+
+
+def preflight(*, config=CONFIG, state=STATE, root=ROOT, manifest_path=MANIFEST,
+              unit_dir=Path("/etc/systemd/system"),
+              relay_inbox=relay.INBOX):
+    """No mutations, network calls, Telegram messages, STOP or START.
+
+    Host-only proof. It cannot prove the Cloudflare signing key has been
+    deployed or that a real owner callback has ever been received.
+    """
+    if os.geteuid() != 0:
+        raise ValueError("owner required")
+    c = _read_config(config)
+    installed = verify_release(root, manifest_path)
+    _check_sources(root, manifest_path, installed)
+    _check_units(root, manifest_path, unit_dir)
+    _private_dir(state)
+    pending = _private_json(state / "pending.json")
+    if type(pending) is not dict or set(pending) != {"pending"} or pending["pending"] is not None:
+        raise ValueError("approval not in initial idle state")
+    for name in ("prompts", "grants"):
+        _check_ledger(state / name)
+    relay_uid = pwd.getpwnam("bybitscanner").pw_uid
+    _check_relay_inbox(relay_inbox, relay_uid)
+    diag, diag_issuer, diag_responder = diagnostic_config()
+    if not diag["enabled"] or diag["release_sha"] != installed:
+        raise ValueError("signed diagnostic bridge not prepared for exact release")
+    callback = eddsa.import_public_key(bytes.fromhex(c["callback_public"]))
+    approval = eddsa.import_private_key(bytes.fromhex(c["approval_seed"]))
+    keys = (callback, approval.public_key(), diag_issuer, diag_responder.public_key())
+    if any(left == right for i, left in enumerate(keys) for right in keys[i+1:]):
+        raise ValueError("approval key separation unproven")
+    if os.getenv("TELEGRAM_CHAT_ID", "").strip() != c["owner_id"]:
+        raise ValueError("approval owner route differs")
+    if not telegram_gateway_client.configured():
+        raise ValueError("approved gateway not configured")
+    # Proof of protected local prerequisites, never remote activation.
+    return "HOST_PRECHECK_OK_DISABLED" if not c["enabled"] else "HOST_PRECHECK_OK_ENABLED"
+
+
 @contextmanager
 def _lock(state):
     _private_dir(state)
