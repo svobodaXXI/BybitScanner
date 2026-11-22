@@ -1,4 +1,5 @@
 """Passive same-candidate pattern flow observer: zero new Scanner/Robot actions."""
+import json
 import os
 import tempfile
 import unittest
@@ -147,7 +148,7 @@ class ObserverTests(unittest.TestCase):
                 observer._save_wedge_capture(approved, context)
                 self.assertTrue(destination.exists())
                 with destination.open(encoding="utf-8") as source:
-                    body = __import__("json").load(source)
+                    body = json.load(source)
                 self.assertEqual(
                     [entry[0] for entry in body["book_frames"]],
                     [101_000, 110_000],
