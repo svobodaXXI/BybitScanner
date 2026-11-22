@@ -213,6 +213,53 @@ def test_frozen_chart_renders_without_market_data(tmp_path):
     assert target.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
 
 
+@pytest.mark.parametrize("include_lower,expect_warning", [
+    (False, True), (True, False),
+])
+def test_mirror_pattern_card_exposes_incomplete_contour_without_fake_line(
+        tmp_path, monkeypatch, include_lower, expect_warning):
+    pytest.importorskip("matplotlib")
+    from matplotlib.figure import Figure
+    from mirror_event_chart import render_mirror_chart
+
+    rows = [
+        {"open_time_ms": i * 60_000, "open": 3.0, "high": 3.3,
+         "low": 2.9, "close": 3.1} for i in range(15)
+    ]
+    upper = {
+        "level_id": "upper", "selected": True, "side": "upper",
+        "boundary": {"anchor_time_ms": 0, "anchor_price": 3.25,
+                     "slope_per_ms": -0.00000001},
+    }
+    lower = {
+        "level_id": "lower", "selected": False, "side": "lower",
+        "boundary": {"anchor_time_ms": 0, "anchor_price": 2.95,
+                     "slope_per_ms": -0.00000001},
+    }
+    observed = {}
+    save = Figure.savefig
+
+    def inspect(fig, *args, **kwargs):
+        ax = fig.axes[0]
+        observed["title"] = ax.get_title()
+        observed["lines"] = len(ax.lines)
+        observed["legend"] = [v.get_text() for v in ax.get_legend().get_texts()]
+        return save(fig, *args, **kwargs)
+
+    monkeypatch.setattr(Figure, "savefig", inspect)
+    target = tmp_path / "frozen-pattern.png"
+    render_mirror_chart({
+        "symbol": "EVAUSDT", "timeframe": "1",
+        "source": "pattern_boundary", "pattern": "Falling Wedge",
+        "event_kind": "breakout", "event_open_time_ms": 14 * 60_000,
+        "candles": rows, "levels": [upper, *([lower] if include_lower else [])],
+    }, target)
+    assert target.read_bytes().startswith(b"\\x89PNG")
+    assert ("Контур паттерна неполон" in observed["title"]) is expect_warning
+    assert observed["lines"] == (2 if include_lower else 1)
+    assert ("Граница источника" in observed["legend"]) is include_lower
+
+
 def test_chart_refuses_missing_evidence(tmp_path):
     pytest.importorskip("matplotlib")
     from mirror_event_chart import render_mirror_chart
