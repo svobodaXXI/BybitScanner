@@ -631,60 +631,37 @@ describe("Closed deals / exact episode index", () => {
     }
   });
 
-  it("pairs an existing VPS device slot through a confirmed Windows link only", async () => {
-    const token = "A".repeat(64);
-    const copies = vi.fn().mockResolvedValue(undefined);
-    const nativeClicks: string[] = [];
+  it("shows only an expiring owner code, never a reusable token or URI", async () => {
+    const code = "A".repeat(24);
     vi.stubGlobal("navigator", {
       userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-      clipboard: { writeText: copies },
     });
-    const spy = vi.spyOn(HTMLAnchorElement.prototype, "click");
-    const observeNative = (event: MouseEvent) => {
-      if (event.target instanceof HTMLAnchorElement &&
-          event.target.href.startsWith("bybitscanner-simulator://pair?")) {
-        nativeClicks.push(event.target.href);
-        event.preventDefault(); // JSDOM has no native Windows protocol dispatch
-      }
-    };
-    document.addEventListener("click", observeNative);
-    try {
-      const fetchMock = vi.fn().mockImplementation(async (url: string) => {
-        if (url.endsWith("/simulator-bridge/pair")) return new Response(JSON.stringify({
-          ok: true, device_id: "owner-pc", token,
-        }), { status: 200 });
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+      if (url.endsWith("/simulator-bridge/pair-code"))
         return new Response(JSON.stringify({
-          ...finrezResponse, closed_episodes: [robotDeal],
+          ok: true, device_id: "owner-pc", code, expires_in_seconds: 90,
         }), { status: 200 });
-      });
-      vi.stubGlobal("fetch", fetchMock);
-      render(<DiaryOverlay accountKey="paper:deals" initialSection="DEALS"
-        statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
-      fireEvent.click(await screen.findByRole("button", { name: /BTCUSDT/ }));
-      fireEvent.click(screen.getByRole("button", { name: "Связать ПК" }));
-      const confirm = await screen.findByRole("link", { name: "Подтвердить подключение" });
-      expect(confirm).toHaveAttribute("href", "bybitscanner-simulator://pair?device_id=owner-pc&token=" + token);
-      expect(confirm).toHaveAttribute("target", "_self");
-      expect(nativeClicks).toHaveLength(0); // browser must not auto-open on async request
-      expect(fetchMock).toHaveBeenCalledWith("/api/diary/simulator-bridge/pair", {
-        method: "POST", credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ device_id: "owner-pc" }),
-      });
-      fireEvent.click(confirm);
-      expect(spy).not.toHaveBeenCalled();
-      expect(copies).not.toHaveBeenCalled();
-      expect(nativeClicks).toEqual([
-        "bybitscanner-simulator://pair?device_id=owner-pc&token=" + token,
-      ]);
-      expect(screen.getByText(/Запрошено открытие локального адаптера/))
-        .toHaveTextContent("Подключение пока не подтверждено.");
-      await waitFor(() => expect(screen.queryByRole("link", { name: "Подтвердить подключение" }))
-        .not.toBeInTheDocument());
-    } finally {
-      document.removeEventListener("click", observeNative);
-      spy.mockRestore();
-    }
+      return new Response(JSON.stringify({
+        ...finrezResponse, closed_episodes: [robotDeal],
+      }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<DiaryOverlay accountKey="paper:deals" initialSection="DEALS"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: /BTCUSDT/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Связать ПК" }));
+    const display = await screen.findByLabelText("Одноразовый код сопряжения");
+    expect(display).toHaveTextContent(code);
+    expect(screen.getByText(/Введите одноразовый код/)).toHaveTextContent("90 секунд");
+    expect(screen.queryByRole("link", { name: "Подтвердить подключение" }))
+      .not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith("/api/diary/simulator-bridge/pair-code", {
+      method: "POST", credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ device_id: "owner-pc" }),
+    });
+    expect(document.body.innerHTML).not.toContain("bybitscanner-simulator://pair");
+    expect(document.body.innerHTML).not.toContain("A".repeat(64));
   });
 
   it.each([
@@ -697,7 +674,7 @@ describe("Closed deals / exact episode index", () => {
     const secret = "SECRET_PAIRING_TOKEN_MUST_NOT_RENDER";
     vi.stubGlobal("navigator", { userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" });
     const fetchMock = vi.fn().mockImplementation(async (url: string) => {
-      if (url.endsWith("/simulator-bridge/pair"))
+      if (url.endsWith("/simulator-bridge/pair-code"))
         return new Response(JSON.stringify({ ok: false, error, token: secret }), { status });
       return new Response(JSON.stringify({
         ...finrezResponse, closed_episodes: [robotDeal],
@@ -730,7 +707,7 @@ describe("Closed deals / exact episode index", () => {
     for (const scenario of scenarios) {
       vi.stubGlobal("navigator", { userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" });
       vi.stubGlobal("fetch", vi.fn().mockImplementation(async (url: string) => {
-        if (url.endsWith("/simulator-bridge/pair")) {
+        if (url.endsWith("/simulator-bridge/pair-code")) {
           if (!scenario.payload) throw new TypeError("network " + secret);
           return new Response(JSON.stringify(scenario.payload), { status: 200 });
         }
