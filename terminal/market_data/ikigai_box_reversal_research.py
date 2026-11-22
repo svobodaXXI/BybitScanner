@@ -124,6 +124,9 @@ def observe_box_reversal_flow(
             or type(obs.available_at_ms) is not int
             or not isinstance(win, FlowWindow) or win.price_source != "TRADE"
             or win.total_notional <= 0 or win.start_ms < known
+            # A frozen candle's "decision_time_ms" is its Bybit OPEN time.
+            # Do not credit pre-approval trades to an APPROVED Robot host.
+            or win.start_ms < approved
             or not win.end_ms <= obs.available_at_ms <= decision_ms
             or (generation is not None and obs.generation != generation)
             or (previous is not None and obs.available_at_ms < previous.available_at_ms)
