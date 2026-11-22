@@ -606,6 +606,46 @@ def handler_factory(static_dir: Path = STATIC_DIR,
                 self._error(403, "Local Wedge SIMULATION only")
                 return
             path = urlsplit(self.path).path
+            if path == "/local-replay/pair-claim":
+                # The local browser submits only an expiring owner-issued code.
+                # The device secret never reaches JavaScript or an HTTP response.
+                from research.local_replay_viewer.launch_bridge_agent import (
+                    AgentConfigError, claim_one_time_pairing_code,
+                )
+                from urllib.error import HTTPError, URLError
+                origin = self.headers.get("Origin")
+                allowed = (f"http://127.0.0.1:{self.server.server_address[1]}",
+                           f"http://localhost:{self.server.server_address[1]}")
+                if (urlsplit(self.path).query or origin not in allowed
+                        or self.headers.get("Sec-Fetch-Site") == "cross-site"
+                        or self.headers.get("X-Local-Pair-Code") != "explicit-click"
+                        or self.headers.get("Content-Type") != "application/json"):
+                    self._error(403, "Explicit same-origin pairing only")
+                    return
+                try:
+                    size = int(self.headers.get("Content-Length", "0"))
+                    if not 2 <= size <= 110:
+                        raise ValueError("invalid_pair_code_size")
+                    payload = json.loads(self.rfile.read(size).decode("utf-8"))
+                    if (not isinstance(payload, dict)
+                            or set(payload) != {"device_id", "code"}
+                            or payload["device_id"] not in {"owner-pc", "owner-laptop"}
+                            or not isinstance(payload["code"], str)
+                            or not re.fullmatch(r"[A-Z2-7]{24}\Z", payload["code"])):
+                        raise ValueError("invalid_pair_code_request")
+                except (ValueError, UnicodeError, TypeError):
+                    self._error(422, "Invalid one-time pairing code")
+                    return
+                try:
+                    claim_one_time_pairing_code(
+                        payload["device_id"], payload["code"])
+                except (AgentConfigError, HTTPError, URLError, OSError,
+                        ValueError):
+                    self._error(409, "Pairing not confirmed; generate a new code")
+                    return
+                self._send(200, b'{"paired":true}',
+                           "application/json; charset=utf-8")
+                return
             if path == "/local-replay/desktop-update":
                 origin = self.headers.get("Origin")
                 allowed = (f"http://127.0.0.1:{self.server.server_address[1]}",
