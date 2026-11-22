@@ -105,11 +105,15 @@ def render_mirror_chart(snapshot: Mapping, output_path: str | Path) -> None:
                 anchor_idx = times.index(anchor_t)
                 ax.scatter([anchor_idx], [anchor_p],
                            color=color, s=44 if selected else 20, zorder=5)
-                if selected and source_t == anchor_t:
-                    stamp = datetime.fromtimestamp(anchor_t / 1000, timezone.utc).strftime("%d.%m.%Y %H:%M UTC")
-                    ax.annotate(f"Исходная опора: {stamp}", (anchor_idx, anchor_p),
-                                xytext=(9, 13), textcoords="offset points",
-                                color="#fbbf24", fontsize=8)
+            if selected and source_t in times:
+                source_price = next((float(anchor[1]) for anchor in level.get("anchors", ())
+                                     if int(anchor[0]) == source_t), anchor_p)
+                source_idx = times.index(source_t)
+                ax.scatter([source_idx], [source_price], color="#fbbf24", s=48, zorder=6)
+                stamp = datetime.fromtimestamp(source_t / 1000, timezone.utc).strftime("%d.%m.%Y %H:%M UTC")
+                ax.annotate(f"Исходная опора: {stamp}", (source_idx, source_price),
+                            xytext=(9, 13), textcoords="offset points",
+                            color="#fbbf24", fontsize=8)
         if source_missing:
             ax.text(0.02, 0.04, "Исходный экстремум вне сохранённого окна · недостаточно доказательств",
                     transform=ax.transAxes, color="#fbbf24", fontsize=9,
