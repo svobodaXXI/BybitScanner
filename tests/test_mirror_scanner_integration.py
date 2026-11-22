@@ -217,6 +217,51 @@ def test_confirmed_lower_wick_extremum_replaces_support_ray(root, fixed_levels):
     assert state["records"][level.level_id]["superseded_by_level_id"] == successor
 
 
+@pytest.mark.parametrize("side,breach,successor", [
+    ("lower", 99.8, 100.2),  # later HIGHER low, EVAA/BLESS-type revision
+    ("upper", 100.2, 99.8),  # later LOWER high (symmetric)
+])
+def test_wick_sweep_later_less_extreme_confirmed_pivot_replaces_breached_ray(
+        root, fixed_levels, monkeypatch, side, breach, successor):
+    old = level_at(100.0, 5 * M, side=side)
+    fixed_levels["levels"] = [old]
+    price = 100.6 if side == "lower" else 99.4
+    clean = (price, 101.0, 100.4, price) if side == "lower" else (
+        price, 99.6, 99.0, price)
+    bars = [clean] * 34
+    bars[25] = ((price, 101.0, breach, price) if side == "lower"
+                else (price, breach, 99.0, price))
+    bars[30] = ((price, 101.0, successor, price) if side == "lower"
+                else (price, successor, 99.0, price))
+    later = {"price": successor, "pivot_at_ms": 30 * M,
+             "confirmed_at_ms": 34 * M, "confirmed_index": 33, "index": 30}
+
+    # Isolate the successor transition from other pivots. The 3-bar
+    # confirmation is exposed only when the final bar has closed.
+    def pivots(rows):
+        available = [later] if len(rows) >= 34 else []
+        return (available, []) if side == "upper" else ([], available)
+
+    monkeypatch.setattr(ms, "confirmed_pivots", pivots)
+    observe(frame(bars[:33]), root)
+    early = ms.load_state("TESTUSDT", "1", root)
+    assert early["records"][old.level_id]["lifecycle"] == ms.LIFECYCLE_TRACKING
+    observe(frame(bars), root)
+    state = ms.load_state("TESTUSDT", "1", root)
+    record = state["records"][old.level_id]
+    assert record["rejection"] == "superseded_by_confirmed_extremum"
+    assert record["candidate"] is False
+    successor_id = record["superseded_by_level_id"]
+    ray = ms.LevelRegistry.from_dict(state["registry"]).levels[successor_id]
+    assert ray.boundary.anchor_price == successor
+    assert ray.boundary.anchor_time_ms == 30 * M
+    assert ray.confirmed_at_ms == 34 * M
+    assert ray.provenance["supersedes_level_id"] == old.level_id
+    observe(frame(bars), root)
+    assert ms.load_state("TESTUSDT", "1", root)["records"][old.level_id][
+        "superseded_by_level_id"] == successor_id
+
+
 def test_wick_sweep_before_confirmation_does_not_cancel_existing_level(root, fixed_levels):
     # An unconfirmed spike can be revised by later bars. Never anticipate
     # the new pivot at the moment of the wick.
