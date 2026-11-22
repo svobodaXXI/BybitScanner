@@ -326,7 +326,7 @@ def test_long_frozen_history_has_readable_recent_pane(tmp_path, monkeypatch):
     monkeypatch.setattr(Figure, "savefig", inspect_save)
     target = tmp_path / "long-source.png"
     render_mirror_chart(snapshot, target)
-    assert target.read_bytes().startswith(b"\\x89PNG\\r\\n\\x1a\\n")
+    assert target.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
     assert captured["axes"] == 2
     assert captured["overview_bars"] == 600
     assert captured["recent_bars"] == 120
