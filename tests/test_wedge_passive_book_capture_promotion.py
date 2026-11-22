@@ -68,6 +68,34 @@ class PassiveBookCapturePromotionTests(unittest.TestCase):
         self.assertTrue(passive.capture_book)
         self.assertEqual(socket.messages[-1]["args"], ["orderbook.200.BTCUSDT"])
 
+    def test_rejected_book_subscription_ack_disables_capture_and_allows_retry(self):
+        socket = _WebSocket()
+        hub = _hub(socket)
+        passive = hub.subscribe_flow_only("BTCUSDT")
+        original_trade_source = passive.impulse_observation
+        hub.subscribe_flow_only("BTCUSDT", capture_book=True)
+        passive.book_frames.append((1, {"type": "snapshot"}))
+
+        hub._dispatch({
+            "op": "subscribe",
+            "req_id": "flowbook:BTCUSDT:capture",
+            "success": False,
+        })
+        self.assertFalse(passive.capture_book)
+        self.assertEqual(list(passive.book_frames), [])
+        self.assertIs(passive.impulse_observation, original_trade_source)
+
+        self.assertIs(hub.subscribe_flow_only("BTCUSDT", capture_book=True), passive)
+        self.assertTrue(passive.capture_book)
+        self.assertEqual(
+            [message["args"] for message in socket.messages],
+            [
+                ["publicTrade.BTCUSDT"],
+                ["orderbook.200.BTCUSDT"],
+                ["orderbook.200.BTCUSDT"],
+            ],
+        )
+
     def test_disconnected_upgrade_is_used_by_next_full_reconnect_subscribe(self):
         hub = _hub()
         passive = hub.subscribe_flow_only("BTCUSDT")
