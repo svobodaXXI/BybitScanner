@@ -303,8 +303,15 @@ def run_once(*, config=CONFIG, state=STATE, root=ROOT, manifest_path=MANIFEST,
                      audience=c["audience"], clock=clock)
 
 
-def main():
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Protected owner release confirmation")
+    parser.add_argument("--preflight", action="store_true",
+                        help="read-only exact-release/local configuration proof")
+    args = parser.parse_args(argv)
     try:
+        if args.preflight:
+            print("OWNER_RELEASE_PREFLIGHT=" + preflight())
+            return 0
         result = run_once()
         print("OWNER_RELEASE_APPROVAL=" + result)
         return 2 if result in ("SUBMISSION_UNPROVEN", "PROMPT_UNPROVEN") else 0
