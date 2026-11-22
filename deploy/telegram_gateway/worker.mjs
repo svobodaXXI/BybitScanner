@@ -139,7 +139,7 @@ export default {
           for (const update of payload.result) {
             if (!update || typeof update !== "object") continue;
             delete update._release_approval;
-            await attestRelease(update,env);
+            try { await attestRelease(update,env); } catch (_) { /* Approval remains unproven; ordinary polling survives. */ }
           }
         }
         return reply(200, payload);
