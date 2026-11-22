@@ -114,6 +114,54 @@ class ObserverTests(unittest.TestCase):
         finally:
             observer.close()
 
+    def test_capture_only_rearms_book_for_new_same_symbol_host(self):
+        """A later approved Wedge cannot inherit an earlier host's L2 lease."""
+        calls = []
+
+        def subscribe(symbol, *, capture_book=False):
+            calls.append(("subscribe", symbol, capture_book))
+            return SimpleNamespace(
+                capture_book=True,
+                book_frames=[],
+                impulse_observation=SimpleNamespace(snapshot=lambda: {
+                    "prints": (), "invalid_frames": 0,
+                }),
+            )
+
+        hub = SimpleNamespace(
+            subscribe_flow_only=subscribe,
+            release_flow_only=lambda symbol: calls.append(("release", symbol)),
+        )
+        original = _candidate(phase="WAITING_BREAKOUT")
+        original.updated_at_ms = 100_000
+        original.snapshot_sha256 = "a" * 64
+        candidates = [original]
+        observer = PatternFlowObserver(
+            hub, _REST(None, None, None), "unused",
+            clock_ms=lambda: 180_100,
+            get_candidates=lambda: tuple(candidates),
+            wedge_capture_path=Path("unused-research-only.json"),
+            capture_only=True,
+        )
+        try:
+            self.assertEqual(observer.once(), 0)
+            self.assertEqual(calls, [("subscribe", "BTCUSDT", True)])
+            self.assertEqual(observer.once(), 0)
+            self.assertNotIn(("release", "BTCUSDT"), calls)
+            replacement = _candidate(phase="WAITING_BREAKOUT")
+            replacement.candidate_id = "new-approved-wedge"
+            replacement.updated_at_ms = 110_000
+            replacement.snapshot_sha256 = "b" * 64
+            candidates[:] = [replacement]
+            self.assertEqual(observer.once(), 0)
+            self.assertEqual(
+                calls[-2:],
+                [("release", "BTCUSDT"), ("subscribe", "BTCUSDT", True)],
+            )
+            self.assertEqual(observer._receipts, {})
+        finally:
+            observer.close()
+
     def test_wedge_capture_requires_postapproval_snapshot_and_exact_host(self):
         """A prior candidate's L2 snapshot may not become today's proof."""
         receipt = make_dataclass(
