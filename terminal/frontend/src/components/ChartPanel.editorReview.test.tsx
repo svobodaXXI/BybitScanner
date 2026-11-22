@@ -119,3 +119,53 @@ it("restores Telegram source lines locally with Undo but never invokes review sa
   expect(screen.getByRole("button", { name: "Undo drawing" })).toBeDisabled();
   expect(onSaveGeometryReview).not.toHaveBeenCalled();
 });
+
+
+it("blocks correction submission until the next-candle request finishes, then saves the latest context once", async () => {
+  let finishExtension!: () => void;
+  const extension = new Promise<void>((resolve) => { finishExtension = resolve; });
+  const onExtendEditorHistory = vi.fn(() => extension);
+  const onSaveGeometryReview = vi.fn().mockResolvedValue({ reviewId: "saved-review", label: "GEOMETRY_CORRECTED" });
+  const source = {
+    id: "source-ray", type: "ray" as const,
+    anchors: [{ logical: 0, price: 100 }, { logical: 1, price: 110 }],
+    style: { color: "#8195aa", lineWidth: 1.5 }, locked: true, hidden: false,
+  };
+  const corrected = {
+    ...source, id: "editable:source-ray", locked: false,
+    anchors: [{ logical: 0, price: 100 }, { logical: 1, price: 112 }],
+  };
+  const candles = ["2026-11-22T07:00:00Z", "2026-11-22T07:05:00Z"].map(time =>
+    ({ time, open: 100, high: 115, low: 98, close: 105 }));
+  const props = {
+    candles, tickSize: null, editorMode: true, signalIdentity: "extension-review-test",
+    originalPattern: "Rising Wedge", snapshotRevision: "a".repeat(64),
+    barsSha256: "b".repeat(64), referenceDrawings: [source], editableSeedDrawings: [corrected],
+    onExtendEditorHistory, onSaveGeometryReview,
+  };
+  const view = render(<ChartPanel {...props} />);
+  fireEvent.change(screen.getByRole("combobox", { name: "Правильный паттерн" }), { target: { value: "Falling Wedge" } });
+  fireEvent.change(screen.getByRole("textbox", { name: "Комментарий к исправлению" }), { target: { value: "Уточнение границы" } });
+  const save = screen.getByRole("button", { name: "Передать исправление" });
+  expect(save).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "Показать следующие свечи" }));
+  expect(onExtendEditorHistory).toHaveBeenCalledOnce();
+  expect(save).toBeDisabled();
+  fireEvent.click(save);
+  expect(onSaveGeometryReview).not.toHaveBeenCalled();
+  const context = { asOfMs: Date.parse("2026-11-22T07:10:00Z"), barsSha256: "c".repeat(64) };
+  view.rerender(<ChartPanel {...props} retrospectiveContext={context} />);
+  finishExtension();
+  await waitFor(() => expect(save).toBeEnabled());
+  fireEvent.click(save);
+  await waitFor(() => expect(onSaveGeometryReview).toHaveBeenCalledOnce());
+  expect(onSaveGeometryReview).toHaveBeenCalledWith(expect.objectContaining({
+    signal_id: props.signalIdentity, label: "GEOMETRY_CORRECTED", corrected_pattern: "Falling Wedge",
+    note: "Уточнение границы", context_as_of_ms: context.asOfMs, context_bars_sha256: context.barsSha256,
+    corrected_boundaries: [{ id: "source-ray", type: "ray", anchors: [
+      { bar_open_time_ms: Date.parse(candles[0].time), price: 100 },
+      { bar_open_time_ms: Date.parse(candles[1].time), price: 112 },
+    ] }],
+  }));
+  expect(await screen.findByText("Исправление сохранено")).toBeInTheDocument();
+});
