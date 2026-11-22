@@ -207,7 +207,8 @@ def run_once(*, config=CONFIG, state=STATE, root=ROOT, manifest_path=MANIFEST,
                 raise ValueError("approval configuration changed")
             return verify_release(root, manifest_path)
         def send(text, keyboard):
-            result = telegram_gateway_client.send_text(c["owner_id"], text, reply_markup=keyboard)
+            result = telegram_gateway_client.send_text(c["owner_id"], text, reply_markup=keyboard,
+                                                       retry=False)
             return result["result"]["message_id"] if result.get("ok") is True else None
         def save(value):
             _atomic_file(state / "pending.json", grants._canonical(value), 0o600)
