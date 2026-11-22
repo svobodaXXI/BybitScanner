@@ -6,6 +6,7 @@ an authenticated, exact, one-use approval. No automatic provisioning or enable.
 from __future__ import annotations
 
 from contextlib import contextmanager
+import argparse
 import fcntl
 import hashlib
 import json
@@ -38,6 +39,8 @@ PINNED = ("tools/owner_release_telegram_runtime.py", "tools/owner_release_telegr
           "tools/vps_release_identity.py", "tools/vps_gitless_release_activate.py",
           "tools/github_diagnostic_runtime.py", "tools/github_diagnostic_protocol.py",
           "telegram_gateway_client.py")
+OWNER_UNIT_NAMES = ("bybitscanner-owner-release-approval.service",
+                    "bybitscanner-owner-release-approval.timer")
 
 
 def _private_dir(directory):
