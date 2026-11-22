@@ -159,6 +159,40 @@ def test_preflight_upgrades_only_exact_previous_bridge_to_scoped_facts(tmp_path)
     assert site.read_text() == tampered
 
 
+def test_pair_claim_requires_exact_installed_predecessor(tmp_path):
+    root, ng, site, _ = _site(tmp_path)
+
+    def inspect():
+        return gateway.inspect_authenticated_site(
+            root=root, run=_runner(site, []), nginx_dir=ng, uid=os.geteuid(),
+        )
+
+    _, _, predecessor = inspect()
+    source = root / "deploy/terminal_ingress/nginx-authenticated.conf"
+    successor = source.read_text().replace(
+        gateway.ROUTE_START, gateway.BRIDGE_CLAIM_BLOCK + gateway.ROUTE_START, 1,
+    )
+    source.write_text(successor)
+    with pytest.raises(gateway.MainGatewayBlocked, match="unknown_simulator_bridge_route"):
+        inspect()
+    site.write_bytes(predecessor)
+    _, before, after = inspect()
+    assert before == site.read_bytes() == predecessor
+    claim = gateway.BRIDGE_CLAIM_BLOCK.encode()
+    assert after.replace(claim, b"", 1) == predecessor
+
+    site.write_bytes(after)
+    _, before, after = inspect()
+    assert before == after
+    site.write_bytes(after.replace(claim, claim * 2, 1))
+    with pytest.raises(gateway.MainGatewayBlocked, match="duplicate_simulator_bridge_routes"):
+        inspect()
+    site.write_bytes(predecessor)
+    source.write_text(successor.replace("client_max_body_size 128;", "client_max_body_size 1k;"))
+    with pytest.raises(gateway.MainGatewayBlocked, match="reviewed_simulator_bridge_invalid"):
+        inspect()
+
+
 def test_successor_rejects_foreign_facts_route(tmp_path):
     root, ng, site, baseline = _site(tmp_path)
     site.write_text(baseline.replace(

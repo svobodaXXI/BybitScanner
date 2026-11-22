@@ -32,6 +32,23 @@ AUTH_BLOCK = "    location = /_auth {\n        internal;"
 BRIDGE_START = "    # Paired Windows Simulator agent only:"
 BRIDGE_FACTS_START = "    # Exact owner-queued PAPER facts for the paired device ONLY."
 BRIDGE_FACTS_ROUTE = "location = /api/diary/simulator-bridge/facts {"
+BRIDGE_CLAIM_PATH = "/api/diary/simulator-bridge/pair-claim"
+BRIDGE_CLAIM_BLOCK = (
+    "    location = /api/diary/simulator-bridge/pair-claim {\n"
+    "        limit_except POST { deny all; }\n"
+    "        client_max_body_size 128;\n"
+    "        proxy_pass http://127.0.0.1:8765;\n"
+    "        proxy_set_header Host $host;\n"
+    "        proxy_set_header X-Forwarded-Proto https;\n"
+    "        proxy_set_header Cookie \"\";\n"
+    "        proxy_set_header Authorization \"\";\n"
+    "        proxy_cache off;\n"
+    "        proxy_buffering off;\n"
+    "        proxy_hide_header Cache-Control;\n"
+    "        add_header Cache-Control \"no-store\" always;\n"
+    "    }\n"
+    "\n"
+)
 ROUTE_START = "    # MAIN reads are isolated from the PAPER backend."
 ROUTE_END = "    # The backend is never publicly exposed"
 MARKER = re.compile(r"(?m)^# configuration file ([^:\n]+):\s*$")
@@ -86,29 +103,33 @@ def _simulator_bridge_from_source(root: Path) -> str:
         block = contents[start:end]
     except (OSError, UnicodeError, ValueError) as exc:
         raise MainGatewayBlocked("reviewed_simulator_bridge_unavailable") from exc
+    successor = block.endswith(BRIDGE_CLAIM_BLOCK)
+    reviewed = block.removesuffix(BRIDGE_CLAIM_BLOCK)
+    _require(not successor or BRIDGE_FACTS_ROUTE in reviewed,
+             "reviewed_simulator_bridge_invalid")
     # Two immutable, precisely constrained source shapes are reviewed:
     # migration release poll+ack (accepted by the installed old monolith),
     # and the successor poll+ack+facts. Nothing in between is admissible.
-    with_facts = (BRIDGE_FACTS_ROUTE in block or BRIDGE_FACTS_START in block)
+    with_facts = (BRIDGE_FACTS_ROUTE in reviewed or BRIDGE_FACTS_START in reviewed)
     count = 3 if with_facts else 2
     _require(
-        block.count("location = /api/diary/simulator-bridge/poll {") == 1
-        and block.count("location = /api/diary/simulator-bridge/ack {") == 1
-        and block.count(BRIDGE_FACTS_ROUTE) == int(with_facts)
-        and block.count(BRIDGE_FACTS_START) == int(with_facts)
+        reviewed.count("location = /api/diary/simulator-bridge/poll {") == 1
+        and reviewed.count("location = /api/diary/simulator-bridge/ack {") == 1
+        and reviewed.count(BRIDGE_FACTS_ROUTE) == int(with_facts)
+        and reviewed.count(BRIDGE_FACTS_START) == int(with_facts)
         and len(re.findall(
-            r"location\s*=\s*/api/diary/simulator-bridge/[a-z-]+\s*\{", block,
+            r"location\s*=\s*/api/diary/simulator-bridge/[a-z-]+\s*\{", reviewed,
         )) == count
-        and block.count("limit_except GET { deny all; }") == 1 + int(with_facts)
-        and block.count("limit_except POST { deny all; }") == 1
-        and block.count("proxy_pass http://127.0.0.1:8765;") == count
-        and block.count('proxy_set_header Cookie "";') == count
-        and block.count('proxy_set_header Authorization "";') == count
-        and block.count("client_max_body_size 1k;") == count
-        and block.count("proxy_set_header X-BybitScanner-Simulator-Device-Token"
+        and reviewed.count("limit_except GET { deny all; }") == 1 + int(with_facts)
+        and reviewed.count("limit_except POST { deny all; }") == 1
+        and reviewed.count("proxy_pass http://127.0.0.1:8765;") == count
+        and reviewed.count('proxy_set_header Cookie "";') == count
+        and reviewed.count('proxy_set_header Authorization "";') == count
+        and reviewed.count("client_max_body_size 1k;") == count
+        and reviewed.count("proxy_set_header X-BybitScanner-Simulator-Device-Token"
                         " $http_x_bybitscanner_simulator_device_token;")
             == int(with_facts)
-        and "auth_request" not in block,
+        and "auth_request" not in reviewed,
         "reviewed_simulator_bridge_invalid",
     )
     return block
@@ -172,6 +193,7 @@ def inspect_authenticated_site(
     bridge_poll = "location = /api/diary/simulator-bridge/poll {"
     bridge_ack = "location = /api/diary/simulator-bridge/ack {"
     bridge_facts = BRIDGE_FACTS_ROUTE
+    with_claim = bridge.endswith(BRIDGE_CLAIM_BLOCK)
     bridge_routes = re.findall(
         r"location\s*=\s*(/api/diary/simulator-bridge/[a-z-]+)\s*\{", dump,
     )
@@ -180,8 +202,10 @@ def inspect_authenticated_site(
             "/api/diary/simulator-bridge/poll",
             "/api/diary/simulator-bridge/ack",
             "/api/diary/simulator-bridge/facts",
+            BRIDGE_CLAIM_PATH,
         } for path in bridge_routes)
-        and all(dump.count(route) <= 1 for route in (bridge_poll, bridge_ack, bridge_facts)),
+        and len(bridge_routes) == len(set(bridge_routes))
+        and (with_claim or BRIDGE_CLAIM_PATH not in bridge_routes),
         "duplicate_simulator_bridge_routes",
     )
     for idx in range(1, len(blocks), 2):
@@ -214,7 +238,13 @@ def inspect_authenticated_site(
         _require(bridge_facts not in contents and dump.count(bridge_facts) == 0,
                  "unknown_simulator_bridge_route")
     if bridge not in contents:
-        if with_facts:
+        if with_claim:
+            predecessor = bridge.removesuffix(BRIDGE_CLAIM_BLOCK)
+            _require(contents.count(predecessor) == 1
+                     and BRIDGE_CLAIM_PATH not in bridge_routes,
+                     "unknown_simulator_bridge_route")
+            contents = contents.replace(predecessor, bridge, 1)
+        elif with_facts:
             legacy = _legacy_simulator_bridge_from_reviewed(bridge)
             if legacy in contents:
                 _require(bridge_facts not in contents
@@ -237,6 +267,8 @@ def inspect_authenticated_site(
                      "unknown_simulator_bridge_route")
             contents = contents.replace(BACKEND_BLOCK, bridge + BACKEND_BLOCK, 1)
         updated = contents.encode("utf-8")
+    _require(updated.decode("utf-8").count(f"location = {BRIDGE_CLAIM_PATH} {{") == int(with_claim),
+             "simulator_bridge_route_not_unique")
     _require(updated.decode("utf-8").count("location ^~ /api/manual-main/ {") == 1,
              "main_gateway_route_not_unique")
     _require(updated.decode("utf-8").count(bridge_poll) == 1
