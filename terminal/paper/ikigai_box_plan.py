@@ -309,3 +309,111 @@ def plan_approved_first_ikigai_box(
         target_fee_rate=target_fee_rate, stop_fee_rate=stop_fee_rate,
         structural_stop=structural_stop, take_price=take,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class BoxReversalEntryPreview:
+    """Hypothetical single entry at second-leg exhaustion, never an order."""
+
+    direction: str
+    assumed_entry: Decimal
+    structural_stop: Decimal
+    frozen_take: Decimal
+    quantity: Decimal
+    net_target_profit: Decimal
+    reserved_loss: Decimal
+    maximum_allowed_loss: Decimal
+    allowed: bool
+    reason: str
+    execution_authorized: bool = field(default=False, init=False)
+
+
+def assess_box_reversal_entry(
+    plan: IkigaiBoxPaperPlan,
+    *,
+    entry_price: Decimal,
+    second_extreme: Decimal,
+    quantity: Decimal,
+    qty_step: Decimal,
+    tick_size: Decimal,
+    stop_buffer_ticks: int,
+    entry_fee_rate: Decimal,
+    target_fee_rate: Decimal,
+    stop_fee_rate: Decimal,
+    adverse_entry_per_unit: Decimal,
+    adverse_target_per_unit: Decimal,
+    adverse_stop_per_unit: Decimal,
+    additional_cost_allowance_usdt: Decimal,
+    maximum_allowed_loss_usdt: Decimal,
+) -> BoxReversalEntryPreview:
+    """Bound one alternative Box entry with the original frozen TAKE.
+
+    Research caller supplies causal second-impulse extreme and hypothetical
+    entry from absorption, reclaim or first pullback. This function does NOT
+    attest the host identity, completeness, timestamps, reversal or a fill.
+    It never alters the approved four-slot grid or its protection. No sizing
+    increase, target move, or STOP tightening to rescue rejected economics.
+    Adverse prices include fees on actual scenario notionals; the additional
+    cost allowance is charged once in each mutually exclusive exit scenario.
+    This is not a guarantee against execution outside the supplied bounds.
+    """
+    if not isinstance(plan, IkigaiBoxPaperPlan) or plan.direction not in ("LONG", "SHORT"):
+        raise ValueError("an existing Box plan is required")
+    for name, value in (
+        ("entry", entry_price), ("second extreme", second_extreme),
+        ("quantity", quantity), ("quantity step", qty_step),
+        ("tick", tick_size), ("frozen TAKE", plan.take_price),
+        ("maximum loss", maximum_allowed_loss_usdt),
+    ):
+        require_positive_decimal(value, name)
+    if type(stop_buffer_ticks) is not int or stop_buffer_ticks < 1:
+        raise ValueError("STOP requires an explicit positive tick buffer")
+    if any(p % tick_size for p in (entry_price, second_extreme, plan.take_price)):
+        raise ValueError("entry, extreme and frozen TAKE must be tick-aligned")
+    if quantity % qty_step or quantity > sum(plan.limit_quantities, Decimal(0)):
+        raise ValueError("quantity must fit the original grid quantity and step")
+    for value in (
+        adverse_entry_per_unit, adverse_target_per_unit, adverse_stop_per_unit,
+        additional_cost_allowance_usdt,
+    ):
+        if not isinstance(value, Decimal) or not value.is_finite() or value < 0:
+            raise ValueError("execution and cost allowances must be finite non-negative Decimal")
+    entry_fee = _fee(entry_fee_rate, "entry fee")
+    target_fee = _fee(target_fee_rate, "target fee")
+    stop_fee = _fee(stop_fee_rate, "STOP fee")
+    sign = Decimal(1 if plan.direction == "LONG" else -1)
+    target = plan.take_price
+    if sign * (entry_price - second_extreme) < 0 or sign * (target - entry_price) <= 0:
+        raise ValueError("entry must be between second extreme and frozen TAKE")
+    stop = second_extreme - sign * tick_size * stop_buffer_ticks
+    entry_fill = entry_price + sign * adverse_entry_per_unit
+    target_fill = target - sign * adverse_target_per_unit
+    stop_fill = stop - sign * adverse_stop_per_unit
+    for name, value in (
+        ("structural STOP", stop), ("entry scenario", entry_fill),
+        ("target scenario", target_fill), ("STOP scenario", stop_fill),
+    ):
+        require_positive_decimal(value, name)
+    reward = quantity * (
+        sign * (target_fill - entry_fill) - entry_fill * entry_fee
+        - target_fill * target_fee
+    ) - additional_cost_allowance_usdt
+    loss = quantity * (
+        sign * (entry_fill - stop_fill) + entry_fill * entry_fee
+        + stop_fill * stop_fee
+    ) + additional_cost_allowance_usdt
+    if not reward.is_finite() or not loss.is_finite() or loss <= 0:
+        raise ValueError("invalid alternative entry economics")
+    if loss > maximum_allowed_loss_usdt:
+        reason = "RISK_BUDGET_EXCEEDED"
+    elif reward < 2 * loss:
+        reason = "NET_RR_BELOW_2"
+    else:
+        reason = "HYPOTHETICAL_ECONOMICS_OK"
+    return BoxReversalEntryPreview(
+        direction=plan.direction, assumed_entry=entry_price,
+        structural_stop=stop, frozen_take=target, quantity=quantity,
+        net_target_profit=reward, reserved_loss=loss,
+        maximum_allowed_loss=maximum_allowed_loss_usdt,
+        allowed=reason == "HYPOTHETICAL_ECONOMICS_OK", reason=reason,
+    )

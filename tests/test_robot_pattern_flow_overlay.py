@@ -750,15 +750,16 @@ class StopCampaignRenewalResearchTests(unittest.TestCase):
 
 
 class PatternFlowOptInExecutionGateTests(unittest.TestCase):
-    """Opt-in entry fences ALL native families before order ownership."""
+    """First-release Wedge opt-in; other native entry routes stay unchanged."""
 
     @staticmethod
-    def _monitor(observer):
+    def _monitor(observer, *, l_shape_enabled=False):
         from terminal.application.robot_breakout_monitor import RobotBreakoutMonitor
 
         monitor = object.__new__(RobotBreakoutMonitor)
         monitor._clock_ms = lambda: 181_000
         monitor._get_pattern_flow_evidence = observer
+        monitor._impulse_l_shape_paper_enabled = l_shape_enabled
         return monitor
 
     @staticmethod
@@ -815,24 +816,36 @@ class PatternFlowOptInExecutionGateTests(unittest.TestCase):
                     self._record(pattern, direction, phase),
                 ))
 
-    def test_optin_absent_or_erroring_source_blocks_new_entry_for_all_families(self):
-        for observer in (lambda _: None, lambda _: (_ for _ in ()).throw(
-            RuntimeError("source reconnecting"),
-        )):
-            owner = self._monitor(observer)
+    def test_optin_absent_or_erroring_source_blocks_only_enabled_families(self):
+        for l_shape_enabled in (False, True):
             for pattern, direction, phase in self._families():
-                with self.subTest(pattern=pattern, observer=observer):
-                    self.assertFalse(owner._pattern_flow_allows_entry(
-                        self._record(pattern, direction, phase),
-                    ))
+                for should_raise in (False, True):
+                    calls = []
+                    def observer(record):
+                        calls.append(record)
+                        if should_raise:
+                            raise RuntimeError("source reconnecting")
+                        return None
+                    owner = self._monitor(observer, l_shape_enabled=l_shape_enabled)
+                    record = self._record(pattern, direction, phase)
+                    enabled = pattern in ("Falling Wedge", "Rising Wedge") or (
+                        pattern == "L-shape" and l_shape_enabled
+                    )
+                    with self.subTest(pattern=pattern, l_shape_enabled=l_shape_enabled,
+                                      should_raise=should_raise):
+                        self.assertEqual(owner._pattern_flow_allows_entry(record), not enabled)
+                        self.assertEqual(calls, [record] if enabled else [])
 
-    def test_only_fresh_bound_same_direction_tape_allows_existing_entry_gate(self):
+    def test_only_fresh_bound_same_direction_tape_allows_enabled_entry_gate(self):
         for pattern, direction, phase in self._families():
+            if pattern not in ("Falling Wedge", "Rising Wedge", "L-shape"):
+                continue
             with self.subTest(pattern=pattern):
                 record = self._record(pattern, direction, phase)
                 good = self._receipt(direction)
                 self.assertTrue(
-                    self._monitor(lambda _: good)._pattern_flow_allows_entry(record),
+                    self._monitor(lambda _: good, l_shape_enabled=True)
+                    ._pattern_flow_allows_entry(record),
                 )
                 for bad in (
                     replace(good, candidate_id="foreign"),
@@ -845,15 +858,15 @@ class PatternFlowOptInExecutionGateTests(unittest.TestCase):
                     replace(good, closed_at_ms=60_000),
                 ):
                     self.assertFalse(
-                        self._monitor(lambda _, receipt=bad: receipt)
+                        self._monitor(lambda _, receipt=bad: receipt, l_shape_enabled=True)
                         ._pattern_flow_allows_entry(record),
                     )
-                # Auxiliary reversal formations are NOT independent entries.
-                auxiliary = self._record("Double Top", "SHORT", "RETEST_DETECTED")
-                self.assertFalse(
-                    self._monitor(lambda _: good)
-                    ._pattern_flow_allows_entry(auxiliary),
-                )
+
+    def test_auxiliary_reversal_has_no_independent_entry_scope(self):
+        for pattern, direction in (("Double Top", "SHORT"), ("Double Bottom", "LONG")):
+            self.assertIsNone(existing_pattern_entry_scope(
+                self._record(pattern, direction, "RETEST_DETECTED"),
+            ))
 
 
 if __name__ == "__main__":

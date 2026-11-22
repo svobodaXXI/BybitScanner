@@ -3981,6 +3981,7 @@ class ImpulseNativeMarketMatcherAgeFenceTests(unittest.TestCase):
                 get_robot_runtime_state=lambda _account: SimpleNamespace(
                     mode="ROBOT_RUNNING", recovery_status="READY", version=5,
                 ),
+                robot_symbol_quarantine_candidate_ids=lambda _account, _symbol: (),
             ),
             _robot_linked_entry_limits=lambda _symbol: {order_id.value: 5},
         )
@@ -3990,6 +3991,9 @@ class ImpulseNativeMarketMatcherAgeFenceTests(unittest.TestCase):
         )
         self.assertEqual(match(179_999), frozenset({order_id.value}))
         self.assertEqual(match(180_000), frozenset())
+        runtime.store.robot_symbol_quarantine_candidate_ids = lambda _account, _symbol: ("quarantined",)
+        self.assertEqual(match(180_000), frozenset({order_id.value}))
+        runtime.store.robot_symbol_quarantine_candidate_ids = lambda _account, _symbol: ()
         self.assertEqual(match(
             180_000 + robot_entry_limit.IMPULSE_ENTRY_LIMIT_MAX_AGE_MS
         ), frozenset())

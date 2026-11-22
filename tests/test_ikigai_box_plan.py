@@ -6,6 +6,7 @@ import unittest
 
 from terminal.paper.ikigai_box_plan import (
     approved_first_grid, assess_first_grid_risk, plan_approved_first_ikigai_box,
+    assess_box_reversal_entry,
     plan_ikigai_box,
 )
 
@@ -248,6 +249,75 @@ class IkigaiBoxPaperPlanTests(unittest.TestCase):
             del missing[name]
             with self.subTest(name=name), self.assertRaises(TypeError):
                 plan_ikigai_box(**missing)
+
+
+
+class BoxReversalEntryPreviewTests(unittest.TestCase):
+    def _case(self, direction="LONG", **overrides):
+        args = inputs(direction)
+        args.pop("limit_prices")
+        args.pop("limit_quantities")
+        plan = plan_approved_first_ikigai_box(**args)
+        values = dict(
+            entry_price=D("92.5" if direction == "LONG" else "107.5"),
+            second_extreme=D("92" if direction == "LONG" else "108"),
+            quantity=D("2"), qty_step=D("1"), tick_size=D("0.01"),
+            stop_buffer_ticks=10,
+            entry_fee_rate=D("0.001"), target_fee_rate=D("0.001"),
+            stop_fee_rate=D("0.001"),
+            adverse_entry_per_unit=D("0.1"), adverse_target_per_unit=D("0.1"),
+            adverse_stop_per_unit=D("0.1"), additional_cost_allowance_usdt=D("0.1"),
+            maximum_allowed_loss_usdt=D("3"),
+        )
+        values.update(overrides)
+        return plan, assess_box_reversal_entry(plan, **values)
+
+    def test_mirrored_stop_beyond_extreme_with_all_costs(self):
+        for direction, stop, take, profit, loss in (
+            ("LONG", "91.9", "99.2", "12.5166", "2.0688"),
+            ("SHORT", "108.1", "100.8", "12.4834", "2.1312"),
+        ):
+            with self.subTest(direction=direction):
+                plan, result = self._case(direction)
+                self.assertEqual(result.structural_stop, D(stop))
+                self.assertEqual(result.frozen_take, D(take))
+                self.assertEqual(result.net_target_profit, D(profit))
+                self.assertEqual(result.reserved_loss, D(loss))
+                self.assertTrue(result.allowed)
+                self.assertFalse(result.execution_authorized)
+                self.assertEqual(plan.take_price, D(take))
+                self.assertEqual(plan.stop_price, D("89.6" if direction == "LONG" else "110.4"))
+                self.assertEqual(len(plan.limit_prices), 4)
+
+    def test_reject_risk_and_late_reclaim_without_moving_stop_or_target(self):
+        for direction, entry in (("LONG", "98.5"), ("SHORT", "101.5")):
+            with self.subTest(direction=direction):
+                _, risk = self._case(direction, maximum_allowed_loss_usdt=D("2"))
+                self.assertFalse(risk.allowed)
+                self.assertEqual(risk.reason, "RISK_BUDGET_EXCEEDED")
+                _, late = self._case(direction, entry_price=D(entry),
+                                     maximum_allowed_loss_usdt=D("100"))
+                self.assertFalse(late.allowed)
+                self.assertEqual(late.reason, "NET_RR_BELOW_2")
+                self.assertEqual(late.structural_stop, risk.structural_stop)
+                self.assertEqual(late.frozen_take, risk.frozen_take)
+                self.assertFalse(late.execution_authorized)
+
+    def test_reject_invalid_inputs(self):
+        for values in (
+            {"stop_buffer_ticks": 0},
+            {"stop_buffer_ticks": True},
+            {"second_extreme": D("93")},
+            {"entry_price": D("99.2")},
+            {"entry_price": D("92.501")},
+            {"quantity": D("9")},
+            {"quantity": D("1.5")},
+            {"adverse_stop_per_unit": D("-0.1")},
+            {"target_fee_rate": D("NaN")},
+            {"maximum_allowed_loss_usdt": D("0")},
+        ):
+            with self.subTest(values=values), self.assertRaises(ValueError):
+                self._case(**values)
 
 
 if __name__ == "__main__":
