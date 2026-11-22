@@ -1,0 +1,11 @@
+[Unit]
+Description=Bounded authenticated GitHub read-only diagnostic poll
+
+[Timer]
+OnBootSec=45s
+OnUnitInactiveSec=30s
+AccuracySec=5s
+Unit=bybitscanner-github-diagnostic.service
+
+[Install]
+WantedBy=timers.target
