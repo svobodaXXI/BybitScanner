@@ -272,12 +272,12 @@ def test_owner_mirror_previous_wick_pierces_sloped_triangle_upper_ray(root, fixe
     # upper line, but the next candle has a valid real-body crossing.
     level = line_level(symbol="TESTUSDT", timeframe="1",
                        pattern="Triangle Compression", side="upper",
-                       first=(0, 102.0), second=(5 * M, 101.5),
+                       first=(0, 103.0), second=(5 * M, 102.95),
                        confirmed_at_ms=6 * M)
     fixed_levels["levels"] = [level]
     bars = [(99.5, 100.0, 99.1, 99.5)] * 29
-    bars.append((99.5, 101.0, 99.4, 99.5))  # wick above descending line
-    bars.append((99.5, 104.0, 99.4, 103.0))  # full-body breakout
+    bars.append((99.5, 103.1, 99.4, 99.5))  # only this wick pierces 102.71
+    bars.append((99.5, 105.0, 99.4, 104.0))  # full-body breakout
     summary = observe(frame(bars), root)
     record = ms.load_state("TESTUSDT", "1", root)["records"][level.level_id]
     assert record["rejection"] == "prior_wick_breached_level"
@@ -287,11 +287,11 @@ def test_owner_mirror_previous_wick_pierces_sloped_triangle_upper_ray(root, fixe
 def test_owner_mirror_pristine_slope_still_allows_breakout(root, fixed_levels):
     level = line_level(symbol="TESTUSDT", timeframe="1",
                        pattern="Triangle Compression", side="upper",
-                       first=(0, 102.0), second=(5 * M, 101.5),
+                       first=(0, 103.0), second=(5 * M, 102.95),
                        confirmed_at_ms=6 * M)
     fixed_levels["levels"] = [level]
     bars = [(99.5, 100.0, 99.1, 99.5)] * 30
-    bars.append((99.5, 104.0, 99.4, 103.0))
+    bars.append((99.5, 105.0, 99.4, 104.0))
     summary = observe(frame(bars), root)
     record = ms.load_state("TESTUSDT", "1", root)["records"][level.level_id]
     assert record["candidate"] is True and summary["new_candidates"] == 1
