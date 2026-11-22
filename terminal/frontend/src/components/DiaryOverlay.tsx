@@ -1368,7 +1368,9 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, pnlFilter, sideF
             ? "Источник: точная цепочка Robot candidate → entry order → execution → episode. Не D2, без исходной геометрии и журнала решений."
             : "Источник при наличии D2-связи: отдельные наблюдения Trading Diary D2, не полный журнал решений Робота."}</small>
         </section>
-        <OriginalEpisodeSignalChart
+        <OriginalEpisodeSignalChart key={selected.trade_episode_id + ':' + report.source_revision}
+          marketScope={{ episodeId: selected.trade_episode_id, accountId: report.account_id,
+            owner: report.owner, revision: report.source_revision }}
           candidateId={verifiedRobotSignal(selected, report)?.candidateId ?? null}
           symbol={selected.symbol}
           timeframe={verifiedRobotSignal(selected, report)?.timeframe ?? null}
