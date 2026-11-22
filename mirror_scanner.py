@@ -278,10 +278,49 @@ def _retest_potential_percent(target: float | Decimal, reference: float | Decima
     return abs(level - price) * Decimal("100") / price
 
 
-def _judge_breakout(level: MirrorLevel, record: Mapping[str, Any], latest_close_ms: int, step: int) -> str | None:
+def _prior_wick_rejection(level: MirrorLevel, rows, breakout_open_ms: int) -> str | None:
+    """Only an untouched source ray may initiate a new naked MIRROR breakout.
+
+    Check closed candles AFTER the latest source anchor and BEFORE the
+    breakout, including the candle immediately before the signal. A candle's
+    exact wick timestamp is unknown within OHLC; a possible penetration of a
+    sloping boundary therefore rejects the candidate rather than assuming a
+    pristine level. Missing historical bars cannot establish untouchedness.
+    This read-only gate does not revise a previously confirmed campaign.
+    """
+    anchor_ms = max(at for at, _ in level.anchors)
+    step = timeframe_ms(level.timeframe)
+    first = anchor_ms + step
+    if first >= breakout_open_ms:
+        return None
+    earlier = [r for r in rows if first <= int(r["open_time_ms"]) < breakout_open_ms]
+    if not earlier or int(earlier[0]["open_time_ms"]) != first:
+        return "prior_wick_history_unavailable"
+    cursor = first
+    for row in earlier:
+        at = int(row["open_time_ms"])
+        if at != cursor or int(row["close_time_ms"]) != at + step:
+            return "prior_wick_history_unavailable"
+        boundary_min = min(level.price_at(at), level.price_at(at + step))
+        boundary_max = max(level.price_at(at), level.price_at(at + step))
+        # Equal contact also means the ray is no longer provably untouched.
+        if ((level.side == "upper" and float(row["high"]) >= boundary_min)
+                or (level.side == "lower" and float(row["low"]) <= boundary_max)):
+            return "prior_wick_breached_level"
+        cursor = at + step
+    if cursor != breakout_open_ms:
+        return "prior_wick_history_unavailable"
+    return None
+
+
+def _judge_breakout(level: MirrorLevel, record: Mapping[str, Any], latest_close_ms: int, step: int, *, prior_rows=None) -> str | None:
     """Rejection reason of a naked breakout as a live MIRROR candidate, or None (candidate)."""
 
     breakout = record["naked_retest"]["breakout"]
+    if prior_rows is not None:
+        prior_rejection = _prior_wick_rejection(level, prior_rows, int(breakout["open_time_ms"]))
+        if prior_rejection is not None:
+            return prior_rejection
     age = (latest_close_ms - int(breakout["close_time_ms"])) // step
     if age > FRESH_BREAKOUT_CANDLES:
         return f"stale_breakout:{age}_candles_before_latest_close"
@@ -699,7 +738,7 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
             elif status == STATUS_UNTESTED:
                 rejection = (None if mirror_breakout_allowed(level, record["naked_retest"]["breakout"])
                              else "mirror_breakout_direction_revoked") \
-                    or _judge_breakout(level, record, latest_close, step) \
+                    or _judge_breakout(level, record, latest_close, step, prior_rows=rows) \
                     or _duplicate_breakout(level_id, level, record, records, registry)
                 record["candidate"] = rejection is None
                 record["rejection"] = rejection
