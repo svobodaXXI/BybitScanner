@@ -192,7 +192,8 @@ def _verified_take_closed_stage(sha: str) -> Path:
 
 
 def submit(action: str, sha: str, request: str, origin: str,
-           *, run=subprocess.run, uid: int | None = None) -> int:
+           *, run=subprocess.run, uid: int | None = None,
+           expected_installed_sha: str | None = None) -> int:
     if action not in ACTIONS:
         raise ValueError("invalid_action")
     if sha == "installed" and action in ("start", "stop", "github-status-enable", "github-diagnostic-enable"):
@@ -201,6 +202,12 @@ def submit(action: str, sha: str, request: str, origin: str,
         sha = verify_release(Path(REPO))
     if not isinstance(sha, str) or SHA.fullmatch(sha) is None:
         raise ValueError("invalid_exact_sha")
+    if expected_installed_sha is not None and (
+            action not in ("update", "update-and-start")
+            or not isinstance(expected_installed_sha, str)
+            or SHA.fullmatch(expected_installed_sha) is None
+            or expected_installed_sha == sha):
+        raise ValueError("invalid_approved_predecessor")
     if ORIGIN.fullmatch(origin) is None:
         raise ValueError("invalid_origin")
     unit = unit_name(request)
@@ -245,6 +252,8 @@ def submit(action: str, sha: str, request: str, origin: str,
         "--unit=" + unit,
         "--description=" + description,
         PYTHON, "-m", "tools.paper_maintenance", sha, "--action", action,
+        *(["--expected-installed-sha", expected_installed_sha]
+          if expected_installed_sha is not None else []),
     ]
     result = run(cmd, capture_output=True, text=True, timeout=20, check=False)
     print("REQUEST_ID=" + request)

@@ -3279,7 +3279,14 @@ def main(argv=None) -> int:
                         help="separately authorized continuation of a proven failed STOP; never replay STOP")
     parser.add_argument("--expected-old-backend", metavar="SHA",
                         help="exact installed Backend observed at the failed STOP")
+    parser.add_argument("--expected-installed-sha", metavar="SHA",
+                        help="exact independently authorized predecessor for detached owner update")
     args = parser.parse_args(argv)
+    if args.expected_installed_sha is not None and (
+            args.action not in ("update", "update-and-start")
+            or re.fullmatch(r"[0-9a-f]{40}", args.expected_installed_sha) is None
+            or args.expected_installed_sha == args.sha):
+        parser.error("expected-installed-sha requires a distinct exact owner UPDATE predecessor")
     if args.action is not None:
         try:
             with _owner_action_lifecycle_guard():
@@ -3292,6 +3299,19 @@ def main(argv=None) -> int:
                         or args.take_closed_approved_handoff or args.resume_one_flat_from_prior_stop
                         or args.expected_old_backend):
                     parser.error("one action cannot combine with legacy lifecycle flags")
+                if args.expected_installed_sha is not None:
+                    # Check after acquiring the existing lifecycle lock, before
+                    # staging, STOP or any mutation. A signed request cannot
+                    # authorize upgrading a different intervening release.
+                    from tools.vps_release_identity import ReleaseIdentityBlocked, verify_release
+                    try:
+                        predecessor = verify_release(REPO)
+                    except (ReleaseIdentityBlocked, OSError, ValueError):
+                        print("BLOCKED: approved_predecessor_unproven; no mutation")
+                        return 2
+                    if predecessor != args.expected_installed_sha:
+                        print("BLOCKED: approved_predecessor_changed; no mutation")
+                        return 2
                 if args.action == "github-diagnostic-enable":
                     from tools.github_diagnostic_runtime import enable_diagnostic
                     status = enable_diagnostic(args.sha)
