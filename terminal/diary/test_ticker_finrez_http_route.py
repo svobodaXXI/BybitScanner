@@ -242,6 +242,51 @@ def test_episode_facts_route_rejects_invalid_scope_and_exports_only_one_selected
 
 
 
+def test_episode_market_window_uses_real_closed_candles_and_rejects_wrong_symbol():
+    from retrospective_signal_bars import RetrospectiveBarsError, fetch_closed_episode_market_window
+    import pytest
+    period = 60_000
+    opened = 1_800_000_000_000
+    closed = opened + 5 * period + 1
+    now = closed + 20 * period
+
+    class Session:
+        wrong_symbol = False
+        gap = False
+        def get(self, url, *, params, timeout):
+            assert url == "https://api.bybit.com/v5/market/kline"
+            assert params["category"] == "linear" and params["symbol"] == "BTCUSDT"
+            assert params["interval"] == "1"
+            assert params["start"] == opened - 8 * period
+            assert params["end"] == opened + 13 * period
+            assert params["limit"] == 22
+            rows = [[str(params["start"] + i * period), "100", "102", "99", "101"]
+                    for i in range(params["limit"])]
+            if self.gap:
+                rows[0][0] = rows[1][0]
+            payload = {"retCode": 0, "result": {"category": "linear",
+                       "symbol": "ETHUSDT" if self.wrong_symbol else "BTCUSDT",
+                       "list": list(reversed(rows))}}
+            return type("Response", (), {"raise_for_status": lambda self: None,
+                                        "json": lambda self: payload})()
+
+    session = Session()
+    args = dict(symbol="BTCUSDT", opened_at_ms=opened, closed_at_ms=closed,
+                now_ms=now, session=session)
+    result = fetch_closed_episode_market_window(**args)
+    assert result["complete_through_close"] is True
+    assert len(result["bars"]) == 22
+    assert result["bars"][0]["open_time_ms"] == opened - 8 * period
+    assert result["bars"][-1]["open_time_ms"] == opened + 13 * period
+    session.wrong_symbol = True
+    with pytest.raises(RetrospectiveBarsError):
+        fetch_closed_episode_market_window(**args)
+    session.wrong_symbol = False
+    session.gap = True
+    with pytest.raises(RetrospectiveBarsError):
+        fetch_closed_episode_market_window(**args)
+
+
 def test_episode_candles_route_proves_exact_scope_before_public_read(tmp_path: Path, monkeypatch):
     import retrospective_signal_bars
     from terminal.diary.ticker_finrez import EpisodeFactsNotFound, EpisodeFactsSourceChanged
