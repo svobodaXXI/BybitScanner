@@ -83,6 +83,20 @@ def render_mirror_chart(snapshot: Mapping, output_path: str | Path) -> None:
         subtype = mirror_subtype(snapshot.get("source"), snapshot.get("pattern"),
                                  snapshot.get("event_kind", "breakout"),
                                  retest_confirmed=snapshot.get("retest_confirmed") is True)
+        # A named two-sided pattern is not a verified complete contour when
+        # only one frozen side survives provenance/time filtering. Never
+        # reconstruct the counterpart from newer candles or unrelated levels.
+        pattern = str(snapshot.get("pattern") or "")
+        source = str(snapshot.get("source") or "").lower()
+        two_sided = source == "pattern_boundary" and (
+            "wedge" in pattern.lower() or "triangle" in pattern.lower())
+        source_sides = {
+            level.get("side") for level in levels
+            if level.get("source") == snapshot.get("source")
+            and level.get("pattern") == snapshot.get("pattern")
+            and level.get("side") in ("upper", "lower")
+        }
+        incomplete_contour = two_sided and source_sides != {"upper", "lower"}
         source_missing = False
         for level in levels:
             boundary = level["boundary"]
@@ -123,6 +137,10 @@ def render_mirror_chart(snapshot: Mapping, output_path: str | Path) -> None:
                 ax.annotate(f"Исходная опора: {stamp}", (source_idx, source_price),
                             xytext=(9, 13), textcoords="offset points",
                             color="#fbbf24", fontsize=8)
+        if incomplete_contour:
+            ax.text(0.02, 0.11, "Контур паттерна неполон · в событии нет обеих подтверждённых границ",
+                    transform=ax.transAxes, color="#fbbf24", fontsize=9,
+                    bbox={"facecolor": "#111827", "edgecolor": "#fbbf24", "alpha": 0.9})
         if source_missing:
             ax.text(0.02, 0.04, "Исходный экстремум вне сохранённого окна · недостаточно доказательств",
                     transform=ax.transAxes, color="#fbbf24", fontsize=9,
