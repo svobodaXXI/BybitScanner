@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import stat
+import subprocess
 import time
 
 from Crypto.Signature import eddsa
@@ -95,6 +96,24 @@ def run_once(*, config_dir=CONFIG_DIR, root=ROOT, manifest_path=MANIFEST,
         return DiagnosticJournal(state_dir).run_once(
             enabled=True, issuer_public=issuer, responder_key=responder,
             audience=config["audience"], clock=clock, fetch=fetch, transport=transport)
+
+
+def enable_diagnostic(expected_sha: str, *, root=ROOT, unit_dir=Path("/etc/systemd/system"),
+                      manifest_path=MANIFEST, config_dir=CONFIG_DIR, state_dir=STATE_DIR,
+                      token_file=TOKEN_FILE, uid=0, run=subprocess.run):
+    """Explicit owner-only activation through paper_maintenance, not a request."""
+    from tools.github_status_reporter import _enable_pinned_timer
+    try:
+        if os.geteuid() != uid:
+            raise ValueError("owner required")
+        _token(token_file)
+        assert_enable_ready(expected_sha, root=root, manifest_path=manifest_path,
+                            config_dir=config_dir, state_dir=state_dir, uid=uid)
+    except Exception:
+        return "BLOCKED: diagnostic_config_release_or_journal_unproven"
+    return _enable_pinned_timer(expected_sha, names=NAMES, source_paths=SOURCES,
+                                label="diagnostic", root=root, unit_dir=unit_dir,
+                                manifest_path=manifest_path, uid=uid, run=run)
 
 
 def main():
