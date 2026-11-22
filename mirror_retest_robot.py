@@ -222,6 +222,10 @@ def scanner_level_sources(symbol: str, *, root: Any = None) -> list[dict[str, An
     from mirror_scanner import LIFECYCLE_TRACKING, MirrorStateError, load_state, state_path
 
     sources = []
+    # Risk identity must not change when one of two independently signalled
+    # levels is later retested. Include durable historical candidate=True
+    # records in the same-breakout grouping, not only active sources.
+    breakout_groups: dict[tuple[int, str], set[str]] = {}
     for timeframe in SCANNER_TIMEFRAMES:
         if not state_path(symbol, timeframe, root).exists():
             continue
@@ -231,20 +235,33 @@ def scanner_level_sources(symbol: str, *, root: Any = None) -> list[dict[str, An
         except (MirrorStateError, MirrorLevelError, KeyError, TypeError, ValueError) as exc:
             raise MirrorRobotError(f"MIRROR Scanner state unreadable: {symbol} {timeframe}m") from exc
         for level_id, record in sorted(state["records"].items()):
-            if (not isinstance(record, Mapping) or record.get("candidate") is not True
-                    or record.get("lifecycle") != LIFECYCLE_TRACKING or record.get("status") != STATUS_UNTESTED):
-                continue                                 # stale / weak / duplicate / retested / gap: never a source
+            if not isinstance(record, Mapping) or record.get("candidate") is not True:
+                continue
             level = registry.levels.get(level_id)
             breakout = (record.get("naked_retest") or {}).get("breakout")
             if (level is None or not mirror_breakout_allowed(level, breakout)
                     or level.symbol != symbol or not isinstance(breakout, Mapping)
                     or breakout.get("campaign_direction") not in {CAMPAIGN_LONG, CAMPAIGN_SHORT}):
                 continue
+            group = (int(breakout["close_time_ms"]), breakout["campaign_direction"])
+            breakout_groups.setdefault(group, set()).add(level_id)
+            if (record.get("lifecycle") != LIFECYCLE_TRACKING
+                    or record.get("status") != STATUS_UNTESTED):
+                continue                                 # finished levels still identify a shared risk group
             sources.append({"level_id": level_id, "timeframe": timeframe, "boundary": level.boundary,
                             "pattern": level.pattern, "source": level.source,
                             "breakout_open_ms": int(breakout["open_time_ms"]),
                             "breakout_close_ms": int(breakout["close_time_ms"]),
                             "campaign_direction": breakout["campaign_direction"]})
+    # Two distinct sources broken by one candle may carry separate boundary
+    # campaign_ids, so they must remain OBSERVATION ONLY until one shared R0
+    # identity is implemented. The standalone MIRROR handoff has its own
+    # guard; this prevents bypass through Box-overlay's direct source reader.
+    # Keep both Scanner candidates/Telegram levels untouched. A finished
+    # source continues fencing its counterpart across restart/retest.
+    sources = [item for item in sources
+               if len(breakout_groups[(item["breakout_close_ms"],
+                                       item["campaign_direction"])]) == 1]
     sources.sort(key=lambda item: (-item["breakout_close_ms"], item["level_id"]))
     return sources[:MAX_SCANNER_LEVELS]                  # bounded network work per attachment
 
