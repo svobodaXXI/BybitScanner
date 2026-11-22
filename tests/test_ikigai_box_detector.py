@@ -5,6 +5,7 @@ import unittest
 
 import pandas as pd
 
+from geometry.ikigai_box_completion import box_first_grid_already_completed
 from geometry.ikigai_box import (
     IkigaiBoxParameters,
     _is_reversal_origin,
@@ -793,6 +794,9 @@ class ICNTNov11ArchivedDetectorParityTests(unittest.TestCase):
         )
         self.assertAlmostEqual(formation.fibonacci_1_618, 0.283756, places=10)
         self.assertAlmostEqual(formation.fibonacci_2_618, 0.275756, places=10)
+        # Actual Scanner delivery veto must not classify this first source
+        # geometry as an already completed first-grid opportunity.
+        self.assertFalse(box_first_grid_already_completed(frame, formation))
         self.assertEqual(
             formation,
             detect_ikigai_box(frame.iloc[:182], as_of_index=181),
