@@ -7,6 +7,7 @@ import unittest
 from robot_entry_flow_evidence import FlowWindow
 from terminal.market_data.ikigai_box_reversal_research import (
     BoxFlowObservation, observe_box_reversal_flow,
+    BoxSecondLegExtreme, preview_box_reversal_handoff,
 )
 
 
@@ -118,6 +119,101 @@ class BoxReversalFlowResearchTests(unittest.TestCase):
         ):
             altered = NS(**(vars(record) | {"signal_snapshot": record.signal_snapshot | {key: bad}}))
             self.assertIsNone(observe(altered, windows))
+
+
+
+class BoxReversalHandoffPreviewTests(unittest.TestCase):
+    def _case(self, direction="LONG", book=True):
+        from terminal.paper.ikigai_box_plan import plan_approved_first_ikigai_box
+
+        record, windows = case(direction, book=book)
+        plan = plan_approved_first_ikigai_box(
+            direction=direction, working_quantity=D("8"), frozen_f1=D("100"),
+            frozen_f1618=D("92" if direction == "LONG" else "108"),
+            tick_size=D("0.01"), entry_fee_rate=D("0"), target_fee_rate=D("0"),
+            stop_fee_rate=D("0"),
+        )
+        record.signal_snapshot["identity"]["b_time_ms"] = 500
+        record.signal_snapshot["plan"].update(
+            environment="PAPER", execution_authorized=False,
+            limit_prices=list(map(str, plan.limit_prices)),
+            limit_quantities=list(map(str, plan.limit_quantities)),
+            frozen_f1=str(plan.frozen_f1), frozen_f1618=str(plan.frozen_f1618),
+            take_price=str(plan.take_price), stop_price=str(plan.stop_price),
+        )
+        record.signal_snapshot["inputs"] = dict(
+            tick_size="0.01", entry_fee_rate="0.001",
+            target_fee_rate="0.001", stop_fee_rate="0.001",
+        )
+        extreme = BoxSecondLegExtreme(
+            record.candidate_id, 1, record.snapshot_sha256, "BTCUSDT", 0,
+            2999, 3000, D("91.9" if direction == "LONG" else "108.1"),
+        )
+        return record, windows, plan, extreme
+
+    def _preview(self, args, **overrides):
+        return preview_box_reversal_handoff(*args, **(dict(
+            decision_ms=4000, max_source_age_ms=100, quantity=D("2"),
+            qty_step=D("1"), stop_buffer_ticks=10,
+            adverse_entry_per_unit=D("0.1"), adverse_target_per_unit=D("0.1"),
+            adverse_stop_per_unit=D("0.1"), additional_cost_allowance_usdt=D("0.1"),
+            maximum_allowed_loss_usdt=D("3"),
+        ) | overrides))
+
+    def test_mirrored_handoff_binds_benchmark_stop_and_target(self):
+        for direction, entry, stop, take in (
+            ("LONG", "92.5", "91.8", "99.2"),
+            ("SHORT", "107.5", "108.2", "100.8"),
+        ):
+            with self.subTest(direction=direction):
+                args = self._case(direction)
+                result = self._preview(args)
+                self.assertEqual(result.status, "HYPOTHETICAL_ECONOMICS_OK")
+                self.assertEqual(result.economics.assumed_entry, D(entry))
+                self.assertEqual(result.economics.structural_stop, D(stop))
+                self.assertEqual(result.economics.frozen_take, D(take))
+                self.assertFalse(result.source_complete)
+                self.assertFalse(result.trading_authorized)
+                self.assertFalse(result.economics.execution_authorized)
+                rejected = self._preview(args, maximum_allowed_loss_usdt=D("1"))
+                self.assertEqual(rejected.status, "RISK_BUDGET_EXCEEDED")
+                self.assertFalse(rejected.economics.allowed)
+
+    def test_missing_absorption_has_no_economics(self):
+        result = self._preview(self._case(book=False))
+        self.assertEqual(result.status, "WAIT_HANDOFF")
+        self.assertIsNone(result.economics)
+
+    def test_reject_foreign_or_future_extreme_and_unfrozen_plan(self):
+        record, windows, plan, extreme = self._case()
+        for bad in (
+            replace(extreme, candidate_id="foreign"),
+            replace(extreme, state_revision=2),
+            replace(extreme, symbol="ETHUSDT"),
+            replace(extreme, snapshot_sha256="b"*64),
+            replace(extreme, generation=1),
+            replace(extreme, available_at_ms=4001),
+            replace(extreme, event_ms=499),
+            replace(extreme, event_ms=4001),
+            replace(extreme, price=D("92")),
+        ):
+            with self.subTest(bad=bad):
+                self.assertIsNone(self._preview((record, windows, plan, bad)))
+        for bad_plan in (
+            replace(plan, take_price=D("100")),
+            replace(plan, limit_quantities=(D("3"),)*4),
+            replace(plan, stop_price=D("89")),
+        ):
+            self.assertIsNone(self._preview((record, windows, bad_plan, extreme)))
+        self.assertIsNone(self._preview((record, windows, plan, extreme),
+                                        decision_ms=4101))
+
+    def test_spent_target_and_invalid_frozen_terms_return_none(self):
+        record, (a,b,c), plan, extreme = self._case()
+        spent = replace(c, window=replace(c.window, end_price=plan.take_price))
+        self.assertIsNone(self._preview((record, (a,b,spent), plan, extreme)))
+        record.signal_snapshot["inputs"]["entry_fee_rate"] = "NaN"
+        self.assertIsNone(self._preview((record, (a,b,c), plan, extreme)))
 
 
 if __name__ == "__main__":
