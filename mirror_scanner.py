@@ -281,7 +281,7 @@ def _retest_potential_percent(target: float | Decimal, reference: float | Decima
 def _prior_wick_rejection(level: MirrorLevel, rows, breakout_open_ms: int) -> str | None:
     """Only an untouched source ray may initiate a new naked MIRROR breakout.
 
-    Check closed candles AFTER the latest source anchor and BEFORE the
+    Check closed candles AFTER source confirmation / latest source anchor and BEFORE the
     breakout, including the candle immediately before the signal. A candle's
     exact wick timestamp is unknown within OHLC; a possible penetration of a
     sloping boundary therefore rejects the candidate rather than assuming a
@@ -290,7 +290,9 @@ def _prior_wick_rejection(level: MirrorLevel, rows, breakout_open_ms: int) -> st
     """
     anchor_ms = max(at for at, _ in level.anchors)
     step = timeframe_ms(level.timeframe)
-    first = anchor_ms + step
+    # Source formation touches are not prior invalidations. The boundary
+    # becomes actionable only after its causal confirmation close.
+    first = max(anchor_ms + step, int(level.confirmed_at_ms))
     if first >= breakout_open_ms:
         return None
     earlier = [r for r in rows if first <= int(r["open_time_ms"]) < breakout_open_ms]
@@ -548,34 +550,28 @@ def _advance(level: MirrorLevel, record: dict[str, Any], rows, *, atr_at, gaps, 
     for row in rows:
         if cursor is not None and row["close_time_ms"] <= cursor:
             continue
-        # The old horizontal level dies as soon as the FIRST closed candle
-        # touches it with ANY price (wick included). Waiting for a 3-right-bar
-        # pivot confirmation lets a stale ray publish a bogus "naked" breakout.
-        # A genuine full-body breakout on this SAME candle remains eligible:
-        # there was no earlier wick contact. No future candles are consulted.
-        if (level.is_horizontal and record["status"] == STATUS_WAITING
-                and int(row["open_time_ms"]) >= level.confirmed_at_ms):
-            boundary = level.price_at(int(row["open_time_ms"]))
-            hit = (float(row["high"]) >= boundary if level.side == "upper"
-                   else float(row["low"]) <= boundary)
-            outward = (float(row["open"]) < boundary < float(row["close"])
-                       if level.side == "upper"
-                       else float(row["open"]) > boundary > float(row["close"]))
-            if hit and not outward:
-                extreme = float(row["high"] if level.side == "upper" else row["low"])
-                # The new wick is a distinct time/price source; it becomes
-                # known only after THIS candle closes (no pivot look-ahead).
-                new_extreme = (extreme > boundary if level.side == "upper"
-                               else extreme < boundary)
-                record.update(lifecycle=LIFECYCLE_REJECTED,
-                              rejection="horizontal_level_wick_breached",
-                              superseding_extremum=({
-                                  "pivot_at_ms": int(row["open_time_ms"]),
-                                  "confirmed_at_ms": int(row["close_time_ms"]),
-                                  "price": extreme,
-                              } if new_extreme else None))
-                transitions.append("WICK_BREACH")
-                return record, transitions
+        # A subsequently CONFIRMED higher high / lower low invalidates an
+        # unbroken horizontal mirror ray, even when only its wick crosses.
+        # Wait until the right-hand pivot candles CLOSE: never look ahead.
+        # A breakout already proven before confirmation remains historical;
+        # it must not be rewritten using future pivot evidence.
+        if level.is_horizontal and record["status"] == STATUS_WAITING:
+            for pivot in confirmed_extrema:
+                if (int(pivot["confirmed_at_ms"]) != int(row["close_time_ms"])
+                        or int(pivot["pivot_at_ms"]) < level.confirmed_at_ms):
+                    continue
+                new_price = float(pivot["price"])
+                old_price = level.price_at(int(pivot["pivot_at_ms"]))
+                superseded = ((level.side == "upper" and new_price > old_price)
+                              or (level.side == "lower" and new_price < old_price))
+                if superseded:
+                    record.update(lifecycle=LIFECYCLE_REJECTED,
+                                  rejection="superseded_by_confirmed_extremum",
+                                  superseding_extremum={"pivot_at_ms": int(pivot["pivot_at_ms"]),
+                                                        "confirmed_at_ms": int(pivot["confirmed_at_ms"]),
+                                                        "price": new_price})
+                    transitions.append("SUPERSEDED_EXTREMUM")
+                    return record, transitions
         resolver = None
         state = record["naked_retest"]
         if fine_candles and state["phase"] == PHASE_CAMPAIGN_ACTIVE:
@@ -636,7 +632,7 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
         # Do not alias a newly confirmed replacement to an invalidated
         # historical ray merely because both prices fit the ATR merge zone.
         excluded = any(
-            previous.get("rejection") == "horizontal_level_wick_breached"
+            previous.get("rejection") == "superseded_by_confirmed_extremum"
             and registered.side == level.side
             and registered.is_horizontal and level.is_horizontal
             and abs(registered.boundary.anchor_price - level.boundary.anchor_price) <= tolerance
@@ -702,41 +698,44 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
         record["imbalance"] = _imbalance_quality(record, gaps, rows)
         for status in transitions:
             record["last_event_ms"] = latest_close
-            if status == "WICK_BREACH":
+            if status == "SUPERSEDED_EXTREMUM":
+                # Candidate/Telegram/Robot eligibility is never granted to
+                # the superseded, still-unbroken level. Keep its evidence.
                 record["candidate"] = False
                 pending[:] = [item for item in pending if item["level_id"] != level_id]
                 pivot = record["superseding_extremum"]
-                # An exact wick touch expires the old ray, but only a strictly
-                # more extreme wick creates a NEW independent candidate source.
-                if pivot is not None:
-                    replacement = horizontal_level(
-                        symbol=symbol, timeframe=timeframe, source=SOURCE_SWING_ZONE,
-                        pattern=None, side=level.side, price=float(pivot["price"]),
-                        anchor_time_ms=int(pivot["pivot_at_ms"]),
-                        confirmed_at_ms=int(pivot["confirmed_at_ms"]), touches=1,
-                        provenance={"supersedes_level_id": level_id,
-                                    "source": "closed_wick_extremum"},
-                    )
-                    registry.add(replacement, merge_tolerance=0.0)
-                    if replacement.level_id not in records:
-                        records[replacement.level_id] = {
-                            **new_record(replacement), "registered_at_ms": latest_close,
-                            "sources": [_source_entry(replacement)],
-                            "lifecycle": LIFECYCLE_TRACKING, "candidate": None,
-                            "rejection": None, "freshness": None, "robot": None,
-                            "last_event_ms": latest_close, "notified": [],
-                        }
-                        journal.append({"event": "mirror_level_registered", **base,
-                                        "level_id": replacement.level_id,
-                                        "source": replacement.source, "pattern": replacement.pattern,
-                                        "side": replacement.side,
-                                        "anchors": [list(a) for a in replacement.anchors],
-                                        "confirmed_at_ms": replacement.confirmed_at_ms,
-                                        "supersedes_level_id": level_id})
-                    record["superseded_by_level_id"] = replacement.level_id
+                # This is a NEW confirmed swing-extremum ray, not a retroactive
+                # mutation of the pattern boundary or its campaign. Preserve
+                # the historical source and derive a new independent identity
+                # from the exact price/time of the wick extremum.
+                replacement = horizontal_level(
+                    symbol=symbol, timeframe=timeframe, source=SOURCE_SWING_ZONE,
+                    pattern=None, side=level.side, price=float(pivot["price"]),
+                    anchor_time_ms=int(pivot["pivot_at_ms"]),
+                    confirmed_at_ms=int(pivot["confirmed_at_ms"]), touches=1,
+                    provenance={"supersedes_level_id": level_id,
+                                "source": "confirmed_wick_extremum"},
+                )
+                registry.add(replacement, merge_tolerance=0.0)
+                if replacement.level_id not in records:
+                    records[replacement.level_id] = {
+                        **new_record(replacement), "registered_at_ms": latest_close,
+                        "sources": [_source_entry(replacement)],
+                        "lifecycle": LIFECYCLE_TRACKING, "candidate": None,
+                        "rejection": None, "freshness": None, "robot": None,
+                        "last_event_ms": latest_close, "notified": [],
+                    }
+                    journal.append({"event": "mirror_level_registered", **base,
+                                    "level_id": replacement.level_id,
+                                    "source": replacement.source, "pattern": replacement.pattern,
+                                    "side": replacement.side,
+                                    "anchors": [list(a) for a in replacement.anchors],
+                                    "confirmed_at_ms": replacement.confirmed_at_ms,
+                                    "supersedes_level_id": level_id})
+                record["superseded_by_level_id"] = replacement.level_id
                 journal.append({"event": "mirror_level_rejected", **base, "level_id": level_id,
                                 "reason": record["rejection"],
-                                "superseded_by_level_id": record.get("superseded_by_level_id"),
+                                "superseded_by_level_id": replacement.level_id,
                                 "superseding_extremum": pivot})
             elif status == STATUS_UNTESTED:
                 rejection = (None if mirror_breakout_allowed(level, record["naked_retest"]["breakout"])
