@@ -29,11 +29,87 @@ function matches(a, b) {
   for (let i = 0; i < size; i++) difference |= (x[i] || 0) ^ (y[i] || 0);
   return difference === 0;
 }
+
+const releaseId = /^[0-9a-f]{32}$/;
+const releaseSha = /^[0-9a-f]{40}$/;
+const releaseKey = /^[0-9a-f]{64}$/;
+function releaseText(sha) {
+  return "BybitScanner: обновление VPS\nSHA: " + sha +
+    "\nШтатный UPDATE. Торговля останется выключенной.";
+}
+function releaseButtons(rid) {
+  return {inline_keyboard:[[{text:"✅ Подтвердить обновление",callback_data:"rel:a:"+rid},
+    {text:"❌ Отклонить",callback_data:"rel:r:"+rid}]]};
+}
+async function attestRelease(update, env) {
+  // Only an actual Telegram getUpdates result is an input. Never accept a
+  // caller-supplied callback or sign with the ordinary gateway bearer.
+  if (!releaseKey.test(env.RELEASE_APPROVAL_KEY || "") ||
+      env.RELEASE_APPROVAL_KEY === env.GATEWAY_SHARED_SECRET || !env.TELEGRAM_CHAT_ID || !Number.isSafeInteger(update?.update_id) || update.update_id <= 0) return;
+  const q = update.callback_query, m = q?.message;
+  if (!q || !m || q.from?.is_bot !== false || m.chat?.type !== "private" ||
+      String(q.from?.id) !== String(env.TELEGRAM_CHAT_ID) ||
+      String(m.chat?.id) !== String(env.TELEGRAM_CHAT_ID) ||
+      !Number.isSafeInteger(m.message_id) || m.message_id <= 0 ||
+      m.from?.is_bot !== true || typeof m.text !== "string" || typeof q.data !== "string") return;
+  const match = /^rel:([ar]):([0-9a-f]{32})$/.exec(q.data);
+  const sha = /^BybitScanner: обновление VPS\nSHA: ([0-9a-f]{40})\n/.exec(m.text)?.[1];
+  if (!match || !sha || m.text !== releaseText(sha) ||
+      !Array.isArray(m.reply_markup?.inline_keyboard) ||
+      m.reply_markup.inline_keyboard.length !== 1 ||
+      !Array.isArray(m.reply_markup.inline_keyboard[0]) ||
+      m.reply_markup.inline_keyboard[0].length !== 2 ||
+      !m.reply_markup.inline_keyboard[0].every((b,i)=>b &&
+        Object.keys(b).sort().join(",")==="callback_data,text" &&
+        b.text===releaseButtons(match[2]).inline_keyboard[0][i].text &&
+        b.callback_data===releaseButtons(match[2]).inline_keyboard[0][i].callback_data)) return;
+  const observed = Math.floor(Date.now()/1000);
+  if (!Number.isSafeInteger(m.date) || m.date > observed || observed-m.date > 900) return;
+  const payload = {decision:match[1]==="a"?"approve":"reject",message_id:m.message_id,
+    observed_at:observed,request_id:match[2],target_sha:sha,update_id:update.update_id};
+  const raw = Uint8Array.from(env.RELEASE_APPROVAL_KEY.match(/../g), x=>parseInt(x,16));
+  const key = await crypto.subtle.importKey("raw",raw,{name:"HMAC",hash:"SHA-256"},false,["sign"]);
+  const canonical = JSON.stringify(payload);
+  const sig = await crypto.subtle.sign("HMAC",key,new TextEncoder().encode(
+    "BybitScanner-Release-Approval-v1\u0000"+canonical));
+  update._release_approval = {payload,tag:Array.from(new Uint8Array(sig),x=>x.toString(16).padStart(2,"0")).join("")};
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === "/health" && request.method === "GET") {
       return reply(200, {component:"bybitscanner-telegram-gateway",status:"up",delivery_verified:false});
+    }
+    // Root-only proposal delivery. Ordinary gateway callers cannot invoke this route.
+    if (url.pathname === "/v1/release-proposal" && request.method === "POST") {
+      if (!releaseKey.test(env.RELEASE_APPROVAL_KEY || "") || !env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID ||
+          env.RELEASE_APPROVAL_KEY === env.GATEWAY_SHARED_SECRET)
+        return reply(503,{ok:false,error:"release_not_configured"});
+      if (!matches(request.headers.get("authorization")||"", "Bearer "+env.RELEASE_APPROVAL_KEY))
+        return reply(401,{ok:false,error:"unauthorized"});
+      let input;
+      try {
+        const raw=await request.text();
+        if(raw.length>256) return reply(400,{ok:false,error:"invalid_proposal"});
+        input=JSON.parse(raw);
+      } catch (_) { return reply(400,{ok:false,error:"invalid_proposal"}); }
+      if (!input || Object.keys(input).sort().join(",")!=="request_id,target_sha" ||
+          typeof input.request_id!=="string" || !releaseId.test(input.request_id) ||
+          typeof input.target_sha!=="string" || !releaseSha.test(input.target_sha))
+        return reply(400,{ok:false,error:"invalid_proposal"});
+      try {
+        const tg=await fetch("https://api.telegram.org/bot"+env.TELEGRAM_BOT_TOKEN+"/sendMessage",{
+          method:"POST",headers:{"content-type":"application/json"},
+          body:JSON.stringify({chat_id:env.TELEGRAM_CHAT_ID,text:releaseText(input.target_sha),
+            reply_markup:releaseButtons(input.request_id)}),signal:AbortSignal.timeout(10000)});
+        const p=await tg.json(), m=p.result;
+        if (!tg.ok || p.ok!==true || !Number.isSafeInteger(m?.message_id) || m.message_id<=0 ||
+            String(m.chat?.id)!==String(env.TELEGRAM_CHAT_ID) || m.chat?.type!=="private" ||
+            m.text!==releaseText(input.target_sha))
+          return reply(502,{ok:false,error:"release_delivery_unproven"});
+        return reply(200,{ok:true,message_id:m.message_id});
+      } catch (_) { return reply(503,{ok:false,error:"release_delivery_unproven"}); }
     }
     // Existing VPS monitoring remains the sole getUpdates consumer.
     if (url.pathname === "/v1/get-updates" && request.method === "POST") {
@@ -59,6 +135,13 @@ export default {
           signal: AbortSignal.timeout(38000)
         });
         const payload = await remote.json();
+        if (remote.ok && payload.ok === true && Array.isArray(payload.result)) {
+          for (const update of payload.result) {
+            if (!update || typeof update !== "object") continue;
+            delete update._release_approval;
+            await attestRelease(update,env);
+          }
+        }
         return reply(200, payload);
       } catch (_) { return reply(503, {ok:false,error:"telegram_poll_unavailable"}); }
     }
