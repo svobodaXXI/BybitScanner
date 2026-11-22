@@ -56,8 +56,15 @@ def render_mirror_chart(snapshot: Mapping, output_path: str | Path) -> None:
     from matplotlib import pyplot as plt
     from matplotlib.patches import Rectangle
 
-    # Prioritize vertical geometry readability over a wide, shallow chart.
-    fig, ax = plt.subplots(figsize=(11, 7.2), dpi=130)
+    # Keep the whole immutable origin→event history while giving long cases
+    # a second, legible recent-candle panel (no downsampling or replacement).
+    long_history = len(rows) > 240
+    if long_history:
+        fig, (ax, detail_ax) = plt.subplots(2, 1, figsize=(11, 11.2), dpi=130,
+                                            gridspec_kw={"height_ratios": [1, 1.15]})
+    else:
+        fig, ax = plt.subplots(figsize=(11, 7.2), dpi=130)
+        detail_ax = None
     try:
         fig.patch.set_facecolor("#111827")
         ax.set_facecolor("#111827")
@@ -151,6 +158,51 @@ def render_mirror_chart(snapshot: Mapping, output_path: str | Path) -> None:
                               f" · до ретеста {potential:.2f}%")
         ax.set_title(title, color="white")
         ax.legend(loc="best", fontsize=8, facecolor="#1f2937", labelcolor="white")
+        if detail_ax is not None:
+            detail_ax.set_facecolor("#111827")
+            # A fixed-size recent pane ensures each candle stays readable even
+            # when the immutable original source is 2,000 bars behind.
+            start = max(0, len(rows) - 120)
+            focused = rows[start:]
+            focus_times = times[start:]
+            for i, candle in enumerate(focused):
+                o, h, low, c = (float(candle[k]) for k in ("open", "high", "low", "close"))
+                color = "#34d399" if c >= o else "#fb7185"
+                detail_ax.vlines(i, low, h, color=color, linewidth=0.9)
+                detail_ax.add_patch(Rectangle(
+                    (i - 0.27, min(o, c)), 0.54,
+                    max(abs(c - o), (h - low) * 0.002),
+                    facecolor=color, edgecolor=color, linewidth=0.5))
+            for level in levels:
+                boundary = level["boundary"]
+                anchor_t = int(boundary["anchor_time_ms"])
+                anchor_p = float(boundary["anchor_price"])
+                slope = float(boundary["slope_per_ms"])
+                visible = [(i, anchor_p + slope * (t - anchor_t))
+                           for i, t in enumerate(focus_times) if t >= anchor_t]
+                if visible:
+                    detail_ax.plot([x for x, _ in visible], [y for _, y in visible],
+                                   color="#fbbf24" if level.get("selected") else "#60a5fa",
+                                   linewidth=1.9 if level.get("selected") else 1.4,
+                                   linestyle="-" if level.get("selected") else "--")
+            if event_t is not None:
+                event_focus = next((i for i, t in enumerate(focus_times) if t >= int(event_t)), None)
+                if event_focus is not None:
+                    detail_ax.axvline(event_focus, color="#e5e7eb", alpha=0.5, linestyle=":")
+                    detail_ax.scatter([event_focus], [float(focused[event_focus]["close"])],
+                                      color="white", s=28, marker="o", zorder=6)
+            zoom_left = -0.8
+            detail_ax.set_xlim(zoom_left, zoom_left + (len(focused) - 1 - zoom_left) / 0.75)
+            zoom_ticks = sorted(set([0, len(focused) // 4, len(focused) // 2,
+                                     3 * len(focused) // 4, len(focused) - 1]))
+            detail_ax.set_xticks(zoom_ticks, [
+                datetime.fromtimestamp(focus_times[i] / 1000, timezone.utc).strftime("%d.%m %H:%M")
+                for i in zoom_ticks], rotation=20, ha="right")
+            detail_ax.tick_params(colors="#e5e7eb", labelsize=8)
+            for spine in detail_ax.spines.values():
+                spine.set_color("#4b5563")
+            detail_ax.grid(alpha=0.12)
+            detail_ax.set_title("Крупный план · последние 120 закрытых свечей", color="white", fontsize=10)
         fig.tight_layout()
         fig.savefig(str(output_path), format="png", facecolor=fig.get_facecolor())
     finally:
