@@ -251,7 +251,7 @@ def test_completed_naked_breakout_is_not_retroactively_revoked_by_later_pivot(ro
     ("lower", (100.5, 100.8, 100.2, 100.5), (100.5, 100.8, 98.8, 100.5),
      (100.5, 100.7, 96.5, 97.0)),
 ])
-def test_owner_mirror_prior_wick_breach_rejects_old_horizontal_level(
+def test_wick_sweep_owner_mirror_prior_wick_breach_rejects_old_horizontal_level(
         root, fixed_levels, side, clean, broken, signal):
     level = level_at(100.0, 5 * M, side=side)
     fixed_levels["levels"] = [level]
@@ -267,7 +267,7 @@ def test_owner_mirror_prior_wick_breach_rejects_old_horizontal_level(
     assert ms.load_state("TESTUSDT", "1", root)["pending_notifications"] == []
 
 
-def test_owner_mirror_previous_wick_pierces_sloped_triangle_upper_ray(root, fixed_levels):
+def test_wick_sweep_owner_mirror_previous_wick_pierces_sloped_triangle_upper_ray(root, fixed_levels):
     # 5m-style RAREUSDT geometry: previous wick pierced the descending
     # upper line, but the next candle has a valid real-body crossing.
     level = line_level(symbol="TESTUSDT", timeframe="1",
@@ -284,7 +284,7 @@ def test_owner_mirror_previous_wick_pierces_sloped_triangle_upper_ray(root, fixe
     assert record["candidate"] is False and summary["new_candidates"] == 0
 
 
-def test_owner_mirror_pristine_slope_still_allows_breakout(root, fixed_levels):
+def test_wick_sweep_owner_mirror_pristine_slope_still_allows_breakout(root, fixed_levels):
     level = line_level(symbol="TESTUSDT", timeframe="1",
                        pattern="Triangle Compression", side="upper",
                        first=(0, 103.0), second=(5 * M, 102.95),
