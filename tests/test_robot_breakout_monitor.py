@@ -930,6 +930,7 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
             available_depth=1,
         )
         self.monitor._impulse_early_paper_enabled = True
+        self.monitor._impulse_l_shape_paper_enabled = True
 
         def robot_create_limit(request):
             self.executor.limit_calls.append(request)
@@ -952,6 +953,14 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
 
         self.executor.create_limit = robot_create_limit
         return host
+
+    def test_first_release_does_not_submit_early_l_shape(self):
+        host = self._setup_impulse_early_l_shape_owner()
+        self.monitor._impulse_l_shape_paper_enabled = False
+        self.monitor.tick()
+        self.assertEqual(self.executor.limit_calls, [])
+        record = self.store.get_robot_candidate(host.candidate_id)
+        self.assertNotIn("impulse_entry_intent", record.robot_state.get("execution") or {})
 
     def test_l_shape_early_impulse_owner_fills_and_protects_without_fake_retest(self):
         host = self._setup_impulse_early_l_shape_owner()
@@ -1580,6 +1589,7 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertEqual(record.robot_state["execution"]["limit_order_id"], "test-limit-1")
 
     def test_l_shape_retest_flow_defers_only_before_first_canonical_limit(self):
+        self.monitor._impulse_l_shape_paper_enabled = True
         snap = _l_shape_snapshot()
         record, _ = self.store.create_robot_candidate(
             candidate_id="lshape-flow-1", trading_account_id=ACCOUNT_ID,
@@ -1601,6 +1611,12 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.monitor.tick()
         record = self.store.get_robot_candidate(record.candidate_id)
         self.assertEqual(record.robot_state["phase"], "RETEST_DETECTED")
+        # First-release scope leaves native L-shape timing unchanged.
+        self.monitor._impulse_l_shape_paper_enabled = False
+        self.monitor.bind_pattern_flow_observer(lambda _: None)
+        self.assertTrue(self.monitor._pattern_flow_allows_entry(record))
+        self.monitor._get_pattern_flow_evidence = None
+        self.monitor._impulse_l_shape_paper_enabled = True
         # Exact-ID mismatch cannot create the L-shape entry order.
         from robot_entry_flow_evidence import CandidateBoundFlowEvidence
         from tests.test_robot_pattern_flow_overlay import transition
