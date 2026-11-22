@@ -244,3 +244,83 @@ def test_fixed_github_transport_no_redirect_or_dynamic_endpoint(context):
     transport = GitHubDiagnosticTransport(request=lambda *a, **k: Reply(302, {}), token="x"*40)
     with pytest.raises(ValueError):
         transport.requests(NOW)
+
+
+def test_trusted_issuer_binds_key_and_fixed_request(context):
+    from tools.github_diagnostic_issuer import make_request
+    payload, wire, _, _, issuer, responder, *_ = context
+    public = {"audience": AUDIENCE,
+              "issuer_public": issuer.public_key().export_key(format="raw").hex(),
+              "responder_public": responder.public_key().export_key(format="raw").hex()}
+    request = {k: payload[k] for k in ("request_id", "issued_at", "expires_at")}
+    seed = issuer.seed.hex()
+    assert make_request(public, request, seed, NOW) == wire
+    with pytest.raises(ValueError):
+        make_request(public, {**request, "operation": "start"}, seed, NOW)
+    with pytest.raises(ValueError):
+        make_request(public, request, responder.seed.hex(), NOW)
+    with pytest.raises(ValueError):
+        make_request(public, request, seed, request["expires_at"])
+
+
+def test_runtime_opt_in_and_pinned_release_precede_network(durable_context, tmp_path, monkeypatch):
+    import os
+    from tools import github_diagnostic_runtime as runtime
+    journal, _, _, _, _, issuer, responder, _ = durable_context
+    directory = tmp_path / "protected"
+    directory.mkdir(mode=0o700)
+    path = directory / "config.json"
+    config = {"enabled": False, "release_sha": "a"*40, "audience": AUDIENCE,
+              "issuer_public": issuer.public_key().export_key(format="raw").hex(),
+              "responder_seed": responder.seed.hex()}
+    def put():
+        path.write_text(json.dumps(config))
+        path.chmod(0o600)
+    put()
+    calls = []
+    def pin(*args, **kwargs):
+        calls.append("pin")
+        raise ValueError("unpinned release")
+    def network():
+        pytest.fail("unexpected network session")
+    monkeypatch.setattr(runtime, "_pin_release", pin)
+    args = {"config_dir": directory, "state_dir": journal.directory,
+            "session_factory": network, "uid": os.geteuid()}
+    assert runtime.run_once(**args)["enabled"] is False
+    assert not calls
+    config["enabled"] = True
+    put()
+    with pytest.raises(ValueError, match="unpinned"):
+        runtime.run_once(**args)
+    assert calls == ["pin"]
+    path.chmod(0o644)
+    with pytest.raises(ValueError, match="unprotected"):
+        runtime.run_once(**args)
+    assert calls == ["pin"]
+    config["issuer_public"] = responder.public_key().export_key(format="raw").hex()
+    put()
+    with pytest.raises(ValueError, match="independent"):
+        runtime.run_once(**args)
+    assert calls == ["pin"]
+
+
+def test_host_enable_rejects_uninitialized_journal_before_systemd(durable_context, tmp_path, monkeypatch):
+    import os
+    from tools import github_diagnostic_runtime as runtime
+    _, _, _, _, _, issuer, responder, _ = durable_context
+    directory = tmp_path / "protected"
+    directory.mkdir(mode=0o700)
+    path = directory / "config.json"
+    path.write_text(json.dumps({"enabled": True, "release_sha": "a"*40,
+                               "audience": AUDIENCE,
+                               "issuer_public": issuer.public_key().export_key(format="raw").hex(),
+                               "responder_seed": responder.seed.hex()}))
+    path.chmod(0o600)
+    monkeypatch.setattr(runtime, "_pin_release", lambda *a, **k: None)
+    monkeypatch.setattr(runtime, "_token", lambda _: "x"*40)
+    def systemd(*args, **kwargs):
+        pytest.fail("systemd must not be invoked")
+    result = runtime.enable_diagnostic("a"*40, config_dir=directory,
+                                       state_dir=tmp_path / "missing",
+                                       uid=os.geteuid(), run=systemd)
+    assert result.startswith("BLOCKED:")
