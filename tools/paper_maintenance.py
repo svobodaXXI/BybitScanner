@@ -1362,12 +1362,12 @@ def deploy_staged_editor_only(
                     )
                     return intent_recorded
 
+                if stop is not None and not seal_stop_intent():
+                    return "BLOCKED: prior_STOP_outcome_unproven_without_install_journal; no replay"
                 try:
                     if stop is None:
                         result = action(SCOPE_ALL, before_mutation=seal_stop_intent)
                     else:
-                        if not seal_stop_intent():
-                            return "BLOCKED: prior_STOP_outcome_unproven_without_install_journal; no replay"
                         result = action(SCOPE_ALL)
                 except Exception as exc:
                     # The stop may already have performed a trading/runtime action.

@@ -175,8 +175,9 @@ def test_pre_stop_proof_dispatches_only_one_existing_stop_controller(
             assert kwargs["dual_orphan_handoff"] is None
             assert kwargs["proven_one_flat_orphan_handoff"] is None
             events.append("canonical-owner")
-        def run(self, scope):
+        def run(self, scope, *, before_mutation):
             assert scope == "all"
+            assert before_mutation() is True
             events.append("protected-stop")
             from tools.stop_robot_runtime import ShutdownResult
             return ShutdownResult("all", True, "simulated", runtime_stopped=True)
