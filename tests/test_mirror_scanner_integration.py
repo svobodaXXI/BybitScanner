@@ -593,6 +593,39 @@ def test_wick_sweep_two_distinct_fresh_levels_one_breakout_candle_are_both_obser
     assert len(repeated["pending_notifications"]) == 2
 
 
+def test_wick_sweep_two_nearby_dated_swing_extrema_never_atr_alias(
+        root, fixed_levels):
+    # The old registry merged distinct real extrema whenever their
+    # prices differed by <= 0.25 ATR. Owner explicitly wants both
+    # potential mirror-return targets even when the gap is tiny.
+    a = horizontal_level(
+        symbol="TESTUSDT", timeframe="1", source=SOURCE_SWING_ZONE,
+        pattern=None, side="upper", price=101.0,
+        anchor_time_ms=2 * M, confirmed_at_ms=6 * M,
+    )
+    b = horizontal_level(
+        symbol="TESTUSDT", timeframe="1", source=SOURCE_SWING_ZONE,
+        pattern=None, side="upper", price=101.05,
+        anchor_time_ms=12 * M, confirmed_at_ms=16 * M,
+    )
+    fixed_levels["levels"] = [a, b]
+    observe(frame(flat_bars(30)), root)
+    state = ms.load_state("TESTUSDT", "1", root)
+    assert set(state["records"]) == {a.level_id, b.level_id}
+    assert set(ms.LevelRegistry.from_dict(state["registry"]).levels) == {
+        a.level_id, b.level_id
+    }
+    summary = observe(frame(flat_bars(30) + [
+        (100.0, 104.5, 99.9, 104.0)
+    ]), root)
+    state = ms.load_state("TESTUSDT", "1", root)
+    assert summary["new_candidates"] == 2
+    assert {lid for lid, record in state["records"].items()
+            if record["candidate"]} == {a.level_id, b.level_id}
+    observe(frame(flat_bars(30) + [(100.0, 104.5, 99.9, 104.0)]), root)
+    assert len(ms.load_state("TESTUSDT", "1", root)["pending_notifications"]) == 2
+
+
 def test_one_real_level_from_several_sources_and_repeated_scans_is_one_candidate(root, fixed_levels):
     swing = level_at(101.0, 5 * M)
     box_top = level_at(101.1, 8 * M, source="pattern_boundary", pattern="IKIGAI_BOX")
