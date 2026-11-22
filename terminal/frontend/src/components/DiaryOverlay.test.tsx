@@ -691,7 +691,7 @@ describe("Closed deals / exact episode index", () => {
     expect(notice).not.toHaveTextContent("PRIVATE_ERROR_TOKEN");
     expect(screen.queryByRole("link", { name: "Подтвердить подключение" }))
       .not.toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledWith("/api/diary/simulator-bridge/pair", {
+    expect(fetchMock).toHaveBeenCalledWith("/api/diary/simulator-bridge/pair-code", {
       method: "POST", credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ device_id: "owner-pc" }),
