@@ -302,6 +302,26 @@ class MarketDataHub:
                 return full
             passive = self._flow_only.get(normalized)
             if passive is not None:
+                # A different approved candidate may need pre-breakout L2
+                # after this symbol was already warmed for publicTrade only.
+                # Promote the existing passive lease without disconnecting
+                # or resetting its certified trade source.
+                if capture_book and not passive.capture_book and not self._stop.is_set():
+                    ws = self._ws
+                    if ws is not None:
+                        try:
+                            with self._send_lock:
+                                ws.send(json.dumps({
+                                    "op": "subscribe",
+                                    "req_id": f"flowbook:{normalized}:capture",
+                                    "args": [passive.book_topic],
+                                }))
+                        except Exception:
+                            # No confirmed subscription: retry on the next
+                            # sync, never expose partial L2 as evidence.
+                            return passive
+                    passive.book_frames.clear()
+                    passive.capture_book = True
                 return passive
             if self._stop.is_set() or self._flow_only:
                 return None
@@ -627,6 +647,17 @@ class MarketDataHub:
             return
         request_id = message.get("req_id")
         if not isinstance(request_id, str):
+            return
+        if request_id.startswith("flowbook:") and request_id.endswith(":capture"):
+            # The socket may accept send() yet reject the book subscription.
+            # Keep publicTrade intact; permit the next sync to retry L2.
+            symbol = request_id[len("flowbook:"):-len(":capture")]
+            if message.get("success") is not True:
+                with self._lock:
+                    flow = self._flow_only.get(symbol)
+                    if flow is not None:
+                        flow.book_frames.clear()
+                        flow.capture_book = False
             return
         if request_id.startswith("flow:"):
             symbol = request_id.removeprefix("flow:")
