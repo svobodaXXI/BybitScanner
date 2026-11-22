@@ -718,5 +718,86 @@ class ReversalOriginTests(unittest.TestCase):
         self.assertFalse(_is_reversal_origin(up, 2, 1))       # too few candles before
 
 
+
+class ICNTNov11ArchivedDetectorParityTests(unittest.TestCase):
+    def test_first_closed_m5_box_from_independent_nov11_trade_archive(self):
+        """Fixed as-of replay; exact native detector, no future bars or Robot actions.
+
+        Fixture is 182 OHLC bars derived from immutable publicTrade archive
+        ICNTUSDT2026-11-11.csv.gz (see issue #1253 provenance and SHA256).
+        Frozen *before* GitHub CI; no tuning of detector or selected clock.
+        """
+        import base64
+        import hashlib
+        import json
+        import zlib
+
+        encoded = (
+            "eNp9WFuS4zgMu1BqKnqSOktX3/8amwkAidS49qfVCk2KAl+wf37ef6qv9vos6z3+Lu6du9/Xz/l59e9DviakXVLsC6X+LK2vcE6p"
+            "lJby3VeaxFKlW+vrLPvcQunrGHDH7m35VCg6XNpnLp5ClSSsdAgqhWZcUgBRjXeke1m34aHCU1u+TCMC0G3SbZCuHvFY0iVsXDos"
+            "T1124mmDdNxS7rF0HNAXpQPnOkwM3MDllXPfonQIjYGLzhUtn3MBkuHnYZculLjwRtsr7mG/TT4jIU0xKemUhCu6ylBcwklN2J0C"
+            "mSjSwMz+zqTplybuyDybBE1Z/EWvvQvc9u+G5fH5h0KGH6pLOOjpcZIj6hp0V5IuSSek3wWiKpEejbFfU4dyj9uwsjaGDAoXZoCu"
+            "Otu+495MaRI8w1VHvzDk08xPRiiHnAuro0mVUaaFVp7CumpMQ1OC0xlKmcneYuQ+UuiMS2gxrPbdCd/y2vHZqdNzXbDHsgCOtzVV"
+            "DUHxXOlME+5OtbKWa/K3XLU8I/xj5XqkcyqNmUM3U9HOcumW2Bybws6GxyqujQ+pK7IPeuzJTVi1LPXL8ozn8tkhNIgdl94em4gK"
+            "mi1FXo3cC8aVNC1Kp3Ln6rcrWj7n5kYyrr6Xo2AZ5xnSiTnfZLdZNEjIJQt6HJsK7MjD4WrDSr/67Kw9tNq2pTWa3MPvCiyH+Lrm"
+            "fnsYs0KBVSVCAcPvlqlK0c/PZASkwRz0gGCQJ2j5nuoaZ45ic1SVI+Vd5ePIQS1A6rNQCqQcWDgalAspHgSs0XFciiOK8Fzfarjp"
+            "GziQm21Nr4GN6aZiOY6+vaWLrE+6FtiYG5x3AeEjkjLqLpdlKC0pYSfLTEXIyNzkk4IBs/iryBB1HoYqcfVMnyPooFf43JGhXbir"
+            "KOpQq0lKQ1nIK80LBnuCUMISePQ+tMgu06/FVNKY1NOXSzUjQWYr94WE4kyleaHPuK5XjLK62rvEfFJd7aqLBaXjl8BYGSntrmzj"
+            "uXwRkJDHMkxIrnyoOD7NCEZn6pWUpiWnU4JYCEfsWFxq/Y5m75PVxsq1XMk0iHHlIvHOzAaXN0wAU1kZswEdypCXxqsyf9C2DKEx"
+            "0UBnTPB+YUS5CEG8SuhwoKH56uBKDpbseJ9xvZNsKX+erCBKmwUM2bUOEh5j3dnEhP5g5rOp0bAC0IgTUcRGPqk9wn5Z/+dxsWw4"
+            "BY3mTxeuyWMuuizGmByn/avZqjapu2+rhlRiIERTvAmbV4jWyKrMOg61Yjm0DMQO9JVuMyWjnGo1NksGQoYb70NhvxpqDy/rCuJu"
+            "biy7/gq97Jo7nNnqR8pyFeVKzWtd9Rzb37E74kBRsMpj8BT4fgU+zfV91xrrnYaUT6xzo9CvXtwjJZi3tMSup66uY32mGcvPFzNz"
+            "nFoTAfL8JUHUCkzKMinmQkpeMrFiiVFadGoZ4QsFu/aqYtt1xrcsWho9f0eYyfH764bonuX7iP6lj0Cl5E9E7fGTi1RbTNgzliIZ"
+            "3BO7pKGlcbjnkEJAyyN+JToue/jG8+8XsRbnFt8f3+uiqCV+L5NPKyYN/47EnkQ5dJ3rsu8SKcCRJroy7ZEGLYuFeUZ0P6xNnNkz"
+            "Z16J0x2Pe2KDfgUgRY10yDPR8VS7hyzGT5Ha7U6SiAEr+3BJizpsbtZ/f/8Dd3lYTA=="
+        )
+        raw = zlib.decompress(base64.b64decode(encoded))
+        self.assertEqual(
+            hashlib.sha256(raw).hexdigest(),
+            "0b06fb8bbbde7d961d97c1f91828e9d9b41cd9f057fdd06f125d839a506dbfab",
+        )
+        frame = pd.DataFrame(
+            json.loads(raw), columns=["open", "high", "low", "close"]
+        )
+        self.assertEqual(len(frame), 182)
+        first = None
+        # Bar 23 closes at 02:00 UTC. Inspect each closed prefix chronologically.
+        for end in range(23, len(frame)):
+            found = detect_ikigai_box(frame, as_of_index=end)
+            if found is not None:
+                first = (end, found)
+                break
+        self.assertIsNotNone(first, "NO_NEW_CANDIDATE before 15:10 UTC")
+        end, formation = first
+        self.assertEqual(end, 181)  # 2026-11-11T15:10:00Z close
+        self.assertEqual(formation.direction, "LONG")
+        self.assertEqual(
+            (
+                formation.anchor_start_index,
+                formation.anchor_end_index,
+                formation.box_start_index,
+                formation.box_end_index,
+                formation.second_start_index,
+            ),
+            (158, 163, 164, 168, 169),
+        )
+        self.assertEqual(
+            (
+                formation.anchor_start_price,
+                formation.anchor_end_price,
+                formation.box_low,
+                formation.box_high,
+                formation.second_extreme,
+            ),
+            (0.2967, 0.2887, 0.2891, 0.2925, 0.2863),
+        )
+        self.assertAlmostEqual(formation.fibonacci_1_618, 0.283756, places=10)
+        self.assertAlmostEqual(formation.fibonacci_2_618, 0.275756, places=10)
+        self.assertEqual(
+            formation,
+            detect_ikigai_box(frame.iloc[:182], as_of_index=181),
+            "Native detector must agree on full vs exact closed-as-of prefix",
+        )
+
 if __name__ == "__main__":
     unittest.main()
