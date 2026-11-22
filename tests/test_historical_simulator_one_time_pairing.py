@@ -67,5 +67,112 @@ class PairCodeTests(unittest.TestCase):
             self.issue("owner-unknown")
 
 
+class LocalPairingClientTests(unittest.TestCase):
+    def test_local_claim_never_returns_reusable_token_to_browser(self):
+        import io
+        import json
+        from unittest.mock import patch
+        from research.local_replay_viewer import launch_bridge_agent as agent
+
+        class Client:
+            def __init__(self):
+                self.request = None
+
+            def open(self, request, timeout):
+                self.request = request
+                self.assert_timeout = timeout
+                data = io.BytesIO(json.dumps({
+                    "ok": True, "device_id": "owner-pc", "token": "A" * 64,
+                }).encode("utf-8"))
+                data.status = 200
+                return data
+
+        client = Client()
+        with patch.object(agent, "read_config", return_value=None), \
+             patch.object(agent, "_trusted_statistics_origin", return_value="https://example.test"), \
+             patch.object(agent, "pair_device") as persist:
+            agent.claim_one_time_pairing_code("owner-pc", "A" * 24, opener=client)
+        self.assertEqual(client.assert_timeout, 5)
+        self.assertEqual(client.request.full_url,
+            "https://example.test/api/diary/simulator-bridge/pair-claim")
+        self.assertEqual(client.request.get_method(), "POST")
+        self.assertNotIn("A" * 24, client.request.full_url)
+        self.assertNotIn("A" * 64, client.request.full_url)
+        self.assertEqual(json.loads(client.request.data), {
+            "device_id": "owner-pc", "code": "A" * 24,
+        })
+        persist.assert_called_once_with("owner-pc", "A" * 64)
+
+    def test_existing_local_config_rejects_claim_without_network(self):
+        from unittest.mock import patch
+        from research.local_replay_viewer import launch_bridge_agent as agent
+        with patch.object(agent, "read_config", return_value={"already": "paired"}), \
+             patch.object(agent, "_direct_https_opener") as network:
+            with self.assertRaises(agent.AgentConfigError):
+                agent.claim_one_time_pairing_code("owner-pc", "A" * 24)
+            network.assert_not_called()
+
+
+class LocalPairingHttpTests(unittest.TestCase):
+    def test_cross_origin_rejected_and_exact_local_post_has_no_token(self):
+        import json
+        from http.server import ThreadingHTTPServer
+        from threading import Thread
+        from urllib.request import Request, urlopen
+        from urllib.error import HTTPError
+        from unittest.mock import patch
+        from research.local_replay_viewer.server import handler_factory
+        from research.local_replay_viewer import launch_bridge_agent as agent
+
+        host = ThreadingHTTPServer(("127.0.0.1", 0), handler_factory())
+        server_thread = Thread(target=host.serve_forever, daemon=True)
+        server_thread.start()
+        origin = f"http://127.0.0.1:{host.server_address[1]}"
+        payload = json.dumps({"device_id": "owner-pc", "code": "A" * 24}).encode()
+        def request(src):
+            return Request(origin + "/local-replay/pair-claim", data=payload,
+                           headers={"Content-Type": "application/json",
+                                    "X-Local-Pair-Code": "explicit-click",
+                                    "Origin": src}, method="POST")
+        try:
+            with patch.object(agent, "claim_one_time_pairing_code") as pair:
+                with self.assertRaises(HTTPError) as blocked:
+                    urlopen(request("https://attacker.example"), timeout=5)
+                self.assertEqual(blocked.exception.code, 403)
+                pair.assert_not_called()
+                with urlopen(request(origin), timeout=5) as response:
+                    self.assertEqual(response.status, 200)
+                    data = response.read()
+                self.assertEqual(json.loads(data), {"paired": True})
+                self.assertNotIn(b"token", data)
+                pair.assert_called_once_with("owner-pc", "A" * 24)
+        finally:
+            host.shutdown()
+            host.server_close()
+            server_thread.join(timeout=5)
+
+
+class IngressPairingContractTests(unittest.TestCase):
+    def test_unauthed_exact_claim_only_and_owner_auth_issuance(self):
+        from pathlib import Path
+        import re
+        config = (Path(__file__).resolve().parents[1] /
+                  "deploy/terminal_ingress/nginx-authenticated.conf").read_text()
+        match = re.search(
+            r"location = /api/diary/simulator-bridge/pair-claim \{(.*?)\n    \}",
+            config, re.DOTALL)
+        self.assertIsNotNone(match)
+        route = match.group(1)
+        for text in ('limit_except POST { deny all; }',
+                     'proxy_set_header Cookie "";',
+                     'proxy_set_header Authorization "";',
+                     'proxy_pass http://127.0.0.1:8765;'):
+            self.assertIn(text, route)
+        self.assertNotIn("auth_request", route)
+        self.assertNotIn("allow all", route)
+        self.assertNotIn("location = /api/diary/simulator-bridge/pair-code {", config)
+        self.assertIn("location /api/ {\n        auth_request /_auth;", config)
+
+
 if __name__ == "__main__":
     unittest.main()
