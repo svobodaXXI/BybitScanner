@@ -324,3 +324,43 @@ def test_host_enable_rejects_uninitialized_journal_before_systemd(durable_contex
                                        state_dir=tmp_path / "missing",
                                        uid=os.geteuid(), run=systemd)
     assert result.startswith("BLOCKED:")
+
+
+@pytest.mark.parametrize("defect, expected", [
+    ("format", "stage=SEED_FORMAT"),
+    ("pin", "stage=KEY_PIN"),
+    ("expired", "stage=REQUEST_VALIDATION"),
+    ("http", "stage=PUBLISH http=403"),
+    ("publish", "stage=PUBLISH"),
+])
+def test_issuer_failure_evidence_is_bounded(context, monkeypatch, capsys, defect, expected):
+    from urllib.error import HTTPError
+    from tools import github_diagnostic_issuer as module
+    payload, _, _, _, issuer, responder, *_ = context
+    public = {"audience": AUDIENCE,
+              "issuer_public": issuer.public_key().export_key(format="raw").hex(),
+              "responder_public": responder.public_key().export_key(format="raw").hex()}
+    request = {k: payload[k] for k in ("request_id", "issued_at", "expires_at")}
+    seed = issuer.seed.hex()
+    if defect == "format":
+        seed = "SECRET_WRONG_FORMAT"
+    if defect == "pin":
+        seed = responder.seed.hex()
+    monkeypatch.setenv("GITHUB_REPOSITORY", "svobodaXXI/BybitScanner")
+    monkeypatch.setenv("GITHUB_REF", "refs/heads/diagnostic-issuer")
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "push")
+    monkeypatch.setenv("DIAGNOSTIC_ISSUER_SEED", seed)
+    monkeypatch.setenv("DIAGNOSTIC_GITHUB_TOKEN", "SECRET_TOKEN_NOT_FOR_LOGS")
+    monkeypatch.setattr(module, "_object", lambda path: public if path == module.PUBLIC else request)
+    monkeypatch.setattr(module.time, "time", lambda: NOW if defect != "expired" else request["expires_at"])
+    def publish(*args):
+        if defect == "http":
+            raise HTTPError("https://example.invalid/SECRET", 403, "SECRET_HTTP_BODY", {}, None)
+        if defect == "publish":
+            raise RuntimeError("SECRET_EXCEPTION")
+        pytest.fail("publication must not be attempted")
+    monkeypatch.setattr(module, "publish", publish)
+    assert module.main() == 2
+    out = capsys.readouterr().out
+    assert out == "SIGNED_OBSERVATION_REQUEST_BLOCKED " + expected + "\n"
+    assert "SECRET" not in out and seed not in out
