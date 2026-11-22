@@ -264,6 +264,7 @@ class RobotBreakoutMonitor:
         wedge_be_auto_paper_enabled: bool = False,
         impulse_fade_paper_enabled: bool = False,
         impulse_early_paper_enabled: bool = False,
+        impulse_l_shape_paper_enabled: bool = False,
         get_pattern_flow_evidence: Callable[
             [RobotCandidateRecord], CandidateBoundFlowEvidence | None
         ] | None = None,
@@ -280,6 +281,11 @@ class RobotBreakoutMonitor:
         if type(impulse_early_paper_enabled) is not bool:
             raise ValueError("Impulse early PAPER gate must be explicit bool")
         self._impulse_early_paper_enabled = impulse_early_paper_enabled
+        # The first release is Wedge-only. Keep the L-shape implementation
+        # separately gated, with no production activation wiring yet.
+        if type(impulse_l_shape_paper_enabled) is not bool:
+            raise ValueError("L-shape impulse PAPER gate must be explicit bool")
+        self._impulse_l_shape_paper_enabled = impulse_l_shape_paper_enabled
         self._get_pattern_flow_evidence = get_pattern_flow_evidence
         # Resting entry LIMITs become fill-capable the moment they are durable, so
         # protection coverage for the symbol must already be listening. Without a
@@ -336,13 +342,18 @@ class RobotBreakoutMonitor:
 
         With the opt-in observer absent, retain the original Robot route.
         With it bound, a fresh, exact-owner, directionally supportive and
-        independently source-complete receipt is mandatory for Wedge, L-shape
-        and standalone MIRROR. Ikigai Box retains its native grid, pending
-        separate second-impulse reversal research. Missing/foreign/stale
+        independently source-complete receipt is mandatory for Wedge only
+        in the first release. L-shape requires a separate explicit opt-in;
+        MIRROR and Box retain their native entry behavior. Missing/foreign/stale
         evidence cannot silently bypass impulse timing and submit the old
         entry. This gate never touches an already-owned entry, fill, STOP,
         TAKE, cancel or recovery lifecycle.
         """
+        pattern = record.signal_snapshot.get("pattern")
+        if pattern not in ("Falling Wedge", "Rising Wedge") and not (
+            pattern == "L-shape" and self._impulse_l_shape_paper_enabled
+        ):
+            return True  # only the optional overlay is absent; native gates remain
         observer = self._get_pattern_flow_evidence
         if observer is None:
             return True
@@ -843,6 +854,7 @@ class RobotBreakoutMonitor:
         early_phase = ("WAITING_RETEST" if wedge
                        else robot_l_shape.PHASE_WAITING_RETEST)
         if (not self._impulse_early_paper_enabled
+                or (not wedge and not self._impulse_l_shape_paper_enabled)
                 or state.get("phase") != early_phase
                 or self._get_pattern_flow_evidence is None
                 or self._get_market_book is None
@@ -1033,6 +1045,7 @@ class RobotBreakoutMonitor:
             return self._advance_impulse_early_limit(record)
         if (phase == robot_l_shape.PHASE_WAITING_RETEST
                 and record.signal_snapshot.get("pattern") == "L-shape"
+                and self._impulse_l_shape_paper_enabled
                 and self._impulse_early_paper_enabled
                 and self._advance_impulse_early_limit(record)):
             return True
