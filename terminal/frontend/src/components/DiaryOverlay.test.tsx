@@ -634,15 +634,20 @@ describe("Closed deals / exact episode index", () => {
   it("pairs an existing VPS device slot through a confirmed Windows link only", async () => {
     const token = "A".repeat(64);
     const copies = vi.fn().mockResolvedValue(undefined);
-    const linkClicks: string[] = [];
+    const nativeClicks: string[] = [];
     vi.stubGlobal("navigator", {
       userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
       clipboard: { writeText: copies },
     });
-    const spy = vi.spyOn(HTMLAnchorElement.prototype, "click")
-      .mockImplementation(function (this: HTMLAnchorElement) {
-        linkClicks.push(this.href);
-      });
+    const spy = vi.spyOn(HTMLAnchorElement.prototype, "click");
+    const observeNative = (event: MouseEvent) => {
+      if (event.target instanceof HTMLAnchorElement &&
+          event.target.href.startsWith("bybitscanner-simulator://pair?")) {
+        nativeClicks.push(event.target.href);
+        event.preventDefault(); // JSDOM has no native Windows protocol dispatch
+      }
+    };
+    document.addEventListener("click", observeNative);
     try {
       const fetchMock = vi.fn().mockImplementation(async (url: string) => {
         if (url.endsWith("/simulator-bridge/pair")) return new Response(JSON.stringify({
@@ -657,23 +662,27 @@ describe("Closed deals / exact episode index", () => {
         statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
       fireEvent.click(await screen.findByRole("button", { name: /BTCUSDT/ }));
       fireEvent.click(screen.getByRole("button", { name: "Связать ПК" }));
-      expect(await screen.findByRole("button", { name: "Подтвердить подключение" }))
-        .toBeInTheDocument();
-      expect(linkClicks).toHaveLength(0); // browser must not auto-open on async request
+      const confirm = await screen.findByRole("link", { name: "Подтвердить подключение" });
+      expect(confirm).toHaveAttribute("href", "bybitscanner-simulator://pair?device_id=owner-pc&token=" + token);
+      expect(confirm).toHaveAttribute("target", "_self");
+      expect(nativeClicks).toHaveLength(0); // browser must not auto-open on async request
       expect(fetchMock).toHaveBeenCalledWith("/api/diary/simulator-bridge/pair", {
         method: "POST", credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ device_id: "owner-pc" }),
       });
-      fireEvent.click(screen.getByRole("button", { name: "Подтвердить подключение" }));
-      expect(linkClicks).toEqual([
+      fireEvent.click(confirm);
+      expect(spy).not.toHaveBeenCalled();
+      expect(copies).not.toHaveBeenCalled();
+      expect(nativeClicks).toEqual([
         "bybitscanner-simulator://pair?device_id=owner-pc&token=" + token,
       ]);
-      expect(screen.getByText(/Запрос сопряжения передан Windows/))
-        .toHaveTextContent("Успешное подключение пока не подтверждено.");
-      expect(screen.queryByRole("button", { name: "Подтвердить подключение" }))
-        .not.toBeInTheDocument();
+      expect(screen.getByText(/Запрошено открытие локального адаптера/))
+        .toHaveTextContent("Подключение пока не подтверждено.");
+      await waitFor(() => expect(screen.queryByRole("link", { name: "Подтвердить подключение" }))
+        .not.toBeInTheDocument());
     } finally {
+      document.removeEventListener("click", observeNative);
       spy.mockRestore();
     }
   });
@@ -703,7 +712,7 @@ describe("Closed deals / exact episode index", () => {
     expect(notice).toHaveTextContent(expected);
     expect(notice).not.toHaveTextContent(secret);
     expect(notice).not.toHaveTextContent("PRIVATE_ERROR_TOKEN");
-    expect(screen.queryByRole("button", { name: "Подтвердить подключение" }))
+    expect(screen.queryByRole("link", { name: "Подтвердить подключение" }))
       .not.toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith("/api/diary/simulator-bridge/pair", {
       method: "POST", credentials: "same-origin",
@@ -736,7 +745,7 @@ describe("Closed deals / exact episode index", () => {
       const notice = await screen.findByText(/Подключение пока недоступно:/);
       expect(notice).toHaveTextContent(scenario.failure);
       expect(notice).not.toHaveTextContent(secret);
-      expect(screen.queryByRole("button", { name: "Подтвердить подключение" }))
+      expect(screen.queryByRole("link", { name: "Подтвердить подключение" }))
         .not.toBeInTheDocument();
       view.unmount();
     }
