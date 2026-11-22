@@ -444,6 +444,34 @@ def test_protection_upgrades_passive_source_without_duplicate_trade_or_unsubscri
         hub.close()
 
 
+
+def test_capture_only_probe_preserves_full_protection_context_without_fake_l2():
+    """A protected full context must not be converted into passive raw L2."""
+    ws = _WebSocket()
+    hub = MarketDataHub(_Registry(), _context, connection_factory=lambda *_a, **_k: ws)
+    try:
+        hub._ws = ws
+        protected = hub.subscribe("BTCUSDT")
+        callbacks = []
+        protected.add_update_listener("robot-protection", callbacks.append)
+        before = tuple(ws.sent)
+
+        # A capture-only observer sees the existing full context. It must
+        # not replace its protected book or create a second book subscriber.
+        assert hub.subscribe_flow_only("BTCUSDT", capture_book=True) is protected
+        assert hub.list_flow_contexts() == hub.list_contexts() == (protected,)
+        assert not hasattr(protected, "capture_book")
+        assert not hasattr(protected, "book_frames")
+        assert tuple(ws.sent) == before
+        assert hub.release_flow_only("BTCUSDT") is False
+
+        protected._dispatch_update("BTCUSDT:protected")
+        assert callbacks == ["BTCUSDT:protected"]
+        assert protected.public_orderbook.closed is False
+    finally:
+        hub.close()
+
+
 TESTS = (
     test_hub_uses_one_connection_for_multiple_reusable_symbol_contexts,
     test_hub_rejects_unsupported_symbol_without_creating_context,
@@ -457,6 +485,7 @@ TESTS = (
     test_scanner_impulse_source_status_reports_existing_contexts_only_without_orders,
     test_flow_only_probe_uses_same_ws_no_book_and_no_protection_callback,
     test_protection_upgrades_passive_source_without_duplicate_trade_or_unsubscribe,
+    test_capture_only_probe_preserves_full_protection_context_without_fake_l2,
 )
 
 
