@@ -439,6 +439,38 @@ class PostBreakoutWedgeImpulseQuoteTests(unittest.TestCase):
         with self.assertRaises(RobotEntryLimitError):
             self.plan(book=wrong_symbol)
 
+    def test_early_quote_uses_latest_closed_geometry_not_stale_cursor(self):
+        from dataclasses import replace
+
+        # At 240100 the latest closed M1 starts at 180000 (index 102).
+        # The stored cursor is still 101. At 102 the short boundary is 94,
+        # so an ask of 94 is not outside the wedge.
+        host = self.host("SHORT")
+        receipt = self.receipt("SHORT")
+        receipt = replace(
+            receipt, closed_at_ms=240_000, decision_ms=240_010,
+            transition=replace(receipt.transition, known_at_ms=240_010),
+        )
+        book = self.book("SHORT", received=240_050)
+        with self.assertRaisesRegex(RobotEntryLimitError, "no longer outside"):
+            self.plan(host=host, receipt=receipt, book=book, now=240_100)
+        self.assertEqual(host.robot_state["geometry_cursor"], 101)
+
+    def test_early_quote_cannot_enter_at_apex_with_stale_cursor(self):
+        from dataclasses import replace
+
+        host = self.host()
+        host.signal_snapshot["geometry"]["apex"]["index"] = 102
+        receipt = self.receipt()
+        receipt = replace(
+            receipt, closed_at_ms=240_000, decision_ms=240_010,
+            transition=replace(receipt.transition, known_at_ms=240_010),
+        )
+        with self.assertRaisesRegex(RobotEntryLimitError, "apex reached"):
+            self.plan(host=host, receipt=receipt,
+                      book=self.book(received=240_050), now=240_100)
+        self.assertEqual(host.robot_state["geometry_cursor"], 101)
+
     def test_rejects_unproven_geometry_and_poor_net_reward(self):
         host = self.host()
         host.signal_snapshot["geometry"]["touches"] = {}
