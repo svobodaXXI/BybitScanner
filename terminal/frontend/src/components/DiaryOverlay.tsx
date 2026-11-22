@@ -7,7 +7,16 @@ import "./DiaryOverlay.css";
 export type DiarySection = "FINREZ" | "PATTERNS" | "DEALS" | "TRADES" | "SETUPS" | "STATISTICS" | "MIRROR";
 export type DiaryAccountMenuProps = Pick<ComponentProps<typeof AccountMenu>,
   "workspaceProjection" | "mode" | "selectedAccountId" | "onSelectAccount" | "modeAccountError">;
-type FinrezPeriod = "DAY" | "WEEK" | "MONTH" | "YEAR" | "ALL";
+type FinrezPeriod = "DAY" | "WEEK" | "MONTH" | "YEAR" | "ALL" | "CUSTOM";
+type FinrezDateRange = { from: string; to: string };
+
+function moscowToday(): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Moscow", year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(new Date());
+  const part = (type: string) => parts.find(value => value.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
 type FinrezPnlFilter = "ALL" | "PROFIT" | "LOSS";
 type FinrezSideFilter = "ALL" | "LONG" | "SHORT";
 const NO_VERIFIED_PATTERN_FILTER = "__NO_VERIFIED_PATTERN__";
@@ -192,6 +201,9 @@ type FinrezResponse = {
   owner: "MANUAL" | "ROBOT";
   period: FinrezPeriod;
   period_start_ms: number;
+  period_end_ms?: number;
+  date_from?: string;
+  date_to?: string;
   as_of_ms: number;
   source_revision: number;
   source: "PAPER_EXECUTIONS_ATTRIBUTED";
@@ -1040,7 +1052,8 @@ function validClosedEpisodes(report: FinrezResponse): boolean {
       || deal.replay_evidence !== "EPISODE_INDEX_ONLY"
       || !Number.isSafeInteger(deal.opened_at_ms) || deal.opened_at_ms < 0
       || !Number.isSafeInteger(deal.closed_at_ms) || deal.closed_at_ms < deal.opened_at_ms
-      || deal.closed_at_ms < report.period_start_ms || deal.closed_at_ms > report.as_of_ms
+      || deal.closed_at_ms < report.period_start_ms
+      || deal.closed_at_ms > (report.period_end_ms ?? report.as_of_ms)
       || !Number.isSafeInteger(deal.execution_count) || deal.execution_count < 1
       || typeof deal.pnl_usdt !== "string" || !deal.pnl_usdt.trim()
       || !Number.isFinite(Number(deal.pnl_usdt))) return false;
@@ -1818,6 +1831,13 @@ export function DiaryOverlay({
   const [statistics, setStatistics] = useState<DiaryStatistics | null>(null);
   const [finrez, setFinrez] = useState<FinrezResponse | null>(null);
   const [finrezPeriod, setFinrezPeriod] = useState<FinrezPeriod>("DAY");
+  const [finrezRange, setFinrezRange] = useState<FinrezDateRange | null>(null);
+  const [calendarOpen, setCalendarOpen] = useState(false);
+  const [dateDraft, setDateDraft] = useState<FinrezDateRange>({ from: "", to: "" });
+  const today = moscowToday();
+  const validDateDraft = /^\d{4}-\d{2}-\d{2}$/.test(dateDraft.from)
+    && /^\d{4}-\d{2}-\d{2}$/.test(dateDraft.to)
+    && dateDraft.from >= "1970-01-02" && dateDraft.to >= dateDraft.from && dateDraft.to <= today;
   const [finrezSymbolFilter, setFinrezSymbolFilter] = useState("");
   const [finrezPatternFilter, setFinrezPatternFilter] = useState("");
   const [finrezPnlFilter, setFinrezPnlFilter] = useState<FinrezPnlFilter>("ALL");
@@ -1847,6 +1867,7 @@ export function DiaryOverlay({
         if (!statisticsScope) throw new Error("finrez scope required");
         const response = await fetch(marketApiRoutes.diaryTickerFinrez(
           statisticsScope.accountId, statisticsScope.owner, finrezPeriod,
+          finrezPeriod === "CUSTOM" ? finrezRange ?? undefined : undefined,
         ));
         if (!response.ok) throw new Error("finrez report unavailable");
         const result = (await response.json()) as FinrezResponse;
@@ -1859,6 +1880,12 @@ export function DiaryOverlay({
           || !Number.isSafeInteger(result.source_revision) || result.source_revision < 1
           || !Number.isSafeInteger(result.period_start_ms) || result.period_start_ms < 0
           || !Number.isSafeInteger(result.as_of_ms) || result.as_of_ms < result.period_start_ms
+          || (finrezPeriod === "CUSTOM" && (!finrezRange
+            || result.date_from !== finrezRange.from || result.date_to !== finrezRange.to
+            || !Number.isSafeInteger(result.period_end_ms)
+            || result.period_end_ms! < result.period_start_ms
+            || result.period_end_ms! > result.as_of_ms || !validClosedEpisodes(result)))
+          || (finrezPeriod !== "CUSTOM" && result.period_end_ms !== undefined)
           || !result.attribution_coverage
           || !["COMPLETE", "PARTIAL"].includes(result.attribution_coverage.status)
           || !Number.isSafeInteger(result.attribution_coverage.excluded_unattributed_episode_count)
@@ -1963,7 +1990,7 @@ export function DiaryOverlay({
     } finally {
       if (current()) setLoading(false);
     }
-  }, [section, statisticsScope?.accountId, statisticsScope?.owner, finrezPeriod]);
+  }, [section, statisticsScope?.accountId, statisticsScope?.owner, finrezPeriod, finrezRange]);
 
   useEffect(() => {
     setStatistics(null);
@@ -2028,10 +2055,39 @@ export function DiaryOverlay({
                 ["MONTH", "Месяц"], ["YEAR", "Год"], ["ALL", "Всё время"],
               ] as const).map(([period, label]) => (
                 <button key={period} aria-pressed={finrezPeriod === period} type="button"
-                  onClick={() => setFinrezPeriod(period)}>{label}</button>
+                  onClick={() => { setCalendarOpen(false); setFinrezPeriod(period); }}>{label}</button>
               ))}
+              <button type="button" className="diary-calendar-button" aria-label="Выбрать период"
+                title={finrezPeriod === "CUSTOM" && finrezRange
+                  ? `${finrezRange.from} — ${finrezRange.to} (МСК)` : "Выбрать даты"}
+                aria-pressed={finrezPeriod === "CUSTOM"} aria-expanded={calendarOpen}
+                onClick={() => {
+                  if (!calendarOpen) setDateDraft(finrezRange ?? { from: today, to: today });
+                  setCalendarOpen(value => !value);
+                }}>
+                <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.7">
+                  <rect x="3" y="5" width="18" height="16" rx="2"/>
+                  <path d="M7 3v4m10-4v4M3 10h18m-13 4h2m4 0h2m-8 3h2"/>
+                </svg>
+              </button>
             </nav>
           ) : null}
+          {calendarOpen && (section === "FINREZ" || section === "PATTERNS" || section === "DEALS") && (
+            <div className="diary-calendar-range" role="group" aria-label="Диапазон дат (МСК)">
+              <label>От<input type="date" aria-label="Дата от" value={dateDraft.from}
+                min="1970-01-02" max={dateDraft.to || today}
+                onChange={event => setDateDraft(prior => ({ ...prior, from: event.target.value }))}/></label>
+              <label>До<input type="date" aria-label="Дата до" value={dateDraft.to}
+                min={dateDraft.from || "1970-01-02"} max={today}
+                onChange={event => setDateDraft(prior => ({ ...prior, to: event.target.value }))}/></label>
+              <button type="button" disabled={!validDateDraft} onClick={() => {
+                if (!validDateDraft) return;
+                setFinrezRange({ ...dateDraft });
+                setFinrezPeriod("CUSTOM");
+                setCalendarOpen(false);
+              }}>Применить</button>
+            </div>
+          )}
           <nav className="diary-primary-nav" aria-label="Разделы статистики">
             <button aria-current={section === "FINREZ" || section === "STATISTICS" ? "page" : undefined} onClick={() => { setSelectedTradeId(null); setSection("FINREZ"); }} type="button">Финрез</button>
             <button aria-current={section === "PATTERNS" || section === "SETUPS" ? "page" : undefined} onClick={() => { setSelectedTradeId(null); setSection("PATTERNS"); }} type="button">Паттерны</button>
