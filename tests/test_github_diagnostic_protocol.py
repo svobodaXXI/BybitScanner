@@ -482,11 +482,20 @@ def test_release_pin_continues_only_with_exact_owner_transaction(tmp_path, conte
         assert journal.path.read_bytes() == before_journal
 
 
-def test_signed_owner_outcome_reuses_durable_reservation_and_correlation(context, tmp_path):
+@pytest.mark.parametrize("action,postcheck", [
+    ("update", "VERIFIED_EDITOR_ONLY"),
+    ("start", "VERIFIED_PAPER_READY"),
+    ("update-and-start", "VERIFIED_PAPER_READY"),
+    ("start", "BLOCKED"),
+    ("start", "NOT_APPLICABLE"),  # legacy journal receipt, not readiness
+])
+def test_signed_owner_outcome_reuses_durable_reservation_and_correlation(
+    context, tmp_path, action, postcheck,
+):
     from tools.github_diagnostic_journal import DiagnosticJournal, verify_historical_response
     from tools.github_diagnostic_issuer import make_request
     payload, _, _, _, issuer, responder, _, reads = context
-    identity = {"owner_request_id": "c" * 32, "owner_action": "update", "target_sha": "d" * 40}
+    identity = {"owner_request_id": "c" * 32, "owner_action": action, "target_sha": "d" * 40}
     public = {"audience": AUDIENCE,
               "issuer_public": issuer.public_key().export_key(format="raw").hex(),
               "responder_public": responder.public_key().export_key(format="raw").hex()}
@@ -498,7 +507,7 @@ def test_signed_owner_outcome_reuses_durable_reservation_and_correlation(context
     journal = DiagnosticJournal(directory)
     journal.initialize()
     expected = dict(identity, state="FINISHED_OK", result="success", exit_code=0,
-                    postcheck="VERIFIED_EDITOR_ONLY")
+                    postcheck=postcheck)
     calls = []
     def reader(rid, action, sha):
         calls.append((rid, action, sha))
@@ -546,3 +555,19 @@ def test_owner_status_rejects_invalid_request_before_reservation(context, change
         protocol.process_request(wire, **kw,
                                  owner_status=lambda *_: pytest.fail("invalid request read"))
     assert not claims and not reads
+
+
+@pytest.mark.parametrize("action,state,postcheck", [
+    ("update", "FINISHED_OK", "VERIFIED_PAPER_READY"),
+    ("stop", "FINISHED_OK", "VERIFIED_PAPER_READY"),
+    ("start", "FINISHED_OK", "VERIFIED_EDITOR_ONLY"),
+    ("start", "RUNNING", "VERIFIED_PAPER_READY"),
+    ("update-and-start", "FAILED", "VERIFIED_PAPER_READY"),
+])
+def test_signed_start_postcheck_cannot_escape_action_and_lifecycle(action, state, postcheck):
+    identity = dict(owner_request_id="c" * 32, owner_action=action, target_sha="d" * 40)
+    result = "exit-code" if state == "FAILED" else "success"
+    code = None if state == "RUNNING" else 2 if state == "FAILED" else 0
+    raw = dict(identity, state=state, result=result, exit_code=code, postcheck=postcheck)
+    with pytest.raises(ValueError, match="owner postcheck inconsistent"):
+        protocol._safe_owner_snapshot(raw, identity)
