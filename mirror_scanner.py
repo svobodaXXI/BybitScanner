@@ -346,14 +346,14 @@ def _judge_breakout(level: MirrorLevel, record: Mapping[str, Any], latest_close_
 
 
 def _duplicate_breakout(level_id, level, record, records, registry) -> str | None:
-    """One naked candle through two adjacent levels of one side is one MIRROR event, not two."""
+    """Suppress duplicate *real boundaries*, not independent valid levels.\n\n    One closed candle may genuinely cross two still-untouched price levels.\n    Keep their distinct source IDs and retest targets; identical geometry is\n    already reconciled in LevelRegistry and stays deduplicated here.\n    """
 
     breakout = record["naked_retest"]["breakout"]
     for other_id, other in records.items():
         other_level = registry.levels.get(other_id)
         other_breakout = other["naked_retest"].get("breakout")
         if (other_id != level_id and other.get("candidate") and other_level is not None
-                and other_level.side == level.side and other_breakout is not None
+                and same_level(other_level, level, 0.0) and other_breakout is not None
                 and other_breakout["open_time_ms"] == breakout["open_time_ms"]
                 and other_breakout["direction"] == breakout["direction"]):
             return f"duplicate_breakout_of:{other_id}"
