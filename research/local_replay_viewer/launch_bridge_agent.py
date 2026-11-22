@@ -18,7 +18,7 @@ import sys
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 if __package__:
     from .protocol_launcher import HERE, EPISODE_RE, launch_local_viewer, viewer_is_running
@@ -77,9 +77,18 @@ class _NoRedirect(HTTPRedirectHandler):
         return None
 
 
+def _direct_https_opener():
+    """Keep the paired relay independent of ambient proxy settings.
+
+    Default HTTPS certificate and hostname verification remain enabled.
+    Redirects are refused so device credentials cannot follow another origin.
+    """
+    return build_opener(ProxyHandler({}), _NoRedirect())
+
+
 def _send(config: dict[str, str], *, path: str, body: dict | None = None,
           opener=None) -> dict:
-    client = opener or build_opener(_NoRedirect())
+    client = opener or _direct_https_opener()
     headers = {
         "X-BybitScanner-Simulator-Device-Token": config["token"],
         "Cache-Control": "no-store",
@@ -108,7 +117,7 @@ def _verified_facts(config: dict[str, str], *, request_id: str, episode_id: str,
                     owner: str, revision: int, opener=None) -> bytes:
     """Fetch only the owner-queued, device-bound episode; never an arbitrary API URL."""
     from research.local_replay_viewer.paper_episode_local_store import MAX_BYTES
-    client = opener or build_opener(_NoRedirect())
+    client = opener or _direct_https_opener()
     request = Request(
         config["origin"] + "/api/diary/simulator-bridge/facts?" + urlencode({
             "device_id": config["device_id"], "request_id": request_id,
