@@ -267,6 +267,21 @@ def test_wick_sweep_owner_mirror_prior_wick_breach_rejects_old_horizontal_level(
     assert ms.load_state("TESTUSDT", "1", root)["pending_notifications"] == []
 
 
+def test_wick_sweep_source_formation_touches_before_confirmation_are_not_false_breaches(
+        root, fixed_levels):
+    # Confirmed swing zones require prior touches; those formative touches
+    # must not poison an otherwise fresh level before it became knowable.
+    level = level_at(100.0, 25 * M)
+    fixed_levels["levels"] = [level]
+    bars = flat_bars(30, price=99.5, spread=0.2)
+    bars[20] = (99.5, 100.2, 99.3, 99.5)  # before confirmation, not an active breach
+    bars.append((99.5, 103.5, 99.3, 103.0))
+    summary = observe(frame(bars), root)
+    record = ms.load_state("TESTUSDT", "1", root)["records"][level.level_id]
+    assert summary["new_candidates"] == 1
+    assert record["candidate"] is True
+
+
 def test_wick_sweep_owner_mirror_previous_wick_pierces_sloped_triangle_upper_ray(root, fixed_levels):
     # 5m-style RAREUSDT geometry: previous wick pierced the descending
     # upper line, but the next candle has a valid real-body crossing.
