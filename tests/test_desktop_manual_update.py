@@ -35,7 +35,8 @@ def opener(request, timeout=0):
             "status": "identical", "behind_by": 0, "ahead_by": 0,
         },
         updates.API + "/releases?per_page=30": [{
-            "tag_name": tag, "draft": False, "prerelease": False, "assets": [{
+            "tag_name": tag, "draft": False, "prerelease": False,
+            "published_at": "2026-11-22T06:02:43Z", "assets": [{
                 "name": updates.ASSETS["manager"], "state": "uploaded", "size": len(ASSET),
                 "digest": "sha256:" + DIGEST,
                 "browser_download_url": (
@@ -338,3 +339,32 @@ def test_desktop_release_publication_uses_scoped_app_workflows_permission():
     assert publication.count("gh release create") == 1
     assert "--target $env:DESKTOP_SHA" in publication
     assert "STABLE_MOVED_BEFORE_PUBLISH" in publication
+
+
+def test_publication_order_not_api_list_order():
+    def reordered(request, timeout=0):
+        if request.full_url == updates.API + "/releases?per_page=30":
+            latest = json.loads(opener(request, timeout=timeout).read())[0]
+            older = {**latest, "tag_name": "desktop-" + "b" * 40,
+                     "published_at": "2026-11-22T04:41:16Z"}
+            draft = {**latest, "tag_name": "desktop-" + "c" * 40,
+                     "draft": True, "published_at": None}
+            return Reply(json.dumps([older, draft, latest]).encode())
+        return opener(request, timeout=timeout)
+
+    assert updates.find_asset("manager", opener=reordered).sha == SHA
+
+
+@pytest.mark.parametrize("stamp", [None, "bad-date", "2026-02-30T01:00:00Z",
+                                  "2026-11-22T06:02:43Z"])
+def test_ambiguous_or_invalid_publication_never_selects_older_release(stamp):
+    def unordered(request, timeout=0):
+        if request.full_url == updates.API + "/releases?per_page=30":
+            latest = json.loads(opener(request, timeout=timeout).read())[0]
+            other = {**latest, "tag_name": "desktop-" + "b" * 40,
+                     "published_at": stamp}
+            return Reply(json.dumps([other, latest]).encode())
+        return opener(request, timeout=timeout)
+
+    with pytest.raises(updates.UpdateBlocked, match="desktop_release_publication_"):
+        updates.find_asset("manager", opener=unordered)
