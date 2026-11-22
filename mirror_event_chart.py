@@ -9,11 +9,10 @@ from typing import Mapping, Sequence
 
 
 def _visible_event_candles(snapshot: Mapping) -> Sequence[Mapping]:
-    """Show an older selected source anchor when its exact frozen OHLC exists.
+    """Show every retained frozen candle when an older origin needs context.
 
-    The 120-candle event window remains the fallback for legacy or truncated
-    evidence. Never invent historical candles or extend a line from a guessed
-    origin. The expanded history must share the exact event-window tail.
+    Missing source anchors remain explicitly marked on the image. Never
+    invent historical candles; retained history must match the event tail.
     """
     recent = snapshot.get("candles") or ()
     if not recent:
@@ -32,8 +31,9 @@ def _visible_event_candles(snapshot: Mapping) -> Sequence[Mapping]:
     history = snapshot.get("geometry_candles") or ()
     if not isinstance(history, list) or len(history) <= len(recent):
         return recent
-    if source_anchor not in {int(bar["open_time_ms"]) for bar in history}:
-        return recent  # Outside retained immutable evidence; no invented OHLC.
+    # An older source may precede the 2,000-bar immutable retention bound.
+    # Retain the available history for prior-wick inspection and let the PNG
+    # mark the absent origin, rather than unnecessarily hiding saved candles.
     fields = ("open_time_ms", "open", "high", "low", "close")
     if any(
         tuple(old[field] for field in fields) != tuple(new[field] for field in fields)
