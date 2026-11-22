@@ -1450,10 +1450,6 @@ class TelegramWorkerSingletonReadinessTests(unittest.TestCase):
         self.assertNotIn("test", json.dumps(body))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TelegramMarketTests(unittest.TestCase):
     def test_owner_only_market_command(self):
         with patch.object(monitoring.config, "TELEGRAM_CHAT_ID", "123", create=True), \
@@ -1544,3 +1540,7 @@ class TelegramMarketTests(unittest.TestCase):
         self.assertEqual(candles.call_count, 2)
         candles.assert_any_call("AAAUSDT", "15", HISTORY_BARS, end_ms=cutoff - 1)
         candles.assert_any_call("BBBUSDT", "15", HISTORY_BARS, end_ms=cutoff - 1)
+
+
+if __name__ == "__main__":
+    unittest.main()
