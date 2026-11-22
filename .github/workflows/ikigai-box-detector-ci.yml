@@ -3,6 +3,8 @@ name: Ikigai Box detector
 on:
   pull_request:
     paths:
+      - "terminal/market_data/sustained_absorption.py"
+      - "tests/test_sustained_absorption.py"
       - "terminal/market_data/ikigai_box_reversal_research.py"
       - "tests/test_ikigai_box_reversal_research.py"
       - "terminal/paper/ikigai_box_plan.py"
@@ -43,3 +45,5 @@ jobs:
         run: python -m unittest -v tests.test_ikigai_box_plan
       - name: Verify isolated Box flow research sequence
         run: python -m unittest -v tests.test_ikigai_box_reversal_research
+      - name: Verify fixed-level absorption observations
+        run: python -m unittest -v tests.test_sustained_absorption
