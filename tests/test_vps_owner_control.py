@@ -355,3 +355,48 @@ def test_owner_github_status_enable_is_one_pinned_detached_request(monkeypatch):
     assert calls[1][0] == "systemd-run"
     assert calls[1][-3:] == [SHA, "--action", "github-status-enable"]
     assert "--description=BybitScanner github-status-enable " + SHA + " origin=win-laptop" in calls[1]
+
+
+def test_diagnostic_owner_outcome_exact_identity_and_canonical_postcheck(monkeypatch):
+    calls, proofs = [], []
+    active, sub, result, code = "active", "exited", "success", "0"
+    description = f"BybitScanner update {SHA} origin=PRIVATE-DESKTOP"
+
+    def run(cmd, **kwargs):
+        calls.append(cmd)
+        assert cmd[:2] == ["systemctl", "show"]
+        assert cmd[-1] == control.unit_name(R)
+        return completed(cmd, out=(
+            f"LoadState=loaded\nActiveState={active}\nSubState={sub}\n"
+            f"Result={result}\nExecMainStatus={code}\nDescription={description}\n"))
+
+    def proof(target):
+        proofs.append(target)
+        print("POSTCHECK=VERIFIED_EDITOR_ONLY")
+        print("PRIVATE_DATABASE_IDENTITY")
+        return 0
+
+    monkeypatch.setattr(control, "verify_update", proof)
+    read = lambda: control.read_diagnostic_outcome(R, "update", SHA, run=run)
+    value = read()
+    assert value == dict(owner_request_id=R, owner_action="update", target_sha=SHA,
+                         state="FINISHED_OK", result="success", exit_code=0,
+                         postcheck="VERIFIED_EDITOR_ONLY")
+    assert proofs == [SHA] and len(calls) == 1
+    for wrong in (f"BybitScanner update {SHA[:12]} origin=win-pc",
+                  f"BybitScanner stop {SHA} origin=win-pc",
+                  f"BybitScanner update {'c'*40} origin=win-pc"):
+        description = wrong
+        assert read()["state"] == "UNPROVEN"
+    description = f"BybitScanner update {SHA} origin=win-pc"
+    active, sub, result, code = "failed", "failed", "exit-code", "2"
+    value = read()
+    assert (value["state"], value["exit_code"], value["postcheck"]) == ("FAILED", 2, "NOT_RUN")
+    active, sub, result, code = "activating", "start", "success", "0"
+    assert read()["state"] == "RUNNING"
+    assert read()["exit_code"] is None
+    assert proofs == [SHA]
+    active, sub, result, code = "active", "exited", "success", "0"
+    monkeypatch.setattr(control, "verify_update", lambda _: 0)
+    assert read()["postcheck"] == "BLOCKED"
+    assert all(cmd[0] == "systemctl" and cmd[1] == "show" for cmd in calls)
