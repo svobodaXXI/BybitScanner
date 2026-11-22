@@ -143,7 +143,7 @@ class LocalPairingHttpTests(unittest.TestCase):
                 with urlopen(request(origin), timeout=5) as response:
                     self.assertEqual(response.status, 200)
                     data = response.read()
-                self.assertEqual(json.loads(data), {"paired": True})
+                self.assertEqual(json.loads(data), {"configuration_saved": True})
                 self.assertNotIn(b"token", data)
                 pair.assert_called_once_with("owner-pc", "A" * 24)
         finally:
