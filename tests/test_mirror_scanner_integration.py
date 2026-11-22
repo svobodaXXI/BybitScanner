@@ -287,6 +287,47 @@ def test_wick_sweep_later_less_extreme_pivot_does_not_replace_intact_ray(
     assert list(state["records"]) == [original.level_id]
 
 
+def test_wick_sweep_rejected_old_ray_cannot_spawn_successor_with_history_gap(
+        root, fixed_levels, monkeypatch):
+    # Even a proved old wick + later 3-right pivot does not license a new
+    # source if a candle is missing between old confirmation and breakout.
+    from mirror_levels.levels import LevelRegistry
+    from mirror_levels.tracker import new_record
+    old = level_at(100.0, 5 * M)
+    registry = LevelRegistry()
+    registry.add(old)
+    state = ms.empty_state("TESTUSDT", "1")
+    state["registry"] = registry.to_dict()
+    record = new_record(old)
+    record.update(lifecycle=ms.LIFECYCLE_DONE, candidate=False,
+                  rejection="prior_wick_breached_level")
+    record["naked_retest"]["breakout"] = {
+        "direction": "UP", "campaign_direction": "SHORT",
+        "open_time_ms": 20 * M, "close_time_ms": 21 * M,
+    }
+    state["records"] = {old.level_id: record}
+    ms.save_state(state, root)
+    fixed_levels["levels"] = []
+    later = {"price": 101.0, "pivot_at_ms": 26 * M,
+             "confirmed_at_ms": 30 * M, "index": 26,
+             "confirmed_index": 29}
+    monkeypatch.setattr(ms, "confirmed_pivots", lambda rows: ([later], []))
+    bars = flat_bars(35, price=99.2, spread=0.2)
+    bars[16] = (99.2, 100.2, 99.0, 99.2)
+    complete = frame(bars)
+    missing = complete.loc[complete["time"] != 11 * M].reset_index(drop=True)
+    observe(missing, root)
+    assert set(ms.load_state("TESTUSDT", "1", root)["records"]) == {old.level_id}
+    # Recovery is allowed only once the missing closed candle is supplied.
+    observe(complete, root)
+    recovered = ms.load_state("TESTUSDT", "1", root)
+    renewed = [x for x in ms.LevelRegistry.from_dict(recovered["registry"]).levels.values()
+               if x.anchors == ((26 * M, 101.0),)]
+    assert len(renewed) == 1
+    assert recovered["records"][renewed[0].level_id]["candidate"] is None
+    assert recovered["records"][old.level_id]["candidate"] is False
+
+
 def test_wick_sweep_retired_old_ray_allows_later_higher_low_source(
         root, fixed_levels, monkeypatch):
     # Owner EVAA/BLESS: a deep pierced low is replaced, then a later
@@ -1128,6 +1169,75 @@ def test_real_box_cpusdt_and_l_shape_levels_come_from_the_scanner_engines(root):
     l_record = next(r for r in record.values() if any(s["parent_pattern"] == "L-shape" for s in r["sources"]))
     assert l_record["status"] == STATUS_UNTESTED                          # the L-shape breakout candle itself
     assert l_record["naked_retest"]["breakout"]["open_time_ms"] == breakout_open
+
+
+@pytest.mark.parametrize("first_handoff", ["PENDING", "HANDED"])
+def test_wick_sweep_two_visual_sources_share_breakout_but_never_spend_split_r0(
+        root, monkeypatch, first_handoff):
+    # Two valid MIRROR levels/Telegram observations remain independent, but
+    # risk-campaign identity downstream is still per-level. Fail closed
+    # before Robot handoff, even when a previous source was already sent
+    # on an earlier scan/restart; neither source may spend a second R0.
+    from mirror_levels.levels import LevelRegistry
+    from mirror_levels.tracker import new_record
+    import pattern_robot_integration as bridge
+
+    monkeypatch.setattr(bridge, "is_robot_executable_signal", lambda *a, **kw: True)
+    monkeypatch.setattr(bridge, "prepare_robot_handoff",
+                        lambda *a, **kw: pytest.fail("multi-source R0 spend"))
+    registry = LevelRegistry()
+    levels = [
+        horizontal_level(
+            symbol="TESTUSDT", timeframe="5", source=SOURCE_SWING_ZONE,
+            pattern=None, side="upper", price=price,
+            anchor_time_ms=i * 5 * M, confirmed_at_ms=10 * M,
+        ) for i, price in enumerate((101.0, 102.0))
+    ]
+    state = ms.empty_state("TESTUSDT", "5")
+    entries = []
+    records = {}
+    for i, level in enumerate(levels):
+        registry.add(level)
+        record = new_record(level)
+        record.update(candidate=True, rejection=None,
+                      lifecycle=ms.LIFECYCLE_TRACKING, status=STATUS_UNTESTED)
+        record["naked_retest"]["breakout"] = {
+            "direction": "UP", "campaign_direction": "SHORT",
+            "open_time_ms": 30 * M, "close_time_ms": 35 * M,
+        }
+        records[level.level_id] = record
+        entries.append({
+            "entry_id": f"{level.level_id}@5@{40 * M}",
+            "terms": {
+                "level_id": level.level_id, "level_timeframe": "5",
+                "level_source": SOURCE_SWING_ZONE, "level_pattern": None,
+                "level_side": "upper", "level_breakout_direction": "UP",
+                "level_breakout_close_ms": 35 * M,
+                "source_timeframe": "5", "direction": "SHORT",
+                "confirmation": {"close_time_ms": 40 * M},
+            },
+            "handoff": first_handoff if i == 0 else "PENDING",
+            "candidate_id": "already-sent" if i == 0 and first_handoff == "HANDED" else None,
+        })
+    state.update(registry=registry.to_dict(), records=records,
+                 standalone_entries=entries, pending_notifications=[
+                     {"level_id":lv.level_id, "kind":"breakout"} for lv in levels
+                 ])
+    ms.save_state(state, root)
+    assert ms._hand_off_standalone_entries("TESTUSDT", state, root, now_ms=40*M) == []
+    reloaded = ms.load_state("TESTUSDT", "5", root)
+    expected = ["OFF" if first_handoff == "PENDING" else "HANDED", "OFF"]
+    assert [e["handoff"] for e in reloaded["standalone_entries"]] == expected
+    for entry in reloaded["standalone_entries"]:
+        if entry["handoff"] == "OFF":
+            assert entry["block_reason"] == "mirror_multi_source_shared_r0_unproven"
+    assert {e["level_id"] for e in reloaded["pending_notifications"]} == {
+        lv.level_id for lv in levels
+    }
+    assert all(reloaded["records"][lv.level_id]["candidate"] is True for lv in levels)
+    assert ms._hand_off_standalone_entries("TESTUSDT", reloaded, root, now_ms=40*M) == []
+    assert [e["handoff"] for e in ms.load_state(
+        "TESTUSDT", "5", root)["standalone_entries"]] == expected
 
 
 def test_mirror_standalone_handoff_carries_double_reversal_only_as_context(monkeypatch, tmp_path):
