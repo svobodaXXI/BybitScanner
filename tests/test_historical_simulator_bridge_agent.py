@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 from urllib.request import HTTPSHandler, ProxyHandler
 
 from research.local_replay_viewer import launch_bridge_agent as agent
@@ -293,7 +293,7 @@ class PairedAdapterTests(unittest.TestCase):
         from types import SimpleNamespace
         import sys
         reg = SimpleNamespace(HKEY_CURRENT_USER=1, REG_SZ=1)
-        reg.OpenKey = Mock()
+        reg.OpenKey = MagicMock()
         reg.OpenKey.return_value.__enter__ = lambda self: self
         reg.OpenKey.return_value.__exit__ = lambda self, *args: False
         reg.QueryValueEx = Mock(return_value=("current-release-command", 1))
