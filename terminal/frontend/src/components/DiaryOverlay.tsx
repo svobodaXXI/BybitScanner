@@ -665,21 +665,13 @@ function SimulatorLaunchAction({ episodeId, allowLocalLaunch, owner = null, sour
 
   function openPairingLink() {
     if (!pairingUrl) return;
-    // Native protocol must open synchronously after this owner click. The
-    // local app verifies the device key against its pre-pinned HTTPS origin.
-    try {
-      const link = document.createElement("a");
-      link.href = pairingUrl;
-      link.target = "_blank";
-      link.rel = "noopener noreferrer";
-      document.body.appendChild(link);
-      try { link.click(); } finally { link.remove(); }
-      setPairingNotice("Запрос сопряжения передан Windows. Успешное подключение пока не подтверждено.");
-    } catch {
-      setPairingNotice("Не удалось открыть локальный адаптер. Копирование ID остаётся доступным.");
-    } finally {
-      setPairingUrl(null);
-    }
+    // Let the trusted user click perform native navigation in the current
+    // frame. A synthetic click on a _blank link can be swallowed by WebView.
+    // Never infer successful OS dispatch from the DOM event.
+    const usedUrl = pairingUrl;
+    setPairingNotice("Запрошено открытие локального адаптера. Подключение пока не подтверждено.");
+    // Clear the credential only after the anchor's default action can run.
+    window.setTimeout(() => setPairingUrl(current => current === usedUrl ? null : current), 0);
   }
 
   async function requestLaunch() {
@@ -812,8 +804,10 @@ function SimulatorLaunchAction({ episodeId, allowLocalLaunch, owner = null, sour
             onClick={() => void preparePairing("owner-pc")}>Связать ПК</button>
           <button type="button" className="diary-detail-back" disabled={pairingBusy}
             onClick={() => void preparePairing("owner-laptop")}>Связать ноутбук</button>
-          {pairingUrl ? <button type="button" className="diary-detail-back"
-            onClick={openPairingLink}>Подтвердить подключение</button> : null}
+          {pairingUrl ? <a className="diary-detail-back" href={pairingUrl}
+            target="_self" rel="noreferrer" referrerPolicy="no-referrer"
+            style={{ textDecoration: "none" }}
+            onClick={openPairingLink}>Подтвердить подключение</a> : null}
           {pairingNotice ? <p className="diary-finrez-coverage" role="status">{pairingNotice}</p> : null}
         </div>
       ) : null}
