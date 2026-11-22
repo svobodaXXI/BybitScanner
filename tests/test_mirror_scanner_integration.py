@@ -350,6 +350,42 @@ def test_wick_sweep_retired_old_ray_allows_later_higher_low_source(
     }
 
 
+def test_wick_sweep_rejected_body_break_does_not_strand_later_confirmed_pivot(
+        root, fixed_levels):
+    # A prior wick invalidates a would-be full-body breakout. The rejected
+    # breakout can enter CAMPAIGN_ACTIVE and finish before the offending
+    # wick receives its three right-side closed pivot confirmations.
+    # The next fresh level must still be registered, with no old card.
+    original = level_at(100.0, 5 * M)
+    fixed_levels["levels"] = [original]
+    quiet = (99.5, 99.8, 99.2, 99.5)
+    bars = [quiet] * 26
+    bars.append((99.5, 100.2, 99.3, 99.5))  # index 26: first wick breach
+    bars.append((99.5, 100.1, 99.3, 100.05))  # index 27: invalid body breakout
+    observe(frame(bars), root)
+    state = ms.load_state("TESTUSDT", "1", root)
+    old = state["records"][original.level_id]
+    assert old["candidate"] is False
+    assert old["rejection"] == "prior_wick_breached_level"
+    assert not state["pending_notifications"]
+    bars.extend([(100.03, 100.09, 99.95, 100.02),
+                 (100.02, 100.08, 99.95, 100.02)])
+    observe(frame(bars), root)
+    state = ms.load_state("TESTUSDT", "1", root)
+    levels = ms.LevelRegistry.from_dict(state["registry"]).levels
+    fresh = [ray for ray in levels.values()
+             if ray.side == "upper" and ray.boundary.anchor_time_ms == 26 * M]
+    assert len(fresh) == 1
+    assert fresh[0].boundary.anchor_price == 100.2
+    assert fresh[0].confirmed_at_ms == 30 * M
+    assert state["records"][fresh[0].level_id]["candidate"] is None
+    assert state["records"][original.level_id]["candidate"] is False
+    assert not state["pending_notifications"]
+    observe(frame(bars), root)
+    repeated = ms.load_state("TESTUSDT", "1", root)
+    assert list(repeated["records"]).count(fresh[0].level_id) == 1
+
+
 def test_wick_sweep_before_confirmation_does_not_cancel_existing_level(root, fixed_levels):
     # An unconfirmed spike can be revised by later bars. Never anticipate
     # the new pivot at the moment of the wick.
