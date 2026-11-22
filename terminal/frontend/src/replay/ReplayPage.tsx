@@ -1233,10 +1233,10 @@ export function ReplayPage() {
                    "X-Local-Pair-Code": "explicit-click" },
         body: JSON.stringify({ device_id: pairDevice, code: pairCodeInput }),
       });
-      const result = await response.json() as { paired?: unknown };
-      if (!response.ok || result.paired !== true) throw new Error("pair-not-confirmed");
+      const result = await response.json() as { configuration_saved?: unknown };
+      if (!response.ok || result.configuration_saved !== true) throw new Error("pair-not-confirmed");
       setPairCodeInput("");
-      setPairMessage("ПК связан с Машиной времени. Теперь можно открыть сделку из Статистики.");
+      setPairMessage("Настройки подключения сохранены. Проверка доставки — при открытии сделки из Статистики.");
     } catch {
       setPairMessage("Сопряжение не подтверждено. Получите новый одноразовый код в Telegram.");
     } finally {
