@@ -444,9 +444,9 @@ def test_older_paired_boundary_origin_controls_frozen_lookback(tmp_path, monkeyp
     # The exact old pivot was not retained. Both lines may still be
     # projected, but the PNG must not certify their full source contour.
     truncated = {**snapshot, "geometry_candles": history[-150:]}
-    assert _visible_event_candles(truncated) is truncated["candles"]
+    assert _visible_event_candles(truncated) is truncated["geometry_candles"]
     render_mirror_chart(truncated, tmp_path / "paired-truncated.png")
-    assert captures[-1][0] == 120
+    assert captures[-1][0] == 150
     assert any("Контур паттерна неполон" in s for s in captures[-1][1])
     assert any("недостаточно доказательств" in s for s in captures[-1][1])
 
@@ -460,7 +460,7 @@ def test_mirror_old_source_never_accepts_conflicting_or_invented_bars():
     altered[-1]["close"] = 1.15
     with pytest.raises(ValueError, match="context disagrees"):
         _visible_event_candles({**snapshot, "geometry_candles": altered})
-    # The old source is beyond the retained 2000-bar bound. Without those
-    # exact bars the renderer must retain the recent frame, not invent data.
+    # If the original source is unavailable, retain all verified immutable
+    # candles, never invent the missing pivot or silently drop saved context.
     truncated = snapshot["geometry_candles"][-125:]
-    assert _visible_event_candles({**snapshot, "geometry_candles": truncated}) is snapshot["candles"]
+    assert _visible_event_candles({**snapshot, "geometry_candles": truncated}) is truncated
