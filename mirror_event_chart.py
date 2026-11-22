@@ -94,9 +94,11 @@ def render_mirror_chart(snapshot: Mapping, output_path: str | Path) -> None:
             # A confirmed level starts at its actual anchor, never to the left.
             visible = [(i, anchor_p + slope * (t - anchor_t))
                        for i, t in enumerate(times) if t >= anchor_t]
+            selected = level.get("selected", False)
+            if selected and not visible:
+                source_missing = True
             if not visible:
                 continue
-            selected = level.get("selected", False)
             color = "#fbbf24" if selected else "#60a5fa"
             ax.plot([x for x, _ in visible], [y for _, y in visible],
                     color=color, linewidth=1.9 if selected else 1.4,
