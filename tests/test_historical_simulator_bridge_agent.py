@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from urllib.request import HTTPSHandler, ProxyHandler
 
 from research.local_replay_viewer import launch_bridge_agent as agent
@@ -255,6 +255,60 @@ class PairedAdapterTests(unittest.TestCase):
         ])
         with self.assertRaises(agent.AgentConfigError):
             agent.poll_once(self.config, opener=opener, launch=lambda _: None)
+
+
+    def test_old_poller_retires_after_successor_registers_without_killing_process(self):
+        from types import SimpleNamespace
+        kernel = SimpleNamespace(CloseHandle=Mock())
+        with patch.object(agent, "_acquire_windows_singleton", return_value=123), \
+             patch.object(agent, "_this_release_still_registered",
+                          side_effect=[True, False]) as registered, \
+             patch.object(agent, "poll_once", return_value="IDLE") as poll, \
+             patch.object(agent.ctypes, "windll",
+                          SimpleNamespace(kernel32=kernel), create=True), \
+             patch.object(agent.time, "sleep") as sleep:
+            agent.run_poll_loop(self.config)
+        self.assertEqual(registered.call_count, 2)
+        poll.assert_called_once_with(self.config)
+        sleep.assert_called_once_with(agent.POLL_SECONDS)
+        kernel.CloseHandle.assert_called_once_with(123)
+
+    def test_new_poller_waits_for_old_mutex_and_never_runs_in_parallel(self):
+        from types import SimpleNamespace
+        kernel = SimpleNamespace(
+            CreateMutexW=Mock(side_effect=[11, 22]),
+            GetLastError=Mock(side_effect=[183, 0]),
+            CloseHandle=Mock(),
+        )
+        with patch.object(agent, "os", SimpleNamespace(name="nt")), \
+             patch.object(agent.ctypes, "windll",
+                          SimpleNamespace(kernel32=kernel), create=True), \
+             patch.object(agent.time, "sleep") as sleep:
+            acquired = agent._acquire_windows_singleton()
+        self.assertEqual(acquired, 22)
+        kernel.CloseHandle.assert_called_once_with(11)
+        sleep.assert_called_once_with(agent.POLL_SECONDS)
+
+    def test_registered_run_entry_is_exact_release_identity(self):
+        from types import SimpleNamespace
+        import sys
+        reg = SimpleNamespace(HKEY_CURRENT_USER=1, REG_SZ=1)
+        reg.OpenKey = Mock()
+        reg.OpenKey.return_value.__enter__ = lambda self: self
+        reg.OpenKey.return_value.__exit__ = lambda self, *args: False
+        reg.QueryValueEx = Mock(return_value=("current-release-command", 1))
+        with patch.dict(sys.modules, {"winreg": reg}), \
+             patch.object(agent, "os", SimpleNamespace(name="nt")), \
+             patch.object(agent, "_expected_autostart_command",
+                          return_value="current-release-command"):
+            self.assertTrue(agent._this_release_still_registered())
+            reg.QueryValueEx.return_value = ("older-release-command", 1)
+            self.assertFalse(agent._this_release_still_registered())
+        reg.OpenKey.assert_called_with(
+            reg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Run",
+        )
+
 
 
 if __name__ == "__main__":
