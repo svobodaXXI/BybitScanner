@@ -3211,7 +3211,14 @@ def main(argv=None) -> int:
                         help="separately authorized continuation of a proven failed STOP; never replay STOP")
     parser.add_argument("--expected-old-backend", metavar="SHA",
                         help="exact installed Backend observed at the failed STOP")
+    parser.add_argument("--expected-installed-sha", default="",
+                        help="exact Telegram-approved predecessor; only ordinary UPDATE")
     args = parser.parse_args(argv)
+    if args.expected_installed_sha:
+        from tools.vps_release_identity import SHA40
+        if (args.action != "update" or not SHA40.fullmatch(args.expected_installed_sha)
+                or args.expected_installed_sha == args.sha):
+            parser.error("exact predecessor requires ordinary owner UPDATE")
     if args.action is not None:
         try:
             with _owner_action_lifecycle_guard():
@@ -3297,6 +3304,11 @@ def main(argv=None) -> int:
                             if bundle is not None else []
                         ),
                     ])
+                if args.expected_installed_sha:
+                    from tools.vps_release_identity import verify_release
+                    if verify_release() != args.expected_installed_sha:
+                        print("BLOCKED: approved_predecessor_changed; no STOP")
+                        return 2
                 owner_flags = (
                     ["--update-editor-only-from-stable"] if args.action.startswith("update")
                     else ["--resume-installed-editor-only"]
