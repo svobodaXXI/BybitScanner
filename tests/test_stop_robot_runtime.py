@@ -607,6 +607,74 @@ class FullShutdownTests(unittest.TestCase):
         self.assertIn("listener is alive but exact ownership cannot be proven", result.message)
         self.assertTrue(runtime.backend_alive)
 
+    def test_release_reprobes_transient_initial_health_before_sealing_stop(self):
+        runtime = FakeRuntime(robot=READY)
+        original_get = runtime.get
+        attempts = 0
+
+        def transient_health(url, timeout):
+            nonlocal attempts
+            if url == BACKEND + "/api/health":
+                attempts += 1
+                if attempts == 1:
+                    raise shutdown.Unreachable("initial timeout")
+            return original_get(url, timeout)
+
+        runtime.get = transient_health
+        result = runtime.orchestrator().run(
+            "all", before_mutation=lambda: runtime.calls.append("STOP_INTENT") or True,
+        )
+        self.assertTrue(result.ok, result.message)
+        self.assertEqual(runtime.calls, [
+            "resolve:backend:127.0.0.1:8765", "STOP_INTENT",
+            "scanner:stop", "robot:stop", "backend:shutdown", "telegram:shutdown",
+        ])
+
+    def test_release_unproven_initial_health_does_not_seal_or_mutate(self):
+        runtime = FakeRuntime(robot=READY)
+        original_get = runtime.get
+        attempts = 0
+
+        def unavailable_health(url, timeout):
+            nonlocal attempts
+            if url == BACKEND + "/api/health":
+                attempts += 1
+                raise shutdown.Unreachable("timeout")
+            return original_get(url, timeout)
+
+        runtime.get = unavailable_health
+        seal = mock.Mock(return_value=True)
+        result = runtime.orchestrator().run("all", before_mutation=seal)
+        self.assertFalse(result.ok)
+        self.assertEqual(attempts, 2)
+        seal.assert_not_called()
+        self.assertEqual(runtime.calls, ["resolve:backend:127.0.0.1:8765"] * 2)
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_release_identity_mismatch_and_unsealed_intent_never_mutate(self):
+        for wrong_identity in (True, False):
+            with self.subTest(wrong_identity=wrong_identity):
+                runtime = FakeRuntime(robot=READY)
+                if wrong_identity:
+                    runtime.backend_health["database_identity"] = "foreign"
+                seal = mock.Mock(return_value=False)
+                result = runtime.orchestrator().run("all", before_mutation=seal)
+                self.assertFalse(result.ok)
+                self.assertEqual(seal.call_count, 0 if wrong_identity else 1)
+                self.assertEqual(runtime.calls, [])
+                self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_release_unknown_first_mutation_is_not_retried(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.autopilot_mode = "PAPER_AUTO"
+        runtime.autopilot_off_reply = OSError("lost response")
+        result = runtime.orchestrator().run(
+            "all", before_mutation=lambda: runtime.calls.append("STOP_INTENT") or True,
+        )
+        self.assertFalse(result.ok)
+        self.assertEqual(runtime.calls, ["STOP_INTENT", "autopilot:off"])
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
     def test_robot_needing_backend_authority_keeps_runtime_alive(self):
         for robot in (("ROBOT_STOPPED", "RECONCILIATION_REQUIRED"), ("ROBOT_WEIRD", "X")):
             with self.subTest(robot=robot):

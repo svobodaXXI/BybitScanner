@@ -902,8 +902,9 @@ def test_one_proven_flat_orphan_uses_existing_stop_and_only_opted_callback(
             assert kw["dual_orphan_handoff"] is None
             assert kw["proven_one_flat_orphan_handoff"] is sentinel
             calls.append("existing-stop-controller")
-        def run(self, scope):
+        def run(self, scope, *, before_mutation):
             assert scope == "all"
+            assert before_mutation() is True
             calls.append("stop")
             return SimpleNamespace(ok=True, runtime_stopped=True)
 
@@ -4851,8 +4852,9 @@ def test_deferred_protected_required_leaves_no_stop_marker_and_can_retry_when_fl
     class Owner:
         def __init__(self, **_kw):
             pass
-        def run(self, scope):
+        def run(self, scope, *, before_mutation):
             assert scope == "all"
+            assert before_mutation() is True
             steps.append("stop")
             return SimpleNamespace(ok=True, runtime_stopped=True)
 
@@ -4877,6 +4879,53 @@ def test_deferred_protected_required_leaves_no_stop_marker_and_can_retry_when_fl
     assert accepted == "READY: EDITOR_ONLY"
     assert steps == ["preflight", "preflight", "stop", "install", "resume"]
 
+
+
+def test_release_pre_mutation_refusal_does_not_poison_next_update(monkeypatch, tmp_path):
+    """The real coordinator owns the marker, not a speculative probe outcome."""
+    import tools.paper_maintenance as maintenance
+    import tools.stop_robot_runtime as shutdown
+    import tools.vps_release_identity as release
+
+    target, previous = "a" * 40, "b" * 40
+    root, stage, journal = (tmp_path / "installed", tmp_path / "stage",
+                            tmp_path / "transactions")
+    root.mkdir()
+    stage.mkdir()
+    monkeypatch.setattr(release, "verify_release", lambda *_a, **_kw: previous)
+    monkeypatch.setattr(maintenance, "_pre_stop_required_nonflat_blocker",
+                        lambda *_a, **_kw: None)
+    marker = journal / (".stop-invoked-" + target)
+    mode = {"probe": False}
+    calls = []
+
+    class Owner:
+        def __init__(self, **_kw):
+            pass
+
+        def run(self, scope, *, before_mutation):
+            assert not marker.exists()
+            if not mode["probe"]:
+                return shutdown.ShutdownResult(scope, False, "initial owner health unavailable")
+            assert before_mutation() is True
+            assert marker.is_file()
+            calls.append("stop")
+            return shutdown.ShutdownResult(scope, True, "stopped", runtime_stopped=True)
+
+    monkeypatch.setattr(maintenance, "RuntimeShutdown", Owner)
+    options = dict(
+        root=root, stage=stage, transactions=journal, trusted_uid=os.geteuid(),
+        preflight=lambda *_a, **_kw: None,
+        installer=lambda *_a, **_kw: (calls.append("install"), "INSTALLED_STOPPED: exact")[1],
+        resume=lambda *_a, **_kw: "READY: EDITOR_ONLY",
+    )
+    refused = maintenance.deploy_staged_editor_only(target, **options)
+    assert refused.startswith("BLOCKED: canonical_safe_stop_pre_mutation")
+    assert not marker.exists()
+    assert calls == []
+    mode["probe"] = True
+    assert maintenance.deploy_staged_editor_only(target, **options) == "READY: EDITOR_ONLY"
+    assert calls == ["stop", "install"]
 
 
 def test_owner_github_status_enable_dispatch_is_isolated(monkeypatch):

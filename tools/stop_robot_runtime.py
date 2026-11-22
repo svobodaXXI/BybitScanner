@@ -66,6 +66,10 @@ class SafeStopError(RuntimeError):
     """A shutdown precondition could not be proven; nothing further is changed."""
 
 
+class InitialOwnerHealthUnavailable(SafeStopError):
+    """A live listener has no proven health/ownership; read-only re-probe is possible."""
+
+
 class ReconcileDurablyUnresolved(SafeStopError):
     """Exact 409/REQUIRED rejection, not a timeout or uncertain mutation."""
 
@@ -454,12 +458,15 @@ class RuntimeShutdown:
             # Diagnostics must never make safe shutdown less safe.
             pass
 
-    def run(self, scope: str) -> ShutdownResult:
+    def run(
+        self, scope: str, *, before_mutation: Callable[[], bool] | None = None,
+    ) -> ShutdownResult:
+        """Optional release fence: seal intent only after read-only identity probes."""
         if scope not in SCOPES:
             return ShutdownResult(scope, False, f"unknown shutdown scope {scope!r}")
         steps: list[str] = []
         try:
-            return self._run(scope, steps)
+            return self._run(scope, steps, before_mutation=before_mutation)
         except (SafeStopError, RobotControlRejected) as exc:
             return ShutdownResult(scope, False, f"STOP BLOCKED: {exc}", tuple(steps))
 
@@ -536,13 +543,31 @@ class RuntimeShutdown:
         return tuple(steps)
 
     def _run(self, scope: str, steps: list[str], *,
-             known_drain_continuation: str | None = None) -> ShutdownResult:
+             known_drain_continuation: str | None = None,
+             before_mutation: Callable[[], bool] | None = None) -> ShutdownResult:
+        # Only the initial read-only identity phase may be retried. A temporarily
+        # unreachable live listener is never interpreted as an absent owner.
+        # Ordinary STOP surfaces and previously sealed continuations retain
+        # their existing behavior; a release may re-probe this boundary once.
+        def initial_probe(probe: Callable[[], str], label: str) -> str:
+            try:
+                return probe()
+            except InitialOwnerHealthUnavailable:
+                if before_mutation is None:
+                    raise
+                self._mark(f"{label}: one read-only identity re-probe before STOP intent")
+                self._sleep(POLL_INTERVAL_S)
+                observed = probe()
+                if observed != PRESENT:
+                    raise SafeStopError(f"{label}: live owner disappeared during identity re-probe")
+                return observed
+
         # Both identities are proven before the first mutation of anything.
         self._mark("probing PAPER backend identity")
-        backend = self._probe_backend()
+        backend = initial_probe(self._probe_backend, "PAPER backend")
         self._mark(f"PAPER backend: {backend}")
         self._mark("probing Telegram monitoring identity")
-        telegram = self._probe_telegram()
+        telegram = initial_probe(self._probe_telegram, "Telegram monitoring")
         self._mark(f"Telegram monitoring: {telegram}")
 
         if known_drain_continuation is not None:
@@ -550,6 +575,12 @@ class RuntimeShutdown:
             # the canonical phase engine. No new PAUSE or admission freeze is
             # issued if the host no longer has the proven paused ownership.
             self.require_known_natural_drain_ready(known_drain_continuation)
+
+        # This is the sole transition from observation to the canonical STOP
+        # phases, including legacy branches. Never enter any mutating path if
+        # the existing durable owner journal cannot seal this release intent.
+        if before_mutation is not None and before_mutation() is not True:
+            raise SafeStopError("release STOP intent unproven; no runtime mutation")
 
         if (
             self._legacy_supported
@@ -791,7 +822,7 @@ class RuntimeShutdown:
                     BACKEND, location.hostname or "", location.port or 0, self._root,
                 ))
             except LegacyOwnerUnproven as exc:
-                raise SafeStopError(
+                raise InitialOwnerHealthUnavailable(
                     "PAPER backend listener is alive but exact ownership cannot be proven; "
                     "runtime kept alive"
                 ) from exc
@@ -834,10 +865,10 @@ class RuntimeShutdown:
                     TELEGRAM, location.hostname or "", location.port or 0, self._root,
                 ))
             except LegacyOwnerUnproven as exc:
-                raise SafeStopError(
+                raise InitialOwnerHealthUnavailable(
                     "Telegram listener is alive but exact ownership cannot be proven; runtime kept alive"
                 ) from exc
-            raise SafeStopError(
+            raise InitialOwnerHealthUnavailable(
                 f"Telegram listener is alive at proven chain {chain} but health is unavailable; "
                 "runtime kept alive"
             )

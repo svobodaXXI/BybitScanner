@@ -1347,18 +1347,41 @@ def deploy_staged_editor_only(
                     ).run
                 else:
                     action = stop
-                if not _record_one_shot_stop_intent(
-                    journal_root, target, uid=trusted_uid, root=root,
-                ):
+                # Seal the irreversible STOP intent at the canonical engine's
+                # transition from read-only identity probes to owner mutations.
+                # A probe refusal must not poison the release journal. Injected
+                # stop callbacks have no phase contract: fence before calling.
+                intent_recorded = False
+
+                def seal_stop_intent() -> bool:
+                    nonlocal intent_recorded
+                    if intent_recorded:
+                        return False
+                    intent_recorded = _record_one_shot_stop_intent(
+                        journal_root, target, uid=trusted_uid, root=root,
+                    )
+                    return intent_recorded
+
+                if stop is not None and not seal_stop_intent():
                     return "BLOCKED: prior_STOP_outcome_unproven_without_install_journal; no replay"
                 try:
-                    result = action(SCOPE_ALL)
+                    if stop is None:
+                        result = action(SCOPE_ALL, before_mutation=seal_stop_intent)
+                    else:
+                        result = action(SCOPE_ALL)
                 except Exception as exc:
                     # The stop may already have performed a trading/runtime action.
                     # The durable intent prevents replay; never install on an
                     # exception or try to infer completion from missing processes.
                     return ("BLOCKED: canonical_safe_stop_outcome_unknown:"
                             + type(exc).__name__ + "; no retry, no deployment")
+                if not intent_recorded:
+                    # Even a spurious success cannot grant install authority
+                    # without the same fsynced STOP fence as before.
+                    reason = getattr(result, "message", "reason_unavailable")
+                    return ("BLOCKED: canonical_safe_stop_pre_mutation: "
+                            + " ".join(str(reason).split())[:500]
+                            + "; no STOP authorized, no deployment")
                 if not (getattr(result, "ok", False) is True
                         and getattr(result, "runtime_stopped", False) is True):
                     if _known_natural_drain_failure(result):
