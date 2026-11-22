@@ -339,6 +339,22 @@ def _fresh_pivots_inside_confirmed_zones(levels, highs, lows, rows) -> list[Mirr
         step = timeframe_ms(zone.timeframe)
         origin = int(zone.anchors[0][0])
         known = int(zone.confirmed_at_ms)
+        # The owner permits a new source to REPLACE a damaged old ray,
+        # not extra trade candidates beside an intact two-touch zone.
+        # Check the complete causal formation prefix; a gap cannot prove
+        # the parent was invalid, even if a later pivot itself is pristine.
+        cursor = origin + step
+        old_ray_damaged = False
+        while cursor < known:
+            row = by_time.get(cursor)
+            if row is None or int(row["close_time_ms"]) != cursor + step:
+                break
+            if ((zone.side == "upper" and float(row["high"]) >= zone.price_at(cursor))
+                    or (zone.side == "lower" and float(row["low"]) <= zone.price_at(cursor))):
+                old_ray_damaged = True
+            cursor += step
+        if cursor != known or not old_ray_damaged:
+            continue
         for pivot in (highs if zone.side == "upper" else lows):
             t, p = int(pivot["pivot_at_ms"]), float(pivot["price"])
             if not (origin < t and int(pivot["confirmed_at_ms"]) <= known):
