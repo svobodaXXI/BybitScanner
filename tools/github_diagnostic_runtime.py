@@ -28,6 +28,7 @@ SOURCES = ("tools/github_diagnostic_runtime.py", "tools/github_diagnostic_journa
 PINNED = SOURCES + tuple("deploy/systemd/" + name for name in NAMES)
 OWNER_SOURCES = ("tools/vps_owner_control.py", "tools/paper_maintenance.py",
                  "tools/runtime_intent.py", "tools/stop_robot_runtime.py")
+START_SOURCES = ("tools/flat_paper_recovery_transition.py", "tools/vps_check.py")
 
 
 def _config(directory=CONFIG_DIR, *, uid=0):
@@ -171,7 +172,8 @@ def run_once(*, config_dir=CONFIG_DIR, root=ROOT, manifest_path=MANIFEST,
             manifest = _manifest(_trusted_file(manifest_path, uid))
             if manifest["build_sha"] != config["release_sha"]:
                 return unknown
-            for rel in OWNER_SOURCES:
+            sources = OWNER_SOURCES + (START_SOURCES if action in protocol.START_ACTIONS else ())
+            for rel in sources:
                 if manifest["blobs"].get(rel) != git_blob_hash(_trusted_file(_safe_file(root, rel), uid)):
                     return unknown
             from tools.vps_owner_control import read_diagnostic_outcome
