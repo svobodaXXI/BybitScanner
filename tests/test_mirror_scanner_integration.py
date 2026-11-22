@@ -262,6 +262,31 @@ def test_wick_sweep_later_less_extreme_confirmed_pivot_replaces_breached_ray(
         "superseded_by_level_id"] == successor_id
 
 
+@pytest.mark.parametrize("side,pivot_price", [
+    ("lower", 100.2), ("upper", 99.8),
+])
+def test_wick_sweep_later_less_extreme_pivot_does_not_replace_intact_ray(
+        root, fixed_levels, monkeypatch, side, pivot_price):
+    # A newer pivot ALONE cannot retire an untouched original boundary.
+    original = level_at(100.0, 5 * M, side=side)
+    fixed_levels["levels"] = [original]
+    price = 100.6 if side == "lower" else 99.4
+    bars = [((price, 101.0, 100.4, price) if side == "lower"
+             else (price, 99.6, 99.0, price))] * 34
+    bars[30] = ((price, 101.0, pivot_price, price) if side == "lower"
+                else (price, pivot_price, 99.0, price))
+    pivot = {"price": pivot_price, "pivot_at_ms": 30 * M,
+             "confirmed_at_ms": 34 * M, "confirmed_index": 33, "index": 30}
+    monkeypatch.setattr(ms, "confirmed_pivots", lambda rows:
+                        ([], [pivot]) if side == "lower" else ([pivot], []))
+    observe(frame(bars), root)
+    state = ms.load_state("TESTUSDT", "1", root)
+    record = state["records"][original.level_id]
+    assert record["lifecycle"] == ms.LIFECYCLE_TRACKING
+    assert record.get("superseded_by_level_id") is None
+    assert list(state["records"]) == [original.level_id]
+
+
 def test_wick_sweep_before_confirmation_does_not_cancel_existing_level(root, fixed_levels):
     # An unconfirmed spike can be revised by later bars. Never anticipate
     # the new pivot at the moment of the wick.
