@@ -3502,9 +3502,16 @@ def main(argv=None) -> int:
                 # A degraded but live PAPER owner must not be mistaken for a
                 # stopped EDITOR_ONLY state. In particular REQUIRED with
                 # PAPER_AUTO still configured is closed admission, not READY.
-                blocked = _active_exact_paper_blocker(
-                    args.sha, root=REPO, env_file=args.env_file,
-                )
+                from tools.runtime_intent import Unreachable
+                try:
+                    blocked = _active_exact_paper_blocker(
+                        args.sha, root=REPO, env_file=args.env_file,
+                    )
+                except Unreachable:
+                    # No HTTP reply is not proof of a stopped owner. Continue
+                    # only through the existing Editor freeze, exact release,
+                    # inactive unit and absent-listener resume gates.
+                    blocked = None
                 if blocked is not None:
                     if blocked.startswith(
                         "BLOCKED: active_exact_PAPER_not_ready; "
