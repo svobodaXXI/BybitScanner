@@ -1528,7 +1528,7 @@ def _read_impulse_process_env(pid: int) -> dict[str, str]:
     keys = (*_IMPULSE_PRESET_KEYS, "BYBITSCANNER_BUILD_SHA")
     allowed = {key.encode("ascii"): key for key in keys}
     result = {}
-    for entry in Path(f"/proc/{pid}/environ").read_bytes().split(b"\\0"):
+    for entry in Path(f"/proc/{pid}/environ").read_bytes().split(b"\0"):
         key, sep, value = entry.partition(b"=")
         if key not in allowed:
             continue
