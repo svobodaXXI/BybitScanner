@@ -364,3 +364,33 @@ def test_issuer_failure_evidence_is_bounded(context, monkeypatch, capsys, defect
     out = capsys.readouterr().out
     assert out == "SIGNED_OBSERVATION_REQUEST_BLOCKED " + expected + "\n"
     assert "SECRET" not in out and seed not in out
+
+
+@pytest.mark.parametrize("token", ["ghs_" + "x" * 36, "ghs_123_" + "x" * 230 + "." + "y" * 230 + "." + "z" * 60])
+def test_issuer_accepts_opaque_actions_credentials(monkeypatch, token):
+    from tools import github_diagnostic_issuer as module
+    calls = []
+    class Response:
+        status = 201
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def read(self, limit):
+            return module.json.dumps({"id": 1, "body": module.REQUEST_MARKER + "signed"}).encode()
+    class Opener:
+        def open(self, request, timeout):
+            assert request.get_header("Authorization") == "Bearer " + token
+            calls.append(True)
+            return Response()
+    monkeypatch.setattr(module, "build_opener", lambda *args: Opener())
+    module.publish(b"signed", token)
+    assert calls == [True]
+
+
+@pytest.mark.parametrize("token", ["", "a b", "a\nb", "a\rb", "a\tb", "a" + chr(127), "a" + chr(233)])
+def test_issuer_rejects_invalid_authorization_header(monkeypatch, token):
+    from tools import github_diagnostic_issuer as module
+    monkeypatch.setattr(module, "build_opener", lambda *_: pytest.fail("network forbidden"))
+    with pytest.raises(module.InvalidPublicationCredential):
+        module.publish(b"signed", token)
