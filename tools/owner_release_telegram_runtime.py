@@ -270,6 +270,7 @@ def run_once(*, config=CONFIG, state=STATE, root=ROOT, manifest_path=MANIFEST,
             raise ValueError("approval configuration changed")
         installed = verify_release(root, manifest_path)
         _check_sources(root, manifest_path, installed)
+        _check_units(root, manifest_path, Path("/etc/systemd/system"))
         _, diag_issuer, diag_responder = diagnostic_config()
         callback = eddsa.import_public_key(bytes.fromhex(c["callback_public"]))
         approval = eddsa.import_private_key(bytes.fromhex(c["approval_seed"]))
@@ -317,7 +318,8 @@ def main(argv=None):
         return 2 if result in ("SUBMISSION_UNPROVEN", "PROMPT_UNPROVEN") else 0
     except Exception:
         # Never expose keys, chat IDs, raw Telegram/GitHub bodies or host env.
-        print("OWNER_RELEASE_APPROVAL=BLOCKED_OR_DEFERRED")
+        print("OWNER_RELEASE_PREFLIGHT=BLOCKED" if args.preflight
+              else "OWNER_RELEASE_APPROVAL=BLOCKED_OR_DEFERRED")
         return 2
 
 
