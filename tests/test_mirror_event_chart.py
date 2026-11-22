@@ -400,6 +400,57 @@ def test_frozen_mirror_named_pattern_requires_both_exact_sides(
     assert snapshot["levels"] == [selected, other]
 
 
+def test_older_paired_boundary_origin_controls_frozen_lookback(tmp_path, monkeypatch):
+    pytest.importorskip("matplotlib")
+    from matplotlib.figure import Figure
+    from mirror_event_chart import _visible_event_candles, render_mirror_chart
+
+    history = [
+        {"open_time_ms": i * 300_000, "open": 1.0, "high": 1.2,
+         "low": 0.9, "close": 1.1}
+        for i in range(300)
+    ]
+    def level(side, index, price, selected):
+        t = history[index]["open_time_ms"]
+        return {"level_id": side, "source": "pattern_boundary",
+                "pattern": "Falling Wedge", "side": side,
+                "selected": selected, "anchors": [[t, price]],
+                "boundary": {"anchor_time_ms": t, "anchor_price": price,
+                             "slope_per_ms": 0.0}}
+
+    snapshot = {
+        "symbol": "TESTUSDT", "timeframe": "5",
+        "source": "pattern_boundary", "pattern": "Falling Wedge",
+        "candles": history[-120:], "geometry_candles": history,
+        "event_open_time_ms": history[-1]["open_time_ms"],
+        "levels": [level("upper", 220, 1.15, True),
+                   level("lower", 0, 0.95, False)],
+    }
+    # The selected ray starts within the last 120 bars, but its paired
+    # frozen origin is older and must remain visible in the overview.
+    assert _visible_event_candles(snapshot) is history
+    captures = []
+    original_save = Figure.savefig
+    def inspect_save(fig, *args, **kwargs):
+        ax = fig.axes[0]
+        captures.append((len(ax.patches), [t.get_text() for t in ax.texts]))
+        return original_save(fig, *args, **kwargs)
+    monkeypatch.setattr(Figure, "savefig", inspect_save)
+
+    render_mirror_chart(snapshot, tmp_path / "paired-full.png")
+    assert captures[-1][0] == 300
+    assert not any("Контур паттерна неполон" in s for s in captures[-1][1])
+
+    # The exact old pivot was not retained. Both lines may still be
+    # projected, but the PNG must not certify their full source contour.
+    truncated = {**snapshot, "geometry_candles": history[-150:]}
+    assert _visible_event_candles(truncated) is truncated["candles"]
+    render_mirror_chart(truncated, tmp_path / "paired-truncated.png")
+    assert captures[-1][0] == 120
+    assert any("Контур паттерна неполон" in s for s in captures[-1][1])
+    assert any("недостаточно доказательств" in s for s in captures[-1][1])
+
+
 def test_mirror_old_source_never_accepts_conflicting_or_invented_bars():
     from mirror_event_chart import _visible_event_candles
 
