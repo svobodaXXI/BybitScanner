@@ -267,6 +267,38 @@ def test_wick_sweep_owner_mirror_prior_wick_breach_rejects_old_horizontal_level(
     assert ms.load_state("TESTUSDT", "1", root)["pending_notifications"] == []
 
 
+@pytest.mark.parametrize("side,sequence,expected", [
+    ("upper", [0.004136, 0.004135, 0.004135, 0.004135, 0.004134,
+               0.004137, 0.004137, 0.004136, 0.004135, 0.004127], 0.004137),
+    ("lower", [0.004130, 0.004131, 0.004131, 0.004131, 0.004132,
+               0.004128, 0.004128, 0.004129, 0.004130, 0.004131], 0.004128),
+])
+def test_wick_sweep_owner_adjacent_equal_extrema_causal_plateau(
+        side, sequence, expected):
+    # Owner ALTUSDT review selected the second equal HIGH (0.004137),
+    # which strict 3-left / 3-right pivots lose completely.
+    from mirror_levels.swing import confirmed_pivots
+
+    def extract(prefix):
+        rows = [{
+            "open_time_ms": i * M, "close_time_ms": (i + 1) * M,
+            "high": value if side == "upper" else 0.0042,
+            "low": value if side == "lower" else 0.0040,
+        } for i, value in enumerate(prefix)]
+        highs, lows = confirmed_pivots(rows)
+        return highs if side == "upper" else lows
+
+    # Before the third right-hand candle closes, the second equal wick
+    # is NOT a confirmed source; adding a future candle cannot rewrite it.
+    assert not any(p["index"] == 6 for p in extract(sequence[:9]))
+    confirmed = [p for p in extract(sequence) if p["index"] == 6]
+    assert len(confirmed) == 1
+    assert confirmed[0]["price"] == expected
+    assert confirmed[0]["confirmed_index"] == 9
+    assert confirmed[0]["confirmed_at_ms"] == 10 * M
+    assert [p for p in extract(sequence + [sequence[-1]]) if p["index"] == 6] == confirmed
+
+
 def test_wick_sweep_source_formation_touches_before_confirmation_are_not_false_breaches(
         root, fixed_levels):
     # Confirmed swing zones require prior touches; those formative touches
