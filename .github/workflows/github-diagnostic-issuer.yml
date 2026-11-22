@@ -1,0 +1,31 @@
+name: Sign read-only VPS diagnostic request
+on:
+  push:
+    branches: [diagnostic-issuer]
+    paths: ['.github/diagnostic-request.json']
+permissions:
+  contents: read
+  issues: write
+concurrency:
+  group: diagnostic-issuer
+  cancel-in-progress: false
+jobs:
+  issue:
+    if: github.repository == 'svobodaXXI/BybitScanner' && github.event.created == false && github.event.deleted == false && github.event.forced == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    environment: bybitscanner-diagnostic-issuer
+    steps:
+      - name: Check out exact trusted issuer commit
+        run: |
+          git init
+          git fetch --depth=1 https://github.com/svobodaXXI/BybitScanner.git "$GITHUB_SHA"
+          git checkout --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - name: Install existing pinned signing dependency
+        run: python3 -m pip install --disable-pip-version-check pycryptodome==3.23.0
+      - name: Sign and publish fixed observation request
+        env:
+          DIAGNOSTIC_ISSUER_SEED: ${{ secrets.DIAGNOSTIC_ISSUER_SEED }}
+          DIAGNOSTIC_GITHUB_TOKEN: ${{ github.token }}
+        run: python3 -m tools.github_diagnostic_issuer
