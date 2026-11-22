@@ -106,3 +106,141 @@ def test_failed_observation_never_reports_flat(context):
     assert snapshot["assessment"] == "UNKNOWN"
     assert snapshot["position_count"] is None
     assert b"PRIVATE_REASON" not in reply
+
+
+@pytest.fixture
+def durable_context(context, tmp_path):
+    pytest.importorskip("fcntl")
+    from tools.github_diagnostic_journal import DiagnosticJournal
+    root = tmp_path / "journal"
+    root.mkdir(mode=0o700)
+    journal = DiagnosticJournal(root)
+    journal.initialize()
+    payload, wire, kw, verify, issuer, responder, claims, reads = context
+    kw.pop("reserve")
+    return journal, payload, wire, kw, verify, issuer, responder, reads
+
+
+def test_durable_restart_and_historical_delivery(durable_context):
+    from tools.github_diagnostic_journal import DiagnosticJournal, verify_historical_response
+    journal, _, wire, kw, verify, _, _, reads = durable_context
+    reply = journal.process(wire, **kw)
+    restarted = DiagnosticJournal(journal.directory)
+    with pytest.raises(ValueError):
+        restarted.process(wire, **kw)
+    assert len(reads) == 7
+    args = {k: v for k, v in verify.items() if k not in {"expected_request", "now"}}
+    delayed = NOW + 3600
+    attempts = []
+    def lost_ack(request, response):
+        attempts.append((request, response))
+        raise TimeoutError("unknown POST outcome")
+    with pytest.raises(TimeoutError):
+        restarted.deliver_pending(**args, clock=lambda: delayed, post=lost_ack)
+    def acknowledged(request, response):
+        attempts.append((request, response))
+        return True
+    assert restarted.deliver_pending(**args, clock=lambda: delayed, post=acknowledged) == 1
+    assert restarted.deliver_pending(**args, clock=lambda: delayed, post=acknowledged) == 0
+    assert attempts == [(wire, reply), (wire, reply)]
+    with pytest.raises(ValueError):
+        protocol.verify_response(reply, **{**verify, "now": delayed})
+    historical = verify_historical_response(reply, **{**verify, "now": delayed})
+    assert historical["observed_at"] == NOW and historical["fresh"] is False
+    assert historical["snapshot"]["position_count"] == 1
+    assert len(reads) == 7
+
+
+def test_interrupted_reservation_is_never_reobserved(durable_context, monkeypatch):
+    from tools import github_diagnostic_protocol as p
+    from tools.github_diagnostic_journal import DiagnosticJournal
+    journal, _, wire, kw, _, _, _, reads = durable_context
+    def interrupted(_):
+        raise KeyboardInterrupt
+    with monkeypatch.context() as patch:
+        patch.setattr(p, "observe", interrupted)
+        with pytest.raises(KeyboardInterrupt):
+            journal.process(wire, **kw)
+    with pytest.raises(ValueError):
+        DiagnosticJournal(journal.directory).process(wire, **kw)
+    assert not reads
+
+
+def test_missing_or_tampered_journal_fails_closed(durable_context):
+    journal, _, wire, kw, _, _, _, reads = durable_context
+    journal.path.unlink()
+    with pytest.raises(FileNotFoundError):
+        journal.process(wire, **kw)
+    assert not reads
+
+
+def test_pruning_preserves_pending_and_blocks_clock_rollback(durable_context):
+    from tools.github_diagnostic_journal import RETENTION_SECONDS
+    journal, payload, wire, kw, verify, issuer, _, reads = durable_context
+    journal.process(wire, **kw)
+    args = {k: v for k, v in verify.items() if k not in {"expected_request", "now"}}
+    later = NOW + RETENTION_SECONDS + 100
+    new = {**payload, "request_id": "c"*32, "issued_at": later, "expires_at": later+60}
+    wire_new = protocol.sign_request(new, issuer_key=issuer, audience=AUDIENCE, now=later)
+    journal.process(wire_new, **{**kw, "clock": lambda: later})
+    assert len(journal._load()["entries"]) == 2  # old unacknowledged receipt stays
+    assert journal.deliver_pending(**args, clock=lambda: later, post=lambda *_: True) == 2
+    newest = {**new, "request_id": "d"*32}
+    journal.process(protocol.sign_request(newest, issuer_key=issuer, audience=AUDIENCE,
+                                         now=later), **{**kw, "clock": lambda: later})
+    assert "b"*32 not in journal._load()["entries"]
+    with pytest.raises(ValueError):
+        journal.process(wire, **kw)
+    assert len(reads) == 21
+
+
+def test_bounded_cycle_ignores_unsigned_and_replayed_requests(durable_context):
+    journal, payload, wire, kw, _, issuer, _, reads = durable_context
+    other = protocol.sign_request({**payload, "request_id": "c"*32},
+                                  issuer_key=issuer, audience=AUDIENCE, now=NOW)
+    class Transport:
+        sent = []
+        def requests(self, now):
+            return [b"unsigned", wire, wire, other]
+        def post(self, request, response):
+            self.sent.append((request, response))
+            return True
+    transport = Transport()
+    assert journal.run_once(enabled=False, transport=transport, **kw)["observed"] == 0
+    assert journal.run_once(enabled=True, transport=transport, **kw)["observed"] == 1
+    assert journal.run_once(enabled=True, transport=transport, **kw)["observed"] == 1
+    assert journal.run_once(enabled=True, transport=transport, **kw)["observed"] == 0
+    assert len(reads) == 14
+    assert [x[0] for x in transport.sent] == [wire, other]
+
+
+def test_fixed_github_transport_no_redirect_or_dynamic_endpoint(context):
+    from tools.github_diagnostic_transport import (
+        GitHubDiagnosticTransport, REQUEST_MARKER, RESPONSE_MARKER, ISSUE_URL)
+    _, wire, kw, _, _, _, _, _ = context
+    signed = protocol.process_request(wire, **kw)
+    calls = []
+    class Reply:
+        def __init__(self, code, payload):
+            self.status_code = code
+            self.payload = payload
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def iter_content(self, chunk_size):
+            yield json.dumps(self.payload).encode()
+    def request(method, url, **kwargs):
+        calls.append((method, url, kwargs))
+        if method == "GET":
+            return Reply(200, [{"body": "untrusted"}, {"body": REQUEST_MARKER+wire.decode()}])
+        return Reply(201, {"id": 1, "body": kwargs["json"]["body"]})
+    transport = GitHubDiagnosticTransport(request=request, token="x"*40)
+    assert transport.requests(NOW) == [wire]
+    assert transport.post(wire, signed) is True
+    assert calls[1][2]["json"]["body"] == RESPONSE_MARKER+signed.decode()
+    assert all(url == ISSUE_URL and kwargs["allow_redirects"] is False
+               for _, url, kwargs in calls)
+    transport = GitHubDiagnosticTransport(request=lambda *a, **k: Reply(302, {}), token="x"*40)
+    with pytest.raises(ValueError):
+        transport.requests(NOW)
