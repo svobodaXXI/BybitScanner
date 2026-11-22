@@ -643,7 +643,7 @@ def handler_factory(static_dir: Path = STATIC_DIR,
                         ValueError):
                     self._error(409, "Pairing not confirmed; generate a new code")
                     return
-                self._send(200, b'{"paired":true}',
+                self._send(200, b'{"configuration_saved":true}',
                            "application/json; charset=utf-8")
                 return
             if path == "/local-replay/desktop-update":
