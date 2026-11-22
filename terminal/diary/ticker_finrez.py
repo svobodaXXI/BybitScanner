@@ -406,15 +406,11 @@ class EpisodeFactsSourceChanged(StatisticsScopeError):
     """The statistics index has changed since the selected episode was listed."""
 
 
-def project_paper_closed_episode_facts(
+def _select_paper_closed_episode(
     snapshot: PaperSourceSnapshot, *, account_id: str, owner: str,
     trade_episode_id: str, source_revision: int, now_ms: int,
-) -> dict[str, object]:
-    """Export only persisted fill evidence, by exact, controller-proven episode ID.
-
-    Reuses the Finrez classifier; does NOT synthesize strategy decisions, candle
-    history, order-intent chronology, exchange fills or Simulator PnL.
-    """
+) -> tuple[TradeEpisode, str]:
+    """Resolve a closed episode under the exact Finrez controller scope."""
     if account_id != "paper" or owner not in {"ROBOT", "MANUAL"}:
         raise ValueError("unsupported_episode_scope")
     if not isinstance(trade_episode_id, str) or (
@@ -442,6 +438,40 @@ def project_paper_closed_episode_facts(
     episode, cohort = matches[0]
     if not episode.is_closed or episode.closed_at_ms is None:
         raise EpisodeFactsNotFound("episode_not_closed")
+
+    return episode, cohort
+
+
+def project_paper_closed_episode_market_locator(
+    snapshot: PaperSourceSnapshot, *, account_id: str, owner: str,
+    trade_episode_id: str, source_revision: int, now_ms: int,
+) -> dict[str, object]:
+    """Identity of a proven closed episode; independent of execution-price evidence."""
+    episode, cohort = _select_paper_closed_episode(
+        snapshot, account_id=account_id, owner=owner, trade_episode_id=trade_episode_id,
+        source_revision=source_revision, now_ms=now_ms,
+    )
+    return {
+        "account_id": account_id, "owner": owner, "trade_episode_id": trade_episode_id,
+        "source_revision": source_revision, "symbol": episode.position_key.symbol.value,
+        "side": episode.side.value.upper(), "opened_at_ms": episode.opened_at_ms,
+        "closed_at_ms": episode.closed_at_ms,
+    }
+
+
+def project_paper_closed_episode_facts(
+    snapshot: PaperSourceSnapshot, *, account_id: str, owner: str,
+    trade_episode_id: str, source_revision: int, now_ms: int,
+) -> dict[str, object]:
+    """Export only persisted fill evidence, by exact, controller-proven episode ID.
+
+    Reuses the Finrez classifier; does NOT synthesize strategy decisions, candle
+    history, order-intent chronology, exchange fills or Simulator PnL.
+    """
+    episode, cohort = _select_paper_closed_episode(
+        snapshot, account_id=account_id, owner=owner, trade_episode_id=trade_episode_id,
+        source_revision=source_revision, now_ms=now_ms,
+    )
 
     # Source-consistent execution facts were read in the SAME SQLite snapshot
     # as the allocations and controller origins; never join a later DB read.

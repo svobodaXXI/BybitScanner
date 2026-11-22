@@ -193,6 +193,53 @@ def fetch_closed_trade_timeframe(
     if count <= 0:
         raise RetrospectiveBarsError("no_new_closed_retrospective_bars")
     cutoff = after_ms + count * period
+    return _fetch_verified_market_bars(
+        symbol=symbol, interval=interval, after_ms=after_ms, count=count, session=session,
+    )
+
+
+def fetch_closed_episode_market_window(
+    *, symbol: str, opened_at_ms: int, closed_at_ms: int,
+    now_ms: int, session=None,
+) -> dict:
+    """Read-only public market context for an already proven closed episode.
+
+    Choose a real interval covering the full episode in one bounded REST request.
+    No archived signal, strategy geometry or interpolated prices are needed.
+    """
+    import re
+    if (not isinstance(symbol, str) or not re.fullmatch(r"[A-Z0-9]{3,30}", symbol)
+            or any(type(value) is not int for value in (opened_at_ms, closed_at_ms, now_ms))
+            or not 0 <= opened_at_ms <= closed_at_ms <= now_ms):
+        raise RetrospectiveBarsError("invalid_episode_market_window")
+    for interval, period in sorted({**TF_MS, "240": 14_400_000}.items(), key=lambda item: item[1]):
+        entry = opened_at_ms // period * period
+        exit_open = closed_at_ms // period * period
+        first = max(0, entry - 8 * period)
+        last = min(exit_open + 8 * period, (now_ms // period - 1) * period)
+        count = (last - first) // period + 1
+        if count > 500:
+            continue
+        if count <= 0:
+            raise RetrospectiveBarsError("no_closed_episode_market_bars")
+        cutoff, bars = _fetch_verified_market_bars(
+            symbol=symbol, interval=interval, after_ms=first - period,
+            count=count, session=session, require_identity=True,
+        )
+        return {
+            "market_source": "BYBIT_PUBLIC_LINEAR_CLOSED_OHLC",
+            "interval": interval, "bars": bars, "last_open_ms": cutoff,
+            "complete_through_close": cutoff >= exit_open,
+        }
+    raise RetrospectiveBarsError("episode_market_window_too_large")
+
+
+def _fetch_verified_market_bars(
+    *, symbol: str, interval: str, after_ms: int, count: int,
+    session=None, require_identity: bool = False,
+) -> tuple[int, list[dict]]:
+    period = {**TF_MS, "240": 14_400_000}[interval]
+    cutoff = after_ms + count * period
     try:
         import requests
     except ImportError as exc:
@@ -208,7 +255,10 @@ def fetch_closed_trade_timeframe(
         )
         response.raise_for_status()
         payload = response.json()
-        raw = payload.get("result", {}).get("list", [])
+        result = payload.get("result", {})
+        if require_identity and (result.get("symbol") != symbol or result.get("category") != "linear"):
+            raise RetrospectiveBarsError("retrospective_history_invalid")
+        raw = result.get("list", [])
         if payload.get("retCode") != 0 or len(raw) != count:
             raise RetrospectiveBarsError("retrospective_history_incomplete")
         parsed = []

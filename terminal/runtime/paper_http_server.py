@@ -75,7 +75,8 @@ from terminal.diary.robot_pattern_lineage import attach_verified_robot_pattern_s
 from terminal.diary.ticker_finrez import (
     EpisodeFactsNotFound, EpisodeFactsSourceChanged,
     attach_verified_entry_notional_returns, attach_verified_episode_patterns,
-    custom_period_bounds_ms, project_paper_closed_episode_facts, project_paper_ticker_pnl,
+    custom_period_bounds_ms, project_paper_closed_episode_facts,
+    project_paper_closed_episode_market_locator, project_paper_ticker_pnl,
 )
 from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
 from terminal.market_data.hub import MarketDataHub, SymbolContext
@@ -3465,7 +3466,8 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             self._json_response(200, {"ok": True, **projection})
             return
 
-        if parsed.path == "/api/diary/episode-facts":
+        if parsed.path in {"/api/diary/episode-facts", "/api/diary/episode-candles"}:
+            market_context = parsed.path == "/api/diary/episode-candles"
             # Exactly one selected closed PAPER episode. Read-only evidence
             # from the same source snapshot as the Finrez episode index;
             # never dispatch to Scanner/Robot or query a private exchange API.
@@ -3487,11 +3489,37 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 return
             try:
                 snapshot = load_paper_source_snapshot(self.server.diary_source_db_path)
-                projection = project_paper_closed_episode_facts(
+                project_episode = (project_paper_closed_episode_market_locator if market_context
+                                   else project_paper_closed_episode_facts)
+                projection = project_episode(
                     snapshot, account_id="paper", owner=params["owner"][0],
                     trade_episode_id=episode_id, source_revision=int(revision),
                     now_ms=int(time.time() * 1000),
                 )
+                if market_context:
+                    from retrospective_signal_bars import (
+                        RetrospectiveBarsError, fetch_closed_episode_market_window,
+                    )
+                    try:
+                        market = fetch_closed_episode_market_window(
+                            symbol=projection["symbol"],
+                            opened_at_ms=projection["opened_at_ms"],
+                            closed_at_ms=projection["closed_at_ms"],
+                            now_ms=int(time.time() * 1000),
+                        )
+                    except RetrospectiveBarsError:
+                        self._json_response(503, {"ok": False, "error": "episode_market_history_unavailable"})
+                        return
+                    self._json_response(200, {
+                        "ok": True, "schema": "BYBITSCANNER_CLOSED_EPISODE_MARKET_V1",
+                        "account_id": projection["account_id"], "owner": projection["owner"],
+                        "trade_episode_id": projection["trade_episode_id"],
+                        "source_revision": projection["source_revision"],
+                        "symbol": projection["symbol"], "side": projection["side"],
+                        "opened_at_ms": projection["opened_at_ms"],
+                        "closed_at_ms": projection["closed_at_ms"], **market,
+                    })
+                    return
                 # The optional D2 setup/decision database is independent from
                 # PAPER. It is read only by exact episode ID, never initialized.
                 # Its lack of a link is explicitly NOT proof of a Robot signal.

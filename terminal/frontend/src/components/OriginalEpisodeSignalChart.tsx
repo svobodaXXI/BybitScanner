@@ -16,6 +16,9 @@ type FrozenSignal = { signal_id: string; symbol: string; timeframe: string; bars
 type OriginalEvidence = { snapshot: FrozenSignal; revision: string; intervalMs: number };
 
 type Execution = { at: number; price: number };
+type EpisodeMarketScope = {
+  episodeId: string; accountId: string; owner: "ROBOT" | "MANUAL"; revision: number;
+};
 export type OriginalSignalChartProps = {
   candidateId: string | null;
   symbol: string;
@@ -25,6 +28,7 @@ export type OriginalSignalChartProps = {
   openedAtMs: number;
   closedAtMs: number;
   executions: readonly Execution[];
+  marketScope?: EpisodeMarketScope;
 };
 
 function frameMs(frame: string): number | null {
@@ -240,7 +244,7 @@ export function visibleOriginalBoundarySegments(
 
 /** Same lightweight-charts engine / Moscow axis as Terminal, but without orders or drawing tools. */
 function InteractiveTradeChart({ original, bars, frame, executions, side, showGeometry = true, chartLabel }: {
-  original: OriginalEvidence; bars: readonly Bar[]; frame: string;
+  original: OriginalEvidence | null; bars: readonly Bar[]; frame: string;
   executions: readonly Execution[]; side: OriginalSignalChartProps["side"];
   showGeometry?: boolean; chartLabel?: string;
 }) {
@@ -322,7 +326,7 @@ function InteractiveTradeChart({ original, bars, frame, executions, side, showGe
     // Only the native source interval has sufficient temporal resolution to
     // represent the original pattern faithfully. Alternate frames are market
     // context, not reconstructed detector geometry.
-    const lines = showGeometry
+    const lines = showGeometry && original
       ? visibleOriginalBoundarySegments(original.snapshot.boundaries, bars) : [];
     setVisibleLines(lines.length);
     for (const line of lines) addOverlay(line.points, "#e1b653");
@@ -381,9 +385,89 @@ function InteractiveTradeChart({ original, bars, frame, executions, side, showGe
   );
 }
 
+type MarketEvidence = { frame: string; bars: Bar[]; complete: boolean };
+
+/** A public-market view is distinct from immutable source geometry. */
+export function parseEpisodeMarketContext(raw: unknown, props: OriginalSignalChartProps): MarketEvidence | null {
+  const scope = props.marketScope;
+  if (!scope || !raw || typeof raw !== "object") return null;
+  const payload = raw as Record<string, unknown>;
+  if (payload.ok !== true || payload.schema !== "BYBITSCANNER_CLOSED_EPISODE_MARKET_V1"
+      || payload.market_source !== "BYBIT_PUBLIC_LINEAR_CLOSED_OHLC"
+      || payload.account_id !== scope.accountId || payload.owner !== scope.owner
+      || payload.trade_episode_id !== scope.episodeId || payload.source_revision !== scope.revision
+      || payload.symbol !== props.symbol || payload.side !== props.side
+      || payload.opened_at_ms !== props.openedAtMs || payload.closed_at_ms !== props.closedAtMs
+      || typeof payload.interval !== "string"
+      || !TIMEFRAMES.some(item => item.id === payload.interval)
+      || !Array.isArray(payload.bars) || !payload.bars.length || payload.bars.length > 500) return null;
+  const period = frameMs(payload.interval)!;
+  const first = Math.max(0, Math.floor(props.openedAtMs / period) * period - 8 * period);
+  const exitOpen = Math.floor(props.closedAtMs / period) * period;
+  const bars: Bar[] = [];
+  for (const entry of payload.bars) {
+    const bar = asBar(entry);
+    if (!bar || bar.open_time_ms !== first + bars.length * period
+        || bar.open_time_ms > exitOpen + 8 * period) return null;
+    bars.push(bar);
+  }
+  const last = bars[bars.length - 1].open_time_ms;
+  if (payload.last_open_ms !== last || payload.complete_through_close !== (last >= exitOpen)) return null;
+  return { frame: payload.interval, bars, complete: last >= exitOpen };
+}
+
+function EpisodeMarketFallback(props: OriginalSignalChartProps) {
+  const { marketScope, symbol, side, openedAtMs, closedAtMs, executions } = props;
+  const [result, setResult] = useState<MarketEvidence | null>(null);
+  const [message, setMessage] = useState("Загружаю свечи сделки…");
+  useEffect(() => {
+    if (!marketScope) return;
+    const controller = new AbortController();
+    let active = true;
+    setResult(null);
+    setMessage("Загружаю свечи сделки…");
+    const params = new URLSearchParams({
+      account_id: marketScope.accountId, owner: marketScope.owner,
+      trade_episode_id: marketScope.episodeId, source_revision: String(marketScope.revision),
+    });
+    void (async () => {
+      try {
+        const response = await fetch("/api/diary/episode-candles?" + params.toString(),
+          { cache: "no-store", signal: controller.signal });
+        if (response.status === 409) {
+          if (active) setMessage("История обновилась — откройте Статистику заново.");
+          return;
+        }
+        if (!response.ok) throw new Error("market_history_unavailable");
+        const evidence = parseEpisodeMarketContext(await response.json(), props);
+        if (!evidence) throw new Error("market_history_mismatch");
+        if (!active) return;
+        setResult(evidence);
+        setMessage(evidence.complete ? "" : "Свеча закрытия сделки ещё не закрыта.");
+      } catch {
+        if (active) setMessage("Подтверждённые рыночные свечи сделки недоступны.");
+      }
+    })();
+    return () => { active = false; controller.abort(); };
+  }, [marketScope?.episodeId, marketScope?.accountId, marketScope?.owner,
+      marketScope?.revision, symbol, side, openedAtMs, closedAtMs]);
+  return (
+    <div className="diary-trade-panel" role="region" aria-label="Рыночный график закрытой сделки">
+      {result && <>
+        <h4>Свечи Bybit · {timeframeLabel(result.frame)}</h4>
+        <InteractiveTradeChart original={null} bars={result.bars} frame={result.frame}
+          executions={executions} side={side} showGeometry={false}
+          chartLabel="Рыночный свечной график сделки" />
+      </>}
+      {message && <p className="diary-finrez-basis" role="status">{message}</p>}
+    </div>
+  );
+}
+
 export function OriginalEpisodeSignalChart(props: OriginalSignalChartProps) {
   const { candidateId, symbol, timeframe, pattern, openedAtMs, closedAtMs, executions, side } = props;
   const [original, setOriginal] = useState<OriginalEvidence | null>(null);
+  const [archiveUnavailable, setArchiveUnavailable] = useState(false);
   const [barsByFrame, setBarsByFrame] = useState<Record<string, Bar[]>>({});
   const [frame, setFrame] = useState("");
   const [loading, setLoading] = useState(false);
@@ -393,10 +477,12 @@ export function OriginalEpisodeSignalChart(props: OriginalSignalChartProps) {
   useEffect(() => {
     activeRequest.current?.abort();
     setOriginal(null);
+    setArchiveUnavailable(false);
     setBarsByFrame({});
     setFrame("");
     setLoading(false);
     if (!candidateId || !timeframe || !pattern) {
+      setArchiveUnavailable(true);
       setMessage("Исходная геометрия недоступна: нет доказанной связи сделки с исходным сигналом Робота.");
       return;
     }
@@ -430,6 +516,7 @@ export function OriginalEpisodeSignalChart(props: OriginalSignalChartProps) {
       } catch {
         if (active) {
           setLoading(false);
+          setArchiveUnavailable(true);
           setMessage("Исходная геометрия недоступна или не совпадает с сигналом сделки.");
         }
       }
@@ -552,7 +639,9 @@ export function OriginalEpisodeSignalChart(props: OriginalSignalChartProps) {
   const alternateFrame = !!original && !!frame && frameMs(frame) !== frameMs(original.snapshot.timeframe);
   return (
     <section className="diary-detail-section" aria-label="Исходный сигнал сделки">
-      <h3>Свечной график · исходный сигнал Робота</h3>
+      <h3>{archiveUnavailable && props.marketScope
+        ? "Свечной график сделки" : "Свечной график · исходный сигнал Робота"}</h3>
+      {archiveUnavailable && props.marketScope && <EpisodeMarketFallback {...props} />}
       {original && (
         <div className="diary-trade-timeframes" role="group" aria-label="Таймфрейм сделки">
           {TIMEFRAMES.map(option => <button key={option.id} type="button"
@@ -591,8 +680,8 @@ export function OriginalEpisodeSignalChart(props: OriginalSignalChartProps) {
         </button>
       )}
       <p className="diary-finrez-basis" aria-live="polite">{message}</p>
-      <small>Только неизменяемый архив сигнала и настоящие закрытые свечи.
-        Изменения Редактора и неподтверждённые исполнения не подставляются.</small>
+      {!(archiveUnavailable && props.marketScope) && <small>Только неизменяемый архив сигнала и настоящие закрытые свечи.
+        Изменения Редактора и неподтверждённые исполнения не подставляются.</small>}
     </section>
   );
 }

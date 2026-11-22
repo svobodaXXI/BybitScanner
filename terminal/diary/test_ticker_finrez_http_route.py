@@ -242,6 +242,106 @@ def test_episode_facts_route_rejects_invalid_scope_and_exports_only_one_selected
 
 
 
+def test_episode_market_window_uses_real_closed_candles_and_rejects_wrong_symbol():
+    from retrospective_signal_bars import RetrospectiveBarsError, fetch_closed_episode_market_window
+    import pytest
+    period = 60_000
+    opened = 1_800_000_000_000
+    closed = opened + 5 * period + 1
+    now = closed + 20 * period
+
+    class Session:
+        wrong_symbol = False
+        gap = False
+        def get(self, url, *, params, timeout):
+            assert url == "https://api.bybit.com/v5/market/kline"
+            assert params["category"] == "linear" and params["symbol"] == "BTCUSDT"
+            assert params["interval"] == "1"
+            assert params["start"] == opened - 8 * period
+            assert params["end"] == opened + 13 * period
+            assert params["limit"] == 22
+            rows = [[str(params["start"] + i * period), "100", "102", "99", "101"]
+                    for i in range(params["limit"])]
+            if self.gap:
+                rows[0][0] = rows[1][0]
+            payload = {"retCode": 0, "result": {"category": "linear",
+                       "symbol": "ETHUSDT" if self.wrong_symbol else "BTCUSDT",
+                       "list": list(reversed(rows))}}
+            return type("Response", (), {"raise_for_status": lambda self: None,
+                                        "json": lambda self: payload})()
+
+    session = Session()
+    args = dict(symbol="BTCUSDT", opened_at_ms=opened, closed_at_ms=closed,
+                now_ms=now, session=session)
+    result = fetch_closed_episode_market_window(**args)
+    assert result["complete_through_close"] is True
+    assert len(result["bars"]) == 22
+    assert result["bars"][0]["open_time_ms"] == opened - 8 * period
+    assert result["bars"][-1]["open_time_ms"] == opened + 13 * period
+    session.wrong_symbol = True
+    with pytest.raises(RetrospectiveBarsError):
+        fetch_closed_episode_market_window(**args)
+    session.wrong_symbol = False
+    session.gap = True
+    with pytest.raises(RetrospectiveBarsError):
+        fetch_closed_episode_market_window(**args)
+
+
+def test_episode_candles_route_proves_exact_scope_before_public_read(tmp_path: Path, monkeypatch):
+    import retrospective_signal_bars
+    from terminal.diary.ticker_finrez import EpisodeFactsNotFound, EpisodeFactsSourceChanged
+
+    episode_id = "te_" + "a" * 24
+    calls = []
+    identity = {
+        "account_id": "paper", "owner": "ROBOT", "trade_episode_id": episode_id,
+        "source_revision": 9, "symbol": "BTCUSDT", "side": "LONG",
+        "opened_at_ms": 600_000, "closed_at_ms": 900_000,
+    }
+    def project(snapshot, *, account_id, owner, trade_episode_id, source_revision, now_ms):
+        if source_revision != 9:
+            raise EpisodeFactsSourceChanged("stale")
+        if owner != "ROBOT" or trade_episode_id != episode_id:
+            raise EpisodeFactsNotFound("missing")
+        return identity
+
+    def fetch(**kwargs):
+        calls.append(kwargs)
+        return {"market_source": "BYBIT_PUBLIC_LINEAR_CLOSED_OHLC", "interval": "1",
+                "bars": [{"open_time_ms": 600_000, "open": 100, "high": 101, "low": 99, "close": 100}],
+                "last_open_ms": 600_000, "complete_through_close": False}
+
+    monkeypatch.setattr(paper_http_server, "load_paper_source_snapshot", lambda path: object())
+    monkeypatch.setattr(paper_http_server, "project_paper_closed_episode_market_locator", project)
+    monkeypatch.setattr(retrospective_signal_bars, "fetch_closed_episode_market_window", fetch)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+    server.diary_source_db_path = tmp_path / "absent.sqlite3"
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        root = f"http://127.0.0.1:{server.server_address[1]}/api/diary/episode-candles"
+        query = f"?account_id=paper&owner=ROBOT&trade_episode_id={episode_id}&source_revision=9"
+        assert _get(root + query + "&symbol=ETHUSDT")[0] == 400
+        assert _get(root + query.replace("source_revision=9", "source_revision=8"))[0] == 409
+        assert _get(root + query.replace("owner=ROBOT", "owner=MANUAL"))[0] == 404
+        assert _get(root + query.replace("account_id=paper", "account_id=bybit-main"))[0] == 404
+        assert calls == []
+        status, payload = _get(root + query)
+        assert status == 200
+        assert payload["schema"] == "BYBITSCANNER_CLOSED_EPISODE_MARKET_V1"
+        assert payload["trade_episode_id"] == episode_id
+        assert payload["market_source"] == "BYBIT_PUBLIC_LINEAR_CLOSED_OHLC"
+        assert len(calls) == 1
+        assert calls[0]["symbol"] == "BTCUSDT"
+        assert calls[0]["opened_at_ms"] == 600_000
+        assert calls[0]["closed_at_ms"] == 900_000
+        assert not server.diary_source_db_path.exists()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
 def test_campaign_lineage_route_requires_exact_scope_and_refuses_unproven_history(
     tmp_path: Path, monkeypatch,
 ):

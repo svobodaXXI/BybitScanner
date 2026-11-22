@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 from terminal.diary.ticker_finrez import (
     EpisodeFactsNotFound, EpisodeFactsSourceChanged,
     aggregate_ticker_pnl, custom_period_bounds_ms, period_start_ms, project_paper_closed_episode_facts,
-    project_paper_ticker_pnl,
+    project_paper_closed_episode_market_locator, project_paper_ticker_pnl,
 )
 from terminal.diary.models import (
     AllocationRole, DiaryEnvironment, ExecutionAllocation, TradeEpisode, TradeEpisodeId,
@@ -619,6 +619,22 @@ class ClosedEpisodeFactsTests(unittest.TestCase):
             for index, item in enumerate(episode.allocations)
         )
         return identity, PaperSourceSnapshot(8, (episode,), origins, executions=executions)
+
+    def test_market_locator_works_without_fill_archive_but_preserves_scope_and_revision(self):
+        identity, snapshot = self._snapshot()
+        source = PaperSourceSnapshot(8, snapshot.episodes, snapshot.origins)
+        args = dict(account_id="paper", owner="ROBOT", trade_episode_id=identity,
+                    source_revision=8, now_ms=_ms(9, 12))
+        self.assertEqual(project_paper_closed_episode_market_locator(source, **args), {
+            "account_id": "paper", "owner": "ROBOT", "trade_episode_id": identity,
+            "source_revision": 8, "symbol": "BTCUSDT", "side": "LONG",
+            "opened_at_ms": snapshot.episodes[0].opened_at_ms,
+            "closed_at_ms": snapshot.episodes[0].closed_at_ms,
+        })
+        with self.assertRaises(EpisodeFactsSourceChanged):
+            project_paper_closed_episode_market_locator(source, **{**args, "source_revision": 9})
+        with self.assertRaises(EpisodeFactsNotFound):
+            project_paper_closed_episode_market_locator(source, **{**args, "owner": "MANUAL"})
 
     def test_exports_original_fill_price_orders_and_controller_without_fabricating_decisions(self):
         identity, snapshot = self._snapshot()

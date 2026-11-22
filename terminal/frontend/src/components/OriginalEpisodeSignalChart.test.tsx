@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import {
   OriginalEpisodeSignalChart, parseOriginalTradeSignal, parseOriginalTradeContinuation,
-  parseOriginalTradeTimeframe, visibleOriginalBoundarySegments,
+  parseOriginalTradeTimeframe, visibleOriginalBoundarySegments, parseEpisodeMarketContext,
 } from "./OriginalEpisodeSignalChart";
 
 
@@ -74,6 +74,34 @@ const secondPage = {
 afterEach(() => { vi.unstubAllGlobals(); });
 
 describe("original signal on a closed deal", () => {
+  it("loads a real market candle chart without archived candidate geometry, rejecting mismatched episodes", async () => {
+    const scope = { episodeId: "te_" + "a".repeat(24), accountId: "paper", owner: "ROBOT" as const, revision: 8 };
+    const contextProps = { ...props, candidateId: null, timeframe: null, pattern: null, marketScope: scope };
+    const first = t - 6 * interval;
+    const bars = Array.from({ length: 19 }, (_, index) => ({
+      open_time_ms: first + index * interval, open: 100, high: 102, low: 98, close: 101,
+    }));
+    const market = {
+      ok: true, schema: "BYBITSCANNER_CLOSED_EPISODE_MARKET_V1",
+      market_source: "BYBIT_PUBLIC_LINEAR_CLOSED_OHLC",
+      account_id: "paper", owner: "ROBOT", trade_episode_id: scope.episodeId,
+      source_revision: 8, symbol: "BTCUSDT", side: "LONG",
+      opened_at_ms: props.openedAtMs, closed_at_ms: props.closedAtMs,
+      interval: "5", last_open_ms: bars[bars.length - 1].open_time_ms,
+      complete_through_close: true, bars,
+    };
+    expect(parseEpisodeMarketContext(market, contextProps)?.bars).toEqual(bars);
+    expect(parseEpisodeMarketContext({ ...market, source_revision: 9 }, contextProps)).toBeNull();
+    expect(parseEpisodeMarketContext({ ...market, bars: bars.filter((_, i) => i !== 3) }, contextProps)).toBeNull();
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => market });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<OriginalEpisodeSignalChart {...contextProps} />);
+    expect(await screen.findByRole("application", { name: "Рыночный свечной график сделки" })).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toContain("/api/diary/episode-candles?");
+    expect(screen.queryByRole("region", { name: "График исходного сигнала" })).not.toBeInTheDocument();
+  });
+
   it("accepts exact source identity, ignores Editor corrections and preserves original ray", () => {
     const source = parseOriginalTradeSignal(archived, identity);
     expect(source?.snapshot.boundaries).toEqual(snapshot.boundaries);
