@@ -706,6 +706,59 @@ def test_waiting_level_expires_and_history_gap_rejects(root, fixed_levels):
 
 # --- dedup ------------------------------------------------------------------------------------------
 
+def test_wick_sweep_box_overlay_never_rekeys_shared_breakout_r0_after_retest(root):
+    # Box-overlay reads Scanner MIRROR candidates independently of the
+    # standalone handoff. A two-level breakout must not acquire two separate
+    # boundary-derived risk campaigns or re-key after its first target ends.
+    import mirror_retest_robot as mirror
+    from mirror_levels.levels import LevelRegistry
+    from mirror_levels.tracker import new_record
+    levels = [
+        horizontal_level(
+            symbol="TESTUSDT", timeframe="5", source=SOURCE_SWING_ZONE,
+            pattern=None, side="upper", price=price,
+            anchor_time_ms=i * 5 * M, confirmed_at_ms=10 * M,
+        ) for i, price in enumerate((101.0, 102.0, 103.0))
+    ]
+    registry = LevelRegistry()
+    records = {}
+    for index, level in enumerate(levels):
+        registry.add(level)
+        record = new_record(level)
+        record.update(candidate=True, lifecycle=ms.LIFECYCLE_TRACKING,
+                      status=STATUS_UNTESTED, rejection=None)
+        record["naked_retest"]["breakout"] = {
+            "direction": "UP", "campaign_direction": "SHORT",
+            "open_time_ms": 30 * M if index < 2 else 40 * M,
+            "close_time_ms": 35 * M if index < 2 else 45 * M,
+        }
+        records[level.level_id] = record
+    state = ms.empty_state("TESTUSDT", "5")
+    state.update(registry=registry.to_dict(), records=records,
+                 pending_notifications=[
+                     {"level_id":lv.level_id, "kind": "breakout"} for lv in levels
+                 ])
+    ms.save_state(state, root)
+    sources = mirror.scanner_level_sources("TESTUSDT", root=root)
+    assert [x["level_id"] for x in sources] == [levels[2].level_id]
+    # The owner sees both separate level targets; only Box-overlay's
+    # executable source path hides the ambiguous shared-risk group.
+    assert [x["level_id"] for x in ms.load_state(
+        "TESTUSDT", "5", root)["pending_notifications"]] == [
+            lv.level_id for lv in levels
+        ]
+    # After retest closes the first source, its original candidate remains
+    # durable. It must still prevent the other from becoming a fresh R0.
+    records[levels[0].level_id].update(
+        lifecycle=ms.LIFECYCLE_DONE, status=STATUS_RETESTED
+    )
+    ms.save_state(state, root)
+    assert [x["level_id"] for x in mirror.scanner_level_sources(
+        "TESTUSDT", root=root)] == [levels[2].level_id]
+    assert [x["level_id"] for x in mirror.scanner_level_sources(
+        "TESTUSDT", root=root)] == [levels[2].level_id]
+
+
 def test_wick_sweep_two_distinct_fresh_levels_one_breakout_candle_are_both_observed(
         root, fixed_levels):
     # Owner diagram: separate #1 and #2 extrema can be pierced by the same
