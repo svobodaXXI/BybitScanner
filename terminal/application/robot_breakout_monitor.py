@@ -336,8 +336,9 @@ class RobotBreakoutMonitor:
 
         With the opt-in observer absent, retain the original Robot route.
         With it bound, a fresh, exact-owner, directionally supportive and
-        independently source-complete receipt is mandatory for ALL supported
-        families (Wedge, L-shape, MIRROR, Ikigai Box). Missing/foreign/stale
+        independently source-complete receipt is mandatory for Wedge, L-shape
+        and standalone MIRROR. Ikigai Box retains its native grid, pending
+        separate second-impulse reversal research. Missing/foreign/stale
         evidence cannot silently bypass impulse timing and submit the old
         entry. This gate never touches an already-owned entry, fill, STOP,
         TAKE, cancel or recovery lifecycle.
@@ -1267,10 +1268,8 @@ class RobotBreakoutMonitor:
                     return True
                 self._save_execution_keep_status(record, execution)
                 return True
-            # Timing can only defer a NEW unowned Box grid, never rewrite
-            # already-owned slots, partial fills or protected STOP/TAKE.
-            if not self._pattern_flow_allows_entry(record):
-                return False
+            # Owner decision: leave the native Box grid independent of the
+            # impulse overlay pending second-impulse reversal research.
             # Prove the immutable FLAT/journal baseline before deriving any
             # executable catch-up plan. This is not order ownership and does
             # not require a temporary coverage arm: no order can fill yet.
@@ -1338,8 +1337,6 @@ class RobotBreakoutMonitor:
 
         ownership = self._store().load_box_order_ownership(source.candidate_id)
         if not ownership:
-            if not self._pattern_flow_allows_entry(record):
-                return False
             if self._get_market_book is None:
                 return False
             current_book = self._get_market_book(record.symbol.value)
@@ -2103,7 +2100,7 @@ class RobotBreakoutMonitor:
                 self._invalidate_pre_entry_candidate(record, reason=reason, details=details)
                 return True
             # The same approved-pattern timing overlay shared with L-shape,
-            # MIRROR, double extrema and the unowned Box grid. No second
+            # and MIRROR. No second
             # strategy, candidate, order or STOP/TAKE is ever introduced.
             if not self._pattern_flow_allows_entry(record):
                 return False
