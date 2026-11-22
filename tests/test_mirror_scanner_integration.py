@@ -447,6 +447,31 @@ def test_wick_sweep_source_formation_touches_before_confirmation_are_not_false_b
     assert record["candidate"] is True
 
 
+@pytest.mark.parametrize("symbol,side,level_price,ohlc,expected", [
+    # Owner Editor's exact frozen final 5m candles. A low through the
+    # corrected BREV level is a WICK touch, not a naked/full-body breakout.
+    ("BREVUSDT", "lower", 0.10713,
+     (0.11021, 0.11127, 0.10469, 0.10726), None),
+    # EVAA has a genuine bearish candle body crossing its later HIGHER low.
+    ("EVAAUSDT", "lower", 5.9656,
+     (6.0242, 6.0432, 5.7238, 5.796), "DOWN"),
+])
+def test_wick_sweep_owner_frozen_final_candle_requires_body_not_wick(
+        symbol, side, level_price, ohlc, expected):
+    from geometry.naked_retest import naked_breakout_direction
+    source = horizontal_level(
+        symbol=symbol, timeframe="5", source=SOURCE_SWING_ZONE,
+        pattern=None, side=side, price=level_price,
+        anchor_time_ms=0, confirmed_at_ms=5 * M,
+    )
+    o, h, l, c = ohlc
+    result = naked_breakout_direction(source.boundary, {
+        "open_time_ms": 20 * M, "close_time_ms": 25 * M,
+        "open": o, "high": h, "low": l, "close": c, "closed": True,
+    })
+    assert result == expected
+
+
 def test_wick_sweep_owner_mirror_previous_wick_pierces_sloped_triangle_upper_ray(root, fixed_levels):
     # 5m-style RAREUSDT geometry: previous wick pierced the descending
     # upper line, but the next candle has a valid real-body crossing.
