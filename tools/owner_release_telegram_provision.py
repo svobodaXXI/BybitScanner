@@ -14,7 +14,7 @@ import tempfile
 
 from tools.owner_release_telegram_runtime import (
     OWNER_UNIT_NAMES, CONFIG, STATE, _check_ledger, _check_sources, _check_units,
-    _check_relay_inbox, _private_dir, _private_json,
+    _check_relay_inbox, _private_json,
 )
 from tools.owner_update_grant import GrantLedger
 from tools.telegram_release_inbox import INBOX
@@ -109,7 +109,7 @@ def prepare(expected_sha: str, *, root=ROOT, manifest_path=MANIFEST,
     # an existing state directory or overwrite any nonmatching unit.
     existing = state.exists() or state.is_symlink()
     if existing:
-        _private_dir(state)
+        _directory(state, uid=uid, owner=uid)
         if _private_json(state / "pending.json") != {"pending": None}:
             raise ValueError("existing approval state not idle")
         for name in ("prompts", "grants"):
