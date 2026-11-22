@@ -7,6 +7,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
+from urllib.request import HTTPSHandler, ProxyHandler
 
 from research.local_replay_viewer import launch_bridge_agent as agent
 
@@ -38,6 +39,23 @@ class PairedAdapterTests(unittest.TestCase):
             "origin": "https://example.test", "device_id": "owner-pc",
             "token": "A" * 64,
         }
+
+    def test_default_relay_transport_ignores_ambient_proxy_and_keeps_tls(self):
+        with patch.dict("os.environ", {"https_proxy": "http://127.0.0.1:1"}):
+            opener = agent._direct_https_opener()
+        self.assertFalse(any(isinstance(h, ProxyHandler) and h.proxies
+                             for h in opener.handlers))
+        self.assertTrue(any(isinstance(h, agent._NoRedirect)
+                            for h in opener.handlers))
+        self.assertTrue(any(isinstance(h, HTTPSHandler)
+                            for h in opener.handlers))
+
+    def test_send_uses_direct_transport_without_injected_opener(self):
+        opener = MockOpener([{"ok": True, "state": "IDLE"}])
+        with patch.object(agent, "_direct_https_opener", return_value=opener) as factory:
+            self.assertEqual(agent._send(self.config, path="/api/diary/simulator-bridge/poll"),
+                             {"ok": True, "state": "IDLE"})
+        factory.assert_called_once_with()
 
     def test_default_remains_disabled_without_config(self):
         with tempfile.TemporaryDirectory() as root:

@@ -885,3 +885,83 @@ button.diary-outcome-segment {
   font-size: 0.73rem;
   font-weight: 600;
 }
+
+/* Statistics: compact, one-line disclosure with the existing warning palette. */
+.diary-compact-coverage {
+  min-width: 0;
+  padding: 0;
+}
+.diary-coverage-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  width: 100%;
+  border: 0;
+  border-radius: inherit;
+  padding: 0.32rem 0.55rem;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.diary-coverage-toggle span {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.diary-coverage-toggle svg {
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 1rem;
+}
+.diary-coverage-toggle svg.expanded { transform: rotate(180deg); }
+.diary-coverage-details {
+  padding: 0 0.55rem 0.4rem;
+  overflow-wrap: anywhere;
+}
+.diary-period-nav {
+  gap: 0.25rem;
+}
+.diary-period-nav button {
+  padding-inline: 0.4rem;
+  white-space: nowrap;
+}
+.diary-period-nav .diary-calendar-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+}
+.diary-calendar-button svg { width: 1rem; height: 1rem; }
+.diary-calendar-range {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.35rem;
+  padding: 0.35rem 0.55rem;
+  border-bottom: 1px solid #27313b;
+}
+.diary-calendar-range label {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+  color: #95a3b0;
+  font-size: 0.72rem;
+}
+.diary-calendar-range input,
+.diary-calendar-range button {
+  min-width: 0;
+  box-sizing: border-box;
+  width: 100%;
+  color: #e4eaf0;
+  background: #171d24;
+  border: 1px solid #303b47;
+  border-radius: 0.3rem;
+  padding: 0.4rem;
+  font-size: 0.75rem;
+  color-scheme: dark;
+}
+.diary-calendar-range button { grid-column: 1 / -1; cursor: pointer; }
+.diary-calendar-range button:disabled { opacity: 0.4; cursor: default; }

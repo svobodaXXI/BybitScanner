@@ -54,6 +54,18 @@ MAX_SIM_REQUEST_BYTES = 4_096
 MAX_SIM_CONFIG_BYTES = 12_000
 
 
+def installed_desktop_sha(release_root: Path) -> str | None:
+    """Local immutable package identity only; never consult a remote release."""
+    marker = release_root / "desktop-build-sha.txt"
+    try:
+        if not marker.is_file() or marker.is_symlink() or marker.stat().st_size > 64:
+            return None
+        sha = marker.read_text(encoding="ascii").strip()
+    except (OSError, UnicodeError):
+        return None
+    return sha if re.fullmatch(r"[0-9a-f]{40}", sha) else None
+
+
 def local_simulation_status() -> dict[str, object]:
     """Discovery only; files/checksums are validated again on each run."""
     try:
@@ -357,8 +369,10 @@ def ready_public_market_snapshot(
 
 
 def handler_factory(static_dir: Path = STATIC_DIR,
-                    history_loader: Callable[..., object] = load_public_history):
+                    history_loader: Callable[..., object] = load_public_history,
+                    *, release_root: Path = HERE):
     resolved_dir = static_dir.resolve()
+    desktop_sha = installed_desktop_sha(release_root)
 
     class LocalReplayHandler(BaseHTTPRequestHandler):
         server_version = "MachineTimeLocal/1.0"
@@ -392,6 +406,17 @@ def handler_factory(static_dir: Path = STATIC_DIR,
                 self._error(403, "Local viewer only")
                 return
             url = urlsplit(self.path)
+            if url.path == "/local-replay/desktop-version":
+                if (url.query or self.headers.get("Sec-Fetch-Site") == "cross-site"
+                        or self.headers.get("Origin") not in (
+                            None, "", f"http://127.0.0.1:{self.server.server_address[1]}",
+                            f"http://localhost:{self.server.server_address[1]}",
+                        )):
+                    self._error(403, "Same-origin desktop identity only")
+                    return
+                self._send(200, json.dumps({"sha": desktop_sha}).encode("ascii"),
+                           "application/json; charset=utf-8")
+                return
             if url.path == "/local-replay/paper-episode":
                 from research.local_replay_viewer.paper_episode_local_store import load_episode
                 if (self.headers.get("Sec-Fetch-Site") == "cross-site"

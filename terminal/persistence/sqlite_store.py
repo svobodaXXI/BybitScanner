@@ -1217,6 +1217,14 @@ class SQLiteStore:
         ("robot_candidates_active_symbol",
          "robot_candidates(trading_account_id, symbol, approved_at_ms, candidate_id) "
          "WHERE status IN ('APPROVED', 'OPEN')"),
+        # Partial index prevents each protected-book event from parsing all
+        # historical candidates on a symbol. Only anomalous recovery markers
+        # enter this tiny index; exact candidate evidence stays in the main row.
+        ("robot_candidates_emergency_quarantine",
+         "robot_candidates(trading_account_id, symbol) "
+         "WHERE robot_state_json IS NOT NULL AND ("
+         "json_type(robot_state_json, '$.execution.emergency_close_pending') IS NOT NULL "
+         "OR json_type(robot_state_json, '$.execution.emergency_close_intent') IS NOT NULL)"),
     )
 
     @staticmethod
@@ -3942,6 +3950,25 @@ class SQLiteStore:
         ).fetchone()
         return _command_from_row(row) if row is not None else None
 
+    def load_commands_for_symbol_since(
+        self, account: TradingAccountId, symbol: Symbol, since_ms: int,
+    ) -> tuple[CommandRecord, ...]:
+        """Exact PAPER command history for a frozen entry-ownership proof.
+
+        Historical terminal commands count too: the absence of unfinished
+        commands alone does not prove no close was dispatched.
+        """
+        self._assert_owner()
+        if account.value != "paper" or type(since_ms) is not int or since_ms < 0:
+            raise ValueError("invalid PAPER command history scope")
+        rows = self._connection.execute(
+            """SELECT * FROM trading_commands
+               WHERE trading_account_id=? AND symbol=? AND created_at_ms>=?
+               ORDER BY created_at_ms, command_id""",
+            (account.value, symbol.value, since_ms),
+        ).fetchall()
+        return tuple(_command_from_row(row) for row in rows)
+
     def load_unfinished_commands(self) -> tuple[CommandRecord, ...]:
         self._assert_owner()
         final_states = (
@@ -5842,6 +5869,81 @@ class SQLiteStore:
         )
         return tuple(_robot_candidate_state_from_row(row) for row in rows)
 
+    def robot_symbol_quarantine_candidate_ids(
+        self, trading_account_id: TradingAccountId, symbol: Symbol,
+    ) -> tuple[str, ...]:
+        """Prove the durable scope of an unresolved post-fill emergency close.
+
+        A legacy pending marker and a newer persisted dispatch intent both fence
+        the symbol. Terminal history is included: changing candidate status
+        cannot erase an ambiguous close. A completed recovery releases this
+        *derived* quarantine only after its same-call FLAT proof was persisted
+        with terminal INVALIDATED state. Missing or corrupt reads fail closed.
+        This is an entry fence, NOT evidence permitting account-wide admission.
+        """
+        self._assert_owner()
+        rows = self._connection.execute(
+            """SELECT candidate_id, status, robot_state_json FROM robot_candidates
+               WHERE trading_account_id=? AND symbol=? AND robot_state_json IS NOT NULL
+                 AND (
+                    json_type(robot_state_json, '$.execution.emergency_close_pending') IS NOT NULL
+                    OR json_type(robot_state_json, '$.execution.emergency_close_intent') IS NOT NULL
+                 )
+               ORDER BY candidate_id""",
+            (trading_account_id.value, symbol.value),
+        )
+        blocked = []
+        for row in rows:
+            state = json.loads(row["robot_state_json"])
+            execution = state.get("execution") if isinstance(state, dict) else None
+            if not isinstance(execution, dict):
+                raise PersistenceError("Robot emergency close evidence is malformed")
+            pending = execution.get("emergency_close_pending")
+            if pending is not None and type(pending) is not bool:
+                raise PersistenceError("Robot emergency close pending marker is malformed")
+            intent = execution.get("emergency_close_intent")
+            if intent is not None and not isinstance(intent, dict):
+                raise PersistenceError("Robot emergency close intent is malformed")
+            confirmed_closed = (
+                row["status"] == "INVALIDATED"
+                and pending is not True
+                and execution.get("emergency_close_outcome")
+                    == "CLOSED_EMERGENCY_PROTECTION_FAILURE"
+            )
+            if (pending is True or intent is not None) and not confirmed_closed:
+                blocked.append(str(row["candidate_id"]))
+        return tuple(blocked)
+
+    def robot_account_quarantines(
+        self, trading_account_id: TradingAccountId,
+    ) -> dict[str, tuple[str, ...]]:
+        """Inspect every potentially unproven emergency without guessing risk.
+
+        The small partial recovery-marker index excludes normal historical
+        candidates. Delegate proof of terminal disposition to the exact
+        symbol predicate shared with canonical entry admission.
+        """
+        self._assert_owner()
+        rows = self._connection.execute(
+            """SELECT DISTINCT symbol FROM robot_candidates
+               WHERE trading_account_id=? AND robot_state_json IS NOT NULL
+                 AND (
+                    json_type(robot_state_json, '$.execution.emergency_close_pending') IS NOT NULL
+                    OR json_type(robot_state_json, '$.execution.emergency_close_intent') IS NOT NULL
+                 )
+               ORDER BY symbol""",
+            (trading_account_id.value,),
+        )
+        result: dict[str, tuple[str, ...]] = {}
+        for row in rows:
+            symbol = Symbol(str(row["symbol"]))
+            pending = self.robot_symbol_quarantine_candidate_ids(
+                trading_account_id, symbol,
+            )
+            if pending:
+                result[symbol.value] = pending
+        return result
+
     def load_robot_candidates_for_symbol(
         self, trading_account_id: TradingAccountId, symbol: Symbol,
     ) -> tuple[RobotCandidateRecord, ...]:
@@ -6011,6 +6113,9 @@ class SQLiteStore:
         average_entry: Decimal, stop_price: Decimal, take_price: Decimal,
         entry_quantity: Decimal, entry_position_version: int,
         created_at_ms: int,
+        recovery_state: dict[str, object] | None = None,
+        recovery_expected_revision: int | None = None,
+        recovery_closed_take: tuple[int, Decimal, Decimal, Decimal, Decimal] | None = None,
     ) -> tuple[RobotTradeRecord, bool]:
         """entry_quantity/entry_position_version are the owner-frozen D2.3
         ownership attestation (CR-PAPER-PROTECTION-LIFECYCLE-001): the
@@ -6020,6 +6125,37 @@ class SQLiteStore:
         attestation existed may lack them, and D2.3 dispatch fails closed on
         that absence rather than guessing."""
         self._assert_owner()
+        # Legacy protected post-fill recovery is atomic: do not leave an OPEN
+        # trade with a still-pending emergency marker, or vice versa, on crash.
+        recovery = recovery_state is not None or recovery_expected_revision is not None
+        if recovery:
+            if (not isinstance(recovery_state, dict)
+                    or type(recovery_expected_revision) is not int
+                    or recovery_expected_revision < 0):
+                raise ValueError("protected post-fill recovery needs state and CAS revision")
+            execution = recovery_state.get("execution")
+            if (not isinstance(execution, dict)
+                    or "emergency_close_pending" in execution
+                    or "emergency_close_intent" in execution
+                    or not isinstance(execution.get("protected_postfill_recovery"), dict)):
+                raise ValueError("protected post-fill recovery state is not terminalized")
+            recovery_json = _canonical_json(recovery_state)
+        else:
+            recovery_json = None
+        # Exact already-TAKE-closed legacy recovery: trade, final economics
+        # and candidate CLOSED state must commit in the SAME CAS transaction.
+        closed_values = (None, None, None, None, None, None)
+        if recovery_closed_take is not None:
+            if not recovery or len(recovery_closed_take) != 5:
+                raise ValueError("closed TAKE recovery requires atomic CAS state")
+            exit_at, exit_price, gross, net_pct, fees = recovery_closed_take
+            if (type(exit_at) is not int or exit_at < entry_time_ms
+                    or exit_at > created_at_ms or exit_price <= 0 or fees < 0):
+                raise ValueError("invalid recovered TAKE economics")
+            closed_values = (
+                exit_at, _decimal_text(exit_price), "TAKE",
+                _decimal_text(gross), _decimal_text(net_pct), _decimal_text(fees),
+            )
         if not trade_id.strip() or direction not in ROBOT_DIRECTIONS or entry_path not in ROBOT_ENTRY_PATHS:
             raise ValueError("invalid Robot trade identity, direction or entry path")
         if (
@@ -6041,7 +6177,7 @@ class SQLiteStore:
             trade_id, trading_account_id.value, candidate_id, symbol.value, direction, pattern,
             source_timeframe, signal_time_ms, entry_time_ms, entry_path,
             *(_decimal_text(value) for value in decimals),
-            None, None, None, None, None, None, 1, created_at_ms, created_at_ms,
+            *closed_values, 1, created_at_ms, created_at_ms,
             _decimal_text(entry_quantity), entry_position_version,
         )
         with self._transaction():
@@ -6061,6 +6197,14 @@ class SQLiteStore:
                     and record.take_price == take_price
                     and record.entry_quantity == entry_quantity
                     and record.entry_position_version == entry_position_version
+                    and (recovery_closed_take is None or (
+                        record.exit_time_ms, record.exit_price, record.exit_reason,
+                        record.realized_pnl_usdt, record.realized_pnl_pct,
+                        record.fees_costs_usdt,
+                    ) == (
+                        recovery_closed_take[0], recovery_closed_take[1], "TAKE",
+                        *recovery_closed_take[2:],
+                    ))
                 )
                 if not same:
                     raise DuplicateIdentity("Robot trade identity conflicts with durable trade")
@@ -6081,11 +6225,23 @@ class SQLiteStore:
                 self._connection.execute(
                     "INSERT INTO robot_trades VALUES (" + ",".join("?" for _ in values) + ")", values,
                 )
-                cursor = self._connection.execute(
-                    """UPDATE robot_candidates SET status='OPEN', updated_at_ms=?
-                       WHERE candidate_id=? AND status='APPROVED' AND updated_at_ms<=?""",
-                    (created_at_ms, candidate_id, created_at_ms),
-                )
+                if recovery:
+                    status = "CLOSED" if recovery_closed_take is not None else "OPEN"
+                    cursor = self._connection.execute(
+                        """UPDATE robot_candidates
+                           SET status=?, robot_state_json=?,
+                               state_revision=state_revision+1, updated_at_ms=?
+                           WHERE candidate_id=? AND status='APPROVED'
+                             AND state_revision=? AND updated_at_ms<=?""",
+                        (status, recovery_json, created_at_ms, candidate_id,
+                         recovery_expected_revision, created_at_ms),
+                    )
+                else:
+                    cursor = self._connection.execute(
+                        """UPDATE robot_candidates SET status='OPEN', updated_at_ms=?
+                           WHERE candidate_id=? AND status='APPROVED' AND updated_at_ms<=?""",
+                        (created_at_ms, candidate_id, created_at_ms),
+                    )
                 if cursor.rowcount != 1:
                     raise ConcurrentUpdate("Robot candidate changed before trade creation")
             except sqlite3.IntegrityError as exc:

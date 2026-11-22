@@ -3,13 +3,13 @@ from __future__ import annotations
 
 import unittest
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, localcontext
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 from terminal.diary.ticker_finrez import (
     EpisodeFactsNotFound, EpisodeFactsSourceChanged,
-    aggregate_ticker_pnl, period_start_ms, project_paper_closed_episode_facts,
+    aggregate_ticker_pnl, custom_period_bounds_ms, period_start_ms, project_paper_closed_episode_facts,
     project_paper_ticker_pnl,
 )
 from terminal.diary.models import (
@@ -71,6 +71,30 @@ class FinrezRankingTests(unittest.TestCase):
             {"symbol": "ETHUSDT", "pnl_usdt": "-1.2", "trade_count": 1},
         ])
 
+    def test_ticker_sum_matches_exact_episode_values_beyond_decimal_context(self):
+        # Each individual PnL fits 28 significant digits, but their sum does not.
+        # The former ticker total lost a digit and the exact UI check hid the bar.
+        episodes = [
+            _episode("BTCUSDT", "1.000000000000000000000000001", "0", _ms(9, 0)),
+            _episode("BTCUSDT", "1E-28", "0", _ms(9, 1)),
+            _episode("ETHUSDT", "-1.000000000000000000000000001", "0", _ms(9, 0)),
+            _episode("ETHUSDT", "-1E-28", "0", _ms(9, 1)),
+        ]
+        expected = [
+            {"symbol": "BTCUSDT", "pnl_usdt": "1.0000000000000000000000000011", "trade_count": 2},
+            {"symbol": "ETHUSDT", "pnl_usdt": "-1.0000000000000000000000000011", "trade_count": 2},
+        ]
+        with localcontext() as ctx:
+            ctx.prec = 28
+            for period in ("DAY", "WEEK", "MONTH", "YEAR", "ALL"):
+                for ordered in (episodes, list(reversed(episodes))):
+                    _, rows = aggregate_ticker_pnl(ordered, period=period, now_ms=_ms(9, 12))
+                    self.assertEqual(rows, expected)
+            _, rows = aggregate_ticker_pnl(episodes, period="CUSTOM", now_ms=_ms(9, 12),
+                                          window=(_ms(9, 0), _ms(9, 12)))
+            self.assertEqual(rows, expected)
+            self.assertEqual(ctx.prec, 28)
+
     def test_calendar_periods_use_moscow_boundaries(self):
         now = _ms(12, 12)  # Thursday 12 Nov 2026
         self.assertEqual(period_start_ms(period="DAY", now_ms=now), _ms(12, 0))
@@ -129,6 +153,47 @@ def _scoped_episode(
         execution_fees=Decimal("0.1") * len(allocations), allocations=tuple(allocations),
     )
     return episode, origins
+
+
+class CustomFinrezPeriodTests(unittest.TestCase):
+    def test_inclusive_moscow_days_and_now_cap(self):
+        self.assertEqual(custom_period_bounds_ms(
+            date_from="2026-11-09", date_to="2026-11-09", now_ms=_ms(10, 12),
+        ), (_ms(9, 0), _ms(10, 0) - 1))
+        self.assertEqual(custom_period_bounds_ms(
+            date_from="2026-11-09", date_to="2026-11-10", now_ms=_ms(10, 12),
+        ), (_ms(9, 0), _ms(10, 12)))
+        for first, last in (("2026-11-10", "2026-11-09"),
+                            ("2026-11-09", "2026-11-11"),
+                            ("2026-11-31", "2026-11-10"),
+                            ("20261109", "2026-11-10")):
+            with self.assertRaises(ValueError):
+                custom_period_bounds_ms(date_from=first, date_to=last, now_ms=_ms(10, 12))
+
+    def test_range_uses_close_timestamp_for_index_ticker_and_unknown_coverage(self):
+        roles = [(AllocationRole.OPEN, Origin.ROBOT), (AllocationRole.CLOSE, Origin.ROBOT)]
+        prior, prior_origins = _scoped_episode("before", "BTCUSDT", roles,
+            opened_at=_ms(8, 0), closed_at=_ms(9, 0) - 1)
+        first, first_origins = _scoped_episode("first", "BTCUSDT", roles,
+            opened_at=_ms(8, 12), closed_at=_ms(9, 0))
+        last, last_origins = _scoped_episode("last", "BTCUSDT", roles,
+            opened_at=_ms(9, 12), closed_at=_ms(10, 0) - 1)
+        outside, _ = _scoped_episode("outside", "BTCUSDT", roles,
+            opened_at=_ms(9, 12), closed_at=_ms(10, 0))
+        snapshot = PaperSourceSnapshot(7, (prior, first, last, outside),
+            {**prior_origins, **first_origins, **last_origins})
+        report = project_paper_ticker_pnl(snapshot, account_id="paper", owner="ROBOT",
+            period="CUSTOM", date_from="2026-11-09", date_to="2026-11-09", now_ms=_ms(10, 12))
+        self.assertEqual(report["period_start_ms"], _ms(9, 0))
+        self.assertEqual(report["period_end_ms"], _ms(10, 0) - 1)
+        self.assertEqual(report["date_from"], "2026-11-09")
+        self.assertEqual(report["date_to"], "2026-11-09")
+        self.assertEqual(report["as_of_ms"], _ms(10, 12))
+        self.assertEqual(report["tickers"], [
+            {"symbol": "BTCUSDT", "pnl_usdt": "9.6", "trade_count": 2},
+        ])
+        self.assertEqual({r["trade_episode_id"] for r in report["closed_episodes"]}, {"first", "last"})
+        self.assertEqual(report["attribution_coverage"]["status"], "COMPLETE")
 
 
 class FinrezMixedControllerTests(unittest.TestCase):

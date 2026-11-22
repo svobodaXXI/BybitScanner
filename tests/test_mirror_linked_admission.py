@@ -55,7 +55,7 @@ class MirrorLinkedAdmissionTests(unittest.TestCase):
         self.addCleanup(gate.stop)
 
     def add_active_wedge(
-        self, candidate_id="wedge-owner", direction="LONG", pattern="Falling Wedge"
+        self, candidate_id="wedge-owner", direction="LONG", pattern="Rising Wedge"
     ):
         snapshot = cycle.wedge_snapshot()
         snapshot["pattern"] = pattern

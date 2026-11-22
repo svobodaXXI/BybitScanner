@@ -336,3 +336,100 @@ def test_real_fvg_detection_has_prefix_parity():
         assert detect_fvgs(candles[:cut], symbol="DRIFTUSDT", timeframe="1") == tuple(
             gap for gap in full if gap.formed_at_ms <= horizon)
     assert replay(full[0], candles)["phase"] in {PHASE_UNTOUCHED, PHASE_EDGE, PHASE_PARTIAL, PHASE_FULL}
+
+
+def test_owner_mirror_origin_side_direction_and_legacy_frozen_terms_are_fail_closed():
+    """One source-policy contract for new levels and durable Robot handoffs."""
+    from mirror_levels.levels import (
+        mirror_level_allowed, mirror_breakout_allowed, mirror_frozen_entry_allowed,
+    )
+    def line(pattern, side):
+        return line_level(
+            symbol="TESTUSDT", timeframe="1", pattern=pattern, side=side,
+            first=(0, 100.0), second=(M, 101.0), confirmed_at_ms=2 * M,
+        )
+    def flat_source(source, pattern, side):
+        return horizontal_level(
+            symbol="TESTUSDT", timeframe="1", source=source, pattern=pattern,
+            side=side, price=100.0, anchor_time_ms=0, confirmed_at_ms=2 * M,
+        )
+    allowed = (
+        line("Rising Wedge", "lower"),
+        line("Falling Wedge", "upper"),
+        line("Triangle Compression", "lower"),
+        line("Triangle Compression", "upper"),
+        flat_source(SOURCE_PATTERN_BOUNDARY, "L-shape", "upper"),
+        flat_source(SOURCE_PATTERN_BOUNDARY, "L-shape", "lower"),
+        flat_source(SOURCE_SWING_ZONE, None, "upper"),
+        flat_source(SOURCE_SWING_ZONE, None, "lower"),
+    )
+    forbidden = (
+        line("Rising Wedge", "upper"),
+        line("Falling Wedge", "lower"),
+        line("Broadening", "lower"),
+        line("HORN", "upper"),
+        line("unknown", "upper"),
+        flat_source(SOURCE_PATTERN_BOUNDARY, "IKIGAI_BOX", "upper"),
+        flat_source(SOURCE_SWING_ZONE, "Rising Wedge", "lower"),
+        flat_source(SOURCE_PATTERN_BOUNDARY, "Rising Wedge", "lower"),
+    )
+    for level in allowed:
+        direction = "UP" if level.side == "upper" else "DOWN"
+        campaign = "SHORT" if direction == "UP" else "LONG"
+        assert mirror_level_allowed(level), level
+        assert mirror_breakout_allowed(level, {"direction": direction, "campaign_direction": campaign})
+        assert not mirror_breakout_allowed(level, {"direction": "DOWN" if direction == "UP" else "UP",
+                                                    "campaign_direction": campaign})
+        assert not mirror_breakout_allowed(level, {"direction": direction, "campaign_direction": "LONG" if campaign == "SHORT" else "SHORT"})
+        terms = {"level_id": level.level_id, "level_source": level.source,
+                 "level_pattern": level.pattern, "level_side": level.side,
+                 "level_breakout_direction": direction, "direction": campaign}
+        assert mirror_frozen_entry_allowed(terms), level
+        assert not mirror_frozen_entry_allowed({key: value for key, value in terms.items() if key != "level_side"})
+        assert not mirror_frozen_entry_allowed({**terms, "level_breakout_direction": "UNKNOWN"})
+    for level in forbidden:
+        assert not mirror_level_allowed(level), level
+        assert not mirror_breakout_allowed(level, {"direction": "UP", "campaign_direction": "SHORT"})
+    assert not mirror_frozen_entry_allowed({
+        "level_id": "lvl-old", "level_source": SOURCE_PATTERN_BOUNDARY,
+        "level_pattern": "IKIGAI_BOX", "level_side": "upper",
+        "level_breakout_direction": "UP", "direction": "SHORT",
+    })
+    assert not mirror_frozen_entry_allowed(None)
+
+
+def test_robot_direct_wedge_mirror_uses_only_realization_boundary(monkeypatch):
+    """Legacy approved Wedge records cannot expose the opposite ray to Robot."""
+    import mirror_retest_robot as robot
+
+    upper = Boundary("upper-test", 0, 110, 0, 0)
+    lower = Boundary("lower-test", 0, 90, 0, 0)
+    monkeypatch.setattr(robot, "boundaries_from_candidate_snapshot",
+                        lambda **kwargs: (upper, lower))
+    for pattern, side, outward in (
+        ("Rising Wedge", "lower-test", "DOWN"),
+        ("Falling Wedge", "upper-test", "UP"),
+    ):
+        calls = []
+        def replay(policy, ref, symbol, boundary, *, direction, now_ms):
+            calls.append(boundary.boundary_id)
+            return ({"breakout": {"direction": outward, "close_time_ms": M}}, False)
+        monkeypatch.setattr(robot, "_replay_active", replay)
+        candidate = SimpleNamespace(
+            signal_snapshot={"pattern": pattern}, candidate_id="wedge-test", approved_at_ms=0,
+        )
+        active = robot.find_active_campaign(
+            SimpleNamespace(), (candidate,), symbol="TESTUSDT",
+            direction="LONG" if outward == "DOWN" else "SHORT", now_ms=2 * M,
+        )
+        assert calls == [side]
+        assert active is not None and active["boundary"].boundary_id == side
+
+        def wrong(policy, ref, symbol, boundary, *, direction, now_ms):
+            return ({"breakout": {"direction": "UP" if outward == "DOWN" else "DOWN",
+                                  "close_time_ms": M}}, False)
+        monkeypatch.setattr(robot, "_replay_active", wrong)
+        assert robot.find_active_campaign(
+            SimpleNamespace(), (candidate,), symbol="TESTUSDT",
+            direction="LONG" if outward == "DOWN" else "SHORT", now_ms=2 * M,
+        ) is None

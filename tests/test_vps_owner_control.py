@@ -14,6 +14,107 @@ def completed(cmd, code=0, out=""):
 
 
 class OwnerControlTests(unittest.TestCase):
+    def test_update_postcheck_is_read_only_and_fails_closed(self):
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from unittest.mock import patch
+
+        target = "b" * 40
+        identity = "a" * 64
+        data = {
+            "/api/health": {"ok": True, "component": "paper_backend",
+                            "mode": "paper", "build_sha": target,
+                            "paper_live_safe": True, "robot_admission_ready": False,
+                            "database_identity": identity},
+            "/api/scanner/status": {"ok": True, "mode": "SCANNER_STOPPED",
+                                     "worker_quiescent": True},
+            "/api/robot/autopilot": {"ok": True, "mode": "OFF"},
+            "/api/robot/protection-health": {"ok": True, "healthy": True,
+                         "covered_symbols": [], "armed_symbols": [],
+                         "coverage_roles": {}, "unhealthy_symbols": {}},
+            "/health": {"component": "telegram_monitoring",
+                         "status": "ready", "database_identity": identity},
+        }
+
+        def getter(url, timeout):
+            self.assertEqual(timeout, 3)
+            key = "/health" if ":8766" in url else url.split(":8765", 1)[1]
+            return SimpleNamespace(status=200, json=lambda: data[key])
+
+        def check():
+            out = StringIO()
+            with redirect_stdout(out):
+                result = control.verify_update(target)
+            return result, out.getvalue()
+
+        from unittest.mock import Mock
+        from unittest.mock import patch as mock_patch
+        import sys
+        fake = SimpleNamespace(
+            _durable_editor_freeze=Mock(return_value=identity),
+            _paper_start_quiescent=Mock(return_value=True),
+        )
+        with (patch("tools.vps_release_identity.verify_release", return_value=target),
+              patch("tools.runtime_intent.http_get", side_effect=getter),
+              mock_patch.dict(sys.modules, {"tools.paper_maintenance": fake})):
+            self.assertEqual(check()[0], 0)
+            self.assertIn("POSTCHECK=VERIFIED_EDITOR_ONLY", check()[1])
+            data["/api/robot/protection-health"]["covered_symbols"] = ["BTCUSDT"]
+            self.assertEqual(check()[0], 2)
+            data["/api/robot/protection-health"]["covered_symbols"] = []
+            data["/health"]["database_identity"] = "c" * 64
+            self.assertEqual(check()[0], 2)
+        self.assertEqual(control.verify_update("invalid"), 2)
+
+    def test_finished_status_requires_bound_update_postcheck(self):
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from unittest.mock import patch
+        output = ("LoadState=loaded\nActiveState=active\nSubState=exited\n"
+                  "Result=success\nExecMainStatus=0\n"
+                  "Description=BybitScanner update " + SHA[:12] + " origin=win-laptop\n")
+        run = lambda cmd, **kw: completed(cmd, out=output)
+        for proof, expected in ((0, 0), (2, 2)):
+            with patch.object(control, "verify_update", return_value=proof) as check:
+                with redirect_stdout(StringIO()) as reply:
+                    self.assertEqual(control.status(R, run=run, verify_sha=SHA), expected)
+                self.assertIn("STATUS=FINISHED_OK", reply.getvalue())
+                check.assert_called_once_with(SHA)
+        with patch.object(control, "verify_update") as check:
+            self.assertEqual(control.status(R, run=run), 0)
+            check.assert_not_called()
+        # New units use the full SHA while old ones remain read-only queryable.
+        full = output.replace(SHA[:12] + " origin=", SHA + " origin=")
+        with patch.object(control, "verify_update", return_value=0) as check:
+            self.assertEqual(control.status(
+                R, run=lambda cmd, **kw: completed(cmd, out=full),
+                verify_sha=SHA,
+            ), 0)
+            check.assert_called_once_with(SHA)
+        unrelated = output.replace("BybitScanner update", "BybitScanner start")
+        with patch.object(control, "verify_update") as check:
+            with redirect_stdout(StringIO()) as receipt:
+                self.assertEqual(
+                    control.status(R, run=lambda cmd, **kw: completed(cmd, out=unrelated),
+                                   verify_sha=SHA), 2)
+            self.assertIn("POSTCHECK=BLOCKED_REQUEST_TARGET_MISMATCH", receipt.getvalue())
+            check.assert_not_called()
+
+    def test_invalid_update_proof_does_not_skip_durable_checks(self):
+        import sys
+        from unittest.mock import patch, Mock
+        fake = SimpleNamespace(
+            _durable_editor_freeze=Mock(side_effect=ValueError("PAPER_unproven")),
+            _paper_start_quiescent=Mock(return_value=True),
+        )
+        with (patch("tools.vps_release_identity.verify_release", return_value=SHA),
+              patch.dict(sys.modules, {"tools.paper_maintenance": fake}),
+              patch("tools.runtime_intent.http_get") as getter):
+            self.assertEqual(control.verify_update(SHA), 2)
+            fake._durable_editor_freeze.assert_called_once()
+            fake._paper_start_quiescent.assert_not_called()
+            getter.assert_not_called()
+
     def test_submit_detaches_exact_action_without_shell_or_runtime_bypass(self):
         calls = []
 
@@ -31,6 +132,7 @@ class OwnerControlTests(unittest.TestCase):
         self.assertIn("--remain-after-exit", started)
         self.assertIn("--property=Type=oneshot", started)
         self.assertIn("--unit=" + control.unit_name(R), started)
+        self.assertIn("--description=BybitScanner update " + SHA + " origin=win-DESKTOP", started)
         self.assertEqual(started[-5:], ["-m", "tools.paper_maintenance", SHA,
                                          "--action", "update"])
         self.assertNotIn("systemctl stop", " ".join(started))
@@ -54,17 +156,67 @@ class OwnerControlTests(unittest.TestCase):
 
     def test_duplicate_request_never_restarts_release(self):
         calls = []
+        description = f"BybitScanner stop {SHA} origin=vps-console"
 
         def run(cmd, **_kw):
             calls.append(cmd)
-            if "--property=LoadState" in cmd:
-                return completed(cmd, out="LoadState=loaded\n")
+            if "--property=LoadState,Description" in cmd:
+                return completed(cmd, out=f"LoadState=loaded\nDescription={description}\n")
             return completed(cmd, out=(
                 "LoadState=loaded\nActiveState=active\nSubState=exited\n"
-                "Result=success\nExecMainStatus=0\n"))
+                f"Result=success\nExecMainStatus=0\nDescription={description}\n"))
 
         self.assertEqual(control.submit("stop", SHA, R, "vps-console",
                                         run=run, uid=0), 0)
+        self.assertFalse(any(cmd[0] == "systemd-run" for cmd in calls))
+
+    def test_same_uuid_different_action_sha_origin_or_legacy_unit_fails_closed(self):
+        calls = []
+        stored = f"BybitScanner update {SHA} origin=win-pc"
+
+        def run(cmd, **_kw):
+            calls.append(cmd)
+            return completed(cmd, out="LoadState=loaded\nDescription=" + stored + "\n")
+
+        for action, sha, origin in (
+            ("start", SHA, "win-pc"),
+            ("update", "c" * 40, "win-pc"),
+            ("update", SHA, "win-laptop"),
+        ):
+            with self.subTest(action=action, sha=sha, origin=origin):
+                self.assertEqual(
+                    control.submit(action, sha, R, origin, run=run, uid=0), 2,
+                )
+
+        # The old short SHA is not a whole-payload identity. It can still be
+        # examined through read-only status(), but cannot authorize a submit.
+        stored = f"BybitScanner update {SHA[:12]} origin=win-pc"
+        self.assertEqual(control.submit(
+            "update", SHA, R, "win-pc", run=run, uid=0,
+        ), 2)
+        self.assertFalse(any(cmd[0] == "systemd-run" for cmd in calls))
+
+    def test_existing_take_closed_uuid_can_be_queried_after_stage_was_removed(self):
+        from unittest.mock import patch
+        label = f"BybitScanner update-take-closed {SHA} origin=win-pc"
+        calls = []
+
+        def run(cmd, **_kw):
+            calls.append(cmd)
+            if "--property=LoadState,Description" in cmd:
+                return completed(cmd, out=f"LoadState=loaded\nDescription={label}\n")
+            return completed(cmd, out=(
+                "LoadState=loaded\nActiveState=activating\nSubState=start\n"
+                f"Result=success\nExecMainStatus=0\nDescription={label}\n"
+            ))
+
+        # Reading an existing detached request is independent of its staging
+        # checkout; the status remains RUNNING and nothing can be re-submitted.
+        with patch.object(control, "_verified_take_closed_stage") as stage:
+            self.assertEqual(control.submit(
+                "update-take-closed", SHA, R, "win-pc", run=run, uid=0,
+            ), 3)
+            stage.assert_not_called()
         self.assertFalse(any(cmd[0] == "systemd-run" for cmd in calls))
 
     def test_unknown_submission_is_never_automatically_replayed(self):
@@ -139,3 +291,112 @@ class OwnerControlTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_take_closed_update_is_one_detached_pinned_stage_owner_request(monkeypatch):
+    from pathlib import Path
+    target_stage = Path("/var/lib/bybitscanner-stage-git-" + SHA)
+    monkeypatch.setattr(control, "_verified_take_closed_stage", lambda sha: target_stage)
+    calls = []
+    def run(cmd, **_kwargs):
+        calls.append(cmd)
+        if cmd[0] == "systemctl":
+            return completed(cmd, out="LoadState=not-found\n")
+        return completed(cmd, out="Running as unit")
+    assert control.submit("update-take-closed", SHA, R, "win-PC", run=run, uid=0) == 0
+    assert len(calls) == 2
+    unit = calls[1]
+    assert unit[0] == "systemd-run"
+    assert "--remain-after-exit" in unit
+    assert "--working-directory=" + str(target_stage) in unit
+    assert unit[-5:] == ["-m", "tools.paper_maintenance", SHA,
+                         "--action", "update-take-closed"]
+    assert all("PAPER_AUTO" not in str(s) for s in unit)
+
+
+def test_take_closed_update_refuses_unverified_old_installed_source(monkeypatch):
+    from pathlib import Path
+    import pytest
+    monkeypatch.setattr(control, "__file__", "/opt/BybitScanner/tools/vps_owner_control.py")
+    calls = []
+    def read_only_probe(cmd, **kwargs):
+        calls.append(cmd)
+        assert cmd[0] == "systemctl"  # UUID status is safe even on old source.
+        return completed(cmd, out="LoadState=not-found\nDescription=\n")
+    with pytest.raises(ValueError, match="verified_target_stage"):
+        control.submit("update-take-closed", SHA, R, "win-PC",
+                       run=read_only_probe, uid=0)
+    assert len(calls) == 1  # Never submit a new stage from an old checkout.
+
+
+def test_finished_take_closed_update_requires_same_exact_postcheck():
+    from unittest.mock import patch
+    output = ("LoadState=loaded\nActiveState=active\nSubState=exited\n"
+              "Result=success\nExecMainStatus=0\n"
+              "Description=BybitScanner update-take-closed " + SHA[:12]
+              + " origin=win-PC\n")
+    run = lambda cmd, **kw: completed(cmd, out=output)
+    with patch.object(control, "verify_update", return_value=2) as checker:
+        assert control.status(R, run=run, verify_sha=SHA) == 2
+        checker.assert_called_once_with(SHA)
+
+
+
+def test_owner_github_status_enable_is_one_pinned_detached_request(monkeypatch):
+    from tools import vps_release_identity as identity
+    monkeypatch.setattr(identity, "verify_release", lambda root: SHA)
+    calls = []
+    def run(cmd, **kwargs):
+        calls.append(cmd)
+        return completed(cmd, out="LoadState=not-found\n" if cmd[0] == "systemctl" else "")
+    assert control.submit("github-status-enable", "installed", R,
+                          "win-laptop", run=run, uid=0) == 0
+    assert len(calls) == 2
+    assert calls[1][0] == "systemd-run"
+    assert calls[1][-3:] == [SHA, "--action", "github-status-enable"]
+    assert "--description=BybitScanner github-status-enable " + SHA + " origin=win-laptop" in calls[1]
+
+
+def test_diagnostic_owner_outcome_exact_identity_and_canonical_postcheck(monkeypatch):
+    calls, proofs = [], []
+    active, sub, result, code = "active", "exited", "success", "0"
+    description = f"BybitScanner update {SHA} origin=PRIVATE-DESKTOP"
+
+    def run(cmd, **kwargs):
+        calls.append(cmd)
+        assert cmd[:2] == ["systemctl", "show"]
+        assert cmd[-1] == control.unit_name(R)
+        return completed(cmd, out=(
+            f"LoadState=loaded\nActiveState={active}\nSubState={sub}\n"
+            f"Result={result}\nExecMainStatus={code}\nDescription={description}\n"))
+
+    def proof(target):
+        proofs.append(target)
+        print("POSTCHECK=VERIFIED_EDITOR_ONLY")
+        print("PRIVATE_DATABASE_IDENTITY")
+        return 0
+
+    monkeypatch.setattr(control, "verify_update", proof)
+    read = lambda: control.read_diagnostic_outcome(R, "update", SHA, run=run)
+    value = read()
+    assert value == dict(owner_request_id=R, owner_action="update", target_sha=SHA,
+                         state="FINISHED_OK", result="success", exit_code=0,
+                         postcheck="VERIFIED_EDITOR_ONLY")
+    assert proofs == [SHA] and len(calls) == 1
+    for wrong in (f"BybitScanner update {SHA[:12]} origin=win-pc",
+                  f"BybitScanner stop {SHA} origin=win-pc",
+                  f"BybitScanner update {'c'*40} origin=win-pc"):
+        description = wrong
+        assert read()["state"] == "UNPROVEN"
+    description = f"BybitScanner update {SHA} origin=win-pc"
+    active, sub, result, code = "failed", "failed", "exit-code", "2"
+    value = read()
+    assert (value["state"], value["exit_code"], value["postcheck"]) == ("FAILED", 2, "NOT_RUN")
+    active, sub, result, code = "activating", "start", "success", "0"
+    assert read()["state"] == "RUNNING"
+    assert read()["exit_code"] is None
+    assert proofs == [SHA]
+    active, sub, result, code = "active", "exited", "success", "0"
+    monkeypatch.setattr(control, "verify_update", lambda _: 0)
+    assert read()["postcheck"] == "BLOCKED"
+    assert all(cmd[0] == "systemctl" and cmd[1] == "show" for cmd in calls)

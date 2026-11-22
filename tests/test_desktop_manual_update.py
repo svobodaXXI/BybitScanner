@@ -31,7 +31,7 @@ def opener(request, timeout=0):
     metadata = {
         updates.API + "/branches/" + updates.BRANCH: {"commit": {"sha": SHA}},
         updates.API + "/git/ref/tags/" + tag: {"object": {"type": "commit", "sha": SHA}},
-        updates.API + "/compare/" + SHA + "..." + SHA: {
+        updates.API + "/compare/" + SHA + "..." + SHA + updates.COMPARE_SUMMARY_PAGE: {
             "status": "identical", "behind_by": 0, "ahead_by": 0,
         },
         updates.API + "/releases?per_page=30": [{
@@ -225,7 +225,7 @@ def test_later_unrelated_stable_commits_do_not_invalidate_desktop_release():
         url = request.full_url
         if url == updates.API + "/branches/" + updates.BRANCH:
             return Reply(json.dumps({"commit": {"sha": newer}}).encode())
-        if url == updates.API + "/compare/" + SHA + "..." + newer:
+        if url == updates.API + "/compare/" + SHA + "..." + newer + updates.COMPARE_SUMMARY_PAGE:
             return Reply(json.dumps({"status": "ahead", "behind_by": 0, "ahead_by": 1}).encode())
         return opener(request, timeout=timeout)
 
@@ -239,7 +239,7 @@ def test_divergent_releases_fail_closed():
         url = request.full_url
         if url == updates.API + "/branches/" + updates.BRANCH:
             return Reply(json.dumps({"commit": {"sha": newer}}).encode())
-        if url == updates.API + "/compare/" + SHA + "..." + newer:
+        if url == updates.API + "/compare/" + SHA + "..." + newer + updates.COMPARE_SUMMARY_PAGE:
             return Reply(json.dumps({"status": "diverged", "behind_by": 1,
                                      "ahead_by": 1}).encode())
         return opener(request, timeout=timeout)
@@ -249,10 +249,33 @@ def test_divergent_releases_fail_closed():
 
 
 
+
+def test_large_historical_compare_uses_summary_page_without_files():
+    """A large Compare response must never block an otherwise valid update."""
+    old = "0" * 40
+    expected = (updates.API + "/compare/" + old + "..." + SHA
+                + updates.COMPARE_SUMMARY_PAGE)
+    requested = []
+
+    def comparison(request, timeout=0):
+        url = request.full_url
+        requested.append(url)
+        if url != expected:
+            # GitHub's normal first Compare page may exceed the 256 KB limit.
+            return Reply(b"x" * 256_001)
+        return Reply(json.dumps({
+            "status": "ahead", "ahead_by": 400, "behind_by": 0,
+            "total_commits": 400,
+        }).encode())
+
+    updates.require_forward_update(old, SHA, opener=comparison)
+    assert requested == [expected]
+
+
 def test_known_installed_version_cannot_downgrade():
     old = "b" * 40
     def compare(request, timeout=0):
-        if request.full_url == updates.API + "/compare/" + old + "..." + SHA:
+        if request.full_url == updates.API + "/compare/" + old + "..." + SHA + updates.COMPARE_SUMMARY_PAGE:
             return Reply(json.dumps({"status": "behind", "behind_by": 1,
                                      "ahead_by": 0}).encode())
         return opener(request, timeout=timeout)
@@ -263,8 +286,55 @@ def test_known_installed_version_cannot_downgrade():
 def test_known_installed_version_can_advance():
     old = "0" * 40
     def compare(request, timeout=0):
-        if request.full_url == updates.API + "/compare/" + old + "..." + SHA:
+        if request.full_url == updates.API + "/compare/" + old + "..." + SHA + updates.COMPARE_SUMMARY_PAGE:
             return Reply(json.dumps({"status": "ahead", "behind_by": 0,
                                      "ahead_by": 5}).encode())
         return opener(request, timeout=timeout)
     updates.require_forward_update(old, SHA, opener=compare)
+
+def test_desktop_publication_owner_request_is_exact_and_one_shot():
+    workflow = (Path(__file__).resolve().parents[1] / ".github" / "workflows"
+                / "desktop-release-packages.yml").read_text(encoding="utf-8")
+    assert "  workflow_dispatch:\n  push:" in workflow
+    assert "- 'desktop-publish/*'" in workflow
+    assert "- '.github/desktop-publish-request.txt'" in workflow
+    assert "github.actor == 'svobodaXXI'" in workflow
+    assert "DESKTOP_REQUEST_SHA_MISMATCH" in workflow
+    assert "DESKTOP_REQUEST_UNEXPECTED_CHANGES" in workflow
+    assert "DESKTOP_REQUEST_CONTENT_MISMATCH" in workflow
+    assert "STABLE_MOVED_BEFORE_PUBLISH" in workflow
+    assert "DESKTOP_TAG_ALREADY_EXISTS" in workflow
+    assert workflow.count("gh release create") == 1
+
+
+def test_desktop_release_publication_uses_scoped_app_workflows_permission():
+    """An exact stable workflow-delta release requires workflows:write.
+
+    The ordinary GITHUB_TOKEN stays read-only for validation; only the
+    release creation step receives the short-lived repository-scoped token.
+    """
+    workflow = (Path(__file__).resolve().parents[1] / ".github" / "workflows"
+                / "desktop-release-packages.yml").read_text(encoding="utf-8")
+    assert "DESKTOP_RELEASE_APP_NOT_CONFIGURED" in workflow
+    gate = workflow.index("Verify repository-scoped release identity is configured")
+    build = workflow.index("Build local replay static UI")
+    smoke = workflow.index("Smoke-test packaged Manager Python DLL")
+    token_step = workflow.index("Mint short-lived repository-scoped release token")
+    release = workflow.index("Publish owner-approved desktop release")
+    assert gate < build < smoke < token_step < release
+
+    scoped = workflow[token_step:release]
+    assert "uses: actions/create-github-app-token@v3" in scoped
+    assert "client-id: ${{ vars.DESKTOP_RELEASE_APP_CLIENT_ID }}" in scoped
+    assert "private-key: ${{ secrets.DESKTOP_RELEASE_APP_PRIVATE_KEY }}" in scoped
+    assert "permission-contents: write" in scoped
+    assert "permission-workflows: write" in scoped
+    assert not any(line.strip().startswith(("owner:", "repositories:"))
+                   for line in scoped.splitlines())
+
+    publication = workflow[release:]
+    assert "GH_TOKEN: ${{ steps.desktop_release_token.outputs.token }}" in publication
+    assert "GH_TOKEN: ${{ github.token }}" not in publication
+    assert publication.count("gh release create") == 1
+    assert "--target $env:DESKTOP_SHA" in publication
+    assert "STABLE_MOVED_BEFORE_PUBLISH" in publication

@@ -29,6 +29,10 @@ class LifecycleState:
     initialized_at_ms: int
     opened: list[str] = field(default_factory=list)
     closed: list[str] = field(default_factory=list)
+    retry_after_ms: int = 0
+    # Inclusive lower bounds for the compact exact-ID caches; monotone.
+    opened_floor: tuple[int, str] | None = None
+    closed_floor: tuple[int, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -48,10 +52,23 @@ def save_lifecycle_state(path: Path, state: LifecycleState) -> None:
             "initialized_at_ms": state.initialized_at_ms,
             "opened": state.opened,
             "closed": state.closed,
+            "retry_after_ms": state.retry_after_ms,
+            "opened_floor": list(state.opened_floor) if state.opened_floor else None,
+            "closed_floor": list(state.closed_floor) if state.closed_floor else None,
         }),
         encoding="utf-8",
     )
     os.replace(temporary, path)
+
+
+def _read_floor(value) -> tuple[int, str] | None:
+    if value is None:
+        return None  # Backward-compatible with legacy dedup JSON.
+    if (not isinstance(value, list) or len(value) != 2
+            or type(value[0]) is not int or value[0] < 0
+            or not isinstance(value[1], str) or not value[1]):
+        raise ValueError("invalid lifecycle watermark")
+    return value[0], value[1]
 
 
 def load_lifecycle_state(path: Path, now_ms: int) -> LifecycleState:
@@ -63,6 +80,9 @@ def load_lifecycle_state(path: Path, now_ms: int) -> LifecycleState:
             initialized_at_ms=int(raw["initialized_at_ms"]),
             opened=[str(item) for item in raw.get("opened", [])],
             closed=[str(item) for item in raw.get("closed", [])],
+            retry_after_ms=max(0, int(raw.get("retry_after_ms", 0))),
+            opened_floor=_read_floor(raw.get("opened_floor")),
+            closed_floor=_read_floor(raw.get("closed_floor")),
         )
     except FileNotFoundError:
         pass
@@ -85,20 +105,57 @@ def collect_new_lifecycle_events(store, state: LifecycleState) -> list[Lifecycle
     """Events not yet posted, oldest first; a trade's "opened" precedes its "closed"."""
 
     since = state.initialized_at_ms
+    trades = store.load_robot_trades_with_events_since(PAPER_ACCOUNT_ID, since)
+    # The 200 stored IDs are the latest successful sends in source-time
+    # order. When older IDs are evicted, suppress everything before the
+    # oldest still-retained exact successful event, not the entire history.
+    # This is a one-way durable watermark: late records never rewind it.
+    by_id = {trade.trade_id: trade for trade in trades}
+    for sent, time_field, floor_field in (
+        (state.opened, "entry_time_ms", "opened_floor"),
+        (state.closed, "exit_time_ms", "closed_floor"),
+    ):
+        if len(sent) < REMEMBERED_TRADE_IDS:
+            continue
+        known = []
+        for trade_id in sent:
+            trade = by_id.get(trade_id)
+            ms = getattr(trade, time_field, None)
+            if type(ms) is not int or ms < since:
+                # An uncertain boundary cannot authorize replay of old posts.
+                raise ValueError("lifecycle watermark cannot be verified")
+            known.append((ms, trade_id))
+        candidate = min(known)
+        if known != sorted(known):
+            # Legacy 200-ID rollover could replay evicted CLOSED posts and
+            # append older IDs after newer ones. A minimum-based floor then
+            # traps that rotating cache in another replay cycle. Fence the
+            # highest *confirmed sent* event instead; only strictly newer
+            # events remain eligible. This also repairs an already persisted
+            # too-low floor without replaying the legacy backlog.
+            candidate = max(known)
+        prior = getattr(state, floor_field)
+        if prior is None or candidate > prior:
+            setattr(state, floor_field, candidate)
+
     events = []
-    for trade in store.load_robot_trades_with_events_since(PAPER_ACCOUNT_ID, since):
+    for trade in trades:
         symbol = trade.symbol.value
         # An OPENED event is only meaningful while the trade is still open.
         # A trade that entered and exited between polls needs only its CLOSED
         # notification; otherwise a closed snapshot appears under "Сделка открыта".
         if (trade.exit_time_ms is None
                 and trade.entry_time_ms >= since
-                and trade.trade_id not in state.opened):
+                and trade.trade_id not in state.opened
+                and (state.opened_floor is None
+                     or (trade.entry_time_ms, trade.trade_id) >= state.opened_floor)):
             events.append(LifecycleEvent(EVENT_OPENED, trade.trade_id, symbol, trade.entry_time_ms))
         if (
             trade.exit_time_ms is not None
             and trade.exit_time_ms >= since
             and trade.trade_id not in state.closed
+            and (state.closed_floor is None
+                 or (trade.exit_time_ms, trade.trade_id) >= state.closed_floor)
         ):
             events.append(LifecycleEvent(
                 EVENT_CLOSED, trade.trade_id, symbol, trade.exit_time_ms, trade.exit_reason,

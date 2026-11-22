@@ -34,6 +34,7 @@ import config
 import metascalp_bridge
 import signal_archive
 import telegram_bot
+from telegram_gateway_client import TelegramGatewayError
 import telegram_runtime_intent
 from telegram_labels import SCANNER_EMOJI, ROBOT_EMOJI
 from tools import stop_robot_runtime
@@ -63,6 +64,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 OFFSET_FILE = PROJECT_ROOT / "review_queue" / ".telegram_offset"
 LIFECYCLE_STATE_FILE = PROJECT_ROOT / "review_queue" / ".robot_lifecycle_notified"
 LIFECYCLE_POLL_SECONDS = 10
+LIFECYCLE_RETRY_COOLDOWN_MS = 300_000  # Durable five-minute backoff.
 _CHART_LOCK = threading.Lock()
 PAPER_ACCOUNT_ID = TradingAccountId("paper")
 DB_PATH = Path(os.environ.get("BYBITSCANNER_PAPER_DB", "paper_runtime.sqlite3"))
@@ -402,8 +404,13 @@ def _send_chart_card(chat_id, view, candles, caption, reply_markup, *, require_c
             if _delivered(response):
                 return True
             raise RuntimeError(f"sendPhoto failed: {response}")
+        except TelegramGatewayError:
+            # An unknown delivery or rejection is not grounds for a second
+            # immediate text send. The lifecycle cooldown owns retries.
+            print("[POSITION CARD PHOTO GATEWAY ERROR]")
+            return False
         except Exception as exc:
-            print("[POSITION CARD PHOTO ERROR]", view.symbol, exc)
+            print("[POSITION CARD PHOTO ERROR]", view.symbol, type(exc).__name__)
     if require_chart:
         return False
     return _delivered(_send_text(chat_id, caption, reply_markup=reply_markup))
@@ -425,12 +432,18 @@ def poll_lifecycle_once(now_ms: int | None = None) -> None:
         return
     now_ms = int(time.time() * 1000) if now_ms is None else now_ms
     state = load_lifecycle_state(LIFECYCLE_STATE_FILE, now_ms)
+    if now_ms < state.retry_after_ms:
+        return  # Durable suppression after restart; no replay during cooldown.
+    before_floors = (state.opened_floor, state.closed_floor)
     with _robot_store() as store:
         events = collect_new_lifecycle_events(store, state)
         pending = [
             (event, load_position_view(store, event.symbol, trade_id=event.trade_id))
             for event in events
         ]
+    if before_floors != (state.opened_floor, state.closed_floor):
+        # Persist the validated cursor before any further notifications.
+        save_lifecycle_state(LIFECYCLE_STATE_FILE, state)
     blocked = set()
     for event, view in pending:
         # The trade may close between event selection and this read. Never
@@ -450,9 +463,11 @@ def poll_lifecycle_once(now_ms: int | None = None) -> None:
             print("[LIFECYCLE SEND ERROR]", event.kind, event.trade_id, exc)
             sent = False
         if not sent:
-            print("[LIFECYCLE] not delivered, will retry:", event.kind, event.trade_id)
-            blocked.add(event.trade_id)
-            continue
+            state.retry_after_ms = now_ms + LIFECYCLE_RETRY_COOLDOWN_MS
+            save_lifecycle_state(LIFECYCLE_STATE_FILE, state)
+            print("[LIFECYCLE] delivery deferred; cooldown_seconds=300")
+            return  # Stop the batch on first failure; preserve pending IDs.
+        state.retry_after_ms = 0
         mark_notified(state, event)
         save_lifecycle_state(LIFECYCLE_STATE_FILE, state)
         print("[LIFECYCLE]", event.kind, event.symbol, event.trade_id)
@@ -768,6 +783,37 @@ def _signal_archive_ids(record: RobotCandidateRecord) -> list[str]:
     return ids
 
 
+def _load_archived_candidate_source(record: RobotCandidateRecord) -> dict | None:
+    """Exact candidate archive first, then the Scanner's same-formation origin.
+
+    A Scanner writes origin:<symbol>:<timeframe>:<formation_id> alongside
+    source-original.  Older/partially archived candidates may lack their own
+    copy.  Never search by ticker alone or accept another pattern's origin.
+    """
+    original = signal_archive.load_original_signal(_signal_archive_ids(record))
+    if original is not None:
+        return original
+    snapshot = record.signal_snapshot
+    formation_id = snapshot.get("scanner_formation_id")
+    timeframe = snapshot.get("timeframe")
+    pattern = snapshot.get("pattern")
+    if (not isinstance(formation_id, str) or not formation_id
+            or len(formation_id) > 256
+            or not isinstance(pattern, str) or not pattern
+            or str(snapshot.get("symbol", "")) != record.symbol.value
+            or str(timeframe or "") not in {"1", "5"}):
+        return None
+    origin_id = f"origin:{record.symbol.value}:{timeframe}:{formation_id}"
+    original = signal_archive.load_original_signal([origin_id])
+    if (original is None
+            or original.get("candidate_id") != origin_id
+            or original.get("symbol") != record.symbol.value
+            or str(original.get("timeframe")) != str(timeframe)
+            or original.get("pattern") != pattern):
+        return None
+    return original
+
+
 def _format_signal_time(ms) -> str:
     return datetime.fromtimestamp(int(ms) / 1000, timezone.utc).strftime("%d.%m.%Y %H:%M:%S UTC")
 
@@ -791,10 +837,11 @@ def _repost_editor_source_id(original: Mapping) -> str | None:
     """Prefer the original immutable Editor history, never a ticker match.
 
     The live Scanner card and the later Robot candidate repost have different
-    archive IDs. Only direct Scanner-recorded lineage with matching original
-    image, text, pattern and symbol may point a duplicate at the same Editor
-    geometry/review. Pre-lineage candidate archives can still use their own
-    validated frozen geometry. If neither exists, keep the archived ID so the
+    archive IDs. Direct Scanner-recorded lineage, or a unique integrity-checked
+    legacy frozen source with identical image/text/pattern and near send time,
+    may point to the original Editor history. Pre-lineage candidate archives
+    with their own validated frozen geometry retain their own identity.
+    If neither exists, keep the archived ID so the
     Editor reports missing evidence instead of silently opening live candles.
     """
     own_id = str(original.get("candidate_id") or "").strip() or None
@@ -817,6 +864,14 @@ def _repost_editor_source_id(original: Mapping) -> str | None:
                     and frozen.get("symbol") == original.get("symbol")
                     and str(frozen.get("timeframe")) == str(original.get("timeframe"))):
                 return source_id
+    # Pre-lineage archives can be unlinked despite containing an intact
+    # source-original from the same immutable Telegram signal. Search only
+    # when no lineage was recorded and this record lacks its own frozen rays.
+    if (not linked and own_id and not own_id.startswith("source-original:")
+            and signal_archive.load_frozen_signal_geometry(own_id) is None):
+        unique = signal_archive.find_unique_legacy_frozen_source_id(original)
+        if unique is not None:
+            return unique
     if own_id:
         return own_id
     return None
@@ -870,7 +925,7 @@ def _send_source_signal_card(chat_id, token: str) -> None:
         _send_text(chat_id, "Исходный сигнал не найден или ссылка неоднозначна.")
         return
     symbol = record.symbol.value
-    original = signal_archive.load_original_signal(_signal_archive_ids(record))
+    original = _load_archived_candidate_source(record)
     if original is not None:
         if _repost_original_signal(chat_id, original):
             return

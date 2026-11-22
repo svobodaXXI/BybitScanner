@@ -298,18 +298,29 @@ def attach_auxiliary_reversal(
         direction = AUXILIARY_HOST_DIRECTIONS.get(pattern)
     source_id = evidence.get("source_id")
     confirmed_at, expires_at = evidence.get("confirmed_at_ms"), evidence.get("expires_at_ms")
+    # Re-read evidence as untrusted context. An impossible TOP/LONG or
+    # BOTTOM/SHORT pair and a forged long expiry must never be attached to
+    # another pattern's immutable trading snapshot.
+    expected_reversal_direction = {
+        "Double Top": "SHORT", "Double Bottom": "LONG",
+    }.get(evidence.get("pattern"))
+    source_tf = str(evidence.get("source_timeframe"))
     if (pattern not in ("IKIGAI_BOX", "L-shape", "MIRROR", *AUXILIARY_HOST_DIRECTIONS)
             or evidence.get("version") != AUXILIARY_REVERSAL_VERSION
             or evidence.get("kind") != "DOUBLE_REVERSAL_AUXILIARY"
-            or evidence.get("pattern") not in ("Double Top", "Double Bottom")
-            or direction != evidence.get("direction")
+            or expected_reversal_direction is None
+            or direction != expected_reversal_direction
+            or evidence.get("direction") != expected_reversal_direction
             or host_symbol != evidence.get("symbol")
-            or str(host_tf) != str(evidence.get("source_timeframe"))
+            or source_tf not in {"1", "5"}
+            or str(host_tf) != source_tf
             or not isinstance(source_id, str)
             or len(source_id) != len("double-reversal:") + 64
             or not source_id.startswith("double-reversal:")
             or any(c not in "0123456789abcdef" for c in source_id[16:])
             or type(confirmed_at) is not int or type(expires_at) is not int
+            or confirmed_at % (int(source_tf) * 60_000)
+            or expires_at != confirmed_at + AUXILIARY_MAX_AGE_BARS * int(source_tf) * 60_000
             or not (0 < confirmed_at <= now_ms < expires_at)):
         return result
     result["auxiliary_reversal"] = dict(evidence)

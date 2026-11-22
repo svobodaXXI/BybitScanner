@@ -21,10 +21,11 @@ from terminal.persistence.sqlite_store import SQLiteStore
 class RobotAdmissionGateTests(unittest.TestCase):
     def _make_candidate(
         self, directory: Path, candidate_id: str = "candidate-1", pattern: str = "Falling Wedge",
+        symbol: str = "ONGUSDT",
     ):
         return create_signal_snapshot(
             {
-                "symbol": "ONGUSDT",
+                "symbol": symbol,
                 "pattern": pattern,
                 "geometry": {
                     "current_index": 10,
@@ -56,6 +57,93 @@ class RobotAdmissionGateTests(unittest.TestCase):
             )
         finally:
             store.close()
+
+    def test_terminal_emergency_quarantine_is_durable_and_symbol_scoped(self):
+        """An INVALIDATED label alone cannot erase a still-unknown close."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            candidates = root / "candidates"
+            db_path = root / "paper.sqlite3"
+            self._ready_database(db_path)
+            self._make_candidate(candidates, "new-ong")
+            self._make_candidate(candidates, "peer-sol", symbol="SOLUSDT")
+            account = TradingAccountId("paper")
+            store = SQLiteStore.open(db_path)
+            try:
+                old, _ = store.create_robot_candidate(
+                    candidate_id="old-unknown", trading_account_id=account,
+                    symbol=Symbol("ONGUSDT"), status="APPROVED",
+                    signal_snapshot={"symbol": "ONGUSDT", "pattern": "Falling Wedge",
+                                     "source": "old"},
+                    approved_at_ms=1000, updated_at_ms=1000,
+                )
+                store.save_robot_candidate_state(
+                    old.candidate_id, status="INVALIDATED",
+                    robot_state={"phase": "RETEST_DETECTED", "execution": {
+                        "emergency_close_pending": True,
+                        "emergency_close_intent": {"candidate_id": old.candidate_id},
+                    }},
+                    expected_revision=0, updated_at_ms=1001,
+                )
+                self.assertEqual(
+                    store.robot_symbol_quarantine_candidate_ids(
+                        account, Symbol("ONGUSDT"),
+                    ), ("old-unknown",),
+                )
+                self.assertEqual(
+                    store.robot_symbol_quarantine_candidate_ids(
+                        account, Symbol("SOLUSDT"),
+                    ), (),
+                )
+            finally:
+                store.close()
+
+            with self.assertRaisesRegex(RobotAdmissionRejected, "symbol quarantined"):
+                admit_robot_candidate(
+                    "new-ong", database_path=db_path, store_dir=candidates,
+                    clock_ms=lambda: 2000,
+                )
+            peer, created = admit_robot_candidate(
+                "peer-sol", database_path=db_path, store_dir=candidates,
+                clock_ms=lambda: 2001,
+            )
+            self.assertTrue(created)
+            self.assertEqual(peer.symbol, Symbol("SOLUSDT"))
+            store = SQLiteStore.open(db_path)
+            try:
+                self.assertIsNone(store.get_robot_candidate("new-ong"))
+                self.assertEqual(store.get_robot_candidate("old-unknown").status, "INVALIDATED")
+            finally:
+                store.close()
+
+    def test_terminal_proven_emergency_close_does_not_permanently_quarantine_symbol(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._ready_database(root / "paper.sqlite3")
+            store = SQLiteStore.open(root / "paper.sqlite3")
+            try:
+                account = TradingAccountId("paper")
+                record, _ = store.create_robot_candidate(
+                    candidate_id="proven-closed", trading_account_id=account,
+                    symbol=Symbol("ONGUSDT"), status="APPROVED",
+                    signal_snapshot={"symbol": "ONGUSDT", "pattern": "Falling Wedge"},
+                    approved_at_ms=1000, updated_at_ms=1000,
+                )
+                store.save_robot_candidate_state(
+                    record.candidate_id, status="INVALIDATED",
+                    robot_state={"execution": {
+                        "emergency_close_intent": {"candidate_id": record.candidate_id},
+                        "emergency_close_outcome": "CLOSED_EMERGENCY_PROTECTION_FAILURE",
+                    }},
+                    expected_revision=0, updated_at_ms=1001,
+                )
+                self.assertEqual(
+                    store.robot_symbol_quarantine_candidate_ids(
+                        account, Symbol("ONGUSDT"),
+                    ), (),
+                )
+            finally:
+                store.close()
 
     def test_stopped_runtime_rejects_without_legacy_approval_or_sqlite_admission(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -743,6 +831,29 @@ class BoxPlanOwnerAdmissionTests(unittest.TestCase):
         self.assertFalse(changed_again)
         self.assertEqual(second.candidate_id, first.candidate_id)
         self.assertEqual(len(self._rows()), 2)
+
+    def test_quarantined_symbol_blocks_new_box_handoff(self):
+        self._set_runtime("ROBOT_RUNNING", "READY")
+        account = TradingAccountId("paper")
+        store = SQLiteStore.open(self.db)
+        try:
+            old, _ = store.create_robot_candidate(
+                candidate_id="box-old-unknown", trading_account_id=account,
+                symbol=self.source.symbol, status="APPROVED",
+                signal_snapshot={"symbol": self.source.symbol.value,
+                                 "pattern": "Falling Wedge", "source": "old"},
+                approved_at_ms=3002, updated_at_ms=3002,
+            )
+            store.save_robot_candidate_state(
+                old.candidate_id, status="INVALIDATED",
+                robot_state={"execution": {"emergency_close_pending": True}},
+                expected_revision=0, updated_at_ms=3003,
+            )
+        finally:
+            store.close()
+        with self.assertRaisesRegex(RobotAdmissionRejected, "symbol quarantined"):
+            self._admit()
+        self.assertEqual(self._rows()[self.source.candidate_id].status, "BOX_PLAN_ONLY")
 
     def test_not_ready_robot_fails_closed_and_leaves_source_immutable(self):
         for mode, status in (

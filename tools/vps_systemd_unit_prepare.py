@@ -1,12 +1,15 @@
 """Prepare installed PAPER systemd units before an already authorized start.
 
 Only daemon-reload and conditionally reset an already-loaded failed unit.
-Never starts/stops services, installs files, handles SQL, or touches LIVE.
+Never starts/stops services, installs release files, handles SQL, or touches LIVE.
+The CLI also offers bounded continuation of a previously enabled diagnostic
+pin after a proven owner UPDATE; failure never grants or blocks PAPER authority.
 Call only after the exact approved release is installed and PAPER units are
 stopped. An independent MAIN service may remain active during PAPER start.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 
@@ -63,10 +66,30 @@ def prepare_units(*, run=subprocess.run) -> str:
     return "READY: PAPER systemd units loaded; failed state cleared where required; no start performed"
 
 
+def _continue_diagnostic_pin(*, run=subprocess.run, configured=None) -> str:
+    if configured is None:
+        configured = os.path.lexists("/etc/bybitscanner/github-diagnostic")
+    if not configured:
+        return "SKIPPED_UNCONFIGURED"
+    try:
+        result = run([sys.executable, "-m", "tools.github_diagnostic_runtime", "--carry-forward"],
+                     capture_output=True, text=True, timeout=12, check=False)
+        for status in ("ADVANCED", "UNCHANGED", "SKIPPED_DISABLED", "SKIPPED_UNCONFIGURED"):
+            if (result.returncode == 0
+                    and result.stdout.strip() == "DIAGNOSTIC_PIN_CONTINUITY=" + status):
+                return status
+    except (OSError, subprocess.TimeoutExpired, UnicodeError):
+        pass
+    return "BLOCKED"
+
+
 def main() -> int:
     result = prepare_units()
     print(result)
-    return 0 if result.startswith("READY:") else 2
+    if result.startswith("READY:"):
+        print("DIAGNOSTIC_PIN_CONTINUITY=" + _continue_diagnostic_pin())
+        return 0
+    return 2
 
 
 if __name__ == "__main__":

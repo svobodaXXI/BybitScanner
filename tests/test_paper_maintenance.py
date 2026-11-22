@@ -902,8 +902,9 @@ def test_one_proven_flat_orphan_uses_existing_stop_and_only_opted_callback(
             assert kw["dual_orphan_handoff"] is None
             assert kw["proven_one_flat_orphan_handoff"] is sentinel
             calls.append("existing-stop-controller")
-        def run(self, scope):
+        def run(self, scope, *, before_mutation):
             assert scope == "all"
+            assert before_mutation() is True
             calls.append("stop")
             return SimpleNamespace(ok=True, runtime_stopped=True)
 
@@ -4778,3 +4779,162 @@ def test_active_stopped_paper_unhealthy_protection_never_posts(
         target, root=tmp_path, env_file=None, trusted_uid=os.geteuid(),
     )
     assert status.startswith("BLOCKED: active_stopped_PAPER_protection")
+
+def test_known_required_nonflat_is_identified_before_any_stop_intent(monkeypatch, tmp_path):
+    """Only a verified running REQUIRED owner triggers the early isolation."""
+    import tools.paper_maintenance as maintenance
+    import tools.stop_robot_runtime as shutdown
+
+    monkeypatch.setattr(
+        maintenance, "_active_exact_paper_blocker",
+        lambda *_a, **_kw: (
+            "BLOCKED: active_PAPER_Robot_RECONCILIATION_REQUIRED; "
+            "admission_closed; protection_preserved"
+        ),
+    )
+    monkeypatch.setattr(maintenance, "_environment", lambda _env: {})
+    monkeypatch.setattr(shutdown, "_database_path", lambda *_: tmp_path / "db")
+    monkeypatch.setattr(maintenance, "_active_required_flat_proof", lambda _db: None)
+    observed = maintenance._pre_stop_required_nonflat_blocker(
+        "b" * 40, root=tmp_path, env_file=None,
+    )
+    assert observed.startswith("BLOCKED: protected_REQUIRED_nonflat_or_unknown_before_STOP")
+    assert "no STOP intent" in observed
+
+    # A durable all-FLAT proof preserves the existing canonical STOP route.
+    monkeypatch.setattr(
+        maintenance, "_active_required_flat_proof",
+        lambda _db: ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED", "recoverable"),
+    )
+    assert maintenance._pre_stop_required_nonflat_blocker(
+        "b" * 40, root=tmp_path, env_file=None,
+    ) is None
+    # READY or PAUSED is not broadened into a new pre-stop prohibition.
+    monkeypatch.setattr(maintenance, "_active_exact_paper_blocker", lambda *_a, **_k: None)
+    assert maintenance._pre_stop_required_nonflat_blocker(
+        "b" * 40, root=tmp_path, env_file=None,
+    ) is None
+
+    # A missing HTTP reply does not claim REQUIRED exposure and does not
+    # supplant the canonical STOP controller's established identity checks.
+    from tools.runtime_intent import Unreachable
+    def backend_unreachable(*_a, **_kw):
+        raise Unreachable("no HTTP")
+    monkeypatch.setattr(maintenance, "_active_exact_paper_blocker", backend_unreachable)
+    assert maintenance._pre_stop_required_nonflat_blocker(
+        "b" * 40, root=tmp_path, env_file=None,
+    ) is None
+
+
+def test_deferred_protected_required_leaves_no_stop_marker_and_can_retry_when_flat(
+    monkeypatch, tmp_path,
+):
+    """Known protected failure cannot poison a future exact authorized release."""
+    import tools.paper_maintenance as maintenance
+    import tools.vps_release_identity as release
+
+    target, previous = "a" * 40, "b" * 40
+    root, stage, transactions = (
+        tmp_path / "installed", tmp_path / "stage", tmp_path / "transactions"
+    )
+    root.mkdir()
+    stage.mkdir()
+    monkeypatch.setattr(release, "verify_release", lambda *_a, **_k: previous)
+    allowed = {"flat": False}
+    steps = []
+    def gate(*_a, **_kw):
+        return None if allowed["flat"] else (
+            "BLOCKED: protected_REQUIRED_nonflat_or_unknown_before_STOP; "
+            "no STOP intent, no reconcile, no deploy"
+        )
+    monkeypatch.setattr(maintenance, "_pre_stop_required_nonflat_blocker", gate)
+
+    class Owner:
+        def __init__(self, **_kw):
+            pass
+        def run(self, scope, *, before_mutation):
+            assert scope == "all"
+            assert before_mutation() is True
+            steps.append("stop")
+            return SimpleNamespace(ok=True, runtime_stopped=True)
+
+    monkeypatch.setattr(maintenance, "RuntimeShutdown", Owner)
+    def installer(*_a, **_kw):
+        steps.append("install")
+        return "INSTALLED_STOPPED: exact"
+    options = dict(
+        root=root, stage=stage, transactions=transactions,
+        trusted_uid=os.geteuid(),
+        preflight=lambda *_a, **_kw: steps.append("preflight"),
+        installer=installer,
+        resume=lambda *_a, **_kw: (steps.append("resume"), "READY: EDITOR_ONLY")[1],
+    )
+    refused = maintenance.deploy_staged_editor_only(target, **options)
+    assert refused.startswith("BLOCKED: protected_REQUIRED_nonflat_or_unknown_before_STOP")
+    assert steps == ["preflight"]
+    assert not (transactions / (".stop-invoked-" + target)).exists()
+
+    allowed["flat"] = True  # independently proven durable FLAT, not a bypass
+    accepted = maintenance.deploy_staged_editor_only(target, **options)
+    assert accepted == "READY: EDITOR_ONLY"
+    assert steps == ["preflight", "preflight", "stop", "install", "resume"]
+
+
+
+def test_release_pre_mutation_refusal_does_not_poison_next_update(monkeypatch, tmp_path):
+    """The real coordinator owns the marker, not a speculative probe outcome."""
+    import tools.paper_maintenance as maintenance
+    import tools.stop_robot_runtime as shutdown
+    import tools.vps_release_identity as release
+
+    target, previous = "a" * 40, "b" * 40
+    root, stage, journal = (tmp_path / "installed", tmp_path / "stage",
+                            tmp_path / "transactions")
+    root.mkdir()
+    stage.mkdir()
+    monkeypatch.setattr(release, "verify_release", lambda *_a, **_kw: previous)
+    monkeypatch.setattr(maintenance, "_pre_stop_required_nonflat_blocker",
+                        lambda *_a, **_kw: None)
+    marker = journal / (".stop-invoked-" + target)
+    mode = {"probe": False}
+    calls = []
+
+    class Owner:
+        def __init__(self, **_kw):
+            pass
+
+        def run(self, scope, *, before_mutation):
+            assert not marker.exists()
+            if not mode["probe"]:
+                return shutdown.ShutdownResult(scope, False, "initial owner health unavailable")
+            assert before_mutation() is True
+            assert marker.is_file()
+            calls.append("stop")
+            return shutdown.ShutdownResult(scope, True, "stopped", runtime_stopped=True)
+
+    monkeypatch.setattr(maintenance, "RuntimeShutdown", Owner)
+    options = dict(
+        root=root, stage=stage, transactions=journal, trusted_uid=os.geteuid(),
+        preflight=lambda *_a, **_kw: None,
+        installer=lambda *_a, **_kw: (calls.append("install"), "INSTALLED_STOPPED: exact")[1],
+        resume=lambda *_a, **_kw: "READY: EDITOR_ONLY",
+    )
+    refused = maintenance.deploy_staged_editor_only(target, **options)
+    assert refused.startswith("BLOCKED: canonical_safe_stop_pre_mutation")
+    assert not marker.exists()
+    assert calls == []
+    mode["probe"] = True
+    assert maintenance.deploy_staged_editor_only(target, **options) == "READY: EDITOR_ONLY"
+    assert calls == ["stop", "install"]
+
+
+def test_owner_github_status_enable_dispatch_is_isolated(monkeypatch):
+    from tools import paper_maintenance as maintenance
+    from tools import github_status_reporter as reporter
+    calls = []
+    monkeypatch.setattr(reporter, "enable_observer",
+                        lambda sha: calls.append(sha) or "READY: observer timer")
+    assert maintenance.main(["a" * 40, "--action", "github-status-enable"]) == 0
+    assert calls == ["a" * 40]
+    monkeypatch.setattr(reporter, "enable_observer", lambda sha: "BLOCKED: no token")
+    assert maintenance.main(["a" * 40, "--action", "github-status-enable"]) == 2

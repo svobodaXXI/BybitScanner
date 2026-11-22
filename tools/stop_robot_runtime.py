@@ -66,6 +66,10 @@ class SafeStopError(RuntimeError):
     """A shutdown precondition could not be proven; nothing further is changed."""
 
 
+class InitialOwnerHealthUnavailable(SafeStopError):
+    """A live listener has no proven health/ownership; read-only re-probe is possible."""
+
+
 class ReconcileDurablyUnresolved(SafeStopError):
     """Exact 409/REQUIRED rejection, not a timeout or uncertain mutation."""
 
@@ -393,6 +397,7 @@ class RuntimeShutdown:
         progress: Callable[[str], None] | None = None,
         dual_orphan_handoff: Callable[[], str] | None = None,
         proven_one_flat_orphan_handoff: Callable[[], str] | None = None,
+        take_closed_approved_handoff: Callable[[], str] | None = None,
         legacy_supported: bool | None = None,
     ) -> None:
         env = dict(os.environ if env is None else env)
@@ -433,11 +438,17 @@ class RuntimeShutdown:
         self._progress = progress or (lambda _message: None)
         # Preserve the existing one-shot exceptional callback slot. Normal
         # STOP never gets one, and two competing handoffs cannot be selected.
-        if dual_orphan_handoff is not None and proven_one_flat_orphan_handoff is not None:
+        if sum(
+            candidate is not None for candidate in (
+                dual_orphan_handoff, proven_one_flat_orphan_handoff,
+                take_closed_approved_handoff,
+            )
+        ) > 1:
             raise SafeStopError("ambiguous_protected_flat_handoff")
+        self._take_closed_approved_handoff = take_closed_approved_handoff
         self._dual_orphan_handoff = (
-            dual_orphan_handoff if dual_orphan_handoff is not None
-            else proven_one_flat_orphan_handoff
+            dual_orphan_handoff or proven_one_flat_orphan_handoff
+            or take_closed_approved_handoff
         )
 
     def _mark(self, message: str) -> None:
@@ -447,12 +458,15 @@ class RuntimeShutdown:
             # Diagnostics must never make safe shutdown less safe.
             pass
 
-    def run(self, scope: str) -> ShutdownResult:
+    def run(
+        self, scope: str, *, before_mutation: Callable[[], bool] | None = None,
+    ) -> ShutdownResult:
+        """Optional release fence: seal intent only after read-only identity probes."""
         if scope not in SCOPES:
             return ShutdownResult(scope, False, f"unknown shutdown scope {scope!r}")
         steps: list[str] = []
         try:
-            return self._run(scope, steps)
+            return self._run(scope, steps, before_mutation=before_mutation)
         except (SafeStopError, RobotControlRejected) as exc:
             return ShutdownResult(scope, False, f"STOP BLOCKED: {exc}", tuple(steps))
 
@@ -529,13 +543,31 @@ class RuntimeShutdown:
         return tuple(steps)
 
     def _run(self, scope: str, steps: list[str], *,
-             known_drain_continuation: str | None = None) -> ShutdownResult:
+             known_drain_continuation: str | None = None,
+             before_mutation: Callable[[], bool] | None = None) -> ShutdownResult:
+        # Only the initial read-only identity phase may be retried. A temporarily
+        # unreachable live listener is never interpreted as an absent owner.
+        # Ordinary STOP surfaces and previously sealed continuations retain
+        # their existing behavior; a release may re-probe this boundary once.
+        def initial_probe(probe: Callable[[], str], label: str) -> str:
+            try:
+                return probe()
+            except InitialOwnerHealthUnavailable:
+                if before_mutation is None:
+                    raise
+                self._mark(f"{label}: one read-only identity re-probe before STOP intent")
+                self._sleep(POLL_INTERVAL_S)
+                observed = probe()
+                if observed != PRESENT:
+                    raise SafeStopError(f"{label}: live owner disappeared during identity re-probe")
+                return observed
+
         # Both identities are proven before the first mutation of anything.
         self._mark("probing PAPER backend identity")
-        backend = self._probe_backend()
+        backend = initial_probe(self._probe_backend, "PAPER backend")
         self._mark(f"PAPER backend: {backend}")
         self._mark("probing Telegram monitoring identity")
-        telegram = self._probe_telegram()
+        telegram = initial_probe(self._probe_telegram, "Telegram monitoring")
         self._mark(f"Telegram monitoring: {telegram}")
 
         if known_drain_continuation is not None:
@@ -543,6 +575,12 @@ class RuntimeShutdown:
             # the canonical phase engine. No new PAUSE or admission freeze is
             # issued if the host no longer has the proven paused ownership.
             self.require_known_natural_drain_ready(known_drain_continuation)
+
+        # This is the sole transition from observation to the canonical STOP
+        # phases, including legacy branches. Never enter any mutating path if
+        # the existing durable owner journal cannot seal this release intent.
+        if before_mutation is not None and before_mutation() is not True:
+            raise SafeStopError("release STOP intent unproven; no runtime mutation")
 
         if (
             self._legacy_supported
@@ -572,6 +610,14 @@ class RuntimeShutdown:
                 # not only at the final Backend shutdown preflight.
                 self._require_scanner_stopped()
                 state = self._robot_state()
+                if (state == ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED")
+                        and self._take_closed_approved_handoff is not None):
+                    # The old Backend cannot account an already TAKE-closed
+                    # legacy APPROVED owner. An explicit owner-approved
+                    # immutable FLAT proof is required before bypassing the
+                    # old reconcile that is known to fail this exact shape.
+                    # The callback re-proves under SQLite writer reservation.
+                    return self._finish_dual_orphan_handoff(telegram, steps)
                 if state == ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED"):
                     self._mark("requesting Robot reconciliation")
                     try:
@@ -776,7 +822,7 @@ class RuntimeShutdown:
                     BACKEND, location.hostname or "", location.port or 0, self._root,
                 ))
             except LegacyOwnerUnproven as exc:
-                raise SafeStopError(
+                raise InitialOwnerHealthUnavailable(
                     "PAPER backend listener is alive but exact ownership cannot be proven; "
                     "runtime kept alive"
                 ) from exc
@@ -819,10 +865,10 @@ class RuntimeShutdown:
                     TELEGRAM, location.hostname or "", location.port or 0, self._root,
                 ))
             except LegacyOwnerUnproven as exc:
-                raise SafeStopError(
+                raise InitialOwnerHealthUnavailable(
                     "Telegram listener is alive but exact ownership cannot be proven; runtime kept alive"
                 ) from exc
-            raise SafeStopError(
+            raise InitialOwnerHealthUnavailable(
                 f"Telegram listener is alive at proven chain {chain} but health is unavailable; "
                 "runtime kept alive"
             )
@@ -989,14 +1035,18 @@ class RuntimeShutdown:
             raise SafeStopError(
                 "dual orphan handoff backend exit unproven; not retried; no deploy"
             )
-        steps.append("backend:dual-orphan-handoff")
+        steps.append(
+            "backend:take-closed-approved-handoff"
+            if self._take_closed_approved_handoff is not None
+            else "backend:dual-orphan-handoff"
+        )
         if telegram == PRESENT:
             steps.append(self._shutdown(
                 self._telegram + "/shutdown", self._telegram + "/health",
                 "Telegram monitoring", TELEGRAM, "telegram",
             ))
         return ShutdownResult(
-            SCOPE_ALL, True, "Runtime STOPPED after protected dual orphan handoff.",
+            SCOPE_ALL, True, "Runtime STOPPED after protected exceptional FLAT handoff.",
             tuple(steps), runtime_stopped=True,
         )
 
@@ -1595,6 +1645,32 @@ def build_proven_one_flat_orphan_handoff(
             expected_build_sha=expected_old_sha,
             execute=True,
             proven_one_flat_orphan=True,
+        )
+
+    return handoff
+
+
+def build_take_closed_approved_handoff(
+    env: Mapping[str, str], expected_old_sha: str, *, execute: bool = True,
+) -> Callable[[], str]:
+    """Use the existing protected exit owner; no additional controller.
+
+    execute=False is a read-only preflight before the STOP one-shot fence.
+    execute=True re-proves under BEGIN IMMEDIATE and signals only the exact
+    attested PID/listener; an ambiguous outcome is never retried.
+    """
+    from tools.flat_paper_recovery_transition import (
+        ROOT as VPS_ROOT, _service_pid, execute_flat_handoff,
+    )
+
+    def handoff() -> str:
+        return execute_flat_handoff(
+            db_path=_database_path(VPS_ROOT, env),
+            expected_identity=expected_database_identity(VPS_ROOT, env),
+            expected_pid=_service_pid(),
+            expected_build_sha=expected_old_sha,
+            execute=execute,
+            take_closed_approved=True,
         )
 
     return handoff

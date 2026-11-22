@@ -21,6 +21,7 @@ import { DrawingClearConfirmation } from "../chart/DrawingClearConfirmation";
 import {
   DrawingHistory,
   clearDrawingHistory,
+  originalEditableDrawings,
   type DrawingObject,
   type DrawingTool,
   deserializeDrawings,
@@ -216,7 +217,7 @@ export function ChartPanel({
   barsSha256?: string | null;
   savedReviewId?: string | null;
   savedReviewLabel?: GeometryReviewDraft["label"] | null;
-  savedCorrectedPattern?: GeometryReviewDraft["corrected_pattern"] | null;
+  savedCorrectedPattern?: GeometryReviewDraft["corrected_pattern"] | "Double Top/Bottom" | null;
   savedReviewNote?: string | null;
   onSaveGeometryReview?: (review: GeometryReviewDraft & { note: string; idempotency_key: string }) =>
     Promise<{ reviewId: string; label: GeometryReviewDraft["label"] }>;
@@ -306,7 +307,8 @@ export function ChartPanel({
   const [, setExtensionStatus] = useState("");
   const proposalToken = useRef<{ content: string; key: string } | null>(null);
   const [correctPattern, setCorrectPattern] = useState<string>(
-    savedCorrectedPattern ?? originalPattern ?? "",
+    savedCorrectedPattern && isEditorReviewPattern(savedCorrectedPattern)
+      ? savedCorrectedPattern : originalPattern ?? "",
   );
   // Persisted review text belongs to the same immutable review ID as the
   // restored editable rays. A fresh editor must not silently erase the note.
@@ -388,11 +390,22 @@ export function ChartPanel({
     }
   };
   const commit = useCallback((next: DrawingObject[]) => {
-    historyRef.current.commit(next);
-    setDrawings(next);
+    const previous = historyRef.current.current;
+    const updated = historyRef.current.commit(next);
+    if (updated === previous) return;
+    setDrawings(updated);
     if (!newSignalMode) markReviewEdited();
     else setProposalStatus("");
   }, [newSignalMode, markReviewEdited]);
+
+  const restoreOriginalGeometry = () => {
+    if (!editorMode || !signalIdentity || newSignalMode || !referenceDrawings.length ||
+        reviewPending || proposalPending) return;
+    // Changes only this local drawing history. Saving requires a separate,
+    // explicit owner action via "Передать исправление".
+    commit(originalEditableDrawings(referenceDrawings));
+    setSelectedId(null);
+  };
 
   const switchSignalDrawingMode = () => {
     if (reviewPending || proposalPending) return;
@@ -1080,15 +1093,14 @@ export function ChartPanel({
                     <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
                   </svg>
                 </button>
-                <button type="button" aria-label="Автопилот" title="Автопилот"
+                <button type="button" aria-label="Робот" title="Робот"
                   onClick={() => onEditorNavigate?.("AUTOPILOT")}>
                   <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <circle cx="12" cy="12" r="9" />
-                    <circle cx="12" cy="12" r="2.2" />
-                    <line x1="4.5" y1="9.5" x2="10.2" y2="11.3" />
-                    <line x1="19.5" y1="9.5" x2="13.8" y2="11.3" />
-                    <line x1="12" y1="14.2" x2="12" y2="20.5" />
-                    <path d="M4.8 9.8 Q12 6.5 19.2 9.8" />
+                    <rect x="4" y="7" width="16" height="13" rx="3" />
+                    <path d="M12 7V3M9.5 3h5M4 12H2M20 12h2" />
+                    <circle cx="9" cy="13" r="1" />
+                    <circle cx="15" cy="13" r="1" />
+                    <path d="M9 17h6" />
                   </svg>
                 </button>
               </nav>
@@ -1112,7 +1124,7 @@ export function ChartPanel({
                   <option value="Wedge">Клин</option>
                   <option value="Ikigai Box">Коробка</option>
                   <option value="Triangle">Треугольник</option>
-                  <option value="Double Top/Bottom">Двойная вершина / дно</option>
+                  <option value="Broadening">Рупор</option>
                   <option value="Head and Shoulders">Голова и плечи</option>
                   <option value="G-Shaped">Г-образный паттерн</option>
                 </select>
@@ -1169,6 +1181,11 @@ export function ChartPanel({
                 <option key={value} value={value}>{label}</option>
               )}
             </select>
+            {savedCorrectedPattern && !isEditorReviewPattern(savedCorrectedPattern) && (
+              <small aria-label="Ранее сохранённое исправление">
+                Ранее сохранённый тип: {savedCorrectedPattern}
+              </small>
+            )}
             <input
               aria-label="Комментарий к исправлению"
               placeholder="Комментарий (необязательно)"
@@ -1217,6 +1234,13 @@ export function ChartPanel({
                 </button>}
               </div>
             )}
+            {!ownerChartMode && !newSignalMode && referenceDrawings.length > 0 && (
+              <button type="button" className="editor-restore-original"
+                disabled={reviewPending || proposalPending}
+                onClick={restoreOriginalGeometry}>
+                Вернуть исходную геометрию
+              </button>
+            )}
           </div>
         )}
         <DrawingToolbar
@@ -1225,6 +1249,7 @@ export function ChartPanel({
           selected={selectedId !== null}
           onTool={setTool}
           onMagnet={() => setMagnet((v) => !v)}
+          canUndo={historyRef.current.canUndo()}
           onUndo={() => {
             const previous = drawings;
             const undone = historyRef.current.undo();

@@ -260,9 +260,12 @@ def record_owner_signal_proposal(payload: dict, snapshot: dict, *, directory=Non
 
 
 OWNER_CHART_V3_PATTERNS = frozenset({
-    "Wedge", "Ikigai Box", "Triangle", "Double Top/Bottom",
+    "Wedge", "Ikigai Box", "Triangle", "Broadening", "Double Top/Bottom",
     "Head and Shoulders", "G-Shaped",
 })
+# Historical Double Top/Bottom owner examples remain readable by category,
+# but cannot be submitted as new standalone manual examples.
+OWNER_CHART_V3_NEW_PATTERNS = OWNER_CHART_V3_PATTERNS - {"Double Top/Bottom"}
 
 
 def _record_owner_chart_v3(payload: dict, *, directory=None, now_ms: int | None = None) -> dict:
@@ -274,7 +277,7 @@ def _record_owner_chart_v3(payload: dict, *, directory=None, now_ms: int | None 
     if set(payload) - {"note", "wedge_subtype"} != required:
         raise OwnerSignalProposalError("invalid_owner_chart_fields")
     pattern = payload["pattern"]
-    if pattern not in OWNER_CHART_V3_PATTERNS:
+    if pattern not in OWNER_CHART_V3_NEW_PATTERNS:
         raise OwnerSignalProposalError("unsupported_proposed_pattern")
     if payload["formation_movement"] not in ("UP", "DOWN"):
         raise OwnerSignalProposalError("invalid_formation_movement")
@@ -324,7 +327,7 @@ def _record_owner_chart_v3(payload: dict, *, directory=None, now_ms: int | None 
         bars.append({"open_time_ms": at, **values})
     drawings = payload["proposed_boundaries"]
     is_box = pattern == "Ikigai Box"
-    is_two_ray = pattern in ("Wedge", "Triangle")
+    is_two_ray = pattern in ("Wedge", "Triangle", "Broadening")
     if (not isinstance(drawings, list) or not 1 <= len(drawings) <= 8 or
             (is_box and len(drawings) != 1) or
             (is_two_ray and len(drawings) != 2)):

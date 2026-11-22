@@ -324,7 +324,7 @@ def test_v3_box_is_one_pattern_and_legacy_box_preserved(tmp_path):
 
 def test_v3_other_shapes_are_archive_only(tmp_path):
     from owner_signal_proposal import record_owner_chart_proposal
-    for index, pattern in enumerate(("Double Top/Bottom", "Head and Shoulders", "G-Shaped")):
+    for index, pattern in enumerate(("Head and Shoulders", "G-Shaped")):
         payload = _owner_chart_payload()
         payload.pop("direction", None)
         payload.update(schema_version=3, pattern=pattern,
@@ -339,6 +339,45 @@ def test_v3_other_shapes_are_archive_only(tmp_path):
         )
         assert saved["candidate_created"] is False
         assert saved["robot_candidate_id"] is None
+
+
+def test_v3_horn_uses_two_rays_without_trading_and_dt_db_is_legacy_only(tmp_path):
+    from owner_signal_proposal import (
+        record_owner_chart_proposal, list_owner_chart_training_examples,
+    )
+    payload = _owner_chart_payload()
+    payload.pop("direction", None)
+    payload.update(
+        schema_version=3, pattern="Broadening", formation_movement="UP",
+        idempotency_key="owner-v3-broadening-000001",
+        proposed_boundaries=[
+            {**line, "id": f"manual_{index + 1}"}
+            for index, line in enumerate(payload["proposed_boundaries"])
+        ],
+    )
+    saved = record_owner_chart_proposal(
+        payload, directory=tmp_path, now_ms=121 * 300_000,
+    )
+    assert saved["submission"]["pattern"] == "Broadening"
+    assert saved["submission"]["formation_movement"] == "UP"
+    assert saved["candidate_created"] is False
+    assert saved["robot_candidate_id"] is None
+    assert len(saved["submission"]["proposed_boundaries"]) == 2
+    assert list_owner_chart_training_examples("Broadening", directory=tmp_path) == [saved]
+    with pytest.raises(OwnerSignalProposalError, match="invalid_owner_chart_geometry"):
+        record_owner_chart_proposal(
+            {**payload, "proposed_boundaries": payload["proposed_boundaries"][:1],
+             "idempotency_key": "owner-v3-broadening-000002"},
+            directory=tmp_path, now_ms=121 * 300_000,
+        )
+    with pytest.raises(OwnerSignalProposalError, match="unsupported_proposed_pattern"):
+        record_owner_chart_proposal(
+            {**payload, "pattern": "Double Top/Bottom",
+             "idempotency_key": "owner-v3-removed-db-000001"},
+            directory=tmp_path, now_ms=121 * 300_000,
+        )
+    # Historical archived auxiliary examples remain discoverable and unchanged.
+    assert list_owner_chart_training_examples("Double Top/Bottom", directory=tmp_path) == []
 
 
 def test_v3_owner_chart_http_accepts_movement_without_trade_side(monkeypatch, tmp_path):

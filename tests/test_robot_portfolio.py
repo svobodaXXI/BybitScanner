@@ -224,6 +224,90 @@ class PortfolioTests(unittest.TestCase):
             "later_synced_flat_zero_exposure",
         )
 
+    def _seed_unproven_emergency(self, *, symbol="SOONUSDT", candidate_id="old-soon",
+                                 marker="intent", completed=False):
+        old, _ = self.store.create_robot_candidate(
+            candidate_id=candidate_id, trading_account_id=ACCOUNT,
+            symbol=Symbol(symbol), status="APPROVED",
+            signal_snapshot={"symbol": symbol, "pattern": "Rising Wedge",
+                             "test_identity": candidate_id},
+            approved_at_ms=1, updated_at_ms=1,
+        )
+        execution = {}
+        if marker == "intent":
+            execution["emergency_close_intent"] = {
+                "candidate_id": candidate_id, "dispatch_outcome": "UNKNOWN",
+            }
+        else:
+            execution["emergency_close_pending"] = True
+        if completed:
+            execution["emergency_close_outcome"] = "CLOSED_EMERGENCY_PROTECTION_FAILURE"
+        self.store.save_robot_candidate_state(
+            candidate_id, status="INVALIDATED",
+            robot_state={"execution": execution},
+            expected_revision=old.state_revision, updated_at_ms=2,
+        )
+
+    def test_nonflat_quarantine_cannot_be_treated_as_ordinary_ro_reservation(self):
+        # This net SHORT has no proven STOP or trade owner. The existing 19-RO
+        # capacity calculation is not a bound on an unresolved emergency exit.
+        self.position(990, symbol="SOONUSDT", side="Short")
+        self.assertTrue(self.facts()["available"])  # previous accounting alone
+        self._seed_unproven_emergency()
+        facts = self.facts()
+        self.assertFalse(facts["available"])
+        self.assertEqual(facts["quarantined_symbols"], ["SOONUSDT"])
+        self.assertEqual(facts["unproven_emergency_candidates"], [
+            {"symbol": "SOONUSDT", "candidate_ids": ["old-soon"]},
+        ])
+        self.assertEqual(
+            facts["data_error"], "unproven emergency close prevents account risk attestation",
+        )
+        observed = self.observe(symbol="ETHUSDT")
+        self.assertEqual(observed.result.reason_code, "PORTFOLIO_DATA_UNAVAILABLE")
+
+        # Same durable risk boundary survives SQLiteStore restart.
+        with SQLiteStore.open(self.root / "paper.sqlite3") as reopened:
+            after = collect_portfolio_facts(reopened, ACCOUNT)
+        self.assertFalse(after["available"])
+        self.assertEqual(after["quarantined_symbols"], ["SOONUSDT"])
+
+    def test_unknown_emergency_without_projection_is_not_inferred_flat(self):
+        self._seed_unproven_emergency(marker="pending")
+        facts = self.facts()
+        self.assertFalse(facts["available"])
+        self.assertEqual(facts["quarantined_symbols"], ["SOONUSDT"])
+        self.assertEqual(
+            self.store.robot_account_quarantines(ACCOUNT),
+            {"SOONUSDT": ("old-soon",)},
+        )
+
+    def test_persisted_completed_emergency_marker_does_not_hold_portfolio(self):
+        self._seed_unproven_emergency(completed=True)
+        facts = self.facts()
+        self.assertTrue(facts["available"])
+        self.assertEqual(facts["quarantined_symbols"], [])
+        self.assertEqual(facts["occupied_ro"], 0)
+        self.assertEqual(self.store.robot_account_quarantines(ACCOUNT), {})
+
+    def test_malformed_pending_marker_does_not_certify_risk(self):
+        old, _ = self.store.create_robot_candidate(
+            candidate_id="bad-marker", trading_account_id=ACCOUNT,
+            symbol=Symbol("SOONUSDT"), status="APPROVED",
+            signal_snapshot={"symbol": "SOONUSDT", "test": "bad"},
+            approved_at_ms=1, updated_at_ms=1,
+        )
+        self.store.save_robot_candidate_state(
+            old.candidate_id, status="INVALIDATED",
+            robot_state={"execution": {"emergency_close_pending": "unknown"}},
+            expected_revision=old.state_revision, updated_at_ms=2,
+        )
+        facts = self.facts()
+        self.assertFalse(facts["available"])
+        self.assertEqual(
+            facts["data_error"], "PAPER portfolio facts are incomplete or inconsistent",
+        )
+
     def test_unresolved_market_submission_without_later_snapshot_waits(self):
         self.command("stale-og", "OGUSDT", updated_at_ms=5)
         observed = self.observe()

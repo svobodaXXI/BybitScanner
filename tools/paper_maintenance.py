@@ -236,7 +236,7 @@ def _proven_one_flat_successor(
 ) -> bool:
     """Bind a failed STOP to one independently attested successor release."""
     from tools.paper_stopped_approved_recovery import (
-        PartialStopBlocked, _one_flat_receipt, _one_flat_snapshot,
+        PartialStopBlocked, _one_flat_path, _one_flat_receipt, _one_flat_snapshot,
     )
     from tools.vps_gitless_release_activate import ActivationBlocked
     from tools.paper_interrupted_stop_recovery import _trusted_journal
@@ -253,8 +253,24 @@ def _proven_one_flat_successor(
                 or _trusted_file(journal_root / (".stop-invoked-" + prior), uid)
                 != b"STOP_INVOKED; not install authorization\\n"):
             return False
-        if not all(_one_flat_receipt(journal_root, prior, phase, target, uid=uid)
-                   for phase in ("handoff-attempt", "backend-exited", "handoff-proven")):
+        handoff = _trusted_file(
+            _one_flat_path(journal_root, prior, "handoff-proven"), uid,
+        )
+        if (len(handoff) != 41 or not handoff.endswith(b"\n")
+                or any(c not in b"0123456789abcdef" for c in handoff[:-1])):
+            return False
+        original = handoff[:-1].decode("ascii")
+        if original != target:
+            if _trusted_file(
+                _one_flat_path(journal_root, prior, "retarget"), uid,
+            ) != (original + "\n" + target + "\n").encode("ascii"):
+                return False
+        elif (_one_flat_path(journal_root, prior, "retarget").exists()
+              or _one_flat_path(journal_root, prior, "retarget").is_symlink()):
+            return False
+        if not all(_one_flat_receipt(
+            journal_root, prior, phase, original, uid=uid,
+        ) for phase in ("handoff-attempt", "backend-exited", "handoff-proven")):
             return False
         snapshot = _one_flat_snapshot(journal_root, prior, uid=uid)
         old_sha = snapshot["backend"].get("build_sha")
@@ -813,6 +829,16 @@ def _proven_prior_exceptional_completion(
             successor = _trusted_file(receipt_path, uid).decode("ascii").removesuffix("\n")
         except (OSError, ValueError, UnicodeError):
             return False
+        redirected = journal_root / (".one-flat-handoff-retarget-" + prior)
+        if redirected.exists() or redirected.is_symlink():
+            try:
+                raw = _trusted_file(redirected, uid)
+                if (len(raw) != 82 or raw[:41] != (successor + "\n").encode("ascii")
+                        or raw[81:] != b"\n"):
+                    return False
+                successor = raw[41:-1].decode("ascii")
+            except (OSError, ValueError, UnicodeError):
+                return False
         return _proven_one_flat_successor(
             journal_root, prior, successor, uid=uid, root=root, require_ready=True,
         )
@@ -865,6 +891,7 @@ def _proven_prior_exceptional_completion(
 def deploy_staged_editor_only(
     target: str, *, stage: Path, root: Path = REPO, env_file: Path | None = None,
     dual_orphan_handoff: bool = False, proven_one_flat_orphan_handoff: bool = False,
+    take_closed_approved_handoff: bool = False,
     stop=None, preflight=None,
     installer=None, resume=None, manifest=None, unit_dir=None,
     transactions=None, trusted_uid: int = 0,
@@ -889,13 +916,20 @@ def deploy_staged_editor_only(
     )
     from tools.stop_robot_runtime import (
         build_dual_orphan_handoff, build_proven_one_flat_orphan_handoff,
+        build_take_closed_approved_handoff,
     )
 
     if len(target) != 40 or any(ch not in "0123456789abcdef" for ch in target):
         return "BLOCKED: invalid_approved_target"
-    if dual_orphan_handoff and proven_one_flat_orphan_handoff:
+    if sum(bool(x) for x in (
+        dual_orphan_handoff, proven_one_flat_orphan_handoff,
+        take_closed_approved_handoff,
+    )) > 1:
         return "BLOCKED: competing_exceptional_handoff_options"
-    if confirmed_stop_only and (stop is not None or dual_orphan_handoff or proven_one_flat_orphan_handoff):
+    if take_closed_approved_handoff and stop is not None:
+        return "BLOCKED: take_closed_requires_canonical_owner_stop"
+    if confirmed_stop_only and (stop is not None or dual_orphan_handoff
+                                or proven_one_flat_orphan_handoff or take_closed_approved_handoff):
         return "BLOCKED: confirmed_stop_only_conflicting_STOP_or_handoff"
     if (not root.is_dir() or root.is_symlink() or (root / ".git").exists()
             or not stage.is_dir() or stage.is_symlink()):
@@ -1132,6 +1166,7 @@ def deploy_staged_editor_only(
                         and not confirmed_stop_only
                         and not dual_orphan_handoff
                         and not proven_one_flat_orphan_handoff
+                        and not take_closed_approved_handoff
                         and stop is None):
                     # Legacy STOP intents lacked PR #1039's deferred receipt.
                     # This never infers the old STOP's outcome: only when the
@@ -1201,15 +1236,16 @@ def deploy_staged_editor_only(
                         )
                 elif (len(pending) == 1
                         and pending[0].name != ".stop-invoked-" + target
-                        and proven_one_flat_orphan_handoff
+                        and (proven_one_flat_orphan_handoff
+                             or take_closed_approved_handoff)
                         and not dual_orphan_handoff and stop is None
                         and isinstance(current, str) and len(current) == 40
                         and all(ch in "0123456789abcdef" for ch in current)
                         and pending[0].name.removeprefix(".stop-invoked-")
                             not in (current, target)):
-                    # Existing owner opt-in covers one proven Flat/OPEN
-                    # exceptional continuation. Route by the sealed old STOP
-                    # intent, never by a guessed incident/date or a new STOP.
+                    # A previously failed canonical STOP can continue through
+                    # the existing Flat/OPEN or TAKE-closed protected handoff,
+                    # with no second canonical STOP or inferred old success.
                     # The existing recovery owns exact receipt, running release,
                     # immutable lot, PID/listener, snapshot and at-most-once
                     # handoff checks. An unknown outcome remains BLOCKED.
@@ -1223,6 +1259,7 @@ def deploy_staged_editor_only(
                             expected_old_sha=current, root=root,
                             transactions=journal_root, manifest=manifest_path,
                             uid=trusted_uid,
+                            take_closed_approved=take_closed_approved_handoff,
                         )
                     except (PartialStopBlocked, ActivationBlocked,
                             ReleaseIdentityBlocked, OSError, ValueError) as exc:
@@ -1258,36 +1295,93 @@ def deploy_staged_editor_only(
                 # Ordinary STOP is a single mutating action. The exact dual-orphan
                 # fallback requires its own explicit opt-in, never implied by update.
                 if stop is None:
+                    # A known, live REQUIRED owner with non-FLAT/unknown
+                    # durable obligations must not poison the entire release
+                    # queue with a fresh one-shot STOP intent. Do not change
+                    # the canonical STOP/reconcile/position safety contracts.
+                    if (isinstance(current, str)
+                            and not dual_orphan_handoff
+                            and not proven_one_flat_orphan_handoff
+                            and not take_closed_approved_handoff):
+                        deferred = _pre_stop_required_nonflat_blocker(
+                            current, root=root, env_file=env_file,
+                        )
+                        if deferred is not None:
+                            return deferred
                     env = _environment(env_file)
-                    if proven_one_flat_orphan_handoff and (
+                    if (proven_one_flat_orphan_handoff or take_closed_approved_handoff) and (
                         not isinstance(current, str)
                         or len(current) != 40
                         or any(c not in "0123456789abcdef" for c in current)
                     ):
-                        return "BLOCKED: old_release_not_pinned_for_one_orphan_handoff"
+                        return "BLOCKED: old_release_not_pinned_for_exceptional_handoff"
+                    if take_closed_approved_handoff:
+                        # Before creating an irreversible STOP intent, require
+                        # exact old-release and immutable Flat+TAKE ownership
+                        # proof. Real callback re-proves under the same writer
+                        # barrier before signaling the pinned Backend PID.
+                        try:
+                            prechecked = build_take_closed_approved_handoff(
+                                env, current, execute=False,
+                            )()
+                        except Exception as exc:
+                            return ("BLOCKED: take_closed_pre_STOP_proof:"
+                                    + type(exc).__name__ + "; no STOP intent")
+                        if prechecked != (
+                            "PRECHECK_ONLY: FLAT proven under writer barrier; no process action"
+                        ):
+                            return "BLOCKED: take_closed_pre_STOP_unproven; no STOP intent"
                     callback = build_dual_orphan_handoff(env) if dual_orphan_handoff else None
                     one_orphan = (
                         build_proven_one_flat_orphan_handoff(env, current)
                         if proven_one_flat_orphan_handoff else None
                     )
+                    take_closed = (
+                        build_take_closed_approved_handoff(env, current)
+                        if take_closed_approved_handoff else None
+                    )
                     action = RuntimeShutdown(
                         root=root, env=env, dual_orphan_handoff=callback,
                         proven_one_flat_orphan_handoff=one_orphan,
+                        take_closed_approved_handoff=take_closed,
                     ).run
                 else:
                     action = stop
-                if not _record_one_shot_stop_intent(
-                    journal_root, target, uid=trusted_uid, root=root,
-                ):
+                # Seal the irreversible STOP intent at the canonical engine's
+                # transition from read-only identity probes to owner mutations.
+                # A probe refusal must not poison the release journal. Injected
+                # stop callbacks have no phase contract: fence before calling.
+                intent_recorded = False
+
+                def seal_stop_intent() -> bool:
+                    nonlocal intent_recorded
+                    if intent_recorded:
+                        return False
+                    intent_recorded = _record_one_shot_stop_intent(
+                        journal_root, target, uid=trusted_uid, root=root,
+                    )
+                    return intent_recorded
+
+                if stop is not None and not seal_stop_intent():
                     return "BLOCKED: prior_STOP_outcome_unproven_without_install_journal; no replay"
                 try:
-                    result = action(SCOPE_ALL)
+                    if stop is None:
+                        result = action(SCOPE_ALL, before_mutation=seal_stop_intent)
+                    else:
+                        result = action(SCOPE_ALL)
                 except Exception as exc:
                     # The stop may already have performed a trading/runtime action.
                     # The durable intent prevents replay; never install on an
                     # exception or try to infer completion from missing processes.
                     return ("BLOCKED: canonical_safe_stop_outcome_unknown:"
                             + type(exc).__name__ + "; no retry, no deployment")
+                if not intent_recorded:
+                    # Even a spurious success cannot grant install authority
+                    # without the same fsynced STOP fence as before.
+                    reason = getattr(result, "message", "reason_unavailable")
+                    return ("BLOCKED: canonical_safe_stop_pre_mutation: "
+                            + " ".join(str(reason).split())[:500]
+                            + "; no STOP authorized, no deployment")
                 if not (getattr(result, "ok", False) is True
                         and getattr(result, "runtime_stopped", False) is True):
                     if _known_natural_drain_failure(result):
@@ -2029,6 +2123,40 @@ def _start_active_stopped_paper(
         return "BLOCKED: active_stopped_PAPER_preflight_or_transition_unproven; no_replay"
 
 
+def _pre_stop_required_nonflat_blocker(
+    installed_sha: str, *, root: Path, env_file: Path | None,
+) -> str | None:
+    """Keep a known unresolved PAPER owner out of the irreversible STOP epoch.
+
+    The active, exact-SHA REQUIRED state is diagnostic; an independent read-only
+    all-FLAT ledger proof is needed before even attempting canonical STOP.
+    Unknown or active exposure cannot safely become a durable STOP-intent fence.
+    This does NOT license a release handover or turn REQUIRED into READY.
+    """
+    from tools.runtime_intent import Unreachable
+    try:
+        active = _active_exact_paper_blocker(
+            installed_sha, root=root, env_file=env_file,
+        )
+    except Unreachable:
+        # An unreachable backend is not proof of protected REQUIRED exposure.
+        # Preserve the existing canonical shutdown's ownership checks.
+        return None
+    if not (isinstance(active, str) and active.startswith(
+        "BLOCKED: active_PAPER_Robot_RECONCILIATION_REQUIRED;"
+    )):
+        return None
+    from tools.stop_robot_runtime import _database_path
+
+    db = _database_path(root, _environment(env_file))
+    if _active_required_flat_proof(db) is not None:
+        return None  # Canonical STOP must still prove its own safe transition.
+    return (
+        "BLOCKED: protected_REQUIRED_nonflat_or_unknown_before_STOP; "
+        "no STOP intent, no reconcile, no deploy; existing backend retained"
+    )
+
+
 def _active_exact_paper_blocker(
     target: str, *, root: Path, env_file: Path | None,
 ) -> str | None:
@@ -2420,6 +2548,181 @@ def _recover_active_ingress_overflow(
     except (ReleaseIdentityBlocked, SafeStopError, OSError, ValueError,
             TypeError, sqlite3.Error):
         return "BLOCKED: active_PAPER_recovery_preflight_or_transition_unproven; no_replay"
+
+
+def _recover_active_take_closed(
+    target: str, *, root: Path, env_file: Path | None,
+) -> str:
+    """Owner START: exact historical PAPER TAKE → one canonical reconcile → start.
+
+    No STOP, install, new Market command or SQLite write. A failed proof does
+    not seal an intent. After a sealed intent, an unknown POST is never replayed.
+    This route is called only inside the existing owner lifecycle lock.
+    """
+    from tools.paper_take_closed_handoff_proof import (
+        PROOF_LABEL, prove_take_closed_approved,
+    )
+    from tools.runtime_intent import (
+        expected_database_identity, http_get, http_post_json,
+    )
+    from tools.stop_robot_runtime import _database_path
+    from tools.vps_release_identity import ReleaseIdentityBlocked, verify_release
+    from terminal.persistence.sqlite_store import SQLiteStore
+
+    try:
+        env = _environment(env_file)
+        db = _database_path(root, env)
+        if (verify_release(root) != target or not db.is_file() or db.is_symlink()):
+            return "BLOCKED: take_closed_installed_or_database_unproven; no_mutation"
+        identity = expected_database_identity(root, env)
+        origin = "http://127.0.0.1:8765"
+
+        def read(path: str) -> dict:
+            response = http_get(origin + path, 5)
+            body = response.json()
+            if (response.status != 200 or not isinstance(body, dict)
+                    or body.get("ok") is not True):
+                raise ValueError("take_closed_read_unproven")
+            return body
+
+        snapshot = {
+            "backend": read("/api/health"),
+            "scanner": read("/api/scanner/status"),
+            "autopilot": read("/api/robot/autopilot"),
+            "protection": read("/api/robot/protection-health"),
+        }
+        backend = snapshot["backend"]
+        instance = backend.get("process_instance_id")
+        state = read("/api/robot/state")
+        reason = state.get("reason")
+        prefix = "reconcile_robot could not prove pending Robot entry safety: "
+        if (backend.get("build_sha") != target
+                or backend.get("database_identity") != identity
+                or backend.get("paper_live_safe") is not True
+                or backend.get("robot_admission_ready") is not False
+                or not isinstance(instance, str) or not instance
+                or snapshot["scanner"].get("worker_quiescent") is not True
+                or snapshot["autopilot"].get("trading_account_id") != {"value": "paper"}
+                or state.get("mode") != "ROBOT_RUNNING"
+                or state.get("recovery_status") != "RECONCILIATION_REQUIRED"
+                or not isinstance(reason, str) or not reason.startswith(prefix)):
+            return "BLOCKED: take_closed_owner_or_backend_unproven; no_mutation"
+
+        candidate_id = reason[len(prefix):]
+        if not candidate_id or candidate_id.strip() != candidate_id:
+            return "BLOCKED: take_closed_exact_candidate_unproven; no_mutation"
+
+        with sqlite3.connect(
+            db.resolve().as_uri() + "?mode=ro", uri=True, timeout=5,
+        ) as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA query_only=ON")
+            conn.execute("BEGIN")
+            if prove_take_closed_approved(
+                conn, expected_identity=identity, expected_build_sha=target,
+                **snapshot,
+            ) != PROOF_LABEL:
+                return "BLOCKED: take_closed_immutable_proof_unproven; no_mutation"
+            store = SQLiteStore(conn, db, 5000)
+            candidate = store.get_robot_candidate(candidate_id)
+            execution = (
+                candidate.robot_state.get("execution")
+                if candidate is not None and isinstance(candidate.robot_state, dict)
+                else None
+            )
+            if (candidate is None or candidate.status != "APPROVED"
+                    or not isinstance(execution, dict)
+                    or execution.get("emergency_close_pending") is not True
+                    or execution.get("entry_mode") != "LATE_ADMISSION_MARKET"):
+                return "BLOCKED: take_closed_reason_owner_mismatch; no_mutation"
+
+        # A fresh *full* snapshot must satisfy the proof too. Reusing the
+        # first protection snapshot could miss new exposure or pending ingress.
+        current = {
+            "backend": read("/api/health"),
+            "scanner": read("/api/scanner/status"),
+            "autopilot": read("/api/robot/autopilot"),
+            "protection": read("/api/robot/protection-health"),
+        }
+        after = current["backend"]
+        if (after.get("build_sha") != target
+                or after.get("database_identity") != identity
+                or after.get("process_instance_id") != instance
+                or after.get("paper_live_safe") is not True
+                or after.get("robot_admission_ready") is not False
+                or current["scanner"].get("worker_quiescent") is not True
+                or read("/api/robot/state").get("reason") != reason
+                or not _editor_runtime_ready(target, identity)):
+            return "BLOCKED: take_closed_runtime_changed; no_mutation"
+
+        # Re-prove actual account and the latest protection/ingress immediately
+        # before sealing a non-replayable intent.
+        with sqlite3.connect(
+            db.resolve().as_uri() + "?mode=ro", uri=True, timeout=5,
+        ) as conn:
+            conn.execute("PRAGMA query_only=ON")
+            conn.execute("BEGIN")
+            if prove_take_closed_approved(
+                conn, expected_identity=identity, expected_build_sha=target,
+                **current,
+            ) != PROOF_LABEL:
+                return "BLOCKED: take_closed_proof_changed; no_mutation"
+
+        state_tuple = ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED", reason)
+        if not _record_required_reconcile_once(
+            target, identity, state_tuple, db=db,
+        ):
+            return "BLOCKED: take_closed_prior_reconcile_intent; no_replay"
+
+        # A lost HTTP reply may mean the owner already committed reconciliation.
+        # Never send the same mutable POST again, even under a new request UUID.
+        try:
+            response = http_post_json(origin + "/api/robot/reconcile", {}, 180)
+            result = response.json()
+            if (response.status != 200 or not isinstance(result, dict)
+                    or result.get("ok") is not True
+                    or result.get("success") is not True
+                    or result.get("recovery_status") != "PAUSED"):
+                return "BLOCKED: take_closed_reconcile_unproven; no_replay"
+        except Exception:
+            return "BLOCKED: take_closed_reconcile_outcome_unknown; no_replay"
+
+        if (read("/api/health").get("process_instance_id") != instance
+                or not _editor_runtime_ready(target, identity)):
+            return "BLOCKED: take_closed_backend_changed_after_reconcile; no_replay"
+        with sqlite3.connect(
+            db.resolve().as_uri() + "?mode=ro", uri=True, timeout=5,
+        ) as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA query_only=ON")
+            conn.execute("BEGIN")
+            store = SQLiteStore(conn, db, 5000)
+            candidate = store.get_robot_candidate(candidate_id)
+            trade = store.get_robot_trade("robot-trade-" + candidate_id)
+            execution = (
+                candidate.robot_state.get("execution")
+                if candidate is not None and isinstance(candidate.robot_state, dict)
+                else None
+            )
+            if (candidate is None or candidate.status != "CLOSED"
+                    or not isinstance(execution, dict)
+                    or execution.get("emergency_close_pending") is True
+                    or not isinstance(execution.get("protected_postfill_recovery"), dict)
+                    or execution["protected_postfill_recovery"].get("proof")
+                       != "SINGLE_MARKET_FILL_INTERNAL_TAKE_FLAT_V1"
+                    or trade is None or trade.exit_reason != "TAKE"
+                    or trade.exit_time_ms is None):
+                return "BLOCKED: take_closed_accounting_unproven; no_replay"
+
+        if not _paper_start_quiescent(root, env_file):
+            return "BLOCKED: take_closed_remaining_owner_unproven; START_not_attempted"
+        return start_installed_paper_from_editor(
+            target, root=root, env_file=env_file,
+            editor_status="READY: existing active Editor and Telegram independently verified",
+        )
+    except Exception:
+        # Unknown SQLite/HTTP/proof/postcondition outcomes never authorize replay.
+        return "BLOCKED: take_closed_proof_or_runtime_unproven; no_replay"
 
 
 def _verified_staged_module_bootstrap(
@@ -2878,7 +3181,7 @@ def _stop_exact_installed_paper_once(
 def main(argv=None) -> int:
     parser = _MaintenanceParser(description="Fail-closed one-action PAPER maintenance")
     parser.add_argument("sha")
-    parser.add_argument("--action", choices=("stop", "start", "update", "update-and-start", "provision-owner-pc"),
+    parser.add_argument("--action", choices=("stop", "start", "update", "update-and-start", "provision-owner-pc", "telegram-recover", "update-take-closed", "github-status-enable", "github-diagnostic-enable"),
                         help="single owner action: canonical STOP, PAPER START, or exact stable UPDATE")
     parser.add_argument("--env-file", type=Path, default=Path("/etc/bybitscanner/paper.env"))
     parser.add_argument("--wait-seconds", type=float, default=0)
@@ -2902,6 +3205,8 @@ def main(argv=None) -> int:
                         help="separate explicit opt-in to exact JASMY/FLOW protected handoff")
     parser.add_argument("--proven-one-flat-orphan-handoff", action="store_true",
                         help="explicit owner opt-in: one immutable manual Flat/OPEN close, no trade replay")
+    parser.add_argument("--take-closed-approved-handoff", action="store_true",
+                        help="explicit owner opt-in: one proven legacy APPROVED+PAPER TAKE FLAT handoff")
     parser.add_argument("--resume-one-flat-from-prior-stop", metavar="SHA",
                         help="separately authorized continuation of a proven failed STOP; never replay STOP")
     parser.add_argument("--expected-old-backend", metavar="SHA",
@@ -2915,9 +3220,40 @@ def main(argv=None) -> int:
                         or args.continue_confirmed_stop_only or args.start_paper_after_editor
                         or args.publish_frontend_only or args.frontend_bundle
                         or args.frontend_current_index_sha256 or args.dual_orphan_handoff_20261103
-                        or args.proven_one_flat_orphan_handoff or args.resume_one_flat_from_prior_stop
+                        or args.proven_one_flat_orphan_handoff
+                        or args.take_closed_approved_handoff or args.resume_one_flat_from_prior_stop
                         or args.expected_old_backend):
                     parser.error("one action cannot combine with legacy lifecycle flags")
+                if args.action == "github-diagnostic-enable":
+                    from tools.github_diagnostic_runtime import enable_diagnostic
+                    status = enable_diagnostic(args.sha)
+                    print(status)
+                    return 0 if status.startswith("READY:") else 2
+                if args.action == "github-status-enable":
+                    from tools.github_status_reporter import enable_observer
+                    status = enable_observer(args.sha)
+                    print(status)
+                    return 0 if status.startswith("READY:") else 2
+                if args.action == "telegram-recover":
+                    # One owner-controlled action: no global resume, gateway, release
+                    # switch, STOP, reconcile or trading mutation.
+                    from tools.telegram_only_recover import (
+                        TelegramRecoveryBlocked, recover,
+                    )
+                    try:
+                        result = recover(args.sha)
+                    except TelegramRecoveryBlocked as exc:
+                        print("BLOCKED: telegram_only_recovery:"
+                              + str(exc)[:160] + "; no retry")
+                        return 2
+                    except Exception as exc:
+                        # Transport, release identity, JSON and other unknown
+                        # errors must never trigger a full resume fallback.
+                        print("BLOCKED: telegram_only_recovery_unproven:"
+                              + type(exc).__name__ + "; no retry")
+                        return 2
+                    print("READY: " + result)
+                    return 0
                 if args.action == "stop":
                     status = _stop_exact_installed_paper_once(args.sha, env_file=args.env_file)
                     print(status)
@@ -2928,6 +3264,39 @@ def main(argv=None) -> int:
                     status = provision_owner_pc(args.sha, env_file=args.env_file)
                     print(status)
                     return 0 if status.startswith("READY:") else 2
+                if args.action == "update-take-closed":
+                    # One exceptional owner UUID, not a second SSH recovery
+                    # controller. Only the fully verified exact stable target
+                    # stage may execute code missing from the old Backend.
+                    stage = Path("/var/lib") / ("bybitscanner-stage-git-" + args.sha)
+                    project_modules = tuple(
+                        (name, mod) for name, mod in sys.modules.items()
+                        if name in ("tools", "terminal")
+                        or name.startswith(("tools.", "terminal."))
+                    )
+                    if not _verified_staged_module_bootstrap(
+                        args.sha, stage, (("__main__", sys.modules[__name__]),) + project_modules,
+                    ):
+                        print("BLOCKED: take_closed_owner_stage_unproven; no STOP")
+                        return 2
+                    # This exceptional release still includes all merged UI
+                    # changes. Build the exact-SHA frontend BEFORE recording
+                    # any STOP intent, using the same canonical bundle gate.
+                    try:
+                        bundle = _prepare_editor_frontend_bundle(args.sha, stage=stage)
+                    except (OSError, ValueError) as exc:
+                        print("BLOCKED: take_closed_frontend_preflight:"
+                              + type(exc).__name__ + "; no STOP")
+                        return 2
+                    return main([
+                        args.sha, "--env-file", str(args.env_file),
+                        "--staged-gitless-editor-only", str(stage),
+                        "--take-closed-approved-handoff",
+                        *(
+                            ["--frontend-bundle", str(bundle)]
+                            if bundle is not None else []
+                        ),
+                    ])
                 owner_flags = (
                     ["--update-editor-only-from-stable"] if args.action.startswith("update")
                     else ["--resume-installed-editor-only"]
@@ -2944,6 +3313,7 @@ def main(argv=None) -> int:
                 or args.frontend_bundle or args.frontend_current_index_sha256
                 or args.dual_orphan_handoff_20261103
                 or args.proven_one_flat_orphan_handoff
+                or args.take_closed_approved_handoff
                 or args.resume_one_flat_from_prior_stop
                 or args.expected_old_backend or args.wait_seconds
                 or args.continue_confirmed_stop_only):
@@ -3010,9 +3380,12 @@ def main(argv=None) -> int:
         not args.staged_gitless_editor_only or args.resume_installed_editor_only
         or args.start_paper_after_editor or args.publish_frontend_only
         or args.dual_orphan_handoff_20261103 or args.proven_one_flat_orphan_handoff
+        or args.take_closed_approved_handoff
         or args.resume_one_flat_from_prior_stop or args.expected_old_backend
     ):
         parser.error("confirmed STOP continuation requires only exact Gitless staging")
+    if args.take_closed_approved_handoff and args.start_paper_after_editor:
+        parser.error("TAKE-closed handoff only installs frozen EDITOR_ONLY; no PAPER START")
     if args.staged_gitless_editor_only and REPO.is_dir():
         # Source must be consistently loaded from the installed release OR
         # from the exact root-owned/stable target worktree. The latter allows
@@ -3047,6 +3420,7 @@ def main(argv=None) -> int:
     if args.publish_frontend_only and (not args.frontend_bundle
             or args.resume_installed_editor_only or args.staged_gitless_editor_only
             or args.start_paper_after_editor or args.proven_one_flat_orphan_handoff
+            or args.take_closed_approved_handoff
             or args.dual_orphan_handoff_20261103
             or args.resume_one_flat_from_prior_stop
             or args.expected_old_backend):
@@ -3061,13 +3435,20 @@ def main(argv=None) -> int:
         parser.error("exceptional handoff requires staged Gitless operation")
     if args.proven_one_flat_orphan_handoff and not args.staged_gitless_editor_only:
         parser.error("one orphan handoff requires staged Gitless operation")
-    if args.proven_one_flat_orphan_handoff and args.dual_orphan_handoff_20261103:
+    if args.take_closed_approved_handoff and not args.staged_gitless_editor_only:
+        parser.error("TAKE-closed handoff requires exact staged Gitless operation")
+    if sum(bool(x) for x in (
+        args.proven_one_flat_orphan_handoff,
+        args.dual_orphan_handoff_20261103,
+        args.take_closed_approved_handoff,
+    )) > 1:
         parser.error("choose exactly one exceptional handoff policy")
     if bool(args.resume_one_flat_from_prior_stop) != bool(args.expected_old_backend):
         parser.error("partial continuation requires both exact old Backend and STOP SHA")
     if args.resume_one_flat_from_prior_stop and (
         not args.staged_gitless_editor_only
         or args.proven_one_flat_orphan_handoff
+        or args.take_closed_approved_handoff
         or args.dual_orphan_handoff_20261103
         or args.resume_installed_editor_only
         or args.start_paper_after_editor
@@ -3144,6 +3525,12 @@ def main(argv=None) -> int:
                         blocked = _recover_active_ingress_overflow(
                             args.sha, root=REPO, env_file=args.env_file,
                         )
+                    elif blocked.startswith(
+                        "BLOCKED: active_PAPER_Robot_RECONCILIATION_REQUIRED"
+                    ):
+                        blocked = _recover_active_take_closed(
+                            args.sha, root=REPO, env_file=args.env_file,
+                        )
                     print(blocked)
                     return 0 if blocked.startswith("READY:") else 2
     if args.resume_one_flat_from_prior_stop:
@@ -3167,6 +3554,7 @@ def main(argv=None) -> int:
             env_file=args.env_file,
             dual_orphan_handoff=args.dual_orphan_handoff_20261103,
             proven_one_flat_orphan_handoff=args.proven_one_flat_orphan_handoff,
+            take_closed_approved_handoff=args.take_closed_approved_handoff,
             frontend_bundle=args.frontend_bundle,
             frontend_expected_index_sha256=args.frontend_current_index_sha256,
             confirmed_stop_only=args.continue_confirmed_stop_only,

@@ -448,7 +448,7 @@ describe("Closed deals / exact episode index", () => {
     expect(loss).toHaveAttribute("aria-pressed", "true");
     expect(orderedSymbols()).toEqual(["ADAUSDT", "BTCUSDT", "XRPUSDT"]);
     expect(screen.getByRole("button", { name: /ADAUSDT/ })).toHaveTextContent("PnL: -12,30 USDT");
-    expect(screen.getByRole("button", { name: /XRPUSDT/ })).toHaveTextContent("PnL: -<0,000001 USDT");
+    expect(screen.getByRole("button", { name: /XRPUSDT/ })).toHaveTextContent("PnL: -<0,01 USDT");
 
     fireEvent.click(long);
     expect(orderedSymbols()).toEqual(["BTCUSDT"]);
@@ -515,17 +515,17 @@ describe("Closed deals / exact episode index", () => {
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
 
     const row = await screen.findByRole("button", { name: /BTCUSDT/ });
-    expect(row).toHaveTextContent("PnL: -0,002614 USDT");
+    expect(row).toHaveTextContent("PnL: -<0,01 USDT");
     expect(screen.getByTitle("-0.0026140884")).toBeInTheDocument();
     const tinyRow = screen.getByRole("button", { name: /XRPUSDT/ });
-    expect(tinyRow).toHaveTextContent("PnL: -<0,000001 USDT");
+    expect(tinyRow).toHaveTextContent("PnL: -<0,01 USDT");
     expect(screen.getByTitle("-0.0000000004")).toBeInTheDocument();
 
     fireEvent.click(row);
-    expect(screen.getByText("-0,002614 USDT")).toHaveAttribute("title", "-0.0026140884");
+    expect(screen.getByText("-<0,01 USDT")).toHaveAttribute("title", "-0.0026140884");
     fireEvent.click(screen.getByRole("button", { name: /К сделкам/ }));
     fireEvent.click(await screen.findByRole("button", { name: /XRPUSDT/ }));
-    expect(screen.getByText("-<0,000001 USDT")).toHaveAttribute("title", "-0.0000000004");
+    expect(screen.getByText("-<0,01 USDT")).toHaveAttribute("title", "-0.0000000004");
   });
 
   it("displays exact robot episode identifiers and keeps shared PnL labelled separately", async () => {
@@ -634,15 +634,20 @@ describe("Closed deals / exact episode index", () => {
   it("pairs an existing VPS device slot through a confirmed Windows link only", async () => {
     const token = "A".repeat(64);
     const copies = vi.fn().mockResolvedValue(undefined);
-    const linkClicks: string[] = [];
+    const nativeClicks: string[] = [];
     vi.stubGlobal("navigator", {
       userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
       clipboard: { writeText: copies },
     });
-    const spy = vi.spyOn(HTMLAnchorElement.prototype, "click")
-      .mockImplementation(function (this: HTMLAnchorElement) {
-        linkClicks.push(this.href);
-      });
+    const spy = vi.spyOn(HTMLAnchorElement.prototype, "click");
+    const observeNative = (event: MouseEvent) => {
+      if (event.target instanceof HTMLAnchorElement &&
+          event.target.href.startsWith("bybitscanner-simulator://pair?")) {
+        nativeClicks.push(event.target.href);
+        event.preventDefault(); // JSDOM has no native Windows protocol dispatch
+      }
+    };
+    document.addEventListener("click", observeNative);
     try {
       const fetchMock = vi.fn().mockImplementation(async (url: string) => {
         if (url.endsWith("/simulator-bridge/pair")) return new Response(JSON.stringify({
@@ -657,24 +662,92 @@ describe("Closed deals / exact episode index", () => {
         statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
       fireEvent.click(await screen.findByRole("button", { name: /BTCUSDT/ }));
       fireEvent.click(screen.getByRole("button", { name: "Связать ПК" }));
-      expect(await screen.findByRole("button", { name: "Подтвердить подключение" }))
-        .toBeInTheDocument();
-      expect(linkClicks).toHaveLength(0); // browser must not auto-open on async request
+      const confirm = await screen.findByRole("link", { name: "Подтвердить подключение" });
+      expect(confirm).toHaveAttribute("href", "bybitscanner-simulator://pair?device_id=owner-pc&token=" + token);
+      expect(confirm).toHaveAttribute("target", "_self");
+      expect(nativeClicks).toHaveLength(0); // browser must not auto-open on async request
       expect(fetchMock).toHaveBeenCalledWith("/api/diary/simulator-bridge/pair", {
         method: "POST", credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ device_id: "owner-pc" }),
       });
-      fireEvent.click(screen.getByRole("button", { name: "Подтвердить подключение" }));
-      expect(linkClicks).toEqual([
+      fireEvent.click(confirm);
+      expect(spy).not.toHaveBeenCalled();
+      expect(copies).not.toHaveBeenCalled();
+      expect(nativeClicks).toEqual([
         "bybitscanner-simulator://pair?device_id=owner-pc&token=" + token,
       ]);
-      expect(screen.getByText(/Запрос сопряжения передан Windows/))
-        .toHaveTextContent("Успешное подключение пока не подтверждено.");
-      expect(screen.queryByRole("button", { name: "Подтвердить подключение" }))
-        .not.toBeInTheDocument();
+      expect(screen.getByText(/Запрошено открытие локального адаптера/))
+        .toHaveTextContent("Подключение пока не подтверждено.");
+      await waitFor(() => expect(screen.queryByRole("link", { name: "Подтвердить подключение" }))
+        .not.toBeInTheDocument());
     } finally {
+      document.removeEventListener("click", observeNative);
       spy.mockRestore();
+    }
+  });
+
+  it.each([
+    [503, "simulator_bridge_disabled", "Мост сопряжения отключён на сервере (HTTP 503)"],
+    [503, "simulator_pairing_device_not_configured", "Это устройство не настроено на сервере (HTTP 503)"],
+    [403, "simulator_bridge_unauthorized", "Сервер отклонил авторизацию или источник Telegram Mini App (HTTP 403)"],
+    [400, "invalid_simulator_bridge_request", "Сервер отклонил формат запроса (HTTP 400)"],
+    [502, "PRIVATE_ERROR_TOKEN", "Сервер отклонил сопряжение (HTTP 502)"],
+  ])("shows only safe in-app pairing error for HTTP %i %s", async (status, error, expected) => {
+    const secret = "SECRET_PAIRING_TOKEN_MUST_NOT_RENDER";
+    vi.stubGlobal("navigator", { userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" });
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+      if (url.endsWith("/simulator-bridge/pair"))
+        return new Response(JSON.stringify({ ok: false, error, token: secret }), { status });
+      return new Response(JSON.stringify({
+        ...finrezResponse, closed_episodes: [robotDeal],
+      }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<DiaryOverlay accountKey="paper:pair-error" initialSection="DEALS"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: /BTCUSDT/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Связать ПК" }));
+    const notice = await screen.findByText(/Подключение пока недоступно:/);
+    expect(notice).toHaveTextContent(expected);
+    expect(notice).not.toHaveTextContent(secret);
+    expect(notice).not.toHaveTextContent("PRIVATE_ERROR_TOKEN");
+    expect(screen.queryByRole("link", { name: "Подтвердить подключение" }))
+      .not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith("/api/diary/simulator-bridge/pair", {
+      method: "POST", credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ device_id: "owner-pc" }),
+    });
+  });
+
+  it("distinguishes network failure and invalid success without leaking server payloads", async () => {
+    const secret = "SECRET_PAIRING_TOKEN_MUST_NOT_RENDER";
+    const scenarios = [
+      { failure: "Нет ответа сервера (сеть или шлюз)", payload: null },
+      { failure: "Ответ сервера не прошёл проверку (HTTP 200)", payload: { ok: true, device_id: "owner-laptop", token: secret } },
+    ];
+    for (const scenario of scenarios) {
+      vi.stubGlobal("navigator", { userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" });
+      vi.stubGlobal("fetch", vi.fn().mockImplementation(async (url: string) => {
+        if (url.endsWith("/simulator-bridge/pair")) {
+          if (!scenario.payload) throw new TypeError("network " + secret);
+          return new Response(JSON.stringify(scenario.payload), { status: 200 });
+        }
+        return new Response(JSON.stringify({
+          ...finrezResponse, closed_episodes: [robotDeal],
+        }), { status: 200 });
+      }));
+      const view = render(<DiaryOverlay accountKey="paper:pair-unknown" initialSection="DEALS"
+        statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+      fireEvent.click(await screen.findByRole("button", { name: /BTCUSDT/ }));
+      fireEvent.click(screen.getByRole("button", { name: "Связать ПК" }));
+      const notice = await screen.findByText(/Подключение пока недоступно:/);
+      expect(notice).toHaveTextContent(scenario.failure);
+      expect(notice).not.toHaveTextContent(secret);
+      expect(screen.queryByRole("link", { name: "Подтвердить подключение" }))
+        .not.toBeInTheDocument();
+      view.unmount();
     }
   });
 
@@ -1008,13 +1081,13 @@ describe("Finrez first-screen UI", () => {
     render(<DiaryOverlay accountKey="paper:patterns" initialSection="PATTERNS"
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
     const region = await screen.findByRole("region", { name: "Паттерны по подтверждённым сделкам" });
-    expect(region).toHaveTextContent("Паттерн подтверждён для 4 из 5");
+    expect(region).toHaveTextContent("Подтверждено: 4 из 5");
     expect(region).toHaveTextContent("Робот · сделок: 2 · прибыльных: 1 · убыточных: 1");
-    expect(screen.getByTitle("-1.4012345678 USDT")).toHaveTextContent("-1,4012 USDT");
+    expect(screen.getByTitle("-1.4012345678 USDT")).toHaveTextContent("-1,40 USDT");
     expect(screen.getByTitle("20.2 USDT")).toHaveTextContent("+20,20 USDT");
     const rankedCards = Array.from(region.querySelectorAll(".diary-pattern-card"));
     expect(rankedCards.map((card) => card.querySelector("span[title$='USDT']")?.textContent?.trim()))
-      .toEqual(["+20,20 USDT", "+3,00 USDT", "-1,4012 USDT"]);
+      .toEqual(["+20,20 USDT", "+3,00 USDT", "-1,40 USDT"]);
     const patternDistribution = screen.getByRole("group", { name: "Распределение результатов паттернов" });
     expect(patternDistribution).toHaveTextContent("Прибыльных: 2");
     expect(patternDistribution).toHaveTextContent("Убыточных: 1");
@@ -1025,7 +1098,7 @@ describe("Finrez first-screen UI", () => {
     expect(patternDistribution).toHaveTextContent("Всего: 3");
     fireEvent.click(screen.getByRole("button", { name: "Убыточные паттерны" }));
     expect(region.querySelectorAll(".diary-pattern-card")).toHaveLength(1);
-    expect(region.querySelector(".diary-pattern-card")).toHaveTextContent("-1,4012 USDT");
+    expect(region.querySelector(".diary-pattern-card")).toHaveTextContent("-1,40 USDT");
     fireEvent.click(screen.getByRole("button", { name: "Показать все паттерны" }));
     expect(region.querySelectorAll(".diary-pattern-card")).toHaveLength(3);
     expect(screen.queryByTitle("-999 USDT")).not.toBeInTheDocument();
@@ -1184,8 +1257,14 @@ describe("Finrez first-screen UI", () => {
     render(<DiaryOverlay accountKey="paper:unverified-patterns" initialSection="PATTERNS"
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
     const region = await screen.findByRole("region", { name: "Паттерны по подтверждённым сделкам" });
-    expect(region).toHaveTextContent("Паттерн подтверждён для 0 из 1");
-    expect(region).toHaveTextContent("неполное покрытие атрибуции");
+    expect(region).toHaveTextContent("Подтверждено: 0 из 1");
+    const coverage = screen.getByRole("button", { name: "Подтверждено: 0 из 1 сделок" });
+    expect(coverage).toHaveAttribute("aria-expanded", "false");
+    expect(region).not.toHaveTextContent("происхождение части исполнений не подтверждено");
+    fireEvent.click(coverage);
+    expect(region).toHaveTextContent("происхождение части исполнений не подтверждено");
+    fireEvent.click(coverage);
+    expect(region).not.toHaveTextContent("происхождение части исполнений не подтверждено");
     expect(region).toHaveTextContent("Нет сделок с подтверждённым паттерном");
     expect(region).not.toHaveTextContent("0 USDT");
     const emptyPatternBar = screen.getByRole("group", { name: "Распределение результатов паттернов" });
@@ -1196,7 +1275,7 @@ describe("Finrez first-screen UI", () => {
     fireEvent.change(screen.getByRole("searchbox", { name: "Поиск по тикеру" }), {
       target: { value: "ETH" },
     });
-    expect(region).toHaveTextContent("Паттерн подтверждён для 0 из 0");
+    expect(region).toHaveTextContent("Подтверждено: 0 из 0");
   });
 
   it("shows the ticker ranking with five periods, reuses the Diary modal and defers other sections", async () => {
@@ -1327,8 +1406,8 @@ describe("Finrez first-screen UI", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<DiaryOverlay accountKey="paper:finrez-filter" initialSection="FINREZ"
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
-    expect(await screen.findByText("+7,2012 USDT")).toBeInTheDocument();
-    expect(screen.getByText("-2,5012 USDT")).toBeInTheDocument();
+    expect(await screen.findByText("+7,20 USDT")).toBeInTheDocument();
+    expect(screen.getByText("-2,50 USDT")).toBeInTheDocument();
     expect(screen.queryByText(/2\.5012345678/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Показать сделки по BTCUSDT" }));
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
@@ -1458,7 +1537,7 @@ describe("Finrez first-screen UI", () => {
     }), { status: 200 })));
     render(<DiaryOverlay accountKey="paper:finrez-unreconciled" initialSection="FINREZ"
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
-    expect(await screen.findByText(/Суммарный результат недоступен/)).toBeInTheDocument();
+    expect(await screen.findByText(/Финансовая полоса недоступна/)).toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Финрез: прибыль и убыток в USDT" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Показать все тикеры" })).not.toBeInTheDocument();
     expect(screen.getByText("ETHUSDT")).toBeInTheDocument();
@@ -1482,11 +1561,11 @@ describe("Finrez first-screen UI", () => {
     render(<DiaryOverlay accountKey="paper:compact" initialSection="FINREZ"
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
     expect(await screen.findByTitle("GIGADEVICEUSDT")).toHaveTextContent("GIGADEVICEUSDT");
-    expect(screen.getByTitle("4.3583303660000000000004 USDT")).toHaveTextContent("+4,3583 USDT");
-    expect(screen.getByTitle("0.0000000004 USDT")).toHaveTextContent("+<0,000001 USDT");
+    expect(screen.getByTitle("4.3583303660000000000004 USDT")).toHaveTextContent("+4,36 USDT");
+    expect(screen.getByTitle("0.0000000004 USDT")).toHaveTextContent("+<0,01 USDT");
     expect(screen.getByTitle("0 USDT")).toHaveTextContent("0 USDT");
-    expect(screen.getByTitle("-0.0026140884 USDT")).toHaveTextContent("-0,002614 USDT");
-    expect(screen.getByTitle("-1.8162218600000000000000 USDT")).toHaveTextContent("-1,8162 USDT");
+    expect(screen.getByTitle("-0.0026140884 USDT")).toHaveTextContent("-<0,01 USDT");
+    expect(screen.getByTitle("-1.8162218600000000000000 USDT")).toHaveTextContent("-1,82 USDT");
   });
 
   it("never shows foreign-account ranking or silently falls back to manual", async () => {
@@ -1510,7 +1589,7 @@ describe("Finrez first-screen UI", () => {
     expect(await screen.findByRole("region", { name: "Ручные закрытия сделок робота" })).toBeInTheDocument();
     expect(screen.getByText("Робот · ручное вмешательство")).toBeInTheDocument();
     expect(screen.getByText("-4,50 USDT")).toBeInTheDocument();
-    expect(screen.getByText("Нет закрытых сделок этого типа за выбранный период")).toBeInTheDocument();
+    expect(screen.getByText("Сегодня с 00:00 МСК нет подтверждённых закрытых сделок Робота")).toBeInTheDocument();
     expect(screen.getByText(/В PnL полностью роботизированных сделок не включён/)).toBeInTheDocument();
   });
 
@@ -1541,16 +1620,22 @@ describe("Finrez first-screen UI", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<DiaryOverlay accountKey="paper:4" initialSection="FINREZ"
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
-    expect(await screen.findByText("Нет закрытых сделок этого типа за выбранный период")).toBeInTheDocument();
+    expect(await screen.findByText("Сегодня с 00:00 МСК нет подтверждённых закрытых сделок Робота")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Всё время" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=ALL"));
-    const coverage = await screen.findByRole("status");
-    expect(coverage).toHaveTextContent("История неполная");
-    expect(coverage).toHaveTextContent("исключено 3 закрытых");
-    expect(coverage).toHaveTextContent("11 исполнений");
-    expect(coverage).toHaveTextContent("не полный результат за период");
+    const coverage = await screen.findByRole("button", { name: "Не все сделки учтены" });
+    expect(coverage).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText(/Исключено сделок:/)).not.toBeInTheDocument();
+    expect(screen.getByText("Сделки робота")).toBeInTheDocument();
+    fireEvent.click(coverage);
+    const details = screen.getByText(/Исключено сделок:/);
+    expect(details).toHaveTextContent("Исключено сделок: 3");
+    expect(details).toHaveTextContent("11 исполнений");
+    expect(details).toHaveTextContent("только по проверенным сделкам");
+    fireEvent.click(coverage);
+    expect(screen.queryByText(/Исключено сделок:/)).not.toBeInTheDocument();
     expect(screen.getByText(/Нет достоверно атрибутированных закрытых сделок/)).toBeInTheDocument();
-    expect(screen.queryByText("Нет закрытых сделок этого типа за выбранный период")).not.toBeInTheDocument();
+    expect(screen.queryByText("Сегодня с 00:00 МСК нет подтверждённых закрытых сделок Робота")).not.toBeInTheDocument();
   });
 
   it("shows the same shared economic episode in both scopes without claiming either owned it", async () => {
@@ -1567,7 +1652,7 @@ describe("Finrez first-screen UI", () => {
     const section = await screen.findByRole("region", { name: "Совместно управляемые сделки" });
     expect(section).toHaveTextContent("-11,40 USDT");
     expect(section).toHaveTextContent("не складывайте его дважды");
-    expect(screen.getByText("Нет закрытых сделок этого типа за выбранный период")).toBeInTheDocument();
+    expect(screen.getByText("Сегодня с 00:00 МСК нет подтверждённых закрытых сделок Робота")).toBeInTheDocument();
     current.rerender(<DiaryOverlay accountKey="paper:joint-manual" initialSection="FINREZ"
       statisticsScope={{ accountId: "paper", owner: "MANUAL" }} onClose={() => {}} />);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
@@ -1640,7 +1725,7 @@ describe("shared statistics trade action standard", () => {
     expect(longRow.querySelector(".diary-trade-heading")).toHaveTextContent("Клин ↘");
     expect(longRow.querySelector(".diary-trade-side.long")).toHaveTextContent("LONG");
     expect(longRow.querySelector(".diary-trade-meta")).toHaveTextContent(/Робот.*→/);
-    expect(longRow).toHaveTextContent("PnL: -0,2727 USDT (-0,63%)");
+    expect(longRow).toHaveTextContent("PnL: -0,27 USDT (-0,63%)");
     expect(longRow).toHaveTextContent("Исполнений: 8");
     expect(longRow).not.toHaveTextContent("Паттерн:");
 
@@ -1648,7 +1733,7 @@ describe("shared statistics trade action standard", () => {
     expect(shortRow).toHaveClass("diary-closed-deal-row", "pnl-positive");
     expect(shortRow.querySelector(".diary-trade-heading")).toHaveTextContent("Клин ↗");
     expect(shortRow.querySelector(".diary-trade-side.short")).toHaveTextContent("SHORT");
-    expect(shortRow).toHaveTextContent("PnL: +1,1684 USDT (+0,62%)");
+    expect(shortRow).toHaveTextContent("PnL: +1,17 USDT (+0,62%)");
   });
 
   it("renders source-verified entry-notional return, not guessed leveraged ROI", async () => {
@@ -1924,7 +2009,7 @@ describe("shared statistics trade action standard", () => {
       expect(filmstrip?.querySelectorAll("rect")).toHaveLength(7);
       expect(filmstrip?.querySelectorAll("path")).toHaveLength(1);
     });
-    expect(screen.getByText(/PnL: -1,8162 USDT/)).toHaveAttribute("title", "-1.81622186");
+    expect(screen.getByText(/PnL: -1,82 USDT/)).toHaveAttribute("title", "-1.81622186");
   });
 });
 
@@ -1960,7 +2045,7 @@ describe("Verified Wedge lineage in Statistics", () => {
     render(<DiaryOverlay accountKey="paper:wedge" initialSection="PATTERNS"
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
     const region = await screen.findByRole("region", { name: "Паттерны по подтверждённым сделкам" });
-    expect(region).toHaveTextContent("Паттерн подтверждён для 1 из 1");
+    expect(region).toHaveTextContent("Подтверждено: 1 из 1");
     expect(region).toHaveTextContent("Wedge: 1");
     expect(region).toHaveTextContent("Робот · сделок: 1 · прибыльных: 0 · убыточных: 1");
     expect(screen.getByTitle("-2.5 USDT")).toHaveTextContent("-2,50 USDT");
@@ -1992,7 +2077,7 @@ describe("Verified Wedge lineage in Statistics", () => {
     render(<DiaryOverlay accountKey="paper:nonwedge-source" initialSection="PATTERNS"
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
     const region = await screen.findByRole("region", { name: "Паттерны по подтверждённым сделкам" });
-    expect(region).toHaveTextContent("Паттерн подтверждён для 1 из 1");
+    expect(region).toHaveTextContent("Подтверждено: 1 из 1");
     expect(region).toHaveTextContent("Robot ID: 1");
     fireEvent.click(screen.getByRole("button", { name: "Показать все сделки по паттерну Double Bottom" }));
     expect(await screen.findByRole("combobox", { name: "Выбор паттерна" })).toHaveValue("Double Bottom");
@@ -2000,10 +2085,10 @@ describe("Verified Wedge lineage in Statistics", () => {
     expect(await screen.findByText("candidate-42")).toBeInTheDocument();
     expect(screen.getByText(/точная цепочка Robot candidate/)).toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([url]) =>
-      String(url).startsWith("/api/workspace/signal-geometry"))).toBe(false);
+      String(url).startsWith("/api/workspace/signal-geometry"))).toBe(true);
   });
 
-  it("requests an immutable original chart only for exact Robot Wedge lineage", async () => {
+  it("requests an immutable original chart for proven Robot candidate lineage", async () => {
     const fetchMock = vi.fn().mockImplementation(async (url: string) => {
       if (url.startsWith("/api/workspace/signal-geometry")
           || url.startsWith("/api/diary/episode-facts"))
@@ -2053,7 +2138,7 @@ describe("Verified Wedge lineage in Statistics", () => {
     render(<DiaryOverlay accountKey="paper:wedge-unproven" initialSection="PATTERNS"
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
     const region = await screen.findByRole("region", { name: "Паттерны по подтверждённым сделкам" });
-    expect(region).toHaveTextContent("Паттерн подтверждён для 0 из 7");
+    expect(region).toHaveTextContent("Подтверждено: 0 из 7");
     expect(region).not.toHaveTextContent("-2,50 USDT");
     fireEvent.click(screen.getByRole("button", { name: "Сделки" }));
     expect(await screen.findAllByText("не установлен")).toHaveLength(7);
@@ -2066,7 +2151,7 @@ describe("Verified Wedge lineage in Statistics", () => {
     ), { status: 200 })));
     render(<DiaryOverlay accountKey="paper:manual-wedge" initialSection="PATTERNS"
       statisticsScope={{ accountId: "paper", owner: "MANUAL" }} onClose={() => {}} />);
-    expect(await screen.findByText(/Паттерн подтверждён для 0 из 1/)).toBeInTheDocument();
+    expect(await screen.findByText(/Подтверждено: 0 из 1/)).toBeInTheDocument();
   });
 
   it("keeps an existing exact D2 setup authoritative when Wedge metadata also exists", async () => {
@@ -2091,5 +2176,49 @@ describe("Verified Wedge lineage in Statistics", () => {
     const row = await screen.findByRole("button", { name: /BTCUSDT/ });
     expect(row.querySelector(".diary-deal-pattern")).toHaveTextContent("Triangle Compression");
     expect(row).not.toHaveTextContent("Клин ↘");
+  });
+});
+
+describe("Compact Statistics calendar", () => {
+  it("keeps the applied inclusive range across tabs and rejects inverted draft dates", async () => {
+    const customUrl = "/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=CUSTOM&date_from=2020-01-02&date_to=2020-01-04";
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+      const params = new URL(url, "http://localhost").searchParams;
+      const period = params.get("period") ?? "DAY";
+      return new Response(JSON.stringify({
+        ...finrezResponse, period, tickers: [], closed_episodes: [],
+        ...(period === "CUSTOM" ? {
+          date_from: params.get("date_from"), date_to: params.get("date_to"),
+          period_start_ms: Date.parse("2020-01-02T00:00:00+03:00"),
+          period_end_ms: Date.parse("2020-01-05T00:00:00+03:00") - 1,
+        } : {}),
+        attribution_coverage: { status: "PARTIAL", excluded_unattributed_episode_count: 1,
+          excluded_unattributed_execution_count: 1 },
+      }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<DiaryOverlay accountKey="paper:calendar" initialSection="FINREZ"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    const calendar = screen.getByRole("button", { name: "Выбрать период" });
+    fireEvent.click(calendar);
+    fireEvent.change(screen.getByLabelText("Дата от"), { target: { value: "2020-01-02" } });
+    fireEvent.change(screen.getByLabelText("Дата до"), { target: { value: "2020-01-01" } });
+    expect(screen.getByRole("button", { name: "Применить" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Дата до"), { target: { value: "2020-01-04" } });
+    fireEvent.click(screen.getByRole("button", { name: "Применить" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(customUrl));
+    expect(calendar).toHaveAttribute("aria-pressed", "true");
+    expect(calendar).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(screen.getByRole("button", { name: "Паттерны" }));
+    expect(await screen.findByRole("button", { name: "Подтверждено: 0 из 0 сделок" })).toBeInTheDocument();
+    expect(screen.queryByText(/Кнопка списка открывает/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Сделки" }));
+    const warning = await screen.findByRole("button", { name: "Не все сделки учтены" });
+    expect(warning).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText(/Киноплёнка передаёт/)).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.filter(([url]) => url === customUrl)).toHaveLength(3);
+    fireEvent.click(screen.getByRole("button", { name: "Месяц" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=MONTH"));
+    expect(calendar).toHaveAttribute("aria-pressed", "false");
   });
 });

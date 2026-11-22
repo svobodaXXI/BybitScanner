@@ -18,6 +18,7 @@ export function DrawingToolbar({
   onTool,
   onMagnet,
   onUndo,
+  canUndo,
   onDelete,
   onClear,
 }: {
@@ -27,6 +28,7 @@ export function DrawingToolbar({
   onTool: (tool: DrawingTool) => void;
   onMagnet: () => void;
   onUndo: () => void;
+  canUndo: boolean;
   onDelete: () => void;
   onClear: () => void;
 }) {
@@ -73,6 +75,7 @@ export function DrawingToolbar({
         type="button"
         title="Undo"
         aria-label="Undo drawing"
+        disabled={!canUndo}
         onClick={onUndo}
       >
         {"\u21B6"}

@@ -94,6 +94,36 @@ describe("original signal on a closed deal", () => {
     })).toBeNull(); // Would reveal a candle not yet closed at Robot entry.
   });
 
+  it("accepts exact Box Fibonacci source and renders horizontal levels, not a diagonal", () => {
+    const box = {
+      ...archived, original_pattern: "Ikigai Box",
+      snapshot: {
+        ...snapshot, boundaries: [{
+          boundary_id: "box_fibonacci", kind: "fibonacci",
+          anchors: [
+            { bar_open_time_ms: t, price: 100 },
+            { bar_open_time_ms: t + interval, price: 110 },
+          ],
+        }],
+      },
+    };
+    const source = parseOriginalTradeSignal(box, {
+      ...identity, pattern: "Ikigai Box",
+    });
+    expect(source).not.toBeNull();
+    const lines = visibleOriginalBoundarySegments(source!.snapshot.boundaries, [
+      ...snapshot.bars,
+      { open_time_ms: t + 2 * interval, open: 110, high: 111, low: 109, close: 110 },
+    ]);
+    expect(lines).toHaveLength(11);
+    expect(lines.find(line => line.boundaryId === "box_fibonacci:1.618")?.points)
+      .toEqual([
+        { time: (t + interval) / 1000, value: 116.18 },
+        { time: (t + 2 * interval) / 1000, value: 116.18 },
+      ]);
+    expect(lines.every(line => line.points[0].value === line.points[1].value)).toBe(true);
+  });
+
   it("rejects public continuation gaps, wrong revisions, wrong source IDs and old windows", () => {
     const source = parseOriginalTradeSignal(archived, identity)!;
     const first = parseOriginalTradeContinuation(extension, source, t + interval)!;

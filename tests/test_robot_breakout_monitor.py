@@ -373,6 +373,63 @@ class _Clock:
 
 
 class RobotBreakoutMonitorTests(unittest.TestCase):
+    def test_market_match_does_not_fence_proven_unstarted_box(self):
+        from terminal.runtime.paper_runtime import PaperRuntime
+
+        data = box_snapshot()
+        data["identity"]["symbol"] = SYMBOL
+        source, _ = self.store.save_box_plan_only(snapshot=data, created_at_ms=3001)
+        candidate, _ = self.store.handoff_box_plan_to_robot(
+            source.candidate_id, symbol=source.symbol,
+            expected_snapshot_sha256=source.snapshot_sha256, approved_at_ms=3002,
+        )
+        runtime = PaperRuntime.__new__(PaperRuntime)
+        runtime.store = self.store
+        runtime._paper_account_id = ACCOUNT_ID
+        runtime._match_limits_only = Mock(return_value=0)
+        runtime.evaluate_robot_protection_crossing = Mock(return_value=None)
+        runtime.fence_robot_protection_continuity_loss = Mock()
+        symbol, book = Symbol(SYMBOL), _ready_book()
+
+        # Real store has a frozen handoff but no baseline or trading lineage.
+        self.assertTrue(self.store.prove_box_never_started_flat(source.candidate_id))
+        self.assertEqual(runtime._match_symbol(symbol, book, "early", None), 0)
+        runtime._match_limits_only.assert_not_called()
+        runtime.process_robot_market_event(
+            SYMBOL, book, event_id="early-event", received_at_ms=4000,
+        )
+        runtime._match_limits_only.assert_called_once_with(
+            symbol, book, "early-event", allowed_order_ids=set(),
+        )
+        runtime.fence_robot_protection_continuity_loss.assert_not_called()
+        self.assertEqual(self.store.get_robot_candidate(candidate.candidate_id), candidate)
+        self.assertEqual(self.store.get_robot_runtime_state(ACCOUNT_ID).recovery_status, "READY")
+
+        # A missing baseline must NOT be waved through if a working order
+        # exists on the symbol, even when the linked candidate looks unstarted.
+        self.store.create_paper_limit(
+            client_action_id="foreign-box-limit", request_fingerprint="foreign-box-fp",
+            order_id=OrderId("foreign-box-limit"), order_link_id="foreign-box-link",
+            trading_account_id=ACCOUNT_ID, symbol=symbol, side=OrderSide.BUY,
+            price=Decimal("94"), quantity=Decimal("2"), created_at_ms=4001,
+        )
+        runtime._match_limits_only.reset_mock()
+        self.assertEqual(runtime._match_symbol(symbol, book, "ambiguous", None), 0)
+        runtime._match_limits_only.assert_not_called()
+        runtime.fence_robot_protection_continuity_loss.assert_called_once_with(
+            SYMBOL, "box_ownership_unproven_in_match_fallback",
+        )
+        runtime.fence_robot_protection_continuity_loss.reset_mock()
+        runtime.process_robot_market_event(
+            SYMBOL, book, event_id="ambiguous-event", received_at_ms=4002,
+        )
+        runtime.fence_robot_protection_continuity_loss.assert_called_once_with(
+            SYMBOL, "box_ownership_unproven_before_limit_match",
+        )
+        runtime._match_limits_only.assert_called_once_with(
+            symbol, book, "ambiguous-event", allowed_order_ids=set(),
+        )
+
     def test_box_late_catchup_on_pristine_symbol_markets_crossed_slot_and_limits_rest(self):
         # AVNTUSDT/NEARUSDT shape: never traded on PAPER -- no projection row and
         # no executions -- is a provable FLAT base for the same catch-up path.
@@ -2284,8 +2341,11 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         position_key = PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
         self.assertEqual(self.store.get_position_projection(position_key).side, PositionSide.LONG)
 
-    def test_post_fill_rr_below_two_keeps_protection_and_closes_without_open_trade(self):
-        """A safely admitted LIMIT can fill at a price that collapses Net RR."""
+    def test_post_fill_rr_below_two_keeps_protected_owned_trade_without_emergency_close(self):
+        """Below-2R after a real fill is a recorded economics exception,
+        NEVER evidence that proven STOP/TAKE failed. The exact fill remains an
+        OPEN Robot trade (no phantom exit, no second Market command).
+        """
         self._create_candidate()
         self._drive_to_retest_detected()
         self.monitor.tick()
@@ -2301,21 +2361,68 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         ):
             self.monitor.tick()
         record = self.store.get_robot_candidate("candidate-1")
-        self.assertEqual(record.status, "INVALIDATED")
-        self.assertIsNone(self.store.get_robot_trade("robot-trade-candidate-1"))
+        self.assertEqual(record.status, "OPEN")
+        trade = self.store.get_robot_trade("robot-trade-candidate-1")
+        self.assertIsNotNone(trade)
+        self.assertEqual(trade.entry_quantity, Decimal("1"))
+        self.assertEqual(trade.average_entry, Decimal("81"))
+        self.assertIsNone(trade.exit_time_ms)
         self.assertEqual(
             [name for name, _ in self.executor.protection_calls],
-            ["create_stop", "create_take", "full_close"],
+            ["create_stop", "create_take"],
         )
-        self.assertIn(
-            "POST_FILL_NET_RR_BELOW_2",
-            record.robot_state["execution"]["protection_failure"],
-        )
+        exception = record.robot_state["execution"]["post_fill_policy_exception"]
+        self.assertEqual(exception["reason"], "POST_FILL_NET_RR_BELOW_2")
+        self.assertLess(Decimal(exception["actual_net_rr"]), Decimal("2"))
         self.assertEqual(
             self.store.get_position_projection(
                 PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
             ).side,
-            PositionSide.FLAT,
+            PositionSide.LONG,
+        )
+        self.monitor.tick()  # OPEN does not retry a Market close.
+        self.assertNotIn("full_close", [n for n, _ in self.executor.protection_calls])
+
+    def test_post_fill_low_rr_requires_confirmed_active_protection_not_just_prices(self):
+        """A stale/unconfirmed STOP/TAKE projection must not create OPEN ownership."""
+        from dataclasses import replace
+        self._create_candidate()
+        self._drive_to_retest_detected()
+        self.monitor.tick()
+        order_id = self.store.get_robot_candidate(
+            "candidate-1"
+        ).robot_state["execution"]["limit_order_id"]
+        self.executor.fill_resting_limit(
+            order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81")
+        )
+        # The monitor owns a distinct thread-local SQLiteStore connection;
+        # patching the fixture writer connection does not affect its reads.
+        monitor_store = self.monitor._store()
+        original = monitor_store.get_protection_projection
+
+        def unconfirmed_after_submit(key):
+            projection = original(key)
+            if (projection is not None and projection.stop_loss is not None
+                    and projection.take_profit is not None):
+                return replace(projection, status="unknown")
+            return projection
+
+        with patch.object(
+            RobotBreakoutMonitor, "_frozen_prices",
+            return_value=(Decimal("80"), Decimal("82")),
+        ), patch.object(
+            monitor_store, "get_protection_projection",
+            side_effect=unconfirmed_after_submit,
+        ):
+            self.monitor.tick()
+        self.assertIsNone(self.store.get_robot_trade("robot-trade-candidate-1"))
+        self.assertEqual(
+            self.store.get_robot_candidate("candidate-1").status,
+            "INVALIDATED",
+        )
+        self.assertEqual(
+            [name for name, _ in self.executor.protection_calls],
+            ["create_stop", "create_take", "full_close"],
         )
 
     def test_aioz_short_fee_aware_actual_fill_rr_regression(self):
@@ -2502,51 +2609,133 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertEqual(self.store.get_position_projection(position_key).side, PositionSide.LONG)
 
     def test_repeated_tick_during_pending_emergency_close_is_idempotent_and_no_new_entry(self):
-        """While an emergency close is pending (ambiguous outcome), repeated
-        ticks must keep reconciling the same close -- never open a new entry
-        -- and once the close genuinely completes and reads back FLAT, the
-        candidate becomes terminal exactly once."""
+        """Unknown close outcome holds the candidate; a repeated tick never
+        sends another aggregate full_close, regardless of the stable label."""
         self._create_candidate(start_width=0.0)
         self._drive_to_retest_detected()
-        self._place_legacy_unfiltered_limit()  # reproduce an older, already-admitted order
+        self._place_legacy_unfiltered_limit()
         order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
-        self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"))
-        limit_calls_before = list(self.executor.limit_calls)
-        market_calls_before = list(self.executor.market_calls)
-
+        self.executor.fill_resting_limit(
+            order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"),
+        )
         self.executor.full_close_status = CommandResultStatus.REJECTED
-        first_advance = self.monitor.tick()
-        self.assertEqual(first_advance, ("candidate-1",))
+        self.monitor.tick()
         record = self.store.get_robot_candidate("candidate-1")
-        self.assertEqual(record.status, "APPROVED")
-        self.assertEqual(self.executor.limit_calls, limit_calls_before)  # no duplicate LIMIT
-        self.assertEqual(self.executor.market_calls, market_calls_before)  # no duplicate Market entry
+        intent = record.robot_state["execution"]["emergency_close_intent"]
+        self.assertTrue(record.robot_state["execution"]["emergency_close_pending"])
+        self.assertEqual(intent["entry_order_ids"], [order_id])
+        self.assertEqual(intent["entry_quantity"], "1")
+        self.assertEqual(intent["symbol"], SYMBOL)
+        self.assertEqual(intent["account_id"], "paper")
+        self.assertEqual(intent["dispatch_outcome"], "UNKNOWN")
+        self.assertEqual(len(intent["entry_execution_ids"]), 1)
+        self.assertEqual(len([x for x in self.executor.protection_calls if x[0] == "full_close"]), 1)
 
-        # Recovery: the exchange/runtime now genuinely accepts the close.
+        # A later tick cannot repeat even if the transport would now succeed.
         self.executor.full_close_status = CommandResultStatus.COMPLETED
-        second_advance = self.monitor.tick()
-
-        self.assertEqual(second_advance, ("candidate-1",))
-        record = self.store.get_robot_candidate("candidate-1")
-        self.assertEqual(record.status, "INVALIDATED")
-        self.assertIsNone(self.store.get_robot_trade("robot-trade-candidate-1"))
+        self.monitor.tick()
+        self.monitor.tick()
+        self.assertEqual(self.store.get_robot_candidate("candidate-1").status, "APPROVED")
+        self.assertEqual(len([x for x in self.executor.protection_calls if x[0] == "full_close"]), 1)
         self.assertEqual(
-            [name for name, _ in self.executor.protection_calls],
-            ["full_close", "full_close"],
+            self.store.get_robot_runtime_state(ACCOUNT_ID).recovery_status,
+            "RECONCILIATION_REQUIRED",
         )
-        # Both attempts used the exact same deterministic action id.
-        first_request, second_request = (
-            call[1] for call in self.executor.protection_calls
+        self.assertEqual(
+            self.store.get_position_projection(
+                PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
+            ).side, PositionSide.LONG,
         )
-        self.assertEqual(first_request.client_action_id, second_request.client_action_id)
-        self.assertEqual(self.executor.limit_calls, limit_calls_before)
-        self.assertEqual(self.executor.market_calls, market_calls_before)
 
-        # Terminal: a further tick must not attempt yet another close.
-        third_advance = self.monitor.tick()
-        self.assertEqual(third_advance, ())
-        self.assertEqual(len(self.executor.protection_calls), 2)
+    def test_emergency_intent_is_durable_before_first_full_close(self):
+        self._create_candidate(start_width=0.0)
+        self._drive_to_retest_detected()
+        self._place_legacy_unfiltered_limit()
+        order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
+        self.executor.fill_resting_limit(
+            order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"),
+        )
+        original_close = self.executor.full_close
 
+        def assert_prepared(request):
+            persisted = self.store.get_robot_candidate("candidate-1")
+            self.assertEqual(persisted.status, "APPROVED")
+            execution = persisted.robot_state["execution"]
+            self.assertTrue(execution["emergency_close_pending"])
+            intent = execution["emergency_close_intent"]
+            self.assertEqual(intent["client_action_id"], request.client_action_id.value)
+            from terminal.application.command_identity import robot_emergency_close_identity
+            identity = robot_emergency_close_identity(
+                request.client_action_id.value, request.symbol,
+            )
+            self.assertEqual(intent["command_id"], identity.command_id.value)
+            self.assertEqual(intent["order_link_id"], identity.order_link_id)
+            self.assertEqual(intent["entry_order_ids"], [order_id])
+            self.assertEqual(intent["entry_position_version"],
+                             self.store.get_position_projection(
+                                 PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
+                             ).version)
+            self.assertEqual(len(intent["entry_execution_ids"]), 1)
+            return original_close(request)
+
+        with patch.object(self.executor, "full_close", side_effect=assert_prepared) as close:
+            self.monitor.tick()
+        self.assertEqual(close.call_count, 1)
+        self.assertEqual(self.store.get_robot_candidate("candidate-1").status, "INVALIDATED")
+
+    def test_emergency_close_transport_loss_remains_fenced_across_ticks(self):
+        self._create_candidate(start_width=0.0)
+        self._drive_to_retest_detected()
+        self._place_legacy_unfiltered_limit()
+        order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
+        self.executor.fill_resting_limit(
+            order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"),
+        )
+        with patch.object(
+            self.executor, "full_close", side_effect=RuntimeError("unknown transport result"),
+        ) as close:
+            self.monitor.tick()
+            self.monitor.tick()
+            self.assertEqual(close.call_count, 1)
+        candidate = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(candidate.status, "APPROVED")
+        self.assertTrue(candidate.robot_state["execution"]["emergency_close_pending"])
+        self.assertEqual(
+            self.store.get_robot_runtime_state(ACCOUNT_ID).recovery_status,
+            "RECONCILIATION_REQUIRED",
+        )
+
+    def test_emergency_intent_persist_failure_prevents_close_dispatch(self):
+        """A failed durable write cannot trigger any aggregate close."""
+        self._create_candidate(start_width=0.0)
+        self._drive_to_retest_detected()
+        self._place_legacy_unfiltered_limit()
+        order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
+        self.executor.fill_resting_limit(
+            order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"),
+        )
+        # Monitor keeps its own per-thread SQLiteStore connection.
+        monitor_store = self.monitor._store()
+        original_save = monitor_store.save_robot_candidate_state
+
+        def fail_intent(candidate_id, **kwargs):
+            if (kwargs["robot_state"].get("execution") or {}).get("emergency_close_intent"):
+                raise RuntimeError("durable intent write failed")
+            return original_save(candidate_id, **kwargs)
+
+        with patch.object(monitor_store, "save_robot_candidate_state", side_effect=fail_intent):
+            self.monitor.tick()
+        self.assertEqual(
+            [name for name, _ in self.executor.protection_calls if name == "full_close"],
+            [],
+        )
+        candidate = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(candidate.status, "APPROVED")
+        self.assertNotIn("emergency_close_intent", candidate.robot_state["execution"])
+        self.assertEqual(
+            self.store.get_robot_runtime_state(ACCOUNT_ID).recovery_status,
+            "RECONCILIATION_REQUIRED",
+        )
 
     def test_finalize_trade_fences_without_protection_when_entry_projection_is_missing(self):
         self._create_candidate()
@@ -3036,6 +3225,29 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
             ACCOUNT_ID, mode=mode, recovery_status=recovery_status,
             reason=None, expected_version=current.version, updated_at_ms=self.clock(),
         )
+
+    def test_pre_entry_guard_fences_unproven_emergency_symbol_not_sibling(self):
+        self._create_candidate()
+        self._create_candidate(candidate_id="candidate-peer", symbol="SOLUSDT")
+        record = self.store.get_robot_candidate("candidate-1")
+        old, _ = self.store.create_robot_candidate(
+            candidate_id="old-uncertain", trading_account_id=ACCOUNT_ID,
+            symbol=Symbol(SYMBOL), status="APPROVED",
+            signal_snapshot={"symbol": SYMBOL, "pattern": "Falling Wedge", "old": True},
+            approved_at_ms=1001, updated_at_ms=1001,
+        )
+        self.store.save_robot_candidate_state(
+            old.candidate_id, status="INVALIDATED",
+            robot_state={"execution": {"emergency_close_intent": {
+                "candidate_id": old.candidate_id, "dispatch_outcome": "UNKNOWN",
+            }}},
+            expected_revision=0, updated_at_ms=1002,
+        )
+        reason = self.monitor._pre_entry_block_reason(record)
+        self.assertIn("ROBOT_SYMBOL_QUARANTINED", reason)
+        self.assertIn("old-uncertain", reason)
+        peer = self.store.get_robot_candidate("candidate-peer")
+        self.assertIsNone(self.monitor._pre_entry_block_reason(peer))
 
     def test_pre_entry_guard_allows_multiple_owned_limits_but_blocks_foreign(self):
         self._create_candidate()

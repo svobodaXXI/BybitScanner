@@ -155,23 +155,73 @@ def request_id_store() -> Path:
     return base / "BybitScanner" / "VPSManager" / "last_request_id"
 
 
-def recover_last_request_id(path: Path | None = None) -> str:
+def recover_last_request_context(
+    path: Path | None = None,
+) -> tuple[str, str, str]:
+    """Recover one UUID plus its exact action/SHA; legacy UUID-only is valid."""
     target = path if path is not None else request_id_store()
     try:
-        value = target.read_text(encoding="ascii").strip()
+        rows = target.read_text(encoding="ascii").splitlines()
     except (OSError, UnicodeError):
-        return ""
-    return value if REQUEST_ID.fullmatch(value) else ""
+        return "", "", ""
+    if not rows or REQUEST_ID.fullmatch(rows[0]) is None:
+        return "", "", ""
+    if len(rows) == 1:
+        return rows[0], "", ""  # old manager wrote only the UUID
+    if (len(rows) not in (3, 4) or rows[1] not in CONTROL_ACTIONS.values()
+            or (len(rows) == 4 and rows[3] not in ("PENDING", "DONE"))
+            or (EXACT_SHA.fullmatch(rows[2]) is None
+                and not (rows[2] == "installed" and rows[1] in ("start", "stop")))):
+        return rows[0], "", ""  # malformed context cannot authorize a postcheck
+    return rows[0], rows[1], rows[2]
 
 
-def remember_request_id(request: str, path: Path | None = None) -> None:
-    """Persist before submit so an interrupted client can query status only."""
+def recover_pending_request(path: Path | None = None) -> tuple[str, str, str]:
+    """Only a persisted, unfinished, exact owner action is auto-observed."""
+    target = path if path is not None else request_id_store()
+    try:
+        rows = target.read_text(encoding="ascii").splitlines()
+    except (OSError, UnicodeError):
+        return "", "", ""
+    if len(rows) != 4 or rows[3] != "PENDING":
+        return "", "", ""
+    request, action, sha = recover_last_request_context(target)
+    return (request, action, sha) if action else ("", "", "")
+
+
+def mark_request_terminal(request: str, path: Path | None = None) -> None:
+    """Only mark the same durable UUID terminal; never submit anything."""
+    target = path if path is not None else request_id_store()
+    if REQUEST_ID.fullmatch(request) is None:
+        return
+    req, action, sha = recover_pending_request(target)
+    if req != request or not action:
+        return
+    staged = target.with_suffix(".tmp")
+    staged.write_text("\n".join((req, action, sha, "DONE")) + "\n", encoding="ascii")
+    staged.replace(target)
+
+
+def recover_last_request_id(path: Path | None = None) -> str:
+    return recover_last_request_context(path)[0]
+
+
+def remember_request_id(
+    request: str, path: Path | None = None, *,
+    action: str = "", sha: str = "",
+) -> None:
+    """Atomically persist the UUID/action/SHA before any owner submission."""
     if REQUEST_ID.fullmatch(request) is None:
         raise ValueError("invalid_request_id")
+    if action and (action not in CONTROL_ACTIONS.values()
+                   or (EXACT_SHA.fullmatch(sha) is None
+                       and not (sha == "installed" and action in ("start", "stop")))):
+        raise ValueError("invalid_owner_context")
     target = path if path is not None else request_id_store()
     target.parent.mkdir(parents=True, exist_ok=True)
     staged = target.with_suffix(".tmp")
-    staged.write_text(request + "\n", encoding="ascii")
+    payload = request + ("\n" + action + "\n" + sha + "\nPENDING" if action else "") + "\n"
+    staged.write_text(payload, encoding="ascii")
     staged.replace(target)
 
 
@@ -185,17 +235,37 @@ CONTROL_ACTIONS = {
 CONTROL_MODULE = "cd /opt/BybitScanner && /opt/BybitScanner/venv/bin/python -m tools.vps_owner_control"
 
 
-def gui_owner_status(stdout: str, returncode: int, request: str) -> str:
-    """Only an exact UUID and matching server status can color a GUI result."""
+def gui_owner_status(
+    stdout: str, returncode: int, request: str, *,
+    verify_sha: str = "",
+) -> str:
+    """Bind successful update status to UUID, exact release and PAPER proof."""
     lines = stdout.strip().splitlines()
     states = [line for line in lines if line.startswith("STATUS=")]
     if "REQUEST_ID=" + request not in lines or len(states) != 1:
+        return "unproven"
+    if verify_sha and states[0] == "STATUS=FINISHED_OK":
+        if (returncode == 0 and EXACT_SHA.fullmatch(verify_sha)
+                and "INSTALLED_SHA=" + verify_sha in lines
+                and "POSTCHECK=VERIFIED_EDITOR_ONLY" in lines):
+            return "success"
         return "unproven"
     return {
         (0, "STATUS=FINISHED_OK"): "success",
         (3, "STATUS=RUNNING"): "submitted",
         (2, "STATUS=FAILED"): "failed",
     }.get((returncode, states[0]), "unproven")
+
+
+def update_status_target(command: list[str]) -> str:
+    """Only a generated exact-SHA status command may request proof."""
+    if not command:
+        return ""
+    match = re.fullmatch(
+        re.escape(CONTROL_MODULE) + r" status [0-9a-f]{32} --verify-update ([0-9a-f]{40})",
+        command[-1],
+    )
+    return match.group(1) if match else ""
 
 
 
@@ -227,6 +297,7 @@ def watch_owner_request(
             return run_readonly_ssh_with_laptop_agent_recovery(command, **kwargs)[0]
     sleep = sleep or time.sleep
     state = "submitted" if initially_submitted else "unproven"
+    verify_sha = update_status_target(status_command)
     latest = ""
     unknown = 0
     transport_unknown = 0
@@ -244,9 +315,13 @@ def watch_owner_request(
         except OSError:
             return state, latest + "\nSTATUS_UNPROVEN; SSH client unavailable; operation not resubmitted"
         else:
-            observed = gui_owner_status(reply.stdout, reply.returncode, request)
+            observed = gui_owner_status(
+                reply.stdout, reply.returncode, request, verify_sha=verify_sha)
             if observed in ("success", "failed"):
                 return observed, reply.stdout.strip()
+            if (verify_sha and "STATUS=FINISHED_OK" in reply.stdout.splitlines()
+                    and "REQUEST_ID=" + request in reply.stdout.splitlines()):
+                return "unproven", reply.stdout.strip() + "\nPOSTCHECK_UNPROVEN_NO_RESUBMIT"
             transient = transient_ssh_failure(reply)
             if observed == "submitted":
                 state = "submitted"
@@ -390,6 +465,10 @@ def control_ssh_command(host: str, user: str, key: str, operation: str,
         if REQUEST_ID.fullmatch(request_id) is None:
             raise ValueError("Недопустимый ID операции")
         args = ["status", request_id]
+        if sha:
+            if EXACT_SHA.fullmatch(sha) is None:
+                raise ValueError("Недопустимый SHA проверки обновления")
+            args.extend(["--verify-update", sha])
     elif operation == "list":
         args = ["list"]
     elif operation == "preflight":
@@ -551,6 +630,9 @@ def run_cli(options: argparse.Namespace) -> int:
                                   CONTROL_ACTIONS.values() else
                                   recover_last_request_id() if options.operation == "status" else "")
     sha = options.sha or ("installed" if options.operation in ("start", "stop") else "")
+    if options.operation == "status":
+        saved_id, saved_action, saved_sha = recover_last_request_context()
+        sha = saved_sha if req == saved_id and saved_action == "update" else ""
     try:
         argv = control_ssh_command(host, user, key, options.operation,
                                    sha=sha, request_id=req)
@@ -559,8 +641,8 @@ def run_cli(options: argparse.Namespace) -> int:
         return 2
     if options.operation in CONTROL_ACTIONS.values():
         try:
-            remember_request_id(req)
-        except OSError:
+            remember_request_id(req, action=options.operation, sha=sha)
+        except (OSError, ValueError):
             print("BLOCKED: request ID cannot be preserved; no operation sent")
             return 2
         print("REQUEST_ID=" + req, flush=True)
@@ -581,14 +663,22 @@ def run_cli(options: argparse.Namespace) -> int:
                                        timeout=35, stdin=subprocess.DEVNULL, check=False)
             recovery = ""
     except (OSError, subprocess.TimeoutExpired) as exc:
-        if options.operation == "preflight":
-            failure = ("SSH_CLIENT_TIMEOUT" if isinstance(exc, subprocess.TimeoutExpired)
-                       else "SSH_CLIENT_SPAWN_FAILURE")
-            print("PREFLIGHT_FAILURE_CLASS=" + failure)
-            print("PREFLIGHT_BLOCKED_UNPROVEN")
+        if (options.operation in CONTROL_ACTIONS.values()
+                and isinstance(exc, subprocess.TimeoutExpired)):
+            # The single submit might have reached the VPS. Never resubmit:
+            # query its pre-persisted UUID via the existing read-only watcher.
+            completed = subprocess.CompletedProcess(
+                argv, 255, stdout="", stderr="SSH_SUBMIT_TIMEOUT")
+            recovery = ""
         else:
-            print("SSH_UNPROVEN; request_id=" + req + "; check status; do not resubmit")
-        return 2
+            if options.operation == "preflight":
+                failure = ("SSH_CLIENT_TIMEOUT" if isinstance(exc, subprocess.TimeoutExpired)
+                           else "SSH_CLIENT_SPAWN_FAILURE")
+                print("PREFLIGHT_FAILURE_CLASS=" + failure)
+                print("PREFLIGHT_BLOCKED_UNPROVEN")
+            else:
+                print("SSH_UNPROVEN; request_id=" + req + "; no submit retry")
+            return 2
     output = completed.stdout.strip()
     print(output)
     if recovery:
@@ -611,8 +701,10 @@ def run_cli(options: argparse.Namespace) -> int:
         # Require the exact request ID and matching state/code; SSH failure
         # or an unrelated/partial reply must remain UNPROVEN.
         if "REQUEST_ID=" + req in lines:
-            if completed.returncode == 0 and "STATUS=FINISHED_OK" in lines:
+            if (gui_owner_status(output, completed.returncode, req,
+                                 verify_sha=sha) == "success"):
                 print("OPERATION_FINISHED_OK; request_id=" + req)
+                mark_request_terminal(req)
                 return 0
             if completed.returncode == 3 and "STATUS=RUNNING" in lines:
                 print("OPERATION_RUNNING; request_id=" + req)
@@ -622,11 +714,33 @@ def run_cli(options: argparse.Namespace) -> int:
                 return 2
         print("REMOTE_STATUS_UNPROVEN; request_id=" + req)
         return 2
+    if options.operation in CONTROL_ACTIONS.values():
+        submitted = (
+            completed.returncode == 0
+            and "REQUEST_ID=" + req in output.splitlines()
+            and any(line.startswith("SUBMISSION=ACCEPTED")
+                    for line in output.splitlines())
+        )
+        # Only an established transport-loss outcome may transition to
+        # read-only UUID recovery. Auth/host-key refusal does not retry.
+        transport_lost = (completed.stderr == "SSH_SUBMIT_TIMEOUT"
+                          or transient_ssh_failure(completed))
+        if not submitted and not transport_lost:
+            print("SUBMISSION_UNPROVEN; request_id=" + req + "; no submit retry")
+            return 2
+        proof_cmd = control_ssh_command(
+            host, user, key, "status", request_id=req,
+            sha=sha if options.operation == "update" else "")
+        state, proof = watch_owner_request(
+            proof_cmd, req, initially_submitted=submitted)
+        print(proof)
+        print("OWNER_RESULT=" + state.upper() + "; request_id=" + req)
+        if state in ("success", "failed"):
+            mark_request_terminal(req)
+        return 0 if state == "success" else 2
     if completed.returncode != 0:
         print("REMOTE_STATUS_UNPROVEN; request_id=" + req)
         return 2
-    if options.operation in CONTROL_ACTIONS.values():
-        print("SUBMITTED_NOT_COMPLETE; request_id=" + req)
     return 0
 
 
@@ -722,6 +836,10 @@ class VPSManager(tk.Tk):
         self.log.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
         self.after(100, self.drain)
+        pending_id, pending_action, _ = recover_pending_request()
+        if pending_id and pending_action:
+            # Same local UUID, read-only status. Never replay submit on relaunch.
+            self.after(200, lambda: self.run_control("resume"))
 
     def update_desktop(self) -> None:
         """Update ONLY this local manager, never call owner VPS monolith."""
@@ -869,13 +987,17 @@ class VPSManager(tk.Tk):
         request = (uuid.uuid4().hex if mode in CONTROL_ACTIONS.values()
                    else self.request_id.get().strip() if mode == "status"
                    else self.last_request_id)
-        if mode == "status" and not request:
+        if mode in ("status", "resume") and not request:
             messagebox.showinfo("VPS Manager", "Введите точный ID операции (32 символа)")
             return
+        if mode in ("status", "resume"):
+            prior_id, prior_action, prior_sha = recover_last_request_context()
+            sha = prior_sha if prior_id == request and prior_action == "update" else ""
         try:
             command = control_ssh_command(
                 self.host.get(), self.user.get(), self.key.get(),
-                mode, sha=sha, request_id=request, origin=self.origin)
+                "status" if mode == "resume" else mode,
+                sha=sha, request_id=request, origin=self.origin)
         except ValueError as exc:
             messagebox.showerror("VPS Manager", str(exc))
             return
@@ -884,8 +1006,8 @@ class VPSManager(tk.Tk):
                 "Подтверждение PAPER", f"Отправить на VPS действие {mode} для {sha}?"):
                 return
             try:
-                remember_request_id(request)
-            except OSError:
+                remember_request_id(request, action=mode, sha=sha)
+            except (OSError, ValueError):
                 messagebox.showerror(
                     "VPS Manager", "Не удалось сохранить ID операции. Действие не отправлено."
                 )
@@ -917,7 +1039,7 @@ class VPSManager(tk.Tk):
                         timeout=35, stdin=subprocess.DEVNULL, creationflags=NO_WINDOW,
                         check=False)
                 except subprocess.TimeoutExpired:
-                    if mode != "status":
+                    if mode not in ("status", "resume"):
                         raise
                     # A timed-out status query has no side effect. Continue
                     # with the original UUID on the same SSH route only.
@@ -939,12 +1061,19 @@ class VPSManager(tk.Tk):
                 recovery = ""
             output = result.stdout.strip()
             if mode not in CONTROL_ACTIONS.values():
-                if mode == "status":
-                    state = gui_owner_status(output, result.returncode, request)
+                if mode in ("status", "resume"):
+                    state = gui_owner_status(
+                        output, result.returncode, request,
+                        verify_sha=update_status_target(command))
                     if transient_ssh_failure(result):
                         # Only retry the same read-only UUID status query.
                         state, output = watch_owner_request(
                             command, request, initially_submitted=False)
+                    elif mode == "resume" and state == "submitted":
+                        state, output = watch_owner_request(
+                            command, request, initially_submitted=True)
+                    if state in ("success", "failed"):
+                        mark_request_terminal(request)
                 elif mode == "preflight":
                     state = ("observed" if result.returncode == 0 and
                              "PREFLIGHT_READ_ONLY_DATA_COLLECTED_NOT_ACCEPTED" in output
@@ -978,7 +1107,12 @@ class VPSManager(tk.Tk):
             # Lost submit reply => only query the same request; never replay it.
             # Pin status to the exact authorized submit route and UUID even
             # if GUI fields are edited while the detached action is running.
-            status_command = [*command[:-1], CONTROL_MODULE + " status " + request]
+            target = re.search(
+                r" submit update ([0-9a-f]{40})(?: |$)", command[-1]
+            ) if mode == "update" else None
+            verify_sha = target.group(1) if target else ""
+            status_command = [*command[:-1], CONTROL_MODULE + " status " + request
+                              + (" --verify-update " + verify_sha if verify_sha else "")]
             state = ("submitted" if result.returncode == 0
                      and "REQUEST_ID=" + request in output.splitlines()
                      and any(line.startswith("SUBMISSION=ACCEPTED")
@@ -986,6 +1120,14 @@ class VPSManager(tk.Tk):
                      else "unproven")
             state, details = watch_owner_request(
                 status_command, request, initially_submitted=(state == "submitted"))
+            # The same UUID status response now carries the read-only postcheck.
+            # No extra SSH request, no mutation replay and no unbound success.
+            if mode == "update" and (not verify_sha or state == "success"
+                                     and "POSTCHECK=VERIFIED_EDITOR_ONLY" not in details):
+                state = "unproven"
+                details += "\nPOSTCHECK=UNPROVEN_TARGET_OR_RECEIPT"
+            if state in ("success", "failed"):
+                mark_request_terminal(request)
             self.events.put((state, (precheck_receipt + "\n" if precheck_receipt else "")
                              + (output or "Ответ запуска неизвестен")
                              + "\n" + details + "\nREQUEST_ID=" + request))

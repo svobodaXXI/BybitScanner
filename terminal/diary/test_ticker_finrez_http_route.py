@@ -29,8 +29,12 @@ def test_finrez_route_reuses_attributed_paper_diary_source(tmp_path: Path, monke
         calls.append(("source", path, include_wedge_evidence))
         return snapshot
 
-    def project(source, *, account_id, owner, period, now_ms):
+    def project(source, *, account_id, owner, period, now_ms, **range_args):
         calls.append(("project", source, account_id, owner, period))
+        if period == "CUSTOM":
+            assert range_args == {"date_from": "2020-01-02", "date_to": "2020-01-04"}
+        else:
+            assert range_args == {}
         assert isinstance(now_ms, int) and now_ms > 0
         return {
             "account_id": "paper", "owner": owner, "period": period,
@@ -75,6 +79,15 @@ def test_finrez_route_reuses_attributed_paper_diary_source(tmp_path: Path, monke
         status, payload = _get(root + "?account_id=bybit-main&owner=ROBOT&period=TODAY")
         assert (status, payload["error"]) == (404, "finrez_scope_unavailable")
         assert len(calls) == 12  # invalid/cross-account requests never read the ledger
+        custom = "?account_id=paper&owner=ROBOT&period=CUSTOM"
+        for suffix in ("", "&date_from=2020-01-02", "&date_from=2020-01-02&date_to=2020-01-01",
+                       "&date_from=2020-01-02&date_to=9999-12-31"):
+            assert _get(root + custom + suffix)[0] == 400
+        assert _get(root + "?account_id=paper&owner=ROBOT&period=ALL&date_from=2020-01-02")[0] == 400
+        assert len(calls) == 12
+        status, payload = _get(root + custom + "&date_from=2020-01-02&date_to=2020-01-04")
+        assert status == 200 and payload["period"] == "CUSTOM"
+        assert len(calls) == 14
     finally:
         server.shutdown()
         server.server_close()

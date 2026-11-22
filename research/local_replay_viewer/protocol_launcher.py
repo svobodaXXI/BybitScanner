@@ -11,10 +11,12 @@ import json
 import os
 from pathlib import Path
 import re
+import ssl
 import subprocess
 import sys
 import time
 import webbrowser
+from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlsplit
 from urllib.request import ProxyHandler, Request, build_opener
 
@@ -123,6 +125,29 @@ def launch_local_viewer(episode_id: str) -> None:
         raise OSError("local_simulator_browser_open_unconfirmed")
 
 
+def _pairing_notice(message: str) -> None:
+    # Only fixed messages are passed here. Never display URI, token or exception.
+    try:
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(None, message, "Machine Time", 0x40)
+    except (AttributeError, OSError):
+        print(message, file=sys.stderr)
+
+
+def _pairing_failure_code(error: Exception) -> str:
+    if isinstance(error, HTTPError):
+        return {401: "HTTP_401", 403: "HTTP_403", 404: "HTTP_404",
+                503: "HTTP_503"}.get(error.code, "HTTP_OTHER")
+    if isinstance(error, ssl.SSLError) or (
+            isinstance(error, URLError) and isinstance(error.reason, ssl.SSLError)):
+        return "TLS_FAILURE"
+    if isinstance(error, URLError):
+        return "NETWORK_FAILURE"
+    if isinstance(error, OSError):
+        return "LOCAL_OS_OR_IO_FAILURE"
+    return "PAIRING_VALIDATION_FAILURE"
+
+
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
     if args == ["--register"]:
@@ -135,7 +160,11 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     try:
         if args[0].startswith(SCHEME + "://pair"):
-            device, token = parse_pair_uri(args[0])
+            try:
+                device, token = parse_pair_uri(args[0])
+            except ValueError:
+                _pairing_notice("Pairing failed: INVALID_PAIRING_LINK")
+                return 2
             if os.name != "nt":
                 return 2
             # The existing local trusted-statistics-origin.txt is the only
@@ -144,7 +173,12 @@ def main(argv: list[str] | None = None) -> int:
                 from .launch_bridge_agent import pair_device
             else:
                 from launch_bridge_agent import pair_device
-            pair_device(device, token)
+            try:
+                pair_device(device, token)
+            except (OSError, ValueError) as error:
+                _pairing_notice("Pairing failed: " + _pairing_failure_code(error))
+                return 2
+            _pairing_notice("Pairing configuration accepted.")
             return 0
         episode = parse_open_uri(args[0])
         launch_local_viewer(episode)

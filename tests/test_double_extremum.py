@@ -237,6 +237,38 @@ def test_auxiliary_is_host_context_for_wedge_box_lshape_mirror_but_never_a_trade
     )
 
 
+
+def test_auxiliary_reversal_rejects_impossible_direction_and_forged_lifetime():
+    """An auxiliary Double Top/Bottom is evidence, never an entry authority."""
+    from geometry.double_extremum import attach_auxiliary_reversal
+
+    _, closed_at, reversal = _confirmed_auxiliary_top()
+    assert reversal is not None
+    host = {"symbol": "LABUSDT", "pattern": "Rising Wedge", "timeframe": "1"}
+    accepted = attach_auxiliary_reversal(host, reversal, now_ms=closed_at)
+    assert accepted["auxiliary_reversal"] == reversal
+
+    forged = (
+        # The attachment's host SHORT used to mask the internally
+        # contradictory BOTTOM/SHORT evidence label.
+        dict(reversal, pattern="Double Bottom"),
+        # The producer guarantees only two source-TF bars of relevance,
+        # but the prior attachment trusted an arbitrarily extended expiry.
+        dict(reversal, expires_at_ms=closed_at + 3 * 60_000),
+        # A one-millisecond shifted timestamp is not a closed M1 candle.
+        dict(reversal, confirmed_at_ms=closed_at + 1,
+             expires_at_ms=closed_at + 2 * 60_000 + 1),
+    )
+    for fake in forged:
+        linked = attach_auxiliary_reversal(
+            host, fake, now_ms=closed_at + 1,
+        )
+        assert "auxiliary_reversal" not in linked
+        assert linked == host
+    assert "auxiliary_reversal" not in host
+
+
+
 def test_legacy_double_snapshot_is_observational_not_robot_ready():
     from geometry.double_extremum import frozen_neckline_snapshot
     from pattern_robot_integration import is_robot_executable_signal

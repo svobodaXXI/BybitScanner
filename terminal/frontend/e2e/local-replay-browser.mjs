@@ -74,8 +74,16 @@ try {
   await page.route("**/local-replay/history-stream?*", async route => {
     await route.fulfill({ status: 502, contentType: "text/plain", body: "Mock Scanner unavailable" });
   });
+  // A browser window always identifies the actual loopback server release.
+  const installedSha = "7dab02c7348c11da74407a8800d6dd9770e56937";
+  await page.route("**/local-replay/desktop-version", async route => {
+    await route.fulfill({ status: 200, contentType: "application/json",
+      body: JSON.stringify({ sha: installedSha }) });
+  });
   await page.goto(localUrl, { waitUntil: "networkidle" });
   await page.getByRole("heading", { name: "Машина времени" }).waitFor();
+  await page.getByText("v7dab02c7", { exact: true }).waitFor();
+  assert.equal(await page.title(), "Машина времени · v7dab02c7");
   assert.equal(await page.locator(".replay-badge").count(), 0,
     "no SIMULATION ONLY header badge");
   assert.equal(await page.locator(".replay-run-heading span").count(), 0,

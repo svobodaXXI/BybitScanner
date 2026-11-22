@@ -1118,7 +1118,8 @@ class RobotLifecyclePollTests(unittest.TestCase):
     def test_first_run_does_not_backfill_history(self):
         self.trades = [self._trade("old", self.INIT_MS - 100, self.INIT_MS - 10)]
         self.assertEqual(self._poll(now_ms=self.INIT_MS), [])
-        self.assertEqual(self._state(), {"initialized_at_ms": self.INIT_MS, "opened": [], "closed": []})
+        self.assertEqual(self._state(), {"initialized_at_ms": self.INIT_MS, "opened": [], "closed": [], "retry_after_ms": 0,
+                                         "opened_floor": None, "closed_floor": None})
 
     def test_open_then_close_are_sent_once_across_restart(self):
         self._poll()  # initializes the dedup file
@@ -1141,7 +1142,7 @@ class RobotLifecyclePollTests(unittest.TestCase):
         self.assertEqual((self._state()["opened"], self._state()["closed"]), ([], []))
         trade.exit_time_ms = self.INIT_MS + 2
         trade.exit_reason = "STOP"
-        self.assertEqual(self._poll(results=[True]), [("CLOSED", "t1")])
+        self.assertEqual(self._poll(results=[True], now_ms=self.INIT_MS + 300_001), [("CLOSED", "t1")])
         self.assertEqual((self._state()["opened"], self._state()["closed"]), ([], ["t1"]))
 
     def test_failed_close_is_retried_without_resending_open(self):
@@ -1153,7 +1154,56 @@ class RobotLifecyclePollTests(unittest.TestCase):
         trade.exit_reason = "STOP"
         self.assertEqual(self._poll(results=[False]), [("CLOSED", "t1")])
         self.assertEqual((self._state()["opened"], self._state()["closed"]), (["t1"], []))
-        self.assertEqual(self._poll(), [("CLOSED", "t1")])
+        self.assertEqual(self._poll(now_ms=self.INIT_MS + 300_001), [("CLOSED", "t1")])
+
+    def test_failure_stops_batch_and_persists_cooldown(self):
+        self._poll()
+        self.trades = [
+            self._trade("a", self.INIT_MS + 1, self.INIT_MS + 2),
+            self._trade("b", self.INIT_MS + 3, self.INIT_MS + 4),
+        ]
+        self.assertEqual(self._poll(results=[False]), [("CLOSED", "a")])
+        persisted = self._state()
+        self.assertEqual(persisted["retry_after_ms"],
+                         self.INIT_MS + monitoring.LIFECYCLE_RETRY_COOLDOWN_MS)
+        self.assertEqual(persisted["closed"], [])
+        self.assertEqual(self._poll(now_ms=self.INIT_MS + 299_999), [])
+        self.assertEqual(self._poll(now_ms=self.INIT_MS + 300_001),
+                         [("CLOSED", "a"), ("CLOSED", "b")])
+        self.assertEqual(self._state()["closed"], ["a", "b"])
+        self.assertEqual(self._state()["retry_after_ms"], 0)
+
+    def test_bounded_closed_history_does_not_repeat_and_preserves_unsent(self):
+        from robot_lifecycle_posts import REMEMBERED_TRADE_IDS
+        self._poll()  # initialization
+        amount = REMEMBERED_TRADE_IDS + 10
+        self.trades = [self._trade(f"t{i:04d}", self.INIT_MS + i + 1,
+                                  self.INIT_MS + i + 2) for i in range(amount)]
+        with patch("builtins.print"):
+            initial = self._poll(results=[True] * (REMEMBERED_TRADE_IDS + 5) + [False])
+            self.assertEqual(len(initial), REMEMBERED_TRADE_IDS + 6)
+            self.assertEqual(initial[-1], ("CLOSED", "t0205"))
+            self.assertEqual(self._state()["closed"][-1], "t0204")
+            self.assertEqual(self._poll(now_ms=self.INIT_MS + 299_999), [])
+            pending = self._poll(now_ms=self.INIT_MS + 300_001)
+            self.assertEqual(pending, [
+                ("CLOSED", f"t{i:04d}") for i in range(205, amount)
+            ])
+            self.assertEqual(self._poll(now_ms=self.INIT_MS + 600_000), [])
+        self.assertEqual(len(self._state()["closed"]), REMEMBERED_TRADE_IDS)
+        self.assertIsNotNone(self._state()["closed_floor"])
+
+    @patch("telegram_monitoring.render_position_chart", return_value="chart.png")
+    @patch("telegram_monitoring.telegram_bot.send_photo",
+           side_effect=monitoring.TelegramGatewayError(
+               "Gateway delivery not confirmed: class=RATE_LIMIT, status=429"))
+    @patch("telegram_monitoring._send_text")
+    def test_gateway_photo_rejection_does_not_fallback_to_text(self, text, photo, render):
+        view = SimpleNamespace(symbol="TESTUSDT", mirror_campaign=False)
+        self.assertFalse(monitoring._send_chart_card(123, view, None,
+                         "caption", None, require_chart=False))
+        photo.assert_called_once()
+        text.assert_not_called()
 
     def test_send_exception_is_logged_not_raised(self):
         self._poll()

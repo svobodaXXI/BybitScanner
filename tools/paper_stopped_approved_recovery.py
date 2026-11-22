@@ -442,6 +442,31 @@ def _one_flat_receipt(transactions: Path, prior: str, phase: str, target: str,
     return True
 
 
+def _one_flat_retarget(
+    transactions: Path, prior: str, original: str, target: str, *, uid: int,
+) -> None:
+    """One immutable successor mapping; never rewrite a prior signal receipt."""
+    if original == target:
+        _demand(not _one_flat_path(transactions, prior, "retarget").exists()
+                and not _one_flat_path(transactions, prior, "retarget").is_symlink(),
+                "handoff_successor_already_bound_to_another_target")
+        return
+    _demand(all(len(sha) == 40 and all(c in "0123456789abcdef" for c in sha)
+                for sha in (original, target)), "invalid_handoff_successor")
+    path = _one_flat_path(transactions, prior, "retarget")
+    payload = (original + "\n" + target + "\n").encode("ascii")
+    if not path.exists() and not path.is_symlink():
+        with os.fdopen(os.open(
+            path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600,
+        ), "wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        _sync_directory(transactions)
+    _demand(_trusted_file(path, uid) == payload,
+            "handoff_successor_already_bound_to_another_target")
+
+
 def _one_flat_record(transactions: Path, prior: str, phase: str, target: str,
                      *, uid: int) -> None:
     path = _one_flat_path(transactions, prior, phase)
@@ -500,7 +525,8 @@ def recover_one_flat_after_failed_stop(
     root: Path = ROOT, transactions: Path = TRANSACTIONS,
     manifest: Path = MANIFEST, uid: int = 0,
     inspect=None, backend_handoff=None, installer=None, resume=None,
-    backend_stopped=None, postproof=None,
+    backend_stopped=None, postproof=None, gateway_quiesce=None,
+    take_closed_approved: bool = False,
 ) -> str:
     """At-most-once continuation of one failed canonical STOP, not a STOP retry.
 
@@ -513,6 +539,9 @@ def recover_one_flat_after_failed_stop(
         resume_installed_release,
     )
     from tools.flat_paper_recovery_gate import prove_one_flat_orphan
+    from tools.paper_take_closed_handoff_proof import (
+        PROOF_LABEL as TAKE_CLOSED_PROOF, prove_take_closed_approved,
+    )
     from tools.flat_paper_recovery_transition import (
         execute_flat_handoff, get_snapshots, _service_pid,
     )
@@ -538,31 +567,92 @@ def recover_one_flat_after_failed_stop(
     )
     _demand(not (transactions / (".stop-invoked-" + target)).exists(),
             "target_has_other_STOP_intent")
-    _demand(
-        all(marker.name == ".stop-invoked-" + prior_stop
-            or _proven_prior_exceptional_completion(
-                transactions, marker.name.removeprefix(".stop-invoked-"),
-                root=root, uid=uid,
-            ) for marker in transactions.glob(".stop-invoked-*")),
-        "another_unresolved_STOP_intent",
-    )
+    def prior_intent_resolved(marker: Path) -> bool:
+        sha = marker.name.removeprefix(".stop-invoked-")
+        _demand(len(sha) == 40 and all(ch in "0123456789abcdef" for ch in sha)
+                and _trusted_file(marker, uid)
+                == b"STOP_INVOKED; not install authorization\\n",
+                "untrusted_prior_STOP_intent")
+        if sha == prior_stop:
+            return True
+        # Match the canonical release STOP fence: a sealed editor-ready
+        # transaction is a completed release, not another pending STOP.
+        transaction = transactions / sha
+        completed = transaction / "editor-ready"
+        if completed.exists() or completed.is_symlink():
+            _demand(not transaction.is_symlink()
+                    and _trusted_file(completed, uid) == sha.encode("ascii"),
+                    "untrusted_completed_release_transaction")
+            return True
+        return _proven_prior_exceptional_completion(
+            transactions, sha, root=root, uid=uid,
+        )
+
+    _demand(all(prior_intent_resolved(marker)
+                for marker in transactions.glob(".stop-invoked-*")),
+            "another_unresolved_STOP_intent")
     # A partially committed Gitless transaction cannot pass pre-install
     # collision checks a second time. Only the existing installer may resume it.
     if not (transactions / target).is_dir():
         (inspect or inspect_staged_release)(target, stage=stage, root=root,
                                              manifest=manifest, uid=uid)
     phases = ("handoff-attempt", "backend-exited", "telegram-attempt", "handoff-proven")
+    original_target = target
+    attempt = _one_flat_path(transactions, prior_stop, "handoff-attempt")
+    if attempt.exists() or attempt.is_symlink():
+        raw = _trusted_file(attempt, uid)
+        _demand(len(raw) == 41 and raw.endswith(b"\n")
+                and all(c in b"0123456789abcdef" for c in raw[:-1]),
+                "prior_handoff_target_untrusted")
+        original_target = raw[:-1].decode("ascii")
+        if original_target != target:
+            _demand(
+                _one_flat_receipt(
+                    transactions, prior_stop, "backend-exited",
+                    original_target, uid=uid,
+                ), "prior_backend_exit_not_proven_no_replay",
+            )
+            # The old target must not already own a completed handoff/install.
+            _demand(not (transactions / original_target).exists()
+                    and not (transactions / original_target).is_symlink(),
+                    "original_handoff_already_installed")
     observed = {
-        name: _one_flat_receipt(transactions, prior_stop, name, target, uid=uid)
-        for name in phases
+        phase: _one_flat_receipt(
+            transactions, prior_stop, phase, original_target, uid=uid,
+        ) for phase in phases
     }
+    # A previously selected successor is immutable. Refuse any different SHA
+    # before MAIN-only quiescence or other service/process action.
+    chosen = _one_flat_path(transactions, prior_stop, "retarget")
+    if chosen.exists() or chosen.is_symlink():
+        _demand(original_target != target
+                and _trusted_file(chosen, uid)
+                == (original_target + "\n" + target + "\n").encode("ascii"),
+                "handoff_successor_already_bound_to_another_target")
+    # Bind the proof kind before an irreversible signal. An ambiguous older
+    # Flat/OPEN invocation cannot be relabelled as TAKE-closed on retry.
+    mode_receipt = _one_flat_path(transactions, prior_stop, "take-closed-approved")
+    if take_closed_approved:
+        if mode_receipt.exists() or mode_receipt.is_symlink():
+            _demand(_one_flat_receipt(
+                transactions, prior_stop, "take-closed-approved",
+                original_target, uid=uid,
+            ), "take_closed_mode_receipt_mismatch")
+        else:
+            _demand(not observed["handoff-attempt"],
+                    "untyped_prior_handoff_attempt_cannot_be_reclassified")
+    else:
+        _demand(not mode_receipt.exists() and not mode_receipt.is_symlink(),
+                "prior_take_closed_mode_requires_matching_recovery")
     _demand(not observed["backend-exited"] or observed["handoff-attempt"],
             "backend_receipt_without_signal_intent")
     _demand(not observed["handoff-proven"] or observed["backend-exited"],
             "completion_without_backend_exit")
     if not observed["handoff-attempt"]:
         _demand(not any(observed.values()), "partial_attempt_without_intent")
-    from tools.stop_robot_runtime import build_proven_one_flat_orphan_handoff
+    from tools.stop_robot_runtime import (
+        build_proven_one_flat_orphan_handoff, build_take_closed_approved_handoff,
+    )
     from tools.runtime_intent import expected_database_identity
 
     env = _environment(ENV_FILE)
@@ -584,6 +674,12 @@ def recover_one_flat_after_failed_stop(
     _demand(old == expected_old_sha,
             "old_release_identity_not_pinned_to_partial_STOP")
     if not observed["handoff-attempt"]:
+        if take_closed_approved:
+            # Prove the same Backend survived the earlier rejected STOP.
+            from tools.paper_maintenance import _legacy_paused_backend_predates_stop
+            _demand(_legacy_paused_backend_predates_stop(
+                transactions / (".stop-invoked-" + prior_stop),
+            ), "old_backend_continuity_unproven")
         owner = RuntimeShutdown(root=root, env=env)
         _demand(owner._probe_backend() == PRESENT, "backend_not_proven_active")
         owner._probe_telegram()
@@ -593,16 +689,28 @@ def recover_one_flat_after_failed_stop(
                 ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED"),
                 "robot_not_frozen_required")
         snapshots = get_snapshots()
-        _demand(execute_flat_handoff(
+        prechecked = execute_flat_handoff(
             db_path=db, expected_identity=identity, expected_pid=_service_pid(),
             expected_build_sha=old, execute=False, snapshots=snapshots,
-            proven_one_flat_orphan=True,
-        ).startswith("PRECHECK_ONLY:"), "pre_signal_flat_proof_unproven")
+            proven_one_flat_orphan=not take_closed_approved,
+            take_closed_approved=take_closed_approved,
+        )
+        _demand(
+            prechecked == "PRECHECK_ONLY: FLAT proven under writer barrier; no process action"
+            if take_closed_approved else prechecked.startswith("PRECHECK_ONLY:"),
+            "pre_signal_flat_proof_unproven",
+        )
         _one_flat_snapshot(transactions, prior_stop, uid=uid, value=snapshots)
+        if take_closed_approved and not (mode_receipt.exists() or mode_receipt.is_symlink()):
+            _one_flat_record(transactions, prior_stop, "take-closed-approved", target, uid=uid)
         _one_flat_record(transactions, prior_stop, "handoff-attempt", target, uid=uid)
         try:
             result = (
-                backend_handoff or build_proven_one_flat_orphan_handoff(env, old)
+                backend_handoff or (
+                    build_take_closed_approved_handoff(env, old)
+                    if take_closed_approved
+                    else build_proven_one_flat_orphan_handoff(env, old)
+                )
             )()
         except Exception as exc:
             raise PartialStopBlocked(
@@ -631,7 +739,9 @@ def recover_one_flat_after_failed_stop(
             )
         _demand(owner._probe_telegram() == ABSENT,
                 "telegram_absence_unproven_no_retry")
-        _one_flat_record(transactions, prior_stop, "handoff-proven", target, uid=uid)
+        _one_flat_record(
+            transactions, prior_stop, "handoff-proven", original_target, uid=uid,
+        )
     else:
         _demand(observed["backend-exited"], "hand_off_missing_exit_proof")
 
@@ -645,15 +755,50 @@ def recover_one_flat_after_failed_stop(
         with sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=5) as conn:
             conn.execute("PRAGMA query_only=ON")
             conn.execute("BEGIN")
-            _demand(
-                prove_one_flat_orphan(conn, expected_identity=identity,
-                                      expected_build_sha=snapshots["backend"]["build_sha"],
-                                      **snapshots)
-                == "ONE_FLAT_ORPHAN_IMMUTABLE_CLOSE_EVIDENCE_ONLY",
-                "post_handoff_flat_evidence_changed",
-            )
+            if take_closed_approved:
+                _demand(
+                    prove_take_closed_approved(
+                        conn, expected_identity=identity,
+                        expected_build_sha=snapshots["backend"]["build_sha"],
+                        **snapshots,
+                    ) == TAKE_CLOSED_PROOF,
+                    "post_handoff_take_closed_evidence_changed",
+                )
+            else:
+                _demand(
+                    prove_one_flat_orphan(
+                        conn, expected_identity=identity,
+                        expected_build_sha=snapshots["backend"]["build_sha"],
+                        **snapshots,
+                    ) == "ONE_FLAT_ORPHAN_IMMUTABLE_CLOSE_EVIDENCE_ONLY",
+                    "post_handoff_flat_evidence_changed",
+                )
     else:
         postproof()
+
+    # Seal the approved new SHA before any MAIN or tracked-file change.
+    # A second successor is forbidden even after a failed install attempt.
+    _one_flat_retarget(
+        transactions, prior_stop, original_target, target, uid=uid,
+    )
+
+    # The original PAPER owner is now gone, with immutable post-exit
+    # STOP/TAKE/Flat evidence checked. MAIN shares the tracked source tree,
+    # so its independent read-only worker must quiesce before any file switch.
+    # Reuse the canonical MAIN-only gateway action; never replay PAPER STOP.
+    from tools.vps_manual_main_gateway import (
+        MainGatewayBlocked, quiesce_gateway_after_paper_stop,
+    )
+    try:
+        main_ready = (gateway_quiesce or quiesce_gateway_after_paper_stop)(
+            root=root, uid=uid,
+        )
+    except (MainGatewayBlocked, OSError, ValueError) as exc:
+        raise PartialStopBlocked(
+            "main_gateway_safe_quiescence_unproven:" + type(exc).__name__
+        ) from exc
+    _demand(isinstance(main_ready, str) and main_ready.startswith("READY:"),
+            "main_gateway_safe_quiescence_unproven")
 
     receipt = (installer or activate_staged_release)(
         target, stage=stage, root=root, manifest=manifest,

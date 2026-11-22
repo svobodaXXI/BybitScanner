@@ -21,7 +21,9 @@ from typing import Callable, Mapping
 from terminal.api.rest import TerminalCommandApi
 import robot_protection
 from robot_entry_limit import IMPULSE_ENTRY_LIMIT_MAX_AGE_MS
-from terminal.application.command_identity import CommandIdentityCandidate
+from terminal.application.command_identity import (
+    CommandIdentityCandidate, robot_emergency_close_identity,
+)
 from terminal.application.robot_trade_ledger import (
     attest_wedge_partial, prove_robot_open_trade_ledger, prove_wedge_partial_remainder,
 )
@@ -317,9 +319,16 @@ class RobotPaperActionExecutor:
         return self._runtime._dispatch_robot_command(lambda runtime: runtime._robot_amend_take(request))
 
     def full_close(self, request):
+        # A stable API ClientActionId does NOT deduplicate TradingApplication
+        # Market commands. Bind the monitor's precommitted command identity.
+        identity = robot_emergency_close_identity(
+            request.client_action_id.value, request.symbol,
+        )
         evidence = self._runtime._dispatch_robot_market_book(request.symbol)
         return self._runtime._dispatch_robot_command(
-            lambda runtime: runtime._robot_full_close(request, evidence=evidence)
+            lambda runtime: runtime._robot_full_close(
+                request, evidence=evidence, identity=identity,
+            )
         )
 
     def wedge_be_step(self, candidate_id: str, symbol: str, candle, *, fade_receipt=None):
@@ -384,7 +393,10 @@ class _DirectRobotActionExecutor:
         return self._runtime._robot_amend_take(request)
 
     def full_close(self, request):
-        return self._runtime._robot_full_close(request)
+        identity = robot_emergency_close_identity(
+            request.client_action_id.value, request.symbol,
+        )
+        return self._runtime._robot_full_close(request, identity=identity)
 
 
 SCANNER_STOPPED = "SCANNER_STOPPED"
@@ -2260,6 +2272,13 @@ class PaperRuntime:
         ready = (
             state is not None and state.mode == ROBOT_RUNNING and state.recovery_status == READY
         )
+        # An admission epoch does not override durable symbol isolation.
+        # Query only for otherwise-ready Robot entries; protection/EXIT orders
+        # never pass through this fence.
+        if ready and self.store.robot_symbol_quarantine_candidate_ids(
+            self._paper_account_id, symbol,
+        ):
+            ready = False
         fenced: set[str] = set()
         # An old marketable impulse GTC is NOT a live momentum entry.
         # Admission and a candidate link alone must never reauthorize
@@ -2427,6 +2446,8 @@ class PaperRuntime:
                     try:
                         self.store.prove_box_owned_position(source_id.strip())
                     except Exception:
+                        if self._box_waiting_for_first_ownership(candidate, source_id.strip()):
+                            continue  # no orders to match; monitor owns initial baseline
                         self.fence_robot_protection_continuity_loss(
                             normalized.value, "box_ownership_unproven_before_limit_match",
                         )
@@ -2928,6 +2949,53 @@ class PaperRuntime:
             and closed.exit_reason == "EMERGENCY_CLOSE"
         )
 
+    def _box_waiting_for_first_ownership(self, candidate, source_id: str) -> bool:
+        """An unstarted frozen Box is not a lost protection owner."""
+        try:
+            state = candidate.robot_state
+            if candidate.status != "APPROVED" or not isinstance(state, Mapping):
+                return False
+            execution = state.get("execution", {})
+            if (
+                not isinstance(execution, Mapping)
+                or set(execution) - {
+                    "source_box_candidate_id", "mirror", "last_execution_error",
+                    "last_attempt_at_ms", "attempt_count", "paper_candidate_error",
+                }
+                or state.get("phase") != "BOX_ENTRY_READY"
+                or state.get("execution_authorized") is not False
+                or candidate.trading_account_id != self._paper_account_id
+                or candidate.signal_snapshot.get("source_box_candidate_id") != source_id
+                or state.get("source_box_candidate_id") != source_id
+                or execution.get("source_box_candidate_id", source_id) != source_id
+            ):
+                return False
+            source = self.store.get_robot_candidate(source_id)
+            if (
+                source is None
+                or source.trading_account_id != self._paper_account_id
+                or source.symbol != candidate.symbol
+                or source.status != "BOX_PLAN_ONLY"
+            ):
+                return False
+            account, symbol = self._paper_account_id, candidate.symbol
+            if (
+                self.store.get_robot_trade(f"robot-trade-{candidate.candidate_id}") is not None
+                or self.store.get_open_robot_trade_for_symbol(account, symbol)
+                or self.store.get_protection_projection(
+                    PositionKey(account, Category.LINEAR, symbol, 0)
+                ) is not None
+                or any(item.symbol == symbol for item in
+                       self.store.load_unresolved_paper_protection_obligations(account))
+                or self.store.load_commands_for_symbol_since(account, symbol, source.updated_at_ms)
+            ):
+                return False
+            # Existing strict proof: missing baseline, no ownership, no working
+            # orders, no commands in flight, no new fills, and FLAT exposure.
+            return self.store.prove_box_never_started_flat(source_id)
+        except Exception:
+            return False
+
     def _match_symbol(
         self,
         symbol: Symbol,
@@ -2966,6 +3034,8 @@ class PaperRuntime:
             try:
                 self.store.prove_box_owned_position(source_id.strip())
             except Exception:
+                if self._box_waiting_for_first_ownership(candidate, source_id.strip()):
+                    return 0  # never submit/fill from a missing baseline
                 self.fence_robot_protection_continuity_loss(
                     symbol.value, "box_ownership_unproven_in_match_fallback",
                 )
@@ -6031,6 +6101,50 @@ class PaperRuntime:
         def fail(reason: str) -> RobotReconcileResponse:
             state = self._robot_reconciliation_required_state(reason)
             return response(False, state, state.reason or reason)
+
+        # An already FILLED, protected legacy Market entry does not need a
+        # newly fetched closed candle to establish its past execution.
+        # Restore its accounting while the original REQUIRED fence is held,
+        # then let the normal reconcile prove the entire OPEN-trade ledger.
+        # No trading command, STOP/TAKE mutation or admission transition here.
+        protected_orphans = []
+        for item in self.store.load_active_robot_candidate_states(self._paper_account_id):
+            if item.status != "APPROVED" or not isinstance(item.robot_state, Mapping):
+                continue
+            execution = item.robot_state.get("execution")
+            if (isinstance(execution, Mapping)
+                    and execution.get("emergency_close_pending") is True
+                    and str(execution.get("protection_failure", "")).startswith(
+                        "POST_FILL_NET_RR_BELOW_2 rr="
+                    )):
+                protected_orphans.append(item.candidate_id)
+        if protected_orphans:
+            monitor = RobotBreakoutMonitor(
+                lambda: self.store,
+                self._paper_account_id,
+                get_closed_candle=self._owner_closed_candle,
+                action_executor=_DirectRobotActionExecutor(self),
+                tick_size_provider=lambda symbol: self._instrument_provider(symbol).tick_size,
+                clock_ms=lambda: int(time.time() * 1000),
+            )
+            for candidate_id in protected_orphans:
+                record = self.store.get_robot_candidate(candidate_id)
+                try:
+                    restored = (
+                        record is not None
+                        and monitor.recover_protected_legacy_postfill(record)
+                    )
+                except Exception as error:
+                    LOGGER.warning(
+                        "Legacy protected orphan proof blocked candidate=%s error=%s",
+                        candidate_id, type(error).__name__,
+                    )
+                    restored = False
+                if not restored:
+                    return response(
+                        False, source,
+                        "PROTECTED_POSTFILL_OWNER_PROOF_UNPROVEN: " + candidate_id,
+                    )
 
         prepared = self._robot_recovery.reconcile_required()
         if prepared.runtime_state.recovery_status != RECONCILING:

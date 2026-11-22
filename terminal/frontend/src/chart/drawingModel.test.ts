@@ -3,6 +3,7 @@ import {
   createDrawing,
   clearDrawingHistory,
   DrawingHistory,
+  originalEditableDrawings,
   deserializeDrawings,
   FIBONACCI_LEVELS,
   fibonacciBands,
@@ -47,6 +48,42 @@ describe("drawing model", () => {
     expect(history.current).toHaveLength(1);
     history.redo();
     expect(history.current).toHaveLength(0);
+  });
+  it("undoes three consecutive source-line edits one gesture at a time", () => {
+    const source = createDrawing("ray", { logical: 2, price: 10 });
+    source.id = "source-ray";
+    source.anchors.push({ logical: 6, price: 12 });
+    source.locked = true;
+    const baseline = originalEditableDrawings([source]);
+    const history = new DrawingHistory(baseline);
+    expect(history.canUndo()).toBe(false);
+    for (const price of [13, 14, 15]) {
+      history.commit([moveAnchor(history.current[0], 1, { logical: 6, price })]);
+    }
+    // A pointer released without moving must not consume an Undo step.
+    history.commit([moveAnchor(history.current[0], 1, { logical: 6, price: 15 })]);
+    expect(history.undo()[0].anchors[1].price).toBe(14);
+    expect(history.undo()[0].anchors[1].price).toBe(13);
+    expect(history.undo()).toEqual(baseline);
+    expect(history.canUndo()).toBe(false);
+    expect(history.redo()[0].anchors[1].price).toBe(13);
+  });
+  it("restores immutable Scanner anchors without mutating them or saving", () => {
+    const reference = createDrawing("ray", { logical: 1, price: 40 });
+    reference.id = "source";
+    reference.anchors.push({ logical: 4, price: 42 });
+    reference.locked = true;
+    const initial = originalEditableDrawings([reference]);
+    const history = new DrawingHistory(initial);
+    history.commit([moveAnchor(initial[0], 0, { logical: 2, price: 41 })]);
+    history.commit(originalEditableDrawings([reference]));
+    expect(history.current).toEqual(initial);
+    expect(history.current[0].locked).toBe(false);
+    expect(history.current[0].id).toBe("editable:source");
+    expect(reference.anchors).toEqual([{ logical: 1, price: 40 }, { logical: 4, price: 42 }]);
+    expect(history.undo()[0].anchors[0]).toEqual({ logical: 2, price: 41 });
+    history.current[0].anchors[0].price = 999;
+    expect(reference.anchors[0].price).toBe(40);
   });
   it("clears only drawing history and serializes an empty drawing document", () => {
     const orders = [{ id: "limit-1" }];

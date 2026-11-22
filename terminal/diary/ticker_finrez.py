@@ -6,8 +6,8 @@ execution fees. It is not full equity or an assertion that all external costs
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-from decimal import Decimal
+from datetime import date, datetime, time, timedelta, timezone
+from decimal import Decimal, localcontext
 from typing import Iterable
 from zoneinfo import ZoneInfo
 
@@ -40,15 +40,37 @@ def period_start_ms(*, period: str, now_ms: int) -> int:
     return int((start.astimezone(timezone.utc) - _EPOCH).total_seconds() * 1000)
 
 
+def custom_period_bounds_ms(*, date_from: str, date_to: str, now_ms: int) -> tuple[int, int]:
+    """Inclusive Moscow calendar dates, bounded by the report observation time."""
+    try:
+        if type(now_ms) is not int or now_ms < 0:
+            raise ValueError("invalid_finrez_range")
+        first = date.fromisoformat(date_from)
+        last = date.fromisoformat(date_to)
+        today = (_EPOCH + timedelta(milliseconds=now_ms)).astimezone(_MSK).date()
+        if (first.isoformat() != date_from or last.isoformat() != date_to
+                or first > last or last > today or first < date(1970, 1, 2)):
+            raise ValueError("invalid_finrez_range")
+        start = datetime.combine(first, time.min, tzinfo=_MSK)
+        end = datetime.combine(last + timedelta(days=1), time.min, tzinfo=_MSK)
+        return (int((start - _EPOCH).total_seconds() * 1000),
+                min(now_ms, int((end - _EPOCH).total_seconds() * 1000) - 1))
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("invalid_finrez_range") from exc
+
+
 def aggregate_ticker_pnl(
     episodes: Iterable[TradeEpisode], *, period: str, now_ms: int,
+    window: tuple[int, int] | None = None,
 ) -> tuple[int, list[dict[str, object]]]:
     """Rank closed episodes by close timestamp, never by entry or device time."""
-    start_ms = period_start_ms(period=period, now_ms=now_ms)
+    start_ms, end_ms = window if window is not None else (
+        period_start_ms(period=period, now_ms=now_ms), now_ms,
+    )
     totals: dict[str, tuple[Decimal, int]] = {}
     for episode in episodes:
         closed_at = episode.closed_at_ms
-        if closed_at is None or not (start_ms <= closed_at <= now_ms):
+        if closed_at is None or not (start_ms <= closed_at <= end_ms):
             continue
         # TradeEpisode guarantees finite, allocation-derived Decimal amounts.
         pnl = episode.realized_price_pnl - episode.execution_fees
@@ -56,8 +78,15 @@ def aggregate_ticker_pnl(
             raise ValueError("invalid_finrez_pnl")
         symbol = episode.position_key.symbol.value
         total, count = totals.get(symbol, (Decimal("0"), 0))
-        totals[symbol] = (total + pnl, count + 1)
-    ranked = sorted(totals.items(), key=lambda item: (-item[1][0], item[0]))
+        # The UI reconciles exact decimal episode strings against ticker totals.
+        # Preserve every digit of each emitted episode PnL during aggregation;
+        # the ambient Decimal context can otherwise drop low-order digits.
+        with localcontext() as ctx:
+            ctx.prec = max(ctx.prec, max(total.adjusted(), pnl.adjusted())
+                           - min(total.as_tuple().exponent, pnl.as_tuple().exponent) + 2)
+            combined = total + pnl
+        totals[symbol] = (combined, count + 1)
+    ranked = sorted(totals.items(), key=lambda item: (item[1][0].copy_negate(), item[0]))
     return start_ms, [
         {"symbol": symbol, "pnl_usdt": str(total), "trade_count": count}
         for symbol, (total, count) in ranked
@@ -93,6 +122,7 @@ def index_closed_episodes(
 
 def _classified_finrez_episodes(
     snapshot: PaperSourceSnapshot, *, account_id: str, period: str, now_ms: int,
+    window: tuple[int, int] | None = None,
 ) -> tuple[
     tuple[TradeEpisode, ...], tuple[TradeEpisode, ...], tuple[TradeEpisode, ...],
     tuple[TradeEpisode, ...], tuple[TradeEpisode, ...], int,
@@ -116,7 +146,9 @@ def _classified_finrez_episodes(
     unattributed: list[TradeEpisode] = []
     unattributed_execution_count = 0
     seen_ids: set[str] = set()
-    start_ms = period_start_ms(period=period, now_ms=now_ms)
+    start_ms, end_ms = window if window is not None else (
+        period_start_ms(period=period, now_ms=now_ms), now_ms,
+    )
     for episode in snapshot.episodes:
         if not isinstance(episode, TradeEpisode):
             raise StatisticsScopeError("invalid_trade_episode")
@@ -127,7 +159,7 @@ def _classified_finrez_episodes(
         seen_ids.add(episode.trade_episode_id.value)
 
         closed_at = episode.closed_at_ms
-        if closed_at is None or not (start_ms <= closed_at <= now_ms):
+        if closed_at is None or not (start_ms <= closed_at <= end_ms):
             continue
 
         attributed: list[str] = []
@@ -471,26 +503,34 @@ def project_paper_closed_episode_facts(
 
 def project_paper_ticker_pnl(
     snapshot: PaperSourceSnapshot, *, account_id: str, owner: str,
-    period: str, now_ms: int,
+    period: str, now_ms: int, date_from: str | None = None, date_to: str | None = None,
 ) -> dict[str, object]:
     """Use the existing strict execution-origin attribution before summing."""
     if account_id != "paper" or owner not in {"ROBOT", "MANUAL"}:
         raise ValueError("unsupported_finrez_scope")
+    if period == "CUSTOM":
+        if date_from is None or date_to is None:
+            raise ValueError("invalid_finrez_range")
+        window = custom_period_bounds_ms(date_from=date_from, date_to=date_to, now_ms=now_ms)
+    else:
+        if date_from is not None or date_to is not None:
+            raise ValueError("invalid_finrez_range")
+        window = None
     robot, manual, assisted, joint, unattributed, unattributed_execution_count = (
         _classified_finrez_episodes(
-            snapshot, account_id=account_id, period=period, now_ms=now_ms,
+            snapshot, account_id=account_id, period=period, now_ms=now_ms, window=window,
         )
     )
     start_ms, tickers = aggregate_ticker_pnl(
-        robot if owner == "ROBOT" else manual, period=period, now_ms=now_ms,
+        robot if owner == "ROBOT" else manual, period=period, now_ms=now_ms, window=window,
     )
     _, manual_interventions = aggregate_ticker_pnl(
-        assisted if owner == "ROBOT" else (), period=period, now_ms=now_ms,
+        assisted if owner == "ROBOT" else (), period=period, now_ms=now_ms, window=window,
     )
     # Shared economic episodes are exposed for both views, but are excluded
     # from BOTH scoped totals and must never be summed once per controller.
     _, joint_management = aggregate_ticker_pnl(
-        joint, period=period, now_ms=now_ms,
+        joint, period=period, now_ms=now_ms, window=window,
     )
     selected = robot if owner == "ROBOT" else manual
     eligible: list[tuple[TradeEpisode, str]] = [
@@ -505,6 +545,8 @@ def project_paper_ticker_pnl(
         "owner": owner,
         "period": period,
         "period_start_ms": start_ms,
+        **({"period_end_ms": window[1], "date_from": date_from, "date_to": date_to}
+           if window is not None else {}),
         "as_of_ms": now_ms,
         "source_revision": snapshot.source_revision,
         "source": "PAPER_EXECUTIONS_ATTRIBUTED",

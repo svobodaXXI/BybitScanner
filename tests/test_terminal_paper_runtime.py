@@ -39,8 +39,10 @@ from terminal.application.trading_accounts import (
 from terminal.exchange.events import InstrumentSnapshot
 from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
 from terminal.runtime.paper_runtime import (
-    PaperRuntime, RobotPaperActionExecutor, _robot_protection_crossing_leg,
+    PaperRuntime, RobotPaperActionExecutor, _DirectRobotActionExecutor,
+    _robot_protection_crossing_leg,
 )
+from terminal.application.command_identity import robot_emergency_close_identity
 from terminal.paper.ikigai_box_plan import IkigaiBoxPlanRejected
 from terminal.persistence.sqlite_store import DuplicateIdentity
 
@@ -2136,6 +2138,138 @@ def test_full_close_closes_short_without_flipping_long():
             runtime.close()
 
 
+def test_full_close_of_short_with_repeating_average_entry_and_whole_qty_step():
+    # Multi-level entry has a non-terminating weighted average. Its displayed
+    # decimal must not be used for qty * price / price round-tripping.
+    instrument = replace(
+        _instrument(),
+        symbol="SOONUSDT", base_coin="SOON",
+        min_price=Decimal("0.00001"), tick_size=Decimal("0.0001"),
+        min_order_quantity=Decimal("1"),
+        max_order_quantity=Decimal("2000"),
+        max_market_order_quantity=Decimal("2000"),
+        quantity_step=Decimal("1"),
+    )
+    book = NormalizedOrderBook(
+        symbol=Symbol("SOONUSDT"),
+        bids=(
+            PriceLevel(Price(Decimal("0.2524")), Quantity(Decimal("15"))),
+            PriceLevel(Price(Decimal("0.2523")), Quantity(Decimal("1000"))),
+        ),
+        asks=(PriceLevel(Price(Decimal("0.2525")), Quantity(Decimal("1000"))),),
+        health=BookHealth.READY,
+        received_at_ms=int(__import__("time").time() * 1000),
+        available_depth=2,
+    )
+    provider = MutableBookProvider("SOONUSDT", book)
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = PaperRuntime(
+            Path(temp) / "paper.sqlite3",
+            book_provider=provider,
+            instrument_snapshot=instrument,
+            instrument_provider=lambda symbol: replace(instrument, symbol=symbol),
+        )
+        try:
+            opened = runtime.api.market(MarketCommandRequest(
+                ClientActionId("short-repeating-price-entry"), "SOONUSDT", OrderSide.SELL,
+                VolumeRequest(VolumeUnit.USDT, Decimal("249.7785")),
+                Decimal("0.2523"), "Percent", Decimal("0.5"),
+            ))
+            assert opened.status is CommandResultStatus.COMPLETED, opened
+            state = runtime.paper_state("SOONUSDT")
+            assert (state["position_side"], state["position_quantity"]) == ("Short", "990")
+            entry = Decimal(state["average_entry"])
+            assert Decimal("990") * entry / entry < Decimal("990")
+            closed = runtime.api.full_close(FullCloseCommandRequest(
+                ClientActionId("short-repeating-price-close"), "SOONUSDT",
+            ))
+            assert closed.status is CommandResultStatus.COMPLETED, closed
+            assert runtime.paper_state("SOONUSDT")["position_side"] == "Flat"
+            fills = runtime.store.load_executions_for_symbol(
+                TradingAccountId("paper"), Symbol("SOONUSDT"),
+            )
+            assert [fill.side for fill in fills] == [OrderSide.SELL, OrderSide.BUY]
+        finally:
+            runtime.close()
+
+
+def test_robot_emergency_close_identity_reaches_both_owner_adapters():
+    """Both Robot monitor entrypoints must pass the SAME deterministic identity.
+    A shared action label by itself is not TradingApplication deduplication.
+    """
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime(Path(temp) / "paper.sqlite3")
+        request = FullCloseCommandRequest(
+            ClientActionId("robot-test-emergency-1"), "BTCUSDT",
+        )
+        identity = robot_emergency_close_identity(
+            request.client_action_id.value, request.symbol,
+        )
+        expected = CommandResult(
+            request.client_action_id.value, CommandResultStatus.COMPLETED,
+            "closed", "test only",
+        )
+        try:
+            assert identity == robot_emergency_close_identity(
+                request.client_action_id.value, request.symbol,
+            )
+            assert len(identity.order_link_id) == 36
+            assert identity != robot_emergency_close_identity(
+                request.client_action_id.value, "ETHUSDT",
+            )
+            with patch.object(runtime, "_robot_full_close", return_value=expected) as close:
+                assert _DirectRobotActionExecutor(runtime).full_close(request) is expected
+                assert close.call_args.kwargs["identity"] == identity
+
+            with (
+                patch.object(runtime, "_dispatch_robot_market_book", return_value=None),
+                patch.object(
+                    runtime, "_dispatch_robot_command",
+                    side_effect=lambda callback: callback(runtime),
+                ),
+                patch.object(runtime, "_robot_full_close", return_value=expected) as close,
+            ):
+                assert RobotPaperActionExecutor(runtime).full_close(request) is expected
+                assert close.call_args.kwargs["identity"] == identity
+        finally:
+            runtime.close()
+
+
+def test_robot_emergency_close_persists_exact_market_command_and_replay_is_noop():
+    """PAPER close is owned by the exact command_id/order_link_id rather than
+    just the response action label; no replacement market fill on retry.
+    """
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime(Path(temp) / "paper.sqlite3")
+        request = FullCloseCommandRequest(
+            ClientActionId("robot-test-emergency-2"), "BTCUSDT",
+        )
+        identity = robot_emergency_close_identity(
+            request.client_action_id.value, request.symbol,
+        )
+        try:
+            opened = runtime.api.market(MarketCommandRequest(
+                ClientActionId("open-before-robot-emergency"), "BTCUSDT", OrderSide.SELL,
+                VolumeRequest(VolumeUnit.USDT, Decimal("321")), Decimal("64250"),
+                "Percent", Decimal("0.5"),
+            ))
+            assert opened.status is CommandResultStatus.COMPLETED
+            closed = _DirectRobotActionExecutor(runtime).full_close(request)
+            assert closed.status is CommandResultStatus.COMPLETED
+            assert closed.command_id == identity.command_id.value
+            durable = runtime.store.get_command(identity.command_id)
+            assert durable is not None
+            assert durable.order_link_id == identity.order_link_id
+            assert runtime.paper_state("BTCUSDT")["position_side"] == "Flat"
+            count = len(runtime.store.load_executions())
+            repeated = _DirectRobotActionExecutor(runtime).full_close(request)
+            assert repeated.status is CommandResultStatus.COMPLETED
+            assert repeated.reason_code == "already_flat"
+            assert len(runtime.store.load_executions()) == count
+        finally:
+            runtime.close()
+
+
 def test_paper_limit_create_is_durable_idempotent_and_cancel_is_safe():
     with tempfile.TemporaryDirectory() as temp:
         runtime = _runtime(Path(temp) / "paper.sqlite3")
@@ -2537,6 +2671,67 @@ def _set_admission(runtime, *, mode, recovery_status):
         account_id, mode=mode, recovery_status=recovery_status, reason=None,
         expected_version=running.version, updated_at_ms=now_ms,
     )
+
+
+def test_emergency_symbol_quarantine_fences_only_its_robot_entry_limits():
+    """A still-READY account cannot match a quarantined symbol's entry,
+    even after its faulty candidate was made terminal; peers keep their own
+    independently-stamped admission checks. No live fills are submitted."""
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime(Path(temp) / "paper.sqlite3")
+        account = TradingAccountId("paper")
+        try:
+            for symbol, candidate_id, order_id in (
+                ("BTCUSDT", "btc-live", "btc-entry"),
+                ("ETHUSDT", "eth-live", "eth-entry"),
+            ):
+                _seed_pending_candidate_with_resting_limit(
+                    runtime, candidate_id=candidate_id,
+                    order_id=order_id, symbol=symbol,
+                )
+            ready = _set_admission(
+                runtime, mode="ROBOT_RUNNING", recovery_status="READY",
+            )
+            for candidate_id in ("btc-live", "eth-live"):
+                current = runtime.store.get_robot_candidate(candidate_id)
+                state = dict(current.robot_state)
+                execution = dict(state["execution"])
+                execution["entry_admission_version"] = ready.version
+                state["execution"] = execution
+                runtime.store.save_robot_candidate_state(
+                    candidate_id, status="APPROVED", robot_state=state,
+                    expected_revision=current.state_revision,
+                    updated_at_ms=int(__import__("time").time() * 1000),
+                )
+            btc, eth = Symbol("BTCUSDT"), Symbol("ETHUSDT")
+            def fenced(symbol):
+                return runtime._robot_entry_limit_ids_fenced_by_admission(
+                    symbol, runtime.store.load_active_paper_limits(account, symbol),
+                )
+            assert fenced(btc) == frozenset()
+            assert fenced(eth) == frozenset()
+
+            old, _ = runtime.store.create_robot_candidate(
+                candidate_id="btc-unknown-close", trading_account_id=account,
+                symbol=btc, status="APPROVED",
+                signal_snapshot={"symbol": btc.value, "pattern": "Falling Wedge",
+                                 "source": "unresolved"},
+                approved_at_ms=1005, updated_at_ms=1005,
+            )
+            runtime.store.save_robot_candidate_state(
+                old.candidate_id, status="INVALIDATED",
+                robot_state={"execution": {
+                    "emergency_close_pending": True,
+                    "emergency_close_intent": {"dispatch_outcome": "UNKNOWN"},
+                }},
+                expected_revision=0, updated_at_ms=1006,
+            )
+            assert fenced(btc) == frozenset({"btc-entry"})
+            assert fenced(eth) == frozenset()
+            assert runtime.store.get_paper_limit("btc-entry", account).status == "open"
+            assert runtime.store.get_paper_limit("eth-entry", account).status == "open"
+        finally:
+            runtime.close()
 
 
 def test_entry_limit_admission_ignores_terminal_history_without_weakening_fence():

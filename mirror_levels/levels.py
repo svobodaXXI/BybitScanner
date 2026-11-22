@@ -46,6 +46,58 @@ SIDE_UPPER = "upper"
 SIDE_LOWER = "lower"
 SIDES = frozenset({SIDE_UPPER, SIDE_LOWER})
 
+# Owner-approved MIRROR origin policy; reuse at every Scanner/Robot boundary.
+# Box is only a context/confirmation of an existing campaign, never an origin.
+MIRROR_PATTERN_SIDES = {
+    "Rising Wedge": frozenset({SIDE_LOWER}),
+    "Falling Wedge": frozenset({SIDE_UPPER}),
+    "Triangle Compression": SIDES,
+    "L-shape": SIDES,
+}
+
+
+def mirror_level_allowed(level: "MirrorLevel") -> bool:
+    """Reject forbidden or ambiguous boundaries, including persisted legacy levels."""
+    if not isinstance(level, MirrorLevel):
+        return False
+    if level.source == SOURCE_SWING_ZONE:
+        return level.pattern is None and level.is_horizontal
+    if level.source != SOURCE_PATTERN_BOUNDARY:
+        return False
+    if level.side not in MIRROR_PATTERN_SIDES.get(level.pattern, ()):
+        return False
+    if level.pattern == "L-shape":
+        return level.is_horizontal
+    if level.pattern == "Triangle Compression":
+        return True
+    return not level.is_horizontal
+
+
+def mirror_breakout_allowed(level: "MirrorLevel", breakout: Mapping[str, Any] | None) -> bool:
+    """A source is executable only on its owner-approved outward breakout side."""
+    return (mirror_level_allowed(level)
+            and isinstance(breakout, Mapping)
+            and breakout.get("direction") == ("UP" if level.side == SIDE_UPPER else "DOWN")
+            and breakout.get("campaign_direction") == ("SHORT" if level.side == SIDE_UPPER else "LONG"))
+
+
+def mirror_frozen_entry_allowed(terms: Mapping[str, Any] | None) -> bool:
+    """Final fail-closed gate for stored standalone MIRROR Robot snapshots."""
+    if not isinstance(terms, Mapping):
+        return False
+    level_id = terms.get("level_id")
+    source, pattern = terms.get("level_source"), terms.get("level_pattern")
+    side, direction = terms.get("level_side"), terms.get("level_breakout_direction")
+    if not isinstance(level_id, str) or not level_id.startswith("lvl-") or side not in SIDES:
+        return False
+    if direction != ("UP" if side == SIDE_UPPER else "DOWN"):
+        return False
+    if terms.get("direction") != ("SHORT" if side == SIDE_UPPER else "LONG"):
+        return False
+    if source == SOURCE_SWING_ZONE:
+        return pattern is None
+    return source == SOURCE_PATTERN_BOUNDARY and side in MIRROR_PATTERN_SIDES.get(pattern, ())
+
 TIMEFRAME_MS = {"1": 60_000, "5": 300_000, "15": 900_000, "60": 3_600_000, "240": 14_400_000}
 
 PRICE_DIGITS = 12
