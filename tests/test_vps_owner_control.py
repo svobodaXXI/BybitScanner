@@ -290,56 +290,59 @@ class OwnerControlTests(unittest.TestCase):
 
 
 
-def test_start_receipt_requires_exact_bound_current_paper_proof():
-    from contextlib import redirect_stdout
-    from io import StringIO
-    from unittest.mock import patch
 
-    for action, target, expected, rc in (
-        ("start", SHA, "installed", 0),
-        ("start", SHA, SHA, 0),
-        ("update-and-start", SHA, SHA, 0),
-        ("stop", SHA, SHA, 2),
-        ("start", SHA[:12], "installed", 2),
-        ("start", SHA, "c" * 40, 2),
-    ):
-        output = ("LoadState=loaded\nActiveState=active\nSubState=exited\n"
-                  "Result=success\nExecMainStatus=0\n"
-                  f"Description=BybitScanner {action} {target} origin=win-laptop\n")
-        with patch.object(control, "verify_start", return_value=0) as verify:
-            with redirect_stdout(StringIO()):
-                assert control.status(R, run=lambda cmd, **kw: completed(cmd, out=output),
-                                      verify_start_sha=expected) == rc
-            if rc == 0:
-                verify.assert_called_once_with(SHA)
-            else:
-                verify.assert_not_called()
+class StartReceiptOwnerTests(unittest.TestCase):
+    def test_start_receipt_requires_exact_bound_current_paper_proof(self):
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from unittest.mock import patch
+
+        for action, target, expected, rc in (
+            ("start", SHA, "installed", 0),
+            ("start", SHA, SHA, 0),
+            ("update-and-start", SHA, SHA, 0),
+            ("stop", SHA, SHA, 2),
+            ("start", SHA[:12], "installed", 2),
+            ("start", SHA, "c" * 40, 2),
+        ):
+            output = ("LoadState=loaded\nActiveState=active\nSubState=exited\n"
+                      "Result=success\nExecMainStatus=0\n"
+                      f"Description=BybitScanner {action} {target} origin=win-laptop\n")
+            with patch.object(control, "verify_start", return_value=0) as verify:
+                with redirect_stdout(StringIO()):
+                    assert control.status(R, run=lambda cmd, **kw: completed(cmd, out=output),
+                                          verify_start_sha=expected) == rc
+                if rc == 0:
+                    verify.assert_called_once_with(SHA)
+                else:
+                    verify.assert_not_called()
 
 
-def test_start_postcheck_uses_readonly_canonical_readiness():
-    from contextlib import redirect_stdout
-    from io import StringIO
-    from unittest.mock import patch, Mock
-    import sys
+    def test_start_postcheck_uses_readonly_canonical_readiness(self):
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from unittest.mock import patch, Mock
+        import sys
 
-    readiness = Mock(return_value="READY: canonical full PAPER")
-    fake = SimpleNamespace(_paper_full_readiness=readiness)
-    with (patch("tools.vps_release_identity.verify_release", return_value=SHA) as identity,
-          patch.dict(sys.modules, {"tools.paper_maintenance": fake})):
-        with redirect_stdout(StringIO()) as receipt:
-            assert control.verify_start(SHA) == 0
-        assert "POSTCHECK=VERIFIED_PAPER_READY" in receipt.getvalue()
-        assert "INSTALLED_SHA=" + SHA in receipt.getvalue()
-        assert readiness.call_args.kwargs["target"] == SHA
-        assert readiness.call_args.kwargs["require_gitless_telegram"] is True
-        readiness.return_value = "BLOCKED: protection"
-        with redirect_stdout(StringIO()) as receipt:
+        readiness = Mock(return_value="READY: canonical full PAPER")
+        fake = SimpleNamespace(_paper_full_readiness=readiness)
+        with (patch("tools.vps_release_identity.verify_release", return_value=SHA) as identity,
+              patch.dict(sys.modules, {"tools.paper_maintenance": fake})):
+            with redirect_stdout(StringIO()) as receipt:
+                assert control.verify_start(SHA) == 0
+            assert "POSTCHECK=VERIFIED_PAPER_READY" in receipt.getvalue()
+            assert "INSTALLED_SHA=" + SHA in receipt.getvalue()
+            assert readiness.call_args.kwargs["target"] == SHA
+            assert readiness.call_args.kwargs["require_gitless_telegram"] is True
+            readiness.return_value = "BLOCKED: protection"
+            with redirect_stdout(StringIO()) as receipt:
+                assert control.verify_start(SHA) == 2
+            assert "POSTCHECK=BLOCKED_PAPER_READINESS" in receipt.getvalue()
+            readiness.reset_mock()
+            identity.return_value = "c" * 40
             assert control.verify_start(SHA) == 2
-        assert "POSTCHECK=BLOCKED_PAPER_READINESS" in receipt.getvalue()
-        readiness.reset_mock()
-        identity.return_value = "c" * 40
-        assert control.verify_start(SHA) == 2
-        readiness.assert_not_called()
+            readiness.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
