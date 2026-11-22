@@ -1265,7 +1265,7 @@ export function ReplayPage() {
         </div>
       </header>
 
-      {/\\bWindows\\b/i.test(navigator.userAgent) && (
+      {/\bWindows\b/i.test(navigator.userAgent) && (
         <details className="replay-device-pairing">
           <summary>Связать ПК с Telegram</summary>
           <label>Устройство
