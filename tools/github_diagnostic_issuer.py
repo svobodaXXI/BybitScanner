@@ -47,9 +47,14 @@ class _NoRedirect(HTTPRedirectHandler):
         raise ValueError("unexpected GitHub redirect")
 
 
+class InvalidPublicationCredential(ValueError):
+    """Opaque authorization header must be a nonempty visible ASCII string."""
+
+
 def publish(wire, token):
-    if type(token) is not str or not 30 <= len(token) <= 256 or any(c.isspace() for c in token):
-        raise ValueError("credential missing or malformed")
+    if (type(token) is not str or not token
+            or any(not 33 <= ord(c) <= 126 for c in token)):
+        raise InvalidPublicationCredential("credential missing or malformed")
     body = REQUEST_MARKER + wire.decode("ascii")
     request = Request(ISSUE_URL, data=json.dumps({"body": body}).encode("utf-8"),
                       headers={"Authorization": "Bearer " + token,
@@ -89,6 +94,9 @@ def main():
         publish(wire, os.environ["DIAGNOSTIC_GITHUB_TOKEN"])
         print("SIGNED_OBSERVATION_REQUEST_PUBLISHED")
         return 0
+    except InvalidPublicationCredential:
+        print("SIGNED_OBSERVATION_REQUEST_BLOCKED stage=TOKEN_FORMAT")
+        return 2
     except HTTPError as exc:
         # Numeric HTTP status only. Never log headers, body, URL or exceptions.
         code = exc.code if type(exc.code) is int and 100 <= exc.code <= 599 else 0
