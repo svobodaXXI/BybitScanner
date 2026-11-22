@@ -540,7 +540,7 @@ describe("Closed deals / exact episode index", () => {
     expect(row).toHaveTextContent("-4,80 USDT");
     fireEvent.click(row);
     expect(screen.getByText("robot-episode-42")).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent("не воспроизведение");
+    expect(screen.getByText(/Это не воспроизведение\./)).toHaveAttribute("role", "status");
     expect(screen.queryByRole("button", { name: /Открыть сделку в Симуляторе/ })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /К сделкам/ }));
     expect(await screen.findByRole("button", { name: /BTCUSDT/ })).toBeInTheDocument();
@@ -864,7 +864,7 @@ describe("Closed deals / exact episode index", () => {
       render(<DiaryOverlay accountKey="paper:export" initialSection="DEALS"
         statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
       fireEvent.click(await screen.findByRole("button", { name: /BTCUSDT/ }));
-      expect(screen.getByRole("status")).toHaveTextContent("только реальные зарегистрированные исполнения");
+      expect(screen.getByText(/только реальные зарегистрированные исполнения/)).toHaveAttribute("role", "status");
       fireEvent.click(screen.getByRole("button", { name: "Скачать JSON исполнений" }));
       await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
         `/api/diary/episode-facts?account_id=paper&owner=ROBOT&trade_episode_id=${episodeId}&source_revision=3`,
@@ -2092,7 +2092,11 @@ describe("Verified Wedge lineage in Statistics", () => {
     fireEvent.click(await screen.findByRole("button", { name: /BTCUSDT/ }));
     await waitFor(() => expect(fetchMock.mock.calls.some(([url]) =>
       String(url) === "/api/workspace/signal-geometry?signal_id=candidate-42")).toBe(true));
-    expect(screen.getByText("Свечной график · исходный сигнал Робота")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Свечной график сделки" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Рыночный график закрытой сделки" })).toBeInTheDocument();
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) =>
+      String(url).startsWith("/api/diary/episode-candles?"))).toBe(true));
+    expect(screen.queryByRole("heading", { name: "Свечной график · исходный сигнал Робота" })).not.toBeInTheDocument();
     view.unmount();
 
     fetchMock.mockClear();
