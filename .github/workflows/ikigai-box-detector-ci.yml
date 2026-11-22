@@ -3,6 +3,8 @@ name: Ikigai Box detector
 on:
   pull_request:
     paths:
+      - "terminal/paper/ikigai_box_plan.py"
+      - "tests/test_ikigai_box_plan.py"
       - "geometry/ikigai_box.py"
       - "geometry/ikigai_box_chart.py"
       - "geometry/ikigai_box_overlay.py"
@@ -35,3 +37,5 @@ jobs:
         run: |
           python -m py_compile geometry/ikigai_box.py geometry/ikigai_box_chart.py geometry/ikigai_box_overlay.py ikigai_box_scanner.py ikigai_box_watch_stream.py analyzer/core.py main.py tests/test_ikigai_box_detector.py tests/test_ikigai_box_chart.py tests/test_ikigai_box_overlay.py tests/test_ikigai_box_scanner_delivery.py tests/test_ikigai_box_watch_stream.py
           python -m unittest -v tests.test_ikigai_box_detector tests.test_ikigai_box_chart tests.test_ikigai_box_overlay tests.test_ikigai_box_scanner_delivery tests.test_ikigai_box_watch_stream
+      - name: Verify isolated Box entry economics
+        run: python -m unittest -v tests.test_ikigai_box_plan
