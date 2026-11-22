@@ -1,6 +1,7 @@
 """Passive same-candidate pattern flow observer: zero new Scanner/Robot actions."""
 import os
 import unittest
+from pathlib import Path
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -64,6 +65,61 @@ def _candidate(direction="LONG", phase="RETEST_DETECTED"):
 
 
 class ObserverTests(unittest.TestCase):
+    def test_capture_only_wedge_subscribes_without_robot_or_rest_evidence(self):
+        """Independent Wedge diagnostic never certifies or changes admission."""
+        requests = []
+        context = SimpleNamespace(
+            capture_book=True, book_frames=[],
+            impulse_observation=SimpleNamespace(
+                snapshot=lambda: {"prints": (), "invalid_frames": 0},
+            ),
+        )
+
+        def subscribe(symbol, *, capture_book=False):
+            requests.append(("subscribe", symbol, capture_book))
+            return context
+
+        hub = SimpleNamespace(
+            subscribe_flow_only=subscribe,
+            release_flow_only=lambda symbol: requests.append(("release", symbol)),
+        )
+        existing_open = _candidate(phase="OPEN")
+        existing_open.status = "OPEN"
+        existing_open.symbol = SimpleNamespace(value="ETHUSDT")
+        other = _candidate(phase="BOX_ENTRY_READY")
+        other.signal_snapshot = {"pattern": "IKIGAI_BOX"}
+        other.symbol = SimpleNamespace(value="XRPUSDT")
+        wedge = _candidate(phase="WAITING_BREAKOUT")
+        candidates = [existing_open, other, wedge]
+        rest = _REST(None, None, None)
+        observer = PatternFlowObserver(
+            hub, rest, "unused", clock_ms=lambda: 180_100,
+            get_candidates=lambda: tuple(candidates),
+            wedge_capture_path=Path("wedge-diagnostic-test.json"),
+            capture_only=True,
+        )
+        try:
+            self.assertEqual(observer.once(), 0)
+            self.assertEqual(requests, [("subscribe", "BTCUSDT", True)])
+            self.assertEqual(rest.requests, [])
+            self.assertEqual(observer._receipts, {})
+            self.assertEqual(observer._attempted, set())
+            # Removing the sole eligible Wedge releases just our probe.
+            candidates.clear()
+            self.assertEqual(observer.once(), 0)
+            self.assertEqual(requests[-1], ("release", "BTCUSDT"))
+        finally:
+            observer.close()
+
+    def test_wedge_diagnostic_flag_alone_never_enables_robot_flow(self):
+        with patch.dict(os.environ, {
+            "BYBITSCANNER_WEDGE_CAPTURE_PAPER": "1",
+            PATTERN_FLOW_PAPER_OPT_IN: "0",
+            IMPULSE_EARLY_PAPER_OPT_IN: "1",
+        }, clear=True):
+            self.assertFalse(pattern_flow_enabled())
+            self.assertFalse(impulse_early_paper_enabled())
+
     def test_renewed_stop_campaign_reads_only_current_cached_certificate(self):
         """One existing observer, zero network/DB queries or trading decisions."""
         from terminal.application.robot_admission import RobotReentryAdmissionRequest
