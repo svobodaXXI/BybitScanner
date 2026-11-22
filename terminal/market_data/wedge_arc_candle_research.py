@@ -23,6 +23,7 @@ from scanner_geometry_cursor import (
     ScannerGeometryCursorError, project_latest_geometry_index,
 )
 from robot_entry_flow_evidence import CandidateBoundFlowEvidence, FlowTransition
+from .sustained_absorption import AbsorptionObservation, RecoveryWindow
 from .wedge_candle_exhaustion_research import (
     ClosedCandlePatternObservation, WedgeCandleExhaustionResearch,
     observe_wedge_candle_exhaustion,
@@ -311,3 +312,177 @@ def observe_wedge_arc_with_certified_tape_receipt(
     if result is None:
         return None
     return replace(result, tape_receipt_metadata_matched=True)
+
+
+@dataclass(frozen=True, slots=True)
+class WedgeBoundBookObservation:
+    """Host-bound #1259 fixed-band research, NOT a certified maker execution."""
+
+    candidate_id: str
+    state_revision: int
+    snapshot_sha256: str
+    symbol: str
+    generation: int
+    available_at_ms: int
+    observation: AbsorptionObservation
+
+
+@dataclass(frozen=True, slots=True)
+class WedgeBoundInitiative:
+    """An already-calculated shared taker transition, bound to same Wedge."""
+
+    candidate_id: str
+    state_revision: int
+    snapshot_sha256: str
+    symbol: str
+    generation: int
+    available_at_ms: int
+    transition: FlowTransition
+
+
+@dataclass(frozen=True, slots=True)
+class WedgeReversalResearch:
+    candidate_id: str
+    direction: str
+    decision_ms: int
+    impact_fading: bool
+    repeated_book_recovery: bool
+    initiative_flip: bool
+    status: str
+    # Neither caller DTOs nor an as-of comparison prove native book completeness,
+    # true passive fills, a valid early order, or Wedge risk/admission authority.
+    source_complete: bool = False
+    trading_authorized: bool = False
+
+
+def observe_wedge_reversal_with_fixed_book(
+    record,
+    arc: WedgeArcCandleResearch,
+    book: WedgeBoundBookObservation,
+    initiative: WedgeBoundInitiative,
+    *,
+    decision_ms: int,
+) -> WedgeReversalResearch | None:
+    """Research-only pre-breakout arc → fade → fixed-band → initiative join.
+
+    This does not execute a Wedge reversal. Original WAITING_BREAKOUT owner,
+    frozen arc validation and independently produced tape receipt must precede
+    the join. Cross-source book/print arrival and passive fill attribution are
+    NOT certified by this function; the status is descriptive only.
+    """
+    if (type(decision_ms) is not int or decision_ms <= 0
+            or not isinstance(arc, WedgeArcCandleResearch)
+            or not isinstance(book, WedgeBoundBookObservation)
+            or not isinstance(initiative, WedgeBoundInitiative)):
+        return None
+    try:
+        snapshot, state = record.signal_snapshot, record.robot_state
+        pattern = snapshot["pattern"]
+        direction = {"Falling Wedge": "LONG", "Rising Wedge": "SHORT"}.get(pattern)
+        candidate_id = record.candidate_id
+        revision = record.state_revision
+        symbol = record.symbol.value
+        digest = record.snapshot_sha256
+        if (
+            record.status != "APPROVED" or direction is None
+            or state["phase"] != "WAITING_BREAKOUT"
+            or state["direction"] != direction or state["pattern"] != pattern
+            or not isinstance(candidate_id, str) or not candidate_id
+            or type(revision) is not int or revision < 0
+            or not isinstance(symbol, str) or not symbol.endswith("USDT")
+            or not isinstance(digest, str) or len(digest) != 64
+            or any(ch not in "0123456789abcdef" for ch in digest)
+        ):
+            return None
+    except (TypeError, KeyError, AttributeError):
+        return None
+    if (
+        arc.candidate_id != candidate_id or arc.state_revision != revision
+        or arc.symbol != symbol or arc.direction != direction
+        or type(arc.evaluated_at_ms) is not int
+        or arc.evaluated_at_ms > decision_ms
+        or arc.source_complete is not False or arc.trading_authorized is not False
+        or arc.tape_receipt_metadata_matched is not True
+        or not isinstance(arc.confluence, WedgeCandleExhaustionResearch)
+        or arc.confluence.candidate_id != candidate_id
+        or arc.confluence.state_revision != revision
+        or arc.confluence.direction != direction
+    ):
+        return None
+    b = book.observation
+    flip = initiative.transition
+    if (not isinstance(b, AbsorptionObservation)
+            or not isinstance(flip, FlowTransition)
+            or book.candidate_id != candidate_id
+            or initiative.candidate_id != candidate_id
+            or type(book.state_revision) is not int
+            or type(initiative.state_revision) is not int
+            or book.state_revision != revision or initiative.state_revision != revision
+            or book.snapshot_sha256 != digest or initiative.snapshot_sha256 != digest
+            or book.symbol != symbol or initiative.symbol != symbol
+            or type(book.generation) is not int
+            or type(initiative.generation) is not int
+            or book.generation < 0 or book.generation != initiative.generation
+            or b.symbol != symbol or b.direction != direction
+            or type(b.generation) is not int or b.generation != book.generation
+            or b.source_complete is not False or b.trading_authorized is not False
+            or type(b.decision_ms) is not int
+            or type(book.available_at_ms) is not int
+            or type(initiative.available_at_ms) is not int
+            or type(flip.known_at_ms) is not int
+            or not 0 < b.decision_ms <= book.available_at_ms
+                   <= flip.known_at_ms <= initiative.available_at_ms <= decision_ms
+            or b.decision_ms > arc.evaluated_at_ms
+            or not isinstance(b.windows, tuple) or len(b.windows) < 2
+            or not isinstance(b.frozen_levels, tuple)
+            or len(b.frozen_levels) != 5
+            or b.windows[-1].end_ms != b.decision_ms):
+        return None
+    for i, part in enumerate(b.windows):
+        if (not isinstance(part, RecoveryWindow)
+                or type(part.start_ms) is not int
+                or type(part.end_ms) is not int
+                or part.start_ms >= part.end_ms
+                or (i and part.start_ms != b.windows[i-1].end_ms)
+                or not all(
+                    isinstance(x, Decimal) and x.is_finite() and x >= 0
+                    for x in (part.opposing_notional,
+                              part.compatible_print_notional,
+                              part.compatible_recovery_notional)
+                )
+                or not (part.compatible_recovery_notional
+                        <= part.compatible_print_notional
+                        <= part.opposing_notional)):
+            return None
+    if (not all(isinstance(p, Decimal) and p.is_finite() and p > 0
+                for p in b.frozen_levels)
+            or not all(isinstance(x, Decimal) and x.is_finite() and x >= 0
+                       for x in (b.initial_depth_notional,
+                                 b.minimum_depth_notional, b.final_depth_notional))
+            or b.initial_depth_notional <= 0
+            or not isinstance(b.adverse_quote_break, bool)):
+        return None
+
+    fading = arc.confluence.opposing_flow_fading is True
+    recovery = (
+        b.repeated_recovery_observed
+        and b.minimum_depth_notional > 0
+        and not b.adverse_quote_break
+    )
+    reversal = (
+        flip.buy_wave_accelerating if direction == "LONG"
+        else flip.sell_wave_accelerating
+    )
+    if not (arc.arc_shape_observed and arc.near_frozen_edge):
+        status = "WAIT_FROZEN_ARC"
+    elif not fading:
+        status = "WAIT_OPPOSING_IMPACT_FADE"
+    elif not recovery:
+        status = "WAIT_BOOK_PERSISTENCE"
+    elif not reversal:
+        status = "WAIT_REVERSAL_INITIATIVE"
+    else:
+        status = "WEDGE_REVERSAL_RESEARCH_CANDIDATE"
+    return WedgeReversalResearch(
+        candidate_id, direction, decision_ms, fading, recovery, reversal, status,
+    )
