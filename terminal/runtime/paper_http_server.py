@@ -75,7 +75,8 @@ from terminal.diary.robot_pattern_lineage import attach_verified_robot_pattern_s
 from terminal.diary.ticker_finrez import (
     EpisodeFactsNotFound, EpisodeFactsSourceChanged,
     attach_verified_entry_notional_returns, attach_verified_episode_patterns,
-    custom_period_bounds_ms, project_paper_closed_episode_facts, project_paper_ticker_pnl,
+    custom_period_bounds_ms, project_paper_closed_episode_facts,
+    project_paper_closed_episode_market_locator, project_paper_ticker_pnl,
 )
 from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
 from terminal.market_data.hub import MarketDataHub, SymbolContext
@@ -3488,7 +3489,9 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 return
             try:
                 snapshot = load_paper_source_snapshot(self.server.diary_source_db_path)
-                projection = project_paper_closed_episode_facts(
+                project_episode = (project_paper_closed_episode_market_locator if market_context
+                                   else project_paper_closed_episode_facts)
+                projection = project_episode(
                     snapshot, account_id="paper", owner=params["owner"][0],
                     trade_episode_id=episode_id, source_revision=int(revision),
                     now_ms=int(time.time() * 1000),
