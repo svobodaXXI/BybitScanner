@@ -404,6 +404,22 @@ def build_post_breakout_wedge_impulse_limit_research(
     index = _required_int(geometry_index, "geometry_cursor")
     if index < state["breakout_index"]:
         raise RobotEntryLimitError("Wedge cursor predates breakout")
+    # The early entry is evaluated before the normal candle-state advance.
+    # Use the current closed-M1 time slot in the frozen coordinate space,
+    # not a stale lifecycle cursor. This projects geometry only; it does
+    # not assert missing OHLC or advance the durable Robot state.
+    from scanner_geometry_cursor import project_latest_geometry_index
+    from robot_state_machine import resume_without_replay, PHASE_EXPIRED_AT_APEX
+
+    latest_closed_start = now_ms // 60_000 * 60_000 - 60_000
+    index = project_latest_geometry_index(
+        snapshot, latest_closed_candle_time_ms=latest_closed_start,
+    )
+    resumed, _ = resume_without_replay(
+        snapshot, state, latest_geometry_index=index,
+    )
+    if resumed["phase"] == PHASE_EXPIRED_AT_APEX:
+        raise RobotEntryLimitError("Wedge apex reached before impulse entry")
     boundary_side = "upper" if side is OrderSide.BUY else "lower"
     frozen_boundary = _positive_decimal(
         boundary_price(snapshot, side=boundary_side, geometry_index=index),
