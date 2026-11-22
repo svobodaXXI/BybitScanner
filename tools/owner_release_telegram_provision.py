@@ -110,7 +110,7 @@ def prepare(expected_sha: str, *, root=ROOT, manifest_path=MANIFEST,
     existing = state.exists() or state.is_symlink()
     if existing:
         _directory(state, uid=uid, owner=uid)
-        if _private_json(state / "pending.json") != {"pending": None}:
+        if _private_json(state / "pending.json", uid=uid) != {"pending": None}:
             raise ValueError("existing approval state not idle")
         for name in ("prompts", "grants"):
             _check_ledger(state / name, uid=uid)
