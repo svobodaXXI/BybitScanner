@@ -108,6 +108,39 @@ def _send_text(chat_id, text, **kwargs):
     return telegram_bot.send_message(config.TELEGRAM_TOKEN, chat_id, text, **kwargs)
 
 
+_MARKET_REQUEST_LOCK = threading.Lock()
+
+
+def _send_market(chat_id):
+    """One bounded owner-requested read; the Telegram poller stays responsive."""
+    if not _MARKET_REQUEST_LOCK.acquire(blocking=False):
+        return
+    try:
+        threading.Thread(target=_market_worker, args=(chat_id,),
+                         name="telegram-market-request", daemon=True).start()
+    except Exception:
+        _MARKET_REQUEST_LOCK.release()
+        raise
+
+
+def _market_worker(chat_id):
+    try:
+        try:
+            import bybit_api
+            from telegram_market import collect_market, format_market
+            if _SHUTDOWN_REQUESTED.is_set():
+                return
+            snapshot = collect_market(bybit_api.get_symbols, bybit_api.get_candles,
+                                      _SHUTDOWN_REQUESTED)
+            message = format_market(snapshot, now_ms=int(time.time() * 1000))
+        except Exception:
+            message = "Рынок: подтверждённые данные Bybit недоступны."
+        if not _SHUTDOWN_REQUESTED.is_set():
+            _send_text(chat_id, message)
+    finally:
+        _MARKET_REQUEST_LOCK.release()
+
+
 def _send_scanner_control(chat_id):
     """RUNNING pauses the live pass; anything else is the SCANNER runtime intent."""
     try:
@@ -819,12 +852,24 @@ def _format_signal_time(ms) -> str:
 
 
 def _repost_keyboard(symbol: str, timeframe: str, signal_id: str | None = None) -> dict:
-    """Restore normal navigation without reactivating Robot admission."""
+    """Repost the exact source, without inventing an Editor route for a PNG-only archive."""
+    # _repost_editor_source_id resolves lineage but can intentionally fall back
+    # to an image-only candidate/archive ID. A link must carry validated frozen
+    # geometry of this specific symbol/timeframe, never just a ticker.
+    frozen = (signal_archive.load_frozen_signal_geometry(signal_id)
+              if isinstance(signal_id, str) and signal_id else None)
+    exact_source = bool(
+        isinstance(frozen, Mapping)
+        and frozen.get("signal_id") == signal_id
+        and frozen.get("symbol") == symbol
+        and str(frozen.get("timeframe")) == str(timeframe)
+    )
     try:
         rows = build_tradingview_keyboard(
             symbol, timeframe, include_review_actions=True,
             robot_candidate_id=None, robot_status_button=False,
-            signal_id=signal_id,
+            signal_id=signal_id if exact_source else None,
+            editor_available=exact_source,
         )["inline_keyboard"]
     except Exception as exc:
         print("[SIGNAL REPOST NAV ERROR]", symbol, exc)
@@ -841,8 +886,8 @@ def _repost_editor_source_id(original: Mapping) -> str | None:
     legacy frozen source with identical image/text/pattern and near send time,
     may point to the original Editor history. Pre-lineage candidate archives
     with their own validated frozen geometry retain their own identity.
-    If neither exists, keep the archived ID so the
-    Editor reports missing evidence instead of silently opening live candles.
+    If neither exists, retain the archive identity for provenance; the
+    keyboard independently hides Editor unless the exact geometry validates.
     """
     own_id = str(original.get("candidate_id") or "").strip() or None
     linked = original.get("source_formation_ids")
@@ -1163,6 +1208,8 @@ def _process_message(message) -> bool:
     text = str(message.get("text", "")).strip()
     command = text.split("@", 1)[0]
     handlers = {
+        "/market": _send_market,
+        "Рынок": _send_market,
         "/terminal": _send_workspace,
         "/scanner": _send_scanner_control,
         "/scanner_stop": _send_scanner_stop,
@@ -1261,6 +1308,7 @@ def refresh_command_menu() -> None:
             {"command": "scanner", "description": scanner_label},
             {"command": "scanner_stop", "description": "⏹ Остановить сканер"},
             {"command": "terminal", "description": "Терминал"},
+            {"command": "market", "description": "Рынок"},
         ],
         ensure_ascii=False,
     )

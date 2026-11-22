@@ -9,7 +9,7 @@ import pytest
 from tools import vps_manual_main_gateway as gateway
 
 
-def _site(tmp_path: Path, *, content: str | None = None):
+def _site(tmp_path: Path, *, content: str | None = None, claim_source: bool = False):
     ng = tmp_path / "nginx"
     ng.mkdir(mode=0o700)
     site = ng / "terminal-auth"
@@ -29,7 +29,14 @@ def _site(tmp_path: Path, *, content: str | None = None):
     source = root / "deploy/terminal_ingress/nginx-authenticated.conf"
     source.parent.mkdir(parents=True)
     authoritative = Path("deploy/terminal_ingress/nginx-authenticated.conf").read_text()
-    source.write_text(authoritative)
+    # Existing gateway tests exercise the exact previous installed release;
+    # only the successor-specific test opts in to the new claim-route source.
+    assert authoritative.count(gateway.BRIDGE_CLAIM_BLOCK) == 1
+    source.write_text(
+        authoritative if claim_source else authoritative.replace(
+            gateway.BRIDGE_CLAIM_BLOCK, "", 1,
+        )
+    )
     unit_source = root / "deploy/systemd" / gateway.UNIT
     unit_source.parent.mkdir(parents=True)
     unit_source.write_text(Path("deploy/systemd", gateway.UNIT).read_text())
@@ -157,6 +164,45 @@ def test_preflight_upgrades_only_exact_previous_bridge_to_scoped_facts(tmp_path)
             root=root, run=_runner(site, []), nginx_dir=ng, uid=os.geteuid(),
         )
     assert site.read_text() == tampered
+
+
+def test_pair_claim_requires_exact_installed_predecessor(tmp_path):
+    root, ng, site, _ = _site(tmp_path, claim_source=True)
+
+    def inspect():
+        return gateway.inspect_authenticated_site(
+            root=root, run=_runner(site, []), nginx_dir=ng, uid=os.geteuid(),
+        )
+
+    source = root / "deploy/terminal_ingress/nginx-authenticated.conf"
+    successor = source.read_text()
+    assert successor.count(gateway.BRIDGE_CLAIM_BLOCK) == 1
+    source.write_text(successor.replace(gateway.BRIDGE_CLAIM_BLOCK, "", 1))
+    _, _, predecessor = inspect()
+    source.write_text(successor)
+    with pytest.raises(gateway.MainGatewayBlocked, match="unknown_simulator_bridge_route"):
+        inspect()
+    site.write_bytes(predecessor)
+    _, before, after = inspect()
+    assert before == site.read_bytes() == predecessor
+    claim = gateway.BRIDGE_CLAIM_BLOCK.encode()
+    assert after.replace(claim, b"", 1) == predecessor
+    assert after.count(b"location = /api/diary/simulator-bridge/pair-claim {") == 1
+    assert b"limit_except POST { deny all; }\n        client_max_body_size 128;" in after
+    assert b'proxy_set_header Cookie "";' in after
+    assert b'proxy_set_header Authorization "";' in after
+    assert b"auth_request /_auth;" in after  # Existing owner API remains protected.
+
+    site.write_bytes(after)
+    _, before, after = inspect()
+    assert before == after
+    site.write_bytes(after.replace(claim, claim * 2, 1))
+    with pytest.raises(gateway.MainGatewayBlocked, match="duplicate_simulator_bridge_routes"):
+        inspect()
+    site.write_bytes(predecessor)
+    source.write_text(successor.replace("client_max_body_size 128;", "client_max_body_size 1k;"))
+    with pytest.raises(gateway.MainGatewayBlocked, match="reviewed_simulator_bridge_invalid"):
+        inspect()
 
 
 def test_successor_rejects_foreign_facts_route(tmp_path):

@@ -322,6 +322,30 @@ class TelegramSignalDeliveryTests(unittest.TestCase):
         self.assertIn("signal_id=source-original%3Aarchive-abc", owner[-1][1]["web_app"]["url"])
         self.assertFalse(any("web_app" in button for row in public for button in row))
 
+    def test_mirror_editor_requires_verified_frozen_geometry(self):
+        # A PNG-only MIRROR archive must not present a ticker-only Editor
+        # action that opens live candles as if they belonged to the signal.
+        with patch.dict("os.environ", {
+            "BYBITSCANNER_WORKSPACE_URL": "https://83.217.213.181/login",
+            "BYBITSCANNER_TERMINAL_HTTPS_URL": "",
+        }):
+            missing = notification.build_tradingview_keyboard(
+                "MMTUSDT", "5m", include_review_actions=True,
+                editor_available=False,
+            )["inline_keyboard"]
+            verified = notification.build_tradingview_keyboard(
+                "MMTUSDT", "5m", include_review_actions=True,
+                signal_id="mirror-origin:" + "a" * 24, editor_available=True,
+            )["inline_keyboard"]
+        self.assertFalse(any(
+            button["text"] == "✏️ Редактор"
+            for row in missing for button in row
+        ))
+        self.assertEqual([button["text"] for button in missing[-1]], ["🖥 Терминал"])
+        self.assertIn("signal_id=mirror-origin%3A" + "a" * 24,
+                      verified[-1][0]["web_app"]["url"])
+        self.assertEqual(verified[-1][0]["text"], "✏️ Редактор")
+
     def test_invalid_editor_origin_never_exposed(self):
         with patch.dict("os.environ", {
             "BYBITSCANNER_TERMINAL_HTTPS_URL": "http://127.0.0.1:8080",

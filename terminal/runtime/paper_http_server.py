@@ -5584,6 +5584,11 @@ def main() -> None:
         if pattern_flow_enabled():
             pattern_flow_observer = PatternFlowObserver(
                 hub, create_bybit_rest_session(), database_path,
+                wedge_capture_path=(
+                    database_path.with_suffix(".wedge-pre-breakout.json")
+                    if os.environ.get("BYBITSCANNER_WEDGE_CAPTURE_PAPER") == "1"
+                    else None
+                ),
             )
             runtime.call(lambda owned: owned.bind_robot_pattern_flow_observer(
                 pattern_flow_observer.get,

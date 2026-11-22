@@ -443,6 +443,7 @@ def build_tradingview_keyboard(
     robot_candidate_id=None,
     robot_status_button=False,
     signal_id=None,
+    editor_available=True,
 ):
     """Telegram inline keyboard for TradingView and read-only owner navigation."""
 
@@ -494,10 +495,13 @@ def build_tradingview_keyboard(
     # The listener prepares the local UI; HTTPS/QR are delivered separately.
     if include_review_actions:
         if tf in ("15s", "1m", "5m", "15m", "1h", "1d"):
-            keyboard.append([
-                _owner_workspace_button("EDITOR", symbol, tf, signal_id=signal_id),
-                _owner_workspace_button("TERMINAL", symbol, tf, signal_id=signal_id),
-            ])
+            # A MIRROR source without verified immutable Editor geometry must
+            # never offer a symbol-only Editor button leading to live candles.
+            buttons = []
+            if editor_available:
+                buttons.append(_owner_workspace_button("EDITOR", symbol, tf, signal_id=signal_id))
+            buttons.append(_owner_workspace_button("TERMINAL", symbol, tf, signal_id=signal_id))
+            keyboard.append(buttons)
 
     return {
         "inline_keyboard": keyboard

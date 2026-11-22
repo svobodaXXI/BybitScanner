@@ -54,6 +54,38 @@ class MirrorFrozenGeometryTests(unittest.TestCase):
             data.write_text(json.dumps({"tampered": True}))
             self.assertIsNone(load_frozen_signal_geometry("mirror-origin:abc", directory=root))
 
+    def test_real_swing_level_event_produces_editable_exact_frozen_source(self):
+        from mirror_scanner import _frozen_event_chart
+        from mirror_levels.levels import LevelRegistry, SOURCE_SWING_ZONE, horizontal_level
+
+        step = 300_000
+        source = horizontal_level(
+            symbol="MMTUSDT", timeframe="5", source=SOURCE_SWING_ZONE,
+            pattern=None, side="upper", price=0.23,
+            anchor_time_ms=2 * step, confirmed_at_ms=5 * step,
+        )
+        registry = LevelRegistry()
+        registry.add(source)
+        rows = [
+            {"open_time_ms": i * step, "close_time_ms": (i + 1) * step,
+             "open": 0.225, "high": 0.24, "low": 0.22, "close": 0.23}
+            for i in range(16)
+        ]
+        frozen = _frozen_event_chart(
+            "MMTUSDT", "5", rows, registry, source.level_id,
+            {"sources": [], "naked_retest": {
+                "breakout": {"open_time_ms": 15 * step, "close": 0.23}}},
+            "breakout",
+        )
+        identifier = "mirror-origin:" + "f" * 24
+        snapshot = build_mirror_geometry_snapshot(identifier, frozen)
+        self.assertIsNotNone(snapshot)
+        self.assertEqual(snapshot["signal_id"], identifier)
+        self.assertEqual(snapshot["boundaries"], [{
+            "boundary_id": source.level_id, "kind": "horizontal-ray",
+            "anchors": [{"bar_open_time_ms": 2 * step, "price": 0.23}],
+        }])
+
     def test_image_only_mirror_archive_is_not_a_frozen_editor_source(self):
         # The delivery archive can succeed with PNG-only evidence. That must
         # never be treated as a valid exact-geometry Editor deep link.

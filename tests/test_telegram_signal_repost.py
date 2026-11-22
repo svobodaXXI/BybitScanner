@@ -293,7 +293,6 @@ class SignalRepostTests(unittest.TestCase):
 
     @patch("telegram_monitoring.telegram_bot.send_photo_by_file_id")
     def test_never_redirects_to_different_source_or_missing_geometry(self, by_id):
-        from urllib.parse import parse_qs, urlsplit
         from signal_geometry_producer import build_wedge_geometry_snapshot
         from tests.test_signal_geometry_producer import Candles, GEOMETRY
 
@@ -310,12 +309,71 @@ class SignalRepostTests(unittest.TestCase):
         }):
             self._press([_record()])
         markup = by_id.call_args.kwargs["reply_markup"]["inline_keyboard"]
-        editor = next(b for row in markup for b in row if b["text"] == "✏️ Редактор")
-        self.assertEqual(
-            parse_qs(urlsplit(editor["web_app"]["url"]).query)["signal_id"], ["cand-ena"],
-        )
+        buttons = [b for row in markup for b in row]
+        self.assertFalse(any(b["text"] == "✏️ Редактор" for b in buttons))
+        self.assertTrue(any(b["text"] == "🖥 Терминал" for b in buttons))
         # Neither a different signal's rays nor the current market are substituted.
         self.assertIsNone(signal_archive.load_frozen_signal_geometry("cand-ena"))
+
+    @patch("telegram_monitoring.telegram_bot.send_photo_by_file_id")
+    def test_mirror_repost_image_only_hides_editor_but_keeps_other_actions(self, send):
+        source_id = "mirror-origin:" + "b" * 24
+        self._archive(source_id, symbol="MMTUSDT", text="MIRROR · MMTUSDT · 5m")
+        original = signal_archive.load_original_signal([source_id])
+        self.assertIsNotNone(original)
+        send.return_value = {"ok": True}
+        with patch.dict("os.environ", {
+            "BYBITSCANNER_TERMINAL_HTTPS_URL": "https://terminal.example.com",
+        }):
+            self.assertTrue(monitoring._repost_original_signal(123, original))
+        buttons = [b for row in send.call_args.kwargs["reply_markup"]["inline_keyboard"] for b in row]
+        self.assertFalse(any(b["text"] == "✏️ Редактор" for b in buttons))
+        self.assertTrue(any(b["text"] == "🖥 Терминал" for b in buttons))
+        self.assertTrue(any(b["text"] == "📈 TradingView" for b in buttons))
+        self.assertTrue(any(b["text"] == "⬅️ К кандидатам" for b in buttons))
+
+    @patch("telegram_monitoring.telegram_bot.send_photo_by_file_id")
+    def test_mirror_repost_valid_snapshot_retains_exact_editor_identity(self, send):
+        from urllib.parse import parse_qs, urlsplit
+
+        source_id = "mirror-origin:" + "c" * 24
+        snapshot = {
+            "schema_version": 1,
+            "signal_id": source_id, "symbol": "MMTUSDT", "timeframe": "5",
+            "bars": [
+                {"open_time_ms": 300_000, "open": 0.23, "high": 0.24,
+                 "low": 0.22, "close": 0.23},
+                {"open_time_ms": 600_000, "open": 0.23, "high": 0.24,
+                 "low": 0.22, "close": 0.23},
+            ],
+            "boundaries": [
+                {"boundary_id": "lvl-selected", "kind": "horizontal-ray",
+                 "anchors": [{"bar_open_time_ms": 300_000, "price": 0.23}]}
+            ],
+        }
+        self._archive(source_id, symbol="MMTUSDT", text="MIRROR · MMTUSDT · 5m",
+                      geometry_snapshot=snapshot)
+        original = signal_archive.load_original_signal([source_id])
+        self.assertIsNotNone(original)
+        send.return_value = {"ok": True}
+        with patch.dict("os.environ", {
+            "BYBITSCANNER_TERMINAL_HTTPS_URL": "https://terminal.example.com",
+        }):
+            self.assertTrue(monitoring._repost_original_signal(123, original))
+        buttons = [b for row in send.call_args.kwargs["reply_markup"]["inline_keyboard"] for b in row]
+        editor = next(b for b in buttons if b["text"] == "✏️ Редактор")
+        self.assertEqual(
+            parse_qs(urlsplit(editor["web_app"]["url"]).query)["signal_id"], [source_id],
+        )
+        self.assertEqual(signal_archive.load_frozen_signal_geometry(source_id), snapshot)
+        # An archive of another symbol cannot authorize this Editor route.
+        with patch.dict("os.environ", {
+            "BYBITSCANNER_TERMINAL_HTTPS_URL": "https://terminal.example.com",
+        }):
+            wrong = monitoring._repost_keyboard("OTHERUSDT", "5", source_id)
+        self.assertFalse(any(
+            b["text"] == "✏️ Редактор" for row in wrong["inline_keyboard"] for b in row
+        ))
 
     @patch("telegram_monitoring._send_text")
     @patch("telegram_monitoring.telegram_bot.send_photo")

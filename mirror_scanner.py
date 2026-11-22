@@ -1158,7 +1158,8 @@ def send_mirror_notifications(symbol: str, timeframe: str, *, test_mode: bool = 
                             is_owner = bool(owner_id and chat_id == owner_id)
                             markup = build_tradingview_keyboard(
                                 symbol, timeframe, include_review_actions=is_owner,
-                                signal_id=source_id if is_owner and editor_source_ready else None)
+                                signal_id=source_id if is_owner and editor_source_ready else None,
+                                editor_available=bool(editor_source_ready))
                             if is_owner and source_ready:
                                 markup["inline_keyboard"].insert(0, [{
                                     "text": "↩️ К сигналу",
