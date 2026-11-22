@@ -241,6 +241,50 @@ def _trusted_statistics_origin() -> str:
         raise AgentConfigError("invalid_trusted_statistics_origin") from exc
 
 
+def claim_one_time_pairing_code(device_id: str, code: str, *, opener=None) -> None:
+    """Redeem an owner-authenticated one-time code directly over pinned TLS.
+
+    The reusable device token is received only by this local Python adapter,
+    never by Telegram frontend, local browser JS, a URL or the clipboard.
+    """
+    if not isinstance(device_id, str) or not DEVICE_RE.fullmatch(device_id):
+        raise AgentConfigError("invalid_pairing_device")
+    if not isinstance(code, str) or not re.fullmatch(r"[A-Z2-7]{24}\Z", code):
+        raise AgentConfigError("invalid_one_time_pair_code")
+    if read_config() is not None:
+        raise AgentConfigError("existing_device_pairing_preserved")
+    origin = _trusted_statistics_origin()
+    request = Request(
+        origin + "/api/diary/simulator-bridge/pair-claim",
+        data=json.dumps({"device_id": device_id, "code": code},
+                        separators=(",", ":")).encode("ascii"),
+        headers={
+            "Content-Type": "application/json",
+            "X-BybitScanner-Local-Pair-Claim": "v1",
+            "Cache-Control": "no-store",
+        },
+        method="POST",
+    )
+    client = opener or _direct_https_opener()
+    with client.open(request, timeout=5) as response:
+        if response.status != 200:
+            raise AgentConfigError("pair_code_claim_http_not_ok")
+        raw = response.read(1025)
+    if len(raw) > 1024:
+        raise AgentConfigError("pair_claim_response_too_large")
+    try:
+        result = json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeError) as exc:
+        raise AgentConfigError("invalid_pair_claim_response") from exc
+    if (not isinstance(result, dict) or set(result) !=
+            {"ok", "device_id", "token"} or result["ok"] is not True
+            or result["device_id"] != device_id
+            or not isinstance(result["token"], str)
+            or not re.fullmatch(r"[A-Za-z0-9_-]{48,256}\Z", result["token"])):
+        raise AgentConfigError("invalid_pair_claim_response")
+    pair_device(device_id, result["token"])
+
+
 def pair_device(device_id: str, token: str) -> None:
     """One-shot opt-in; no new service, no shell, no untrusted destination.
 
@@ -282,20 +326,48 @@ def pair_device(device_id: str, token: str) -> None:
     install_if_configured()
 
 
+def _poll_executable() -> Path:
+    candidate = Path(sys.executable).with_name("pythonw.exe")
+    return candidate if candidate.is_file() else Path(sys.executable).resolve()
+
+
+def _expected_autostart_command() -> str:
+    """Canonical per-user Windows Run entry for THIS installed release."""
+    return f'"{_poll_executable()}" -B "{Path(__file__).resolve()}" --poll'
+
+
+def _this_release_still_registered() -> bool:
+    """Old release retires voluntarily when START_LOCAL registers a successor."""
+    if os.name != "nt":
+        return False
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                            r"Software\Microsoft\Windows\CurrentVersion\Run") as key:
+            value, kind = winreg.QueryValueEx(key, AGENT_RUN_NAME)
+        return kind == winreg.REG_SZ and value == _expected_autostart_command()
+    except OSError:
+        return False  # Never poll or launch when local ownership is unproven.
+
+
 def _acquire_windows_singleton():
     if os.name != "nt":
         raise OSError("Windows_only")
-    # One lightweight adapter per interactive Windows session; never stop or
-    # replace unrelated processes. Hold the handle until process exit.
-    handle = ctypes.windll.kernel32.CreateMutexW(
-        None, False, r"Local\BybitScannerMachineTimeLaunchAdapter"
-    )
-    if not handle:
-        raise OSError("local_simulator_mutex_unavailable")
-    if ctypes.windll.kernel32.GetLastError() == 183:
+    # Wait only for the existing same-product agent to release its handle.
+    # The old version checks the Run registration and exits on supersession.
+    # No process is killed, no file deleted, and no second poller may run.
+    for attempt in range(6):
+        handle = ctypes.windll.kernel32.CreateMutexW(
+            None, False, r"Local\BybitScannerMachineTimeLaunchAdapter"
+        )
+        if not handle:
+            raise OSError("local_simulator_mutex_unavailable")
+        if ctypes.windll.kernel32.GetLastError() != 183:
+            return handle
         ctypes.windll.kernel32.CloseHandle(handle)
-        return None
-    return handle
+        if attempt < 5:
+            time.sleep(POLL_SECONDS)
+    return None
 
 
 def install_if_configured() -> bool:
@@ -307,11 +379,10 @@ def install_if_configured() -> bool:
         raise OSError("Windows_only")
     import winreg
 
-    path = Path(__file__).resolve()
-    candidate = Path(sys.executable).with_name("pythonw.exe")
-    executable = candidate if candidate.is_file() else Path(sys.executable).resolve()
     # Known installed script only; no arguments from a remote URL.
-    command = f'"{executable}" -B "{path}" --poll'
+    command = _expected_autostart_command()
+    executable = _poll_executable()
+    path = Path(__file__).resolve()
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER,
                           r"Software\Microsoft\Windows\CurrentVersion\Run") as key:
         winreg.SetValueEx(key, AGENT_RUN_NAME, 0, winreg.REG_SZ, command)
@@ -330,7 +401,7 @@ def run_poll_loop(config: dict[str, str]) -> None:
     if mutex is None:
         return
     try:
-        while True:
+        while _this_release_still_registered():
             try:
                 poll_once(config)
             except HTTPError as error:

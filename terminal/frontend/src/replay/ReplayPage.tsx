@@ -609,6 +609,11 @@ export function ReplayPage() {
   const [runLoading, setRunLoading] = useState(false);
   const [desktopUpdate, setDesktopUpdate] = useState("idle");
   const [desktopSha, setDesktopSha] = useState<string | null>(null);
+  const [pairCodeInput, setPairCodeInput] = useState("");
+  const [pairDevice, setPairDevice] = useState<"owner-pc" | "owner-laptop">("owner-pc");
+  const [pairBusy, setPairBusy] = useState(false);
+  const [pairMessage, setPairMessage] = useState("");
+
   const [runWaitingSeconds, setRunWaitingSeconds] = useState(0);
 
   useEffect(() => {
@@ -1217,6 +1222,28 @@ export function ReplayPage() {
     }
   }
 
+  async function confirmOneTimePairing() {
+    if (pairBusy || !/^[A-Z2-7]{24}$/.test(pairCodeInput)) return;
+    setPairBusy(true);
+    setPairMessage("");
+    try {
+      const response = await fetch("/local-replay/pair-claim", {
+        method: "POST", cache: "no-store",
+        headers: { "Content-Type": "application/json",
+                   "X-Local-Pair-Code": "explicit-click" },
+        body: JSON.stringify({ device_id: pairDevice, code: pairCodeInput }),
+      });
+      const result = await response.json() as { configuration_saved?: unknown };
+      if (!response.ok || result.configuration_saved !== true) throw new Error("pair-not-confirmed");
+      setPairCodeInput("");
+      setPairMessage("Настройки подключения сохранены. Проверка доставки — при открытии сделки из Статистики.");
+    } catch {
+      setPairMessage("Сопряжение не подтверждено. Получите новый одноразовый код в Telegram.");
+    } finally {
+      setPairBusy(false);
+    }
+  }
+
   return (
     <main className="replay-shell">
       <header className="replay-header">
@@ -1237,6 +1264,30 @@ export function ReplayPage() {
           {desktopUpdate === "restarting" && <span role="status">Обновление установлено; перезапустите страницу после открытия новой версии</span>}
         </div>
       </header>
+
+      {/\bWindows\b/i.test(navigator.userAgent) && (
+        <details className="replay-device-pairing">
+          <summary>Связать ПК с Telegram</summary>
+          <label>Устройство
+            <select aria-label="Устройство для сопряжения" value={pairDevice}
+              onChange={e => setPairDevice(e.target.value as "owner-pc" | "owner-laptop")}>
+              <option value="owner-pc">ПК</option>
+              <option value="owner-laptop">Ноутбук</option>
+            </select>
+          </label>
+          <label>Одноразовый код из Статистики Telegram
+            <input aria-label="Одноразовый код из Telegram"
+              autoComplete="off" spellCheck={false} maxLength={24}
+              value={pairCodeInput}
+              onChange={e => setPairCodeInput(e.target.value.trim().toUpperCase())} />
+          </label>
+          <button type="button" onClick={() => void confirmOneTimePairing()}
+            disabled={pairBusy || !/^[A-Z2-7]{24}$/.test(pairCodeInput)}>
+            {pairBusy ? "Проверяю…" : "Подключить"}
+          </button>
+          {pairMessage && <p role="status">{pairMessage}</p>}
+        </details>
+      )}
 
       <RunSetupPanel symbol={symbol} onHistoryPreparation={onHistoryPreparation}
         onPasteSymbol={onPasteSymbol} onSimulationStart={onSimulationStart}

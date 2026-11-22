@@ -4279,6 +4279,8 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             "/api/diary/simulator-bridge/request",
             "/api/diary/simulator-bridge/status",
             "/api/diary/simulator-bridge/pair",
+            "/api/diary/simulator-bridge/pair-code",
+            "/api/diary/simulator-bridge/pair-claim",
             "/api/diary/simulator-bridge/ack",
         }:
             # Owner-facing routes rely on existing Nginx owner authentication
@@ -4314,12 +4316,32 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                         fetch_site=self.headers.get("Sec-Fetch-Site", ""),
                     )
                 elif path.endswith("/pair"):
-                    # Nginx owner-auth must protect this route exactly as
-                    # request/status. No device token is provisioned on VPS.
+                    # Legacy owner-authenticated flow; do not use in new UI.
                     payload = self._payload({"device_id"})
                     result = relay.pairing_credentials(
                         device_id=payload["device_id"],
                         request_origin=self.headers.get("Origin", ""),
+                        fetch_site=self.headers.get("Sec-Fetch-Site", ""),
+                    )
+                elif path.endswith("/pair-code"):
+                    # Owner-authenticated by the existing /api/ Nginx gate.
+                    payload = self._payload({"device_id"})
+                    result = relay.issue_pair_code(
+                        device_id=payload["device_id"],
+                        request_origin=self.headers.get("Origin", ""),
+                        fetch_site=self.headers.get("Sec-Fetch-Site", ""),
+                    )
+                elif path.endswith("/pair-claim"):
+                    # Only exact no-cookie Nginx route; code grants no PAPER
+                    # reads or commands and expires in 90 seconds.
+                    if (self.headers.get("Origin") or self.headers.get("Sec-Fetch-Site")
+                            or self.headers.get("X-BybitScanner-Local-Pair-Claim") != "v1"
+                            or self.headers.get("Content-Type") != "application/json"):
+                        raise RelayForbidden("untrusted_local_pair_claim")
+                    payload = self._payload({"device_id", "code"})
+                    result = relay.claim_pair_code(
+                        device_id=payload["device_id"], code=payload["code"],
+                        origin=self.headers.get("Origin", ""),
                         fetch_site=self.headers.get("Sec-Fetch-Site", ""),
                     )
                 else:
