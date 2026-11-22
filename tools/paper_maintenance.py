@@ -3181,7 +3181,7 @@ def _stop_exact_installed_paper_once(
 def main(argv=None) -> int:
     parser = _MaintenanceParser(description="Fail-closed one-action PAPER maintenance")
     parser.add_argument("sha")
-    parser.add_argument("--action", choices=("stop", "start", "update", "update-and-start", "provision-owner-pc", "telegram-recover", "update-take-closed", "github-status-enable"),
+    parser.add_argument("--action", choices=("stop", "start", "update", "update-and-start", "provision-owner-pc", "telegram-recover", "update-take-closed", "github-status-enable", "github-diagnostic-enable"),
                         help="single owner action: canonical STOP, PAPER START, or exact stable UPDATE")
     parser.add_argument("--env-file", type=Path, default=Path("/etc/bybitscanner/paper.env"))
     parser.add_argument("--wait-seconds", type=float, default=0)
@@ -3224,6 +3224,11 @@ def main(argv=None) -> int:
                         or args.take_closed_approved_handoff or args.resume_one_flat_from_prior_stop
                         or args.expected_old_backend):
                     parser.error("one action cannot combine with legacy lifecycle flags")
+                if args.action == "github-diagnostic-enable":
+                    from tools.github_diagnostic_runtime import enable_diagnostic
+                    status = enable_diagnostic(args.sha)
+                    print(status)
+                    return 0 if status.startswith("READY:") else 2
                 if args.action == "github-status-enable":
                     from tools.github_status_reporter import enable_observer
                     status = enable_observer(args.sha)

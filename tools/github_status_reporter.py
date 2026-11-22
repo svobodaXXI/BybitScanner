@@ -276,9 +276,6 @@ def enable_observer(expected_sha: str, *, root: Path = Path("/opt/BybitScanner")
                     token_file: Path = TOKEN_FILE, manifest_path=None,
                     uid: int = 0, run=subprocess.run) -> str:
     """Explicit owner opt-in; never stop/start trading or manage credentials."""
-    from tools.vps_release_identity import MANIFEST, verify_release, git_blob_hash, _safe_file
-    from tools.vps_gitless_release_activate import _trusted_file, _atomic_new_file, _manifest
-
     names = ("bybitscanner-github-status.service", "bybitscanner-github-status.timer")
     try:
         if os.geteuid() != uid:
@@ -287,22 +284,34 @@ def enable_observer(expected_sha: str, *, root: Path = Path("/opt/BybitScanner")
     except (OSError, ValueError):
         return "BLOCKED: observer_token_missing_or_unprotected"
 
+    return _enable_pinned_timer(expected_sha, names=names,
+                                source_paths=("tools/github_status_reporter.py",),
+                                label="observer", root=root, unit_dir=unit_dir,
+                                manifest_path=manifest_path, uid=uid, run=run)
+
+
+def _enable_pinned_timer(expected_sha: str, *, names, source_paths, label,
+                         root: Path, unit_dir: Path, manifest_path, uid, run) -> str:
+    """Private fixed-profile activation shared by the two read-only timers."""
+    from tools.vps_release_identity import MANIFEST, verify_release, git_blob_hash, _safe_file
+    from tools.vps_gitless_release_activate import _trusted_file, _atomic_new_file, _manifest
+
     try:
         manifest_path = MANIFEST if manifest_path is None else manifest_path
         if verify_release(root, manifest_path) != expected_sha:
-            return "BLOCKED: observer_release_mismatch"
+            return f"BLOCKED: {label}_release_mismatch"
         manifest = _manifest(_trusted_file(manifest_path, uid))
         if manifest["build_sha"] != expected_sha:
-            return "BLOCKED: observer_release_mismatch"
+            return f"BLOCKED: {label}_release_mismatch"
         meta = unit_dir.lstat()
         if not stat.S_ISDIR(meta.st_mode) or meta.st_uid != uid or meta.st_mode & 0o022:
-            return "BLOCKED: observer_unit_directory_unprotected"
+            return f"BLOCKED: {label}_unit_directory_unprotected"
 
         def command(*args):
             result = run(["systemctl", *args], capture_output=True, text=True,
                          timeout=20, check=False)
             if result.returncode:
-                raise ValueError("observer_systemd_unproven")
+                raise ValueError(f"{label}_systemd_unproven")
             return result.stdout
 
         def properties(name):
@@ -316,7 +325,7 @@ def enable_observer(expected_sha: str, *, root: Path = Path("/opt/BybitScanner")
                     and values.get("LoadState") == "not-found"
                     and values.get("FragmentPath") == ""
                     and values.get("DropInPaths") == ""):
-                raise ValueError("observer_systemd_unproven")
+                raise ValueError(f"{label}_systemd_unproven")
             return values
 
         def exact_unit(name, values):
@@ -327,10 +336,10 @@ def enable_observer(expected_sha: str, *, root: Path = Path("/opt/BybitScanner")
 
         # Verify all sources and existing destinations before any file mutation.
         sources = {}
-        for rel in ("tools/github_status_reporter.py", *("deploy/systemd/" + n for n in names)):
+        for rel in (*source_paths, *("deploy/systemd/" + n for n in names)):
             data = _trusted_file(_safe_file(root, rel), uid)
             if manifest["blobs"].get(rel) != git_blob_hash(data):
-                return "BLOCKED: observer_source_not_pinned"
+                return f"BLOCKED: {label}_source_not_pinned"
             sources[rel] = data
         pending = []
         for name in names:
@@ -339,32 +348,32 @@ def enable_observer(expected_sha: str, *, root: Path = Path("/opt/BybitScanner")
             values = properties(name)
             if os.path.lexists(path):
                 if _trusted_file(path, uid) != data:
-                    return "BLOCKED: observer_existing_unit_conflict"
+                    return f"BLOCKED: {label}_existing_unit_conflict"
                 if (values.get("FragmentPath") not in ("", str(path))
                         or values.get("DropInPaths") != ""):
-                    return "BLOCKED: observer_effective_unit_conflict"
+                    return f"BLOCKED: {label}_effective_unit_conflict"
             else:
                 if (values.get("LoadState") != "not-found"
                         or values.get("FragmentPath") != ""
                         or values.get("DropInPaths") != ""):
-                    return "BLOCKED: observer_effective_unit_conflict"
+                    return f"BLOCKED: {label}_effective_unit_conflict"
                 pending.append((path, data))
 
         for path, data in pending:
             _atomic_new_file(path, data)
         command("daemon-reload")
         if not all(exact_unit(name, properties(name)) for name in names):
-            return "BLOCKED: observer_effective_unit_unproven"
+            return f"BLOCKED: {label}_effective_unit_unproven"
         command("enable", "--now", names[1])
         values = properties(names[1])
         if (not exact_unit(names[1], values)
                 or values.get("UnitFileState") != "enabled"
                 or values.get("ActiveState") != "active"):
-            return "BLOCKED: observer_timer_activation_unproven; no retry"
-        return "READY: GitHub observer timer enabled and active; delivery unverified"
+            return f"BLOCKED: {label}_timer_activation_unproven; no retry"
+        return f"READY: GitHub {label} timer enabled and active; delivery unverified"
     except Exception:
         # Never print credentials, subprocess stderr or arbitrary unit contents.
-        return "BLOCKED: observer_setup_unproven; no automatic retry"
+        return f"BLOCKED: {label}_setup_unproven; no automatic retry"
 
 
 def main() -> int:

@@ -8,14 +8,14 @@
   "title": "Двусторонний мост — изолированный протокол диагностики",
   "governance_type": "DESIGN_TO_IMPLEMENTATION_CHANGE_REQUEST",
   "status": "IN_PROGRESS",
-  "revision": "1.1",
+  "revision": "1.2",
   "lifecycle_stage": "IMPLEMENT",
   "objective": "Сократить ручные PowerShell-шаги: запрос диагностики через GitHub → фиксированное read-only наблюдение → проверяемый коррелированный ответ.",
   "non_goals": [
     "Прямой SSH, произвольные команды, новый исполнитель релизов, торговые полномочия."
   ],
   "approved_scope": [
-    "Офлайн прототип и интегрированный диагностический цикл: строгий протокол, независимые Ed25519 ключи, переиспользование observe(), durable journal, ограниченный GitHub transport и проверка повторной доставки. Без активации."
+    "Офлайн прототип и интегрированный диагностический цикл: строгий протокол, независимые Ed25519 ключи, переиспользование observe(), durable journal, ограниченный GitHub transport и проверка повторной доставки. Подготовка изолированного host wiring и независимого issuer; реальная активация только после защитных ворот."
   ],
   "prohibited_scope": [
     "Любая активация VPS до отдельного разрешения и закрытия защитных ворот; публичный комментарий не является полномочием; LIVE, START, STOP, UPDATE, SQL и торговые мутации."
@@ -41,7 +41,7 @@
     "Сначала изолированная диагностика, никаких runtime mutations; GitHub только транспорт; раздельный доверенный издатель запросов и подписант ответов; Ed25519 из существующей зависимости."
   ],
   "unresolved_decisions": [
-    "Доверенный issuer, защищённое размещение и pinning ключей/release, runtime scheduling/rate limit, host-level owner enable/disable, закрытие RISK-MONOLITH-01. Runtime activation не авторизована."
+    "Владелец поручил минимальную активацию при выполнении обязательных защитных ворот. Требуются CI, защищённая настройка ключей и issuer environment, доказательство доставки новым токеном, exact-SHA release и коррелированный реальный roundtrip."
   ],
   "acceptance_criteria": [
     "Изолированный signed roundtrip с точным request ID и digest; отклонение подмены, устаревания, неправильного назначения, неразрешённого действия и повтора до чтения API.",
@@ -83,10 +83,10 @@
     }
   ],
   "current_phase": "IMPLEMENT",
-  "current_checkpoint": "DURABLE_DIAGNOSTIC_CYCLE_CI_PENDING",
+  "current_checkpoint": "ISOLATED_HOST_WIRING_AND_ISSUER_CI_PENDING",
   "implementation_status": "IN_PROGRESS",
   "next_phase": "VERIFY",
-  "next_phase_authorization": "AUTHORIZED_OFFLINE_ONLY",
+  "next_phase_authorization": "OWNER_REQUESTED_MINIMAL_ACTIVATION_SUBJECT_TO_GATES",
   "related_commits": [
     {
       "phase": "BASELINE",
@@ -123,3 +123,9 @@
 ## Единая поставка диагностического контура
 
 Протокол #1230 объединяется с отдельным журналом подписанных запросов и ответов, атомарной записью до observe(), ограниченным опросом #1212 и восстановлением доставки после неопределённого POST. Повтор публикации возможен только теми же подписанными байтами; дедупликация по request ID и digest. При прерывании между резервированием и сохранением ответа повторное наблюдение запрещено; потерянный результат не выдаётся за доказанный. Просроченные ответы проверяются как исторические, не как текущий статус. Неотправленные ответы не удаляются. Тесты не используют реальные ключи, сеть или торговый runtime. Реальная активация, ротация токена, доверенный issuer, защищённый key/release pinning и гарантированный интервал запуска остаются отдельными защитными воротами.
+
+## Минимальная активация (22.11.2026)
+
+Отдельная ветка diagnostic-issuer создаётся **только из проверенного интегрированного релиза**, после review и merge. Запрос инициируется обновлением единственного файла .github/diagnostic-request.json (request_id, issued_at, expires_at). Workflow запускается только push в эту ветку, не issue_comment, не PR. Новый Issues-only токен наблюдателя не должен иметь Contents/Actions/Workflows write. Доверенная Contents-write сторона и защищённый GitHub Actions environment bybitscanner-diagnostic-issuer — независимый issuer; секрет DIAGNOSTIC_ISSUER_SEED только в environment, разрешённая deployment branch только diagnostic-issuer, без доступа из PR/других веток. Любой, кто может изменить код на доверенной ветке, входит в доверенную issuer boundary; не выдавать это за изоляцию от владельца репозитория. Проверить настройки и реальное срабатывание workflow, не считать GitHub-коннектор способным trigger до evidence.
+
+Одноразовая настройка: независимые Ed25519 seed (issuer в environment, responder только VPS), public pins в .github/diagnostic-public.json (audience, issuer_public, responder_public), root-only 0700 каталог /etc/bybitscanner/github-diagnostic и 0600 config.json (enabled, release_sha, audience, issuer_public, responder_seed). Ни private seed, ни PAT не публиковать. Реальный VPS exact-SHA pin и отдельный durable journal: tools.github_diagnostic_runtime --initialize только впервые; отсутствующий/повреждённый прежний journal не восстанавливать автоматически. Включение только через tools.vps_owner_control -> tools.paper_maintenance github-diagnostic-enable. Таймер 30 секунд после завершения, один observe за цикл, GitHub endpoint фиксирован. Kill switch: root-controlled enabled=false, polling не выполняет IO; для отключения таймера root/systemd без затрагивания торговых служб. При смене release SHA наблюдение fail-closed до подтверждённого обновления pin. Автоматизация lifecycle key/release pin отложена. Принимается только настоящий signed roundtrip, в котором ответ проверен по заранее закреплённому public key и digest запроса; unsigned status не заменяет это. Состояние существующего observer не является доказательством закрытия RISK-MONOLITH-01.

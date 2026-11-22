@@ -1,0 +1,20 @@
+[Unit]
+Description=Authenticated read-only GitHub diagnostic (no trading authority)
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/bybitscanner/github-diagnostic/config.json
+ConditionPathExists=/var/lib/bybitscanner-github-diagnostic/diagnostic-receipts.json
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/BybitScanner
+ExecStart=/opt/BybitScanner/venv/bin/python -m tools.github_diagnostic_runtime
+Environment=PYTHONDONTWRITEBYTECODE=1
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/bybitscanner-github-diagnostic
+TimeoutStartSec=120
