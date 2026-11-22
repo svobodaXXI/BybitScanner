@@ -472,6 +472,82 @@ def test_capture_only_probe_preserves_full_protection_context_without_fake_l2():
         hub.close()
 
 
+def test_private_protected_ingress_witness_requires_real_snapshot_and_no_new_topic():
+    """Research reads existing protected ingress; no second book or WS lease."""
+    ws = _WebSocket()
+    hub = MarketDataHub(_Registry(), _context, connection_factory=lambda *_a, **_k: ws)
+    try:
+        hub._ws = ws
+        assert hub.begin_protected_research_capture("BTCUSDT") is None
+        assert hub.list_contexts() == ()
+        full = hub.subscribe("BTCUSDT")
+        seen = []
+        full.add_update_listener("robot-protection", seen.append)
+        before_topics = tuple(ws.sent)
+        witness = hub.begin_protected_research_capture("BTCUSDT")
+        assert witness is not None and witness.capture_book is True
+        assert witness.impulse_observation is full.impulse_observation
+        assert hub.begin_protected_research_capture("BTCUSDT") is witness
+        assert hub.begin_protected_research_capture("ONGUSDT") is None
+        assert hub.subscribe_flow_only("BTCUSDT", capture_book=True) is full
+        assert hub.list_flow_contexts() == hub.list_contexts() == (full,)
+        assert not hasattr(full, "book_frames")  # no second trading book
+        assert tuple(ws.sent) == before_topics
+
+        # An orphan delta cannot bootstrap L2 history.
+        def frame(kind, uid):
+            return {
+                "topic": "orderbook.1000.BTCUSDT", "type": kind,
+                "data": {"u": uid, "seq": uid,
+                         "b": [["100", "1"]], "a": [["101", "1"]]},
+                "cts": 1234 + uid, "ts": 1234 + uid,
+            }
+        hub._dispatch(frame("delta", 9))
+        assert tuple(witness.book_frames) == ()
+        hub._dispatch(frame("snapshot", 10))
+        hub._dispatch(frame("delta", 11))
+        assert [item[1]["data"]["u"] for item in witness.book_frames] == [10, 11]
+        assert all(isinstance(received_ms, int) and received_ms > 0
+                   for received_ms, _ in witness.book_frames)
+        assert len(full.public_orderbook.messages) == 3
+        full._dispatch_update("robot-still-owned")
+        assert seen == ["robot-still-owned"]
+        assert hub.end_protected_research_capture("BTCUSDT") is True
+        assert tuple(witness.book_frames) == ()
+        assert hub.end_protected_research_capture("BTCUSDT") is False
+        hub._dispatch(frame("snapshot", 12))
+        assert tuple(witness.book_frames) == ()
+        assert full.public_orderbook.closed is False
+        assert tuple(ws.sent) == before_topics
+    finally:
+        hub.close()
+
+
+def test_private_protected_capture_invalidates_gap_and_overflow():
+    hub = MarketDataHub(_Registry(), _context, connection_factory=lambda *_a, **_k: None)
+    try:
+        hub.subscribe("BTCUSDT")
+        witness = hub.begin_protected_research_capture("BTCUSDT")
+        assert witness is not None
+        snapshot = {"type": "snapshot"}
+        delta = {"type": "delta"}
+        witness.on_book(100, snapshot, "APPLIED")
+        assert len(witness.book_frames) == 1
+        witness.reset()  # disconnect must not retain previous generation
+        witness.on_book(101, delta, "APPLIED")
+        assert not witness.book_frames
+        witness.on_book(102, snapshot, "APPLIED")
+        for n in range(1024):
+            witness.on_book(103 + n, delta, "APPLIED")
+        assert not witness.book_frames  # do not evict the initial snapshot
+        witness.on_book(1128, delta, "APPLIED")
+        assert not witness.book_frames
+        witness.on_book(1129, snapshot, "APPLIED")
+        assert len(witness.book_frames) == 1
+    finally:
+        hub.close()
+
+
 TESTS = (
     test_hub_uses_one_connection_for_multiple_reusable_symbol_contexts,
     test_hub_rejects_unsupported_symbol_without_creating_context,
@@ -486,6 +562,8 @@ TESTS = (
     test_flow_only_probe_uses_same_ws_no_book_and_no_protection_callback,
     test_protection_upgrades_passive_source_without_duplicate_trade_or_unsubscribe,
     test_capture_only_probe_preserves_full_protection_context_without_fake_l2,
+    test_private_protected_ingress_witness_requires_real_snapshot_and_no_new_topic,
+    test_private_protected_capture_invalidates_gap_and_overflow,
 )
 
 
