@@ -186,3 +186,70 @@ def test_ordinary_poller_only_carries_bounded_receipt(tmp_path, context):
     assert relay.relay({"callback_query": {"data": "robot:cmd:start"}}, inbox=inbox) is None
     assert relay.relay({"callback_query": {"data": "owner-release:yes:" + nonce}}, inbox=inbox) is False
     assert not calls
+
+
+def test_read_only_activation_preflight_checks_actual_unit_bytes(tmp_path):
+    import os
+    from pathlib import Path
+    root = tmp_path / "release"
+    units = tmp_path / "systemd"
+    root.mkdir()
+    units.mkdir()
+    blobs = {}
+    for name in runtime.OWNER_UNIT_NAMES:
+        rel = "deploy/systemd/" + name
+        tracked = root / rel
+        tracked.parent.mkdir(parents=True, exist_ok=True)
+        tracked.write_bytes(("unit=" + name).encode())
+        installed = units / name
+        installed.write_bytes(tracked.read_bytes())
+        blobs[rel] = grants.hashlib.sha1(
+            b"blob " + str(len(tracked.read_bytes())).encode() + b"\0"
+            + tracked.read_bytes()).hexdigest()
+    manifest = dict(build_sha="a" * 40,
+                    blobs={**blobs, "tools/vps_release_identity.py": "b"*40,
+                           "terminal/runtime/paper_http_server.py": "c"*40})
+    file = tmp_path / "manifest.json"
+    file.write_text(json.dumps(manifest))
+    uid = os.geteuid()
+    before = {str(p):p.read_bytes() for p in [file, *units.iterdir()]}
+    runtime._check_units(root, file, units, uid=uid)
+    assert before == {str(p):p.read_bytes() for p in [file, *units.iterdir()]}
+    (units / runtime.OWNER_UNIT_NAMES[0]).write_bytes(b"changed unit")
+    with pytest.raises(ValueError, match="not pinned"):
+        runtime._check_units(root, file, units, uid=uid)
+    (units / runtime.OWNER_UNIT_NAMES[0]).unlink()
+    with pytest.raises(Exception):
+        runtime._check_units(root, file, units, uid=uid)
+
+
+def test_preflight_refuses_missing_or_damaged_one_use_ledger(tmp_path):
+    import os
+    path = tmp_path / "grant-ledger"
+    path.mkdir(mode=0o700)
+    ledger = grants.GrantLedger(path)
+    ledger.initialize()
+    runtime._check_ledger(path, uid=os.geteuid())
+    marker = path / "initialized"
+    marker.chmod(0o644)
+    with pytest.raises(ValueError, match="not initialized"):
+        runtime._check_ledger(path, uid=os.geteuid())
+    marker.chmod(0o600)
+    marker.write_bytes(b"forged")
+    with pytest.raises(ValueError, match="not initialized"):
+        runtime._check_ledger(path, uid=os.geteuid())
+    marker.unlink()
+    with pytest.raises(OSError):
+        runtime._check_ledger(path, uid=os.geteuid())
+
+
+def test_read_only_preflight_never_enters_live_cycle(monkeypatch, capsys):
+    monkeypatch.setattr(runtime, "run_once", lambda: pytest.fail("live cycle invoked"))
+    monkeypatch.setattr(runtime, "preflight", lambda: "HOST_PRECHECK_OK_DISABLED")
+    assert runtime.main(["--preflight"]) == 0
+    assert "HOST_PRECHECK_OK_DISABLED" in capsys.readouterr().out
+    monkeypatch.setattr(runtime, "preflight", lambda: (_ for _ in ()).throw(ValueError("PRIVATE")))
+    assert runtime.main(["--preflight"]) == 2
+    printed = capsys.readouterr().out
+    assert "OWNER_RELEASE_PREFLIGHT=BLOCKED" in printed
+    assert "PRIVATE" not in printed
