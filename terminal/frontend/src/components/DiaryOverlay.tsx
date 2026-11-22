@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { marketApiRoutes } from "../marketData/apiRoutes";
 import { AccountMenu } from "./AccountMenu";
 import { OriginalEpisodeSignalChart } from "./OriginalEpisodeSignalChart";
@@ -1064,6 +1064,23 @@ function compactDealPattern(pattern: string | null): string {
 }
 
 
+/** Essential coverage stays visible; explanations expand only on demand. */
+function CompactCoverage({ label, children }: { label: string; children: ReactNode }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className="diary-finrez-coverage diary-compact-coverage">
+      <button type="button" className="diary-coverage-toggle" aria-expanded={expanded}
+        onClick={() => setExpanded(value => !value)}>
+        <span>{label}</span>
+        <svg viewBox="0 0 16 16" aria-hidden="true" className={expanded ? "expanded" : ""}>
+          <path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.5" />
+        </svg>
+      </button>
+      {expanded && <div className="diary-coverage-details">{children}</div>}
+    </div>
+  );
+}
+
 /** One accessible, proportional control for either pattern cards or closed deals. */
 function OutcomeSplitBar({ kind, wins, losses, breakeven, filter, onFilter }: {
   kind: "deals" | "patterns"; wins: number; losses: number; breakeven: number;
@@ -1393,10 +1410,10 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, pnlFilter, sideF
         </div>
       ) : null}
       {report.attribution_coverage.status === "PARTIAL" ? (
-        <p className="diary-finrez-coverage" role="status">
-          Часть истории не включена: у {report.attribution_coverage.excluded_unattributed_episode_count}
-          { " " }закрытых сделок не подтверждено, кто ими управлял.
-        </p>
+        <CompactCoverage label="Не все сделки учтены">
+          Исключено сделок: {report.attribution_coverage.excluded_unattributed_episode_count}.
+          {" "}Не подтверждено, кто ими управлял.
+        </CompactCoverage>
       ) : null}
       <OutcomeSplitBar kind="deals" wins={wins} losses={losses} breakeven={breakeven}
         filter={pnlFilter} onFilter={onPnlFilterChange} />
@@ -1450,9 +1467,6 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, pnlFilter, sideF
       )}
       {filmNotice ? <p className="diary-finrez-coverage" role="status">{filmNotice}</p> : null}
       {downloadError ? <p className="diary-finrez-coverage" role="alert">{downloadError}</p> : null}
-      <p className="diary-finrez-basis">
-        Киноплёнка передаёт подтверждённый JSON исполнений по ID при наличии сопряжённого Симулятора. Свечи подгружаются локально с Bybit; полный журнал решений Робота может отсутствовать.
-      </p>
     </div>
   );
 }
@@ -1586,25 +1600,18 @@ function PatternsView({ report, symbolFilter, onSelectPattern }: {
     <section className="diary-finrez" aria-label="Паттерны по подтверждённым сделкам">
       <OutcomeSplitBar kind="patterns" wins={wins} losses={losses} breakeven={breakeven}
         filter={resultFilter} onFilter={setResultFilter} />
-      <p className="diary-finrez-basis">
-        Здесь показаны только паттерны, которые удалось достоверно связать с закрытой сделкой Робота.
-        Сделка без подтверждённой связи с паттерном не включается в эту вкладку.
-      </p>
-      <p className="diary-finrez-coverage" role="status">
-        С подтверждённым паттерном: {provenCount} из {episodes.length} закрытых сделок за период.
+      <CompactCoverage label={`Подтверждено: ${provenCount} из ${episodes.length} сделок`}>
+        Здесь показаны только сделки с достоверно подтверждённым паттерном.
         Остальные сделки не считаются убыточными или нулевыми.
         {report.attribution_coverage.status === "PARTIAL"
-          ? " Сам финансовый отчёт также имеет неполное покрытие атрибуции."
+          ? " Не все сделки включены в финансовый отчёт: происхождение части исполнений не подтверждено."
           : ""}
-      </p>
+      </CompactCoverage>
       {rows.length === 0 ? <p className="diary-state">
         {ranked.length === 0 ? "Нет сделок с подтверждённым паттерном за выбранный период"
           : "Нет паттернов с выбранным финансовым результатом"}
       </p> : (
         <>
-          <p className="diary-finrez-basis">
-            Кнопка списка открывает все подтверждённые сделки с паттерном, включая другие категории управления.
-          </p>
           <div className="diary-finrez-list">
             {rows.map((row) => {
               const wins = row.deals.filter((deal) => verifiedPnlSign(deal.pnl_usdt) > 0).length;
@@ -1660,12 +1667,12 @@ function FinrezMoneyBar({ report, filter, onFilter }: {
   onFilter: (next: FinrezPnlFilter) => void;
 }) {
   const totals = verifiedFinrezMoneyTotals(report);
-  if (totals === null) return <p className="diary-finrez-coverage" role="status">
+  if (totals === null) return <CompactCoverage label="Финансовая полоса недоступна">
     {report.tickers.length === 0
-      ? "Нет подтверждённого результата для финансовой полосы за этот период."
-      : "Полоса прибыли и убытка пока недоступна: суммы сделок и тикеров не удалось подтвердить как одинаковые."}
+      ? "Нет подтверждённого результата за этот период."
+      : "Суммы сделок и тикеров не удалось сверить."}
     {" "}Это не нулевой результат.
-  </p>;
+  </CompactCoverage>;
   const gross = Number(totals.profit) + Number(totals.loss);
   const profitPct = gross > 0 ? Number(totals.profit) / gross * 100 : 0;
   const lossPct = gross > 0 ? 100 - profitPct : 0;
@@ -1726,15 +1733,14 @@ function FinrezView({ report, symbolFilter, onSelectTicker }: {
     <div className="diary-finrez" aria-label="Финансовый результат по тикерам">
       <FinrezMoneyBar report={report} filter={resultFilter} onFilter={setResultFilter} />
       <p className="diary-finrez-basis">
-        {report.owner === "ROBOT" ? "Только полностью роботизированные сделки" : "Только ручные сделки"}
-        {" · "}Реализованный PnL (цена − комиссии исполнений) · USDT
+        {report.owner === "ROBOT" ? "Сделки робота" : "Ручные сделки"}
       </p>
       {report.attribution_coverage.status === "PARTIAL" ? (
-        <p className="diary-finrez-coverage" role="status">
-          Не все сделки учтены: у {report.attribution_coverage.excluded_unattributed_episode_count}
-          { " " }закрытых сделок ({report.attribution_coverage.excluded_unattributed_execution_count} исполнений)
-          не подтверждено, кто ими управлял. Показанная прибыль — только по проверенным сделкам.
-        </p>
+        <CompactCoverage label="Не все сделки учтены">
+          Исключено сделок: {report.attribution_coverage.excluded_unattributed_episode_count}
+          {" "}({report.attribution_coverage.excluded_unattributed_execution_count} исполнений).
+          {" "}Не подтверждено, кто ими управлял. Показанный PnL — только по проверенным сделкам.
+        </CompactCoverage>
       ) : null}
       {visibleTickers.length === 0 ? (
         <p className="diary-state">
