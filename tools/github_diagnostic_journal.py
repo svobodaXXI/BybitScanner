@@ -98,7 +98,7 @@ class DiagnosticJournal:
                 raise ValueError("delivery without response")
         return state
 
-    def process(self, wire, *, issuer_public, responder_key, audience, clock, fetch):
+    def process(self, wire, *, issuer_public, responder_key, audience, clock, fetch, owner_status=None):
         """Consume before observation; save signed receipt before returning it."""
         def reserve(rid, digest):
             with self._lock():
@@ -131,7 +131,7 @@ class DiagnosticJournal:
 
         reply = protocol.process_request(
             wire, issuer_public=issuer_public, responder_key=responder_key,
-            audience=audience, clock=clock, reserve=reserve, fetch=fetch)
+            audience=audience, clock=clock, reserve=reserve, fetch=fetch, owner_status=owner_status)
         verify_historical_response(
             reply, expected_request=wire, issuer_public=issuer_public,
             responder_public=responder_key.public_key(), audience=audience, now=clock())
@@ -178,7 +178,7 @@ class DiagnosticJournal:
 
 
     def run_once(self, *, enabled, issuer_public, responder_key, audience,
-                 clock, fetch, transport):
+                 clock, fetch, transport, owner_status=None):
         """Drain pending replies first, then consume at most one new request.
 
         The caller provides the trusted local enable decision and pinned keys.
@@ -211,7 +211,7 @@ class DiagnosticJournal:
                 continue
             self.process(wire, issuer_public=issuer_public,
                          responder_key=responder_key, audience=audience,
-                         clock=clock, fetch=fetch)
+                         clock=clock, fetch=fetch, owner_status=owner_status)
             return {"enabled": True, "observed": 1,
                     "delivered": delivered + self.deliver_pending(**delivery)}
         return {"enabled": True, "observed": 0, "delivered": delivered}

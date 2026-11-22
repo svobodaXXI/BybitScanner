@@ -33,12 +33,14 @@ def make_request(public, request, seed, now):
             or public["issuer_public"] == public["responder_public"]
             or type(seed) is not str or not HEX64.fullmatch(seed)
             or type(request) is not dict
-            or set(request) != {"request_id", "issued_at", "expires_at"}):
+            or set(request) not in ({"request_id", "issued_at", "expires_at"},
+                                    {"request_id", "issued_at", "expires_at"} | protocol.OWNER_STATUS_FIELDS)):
         raise ValueError("invalid issuer configuration")
     key = eddsa.import_private_key(bytes.fromhex(seed))
     if key.public_key().export_key(format="raw").hex() != public["issuer_public"]:
         raise ValueError("issuer key pin mismatch")
-    payload = dict(request, version=1, operation="observe", audience=public["audience"])
+    operation = "owner_status" if protocol.OWNER_STATUS_FIELDS <= set(request) else "observe"
+    payload = dict(request, version=1, operation=operation, audience=public["audience"])
     return protocol.sign_request(payload, issuer_key=key, audience=public["audience"], now=now)
 
 

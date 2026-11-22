@@ -26,6 +26,8 @@ SOURCES = ("tools/github_diagnostic_runtime.py", "tools/github_diagnostic_journa
            "tools/github_status_reporter.py", "tools/vps_release_identity.py",
            "tools/vps_gitless_release_activate.py")
 PINNED = SOURCES + tuple("deploy/systemd/" + name for name in NAMES)
+OWNER_SOURCES = ("tools/vps_owner_control.py", "tools/paper_maintenance.py",
+                 "tools/runtime_intent.py", "tools/stop_robot_runtime.py")
 
 
 def _config(directory=CONFIG_DIR, *, uid=0):
@@ -159,12 +161,31 @@ def run_once(*, config_dir=CONFIG_DIR, root=ROOT, manifest_path=MANIFEST,
         return {"enabled": False, "observed": 0, "delivered": 0}
     _pin_release(config["release_sha"], root, manifest_path, uid=uid)
     token = _token(token_file)
+
+    def owner_status(request, action, target):
+        # An unknown or mixed release cannot produce an authoritative owner
+        # outcome. Check the additional reader sources before importing them.
+        unknown = dict(owner_request_id=request, owner_action=action, target_sha=target,
+                       state="UNPROVEN", result="UNKNOWN", exit_code=None, postcheck="NOT_RUN")
+        try:
+            manifest = _manifest(_trusted_file(manifest_path, uid))
+            if manifest["build_sha"] != config["release_sha"]:
+                return unknown
+            for rel in OWNER_SOURCES:
+                if manifest["blobs"].get(rel) != git_blob_hash(_trusted_file(_safe_file(root, rel), uid)):
+                    return unknown
+            from tools.vps_owner_control import read_diagnostic_outcome
+            return read_diagnostic_outcome(request, action, target)
+        except Exception:
+            return unknown
+
     with session_factory() as session:
         session.trust_env = False
         transport = GitHubDiagnosticTransport(request=session.request, token=token)
         return DiagnosticJournal(state_dir).run_once(
             enabled=True, issuer_public=issuer, responder_key=responder,
-            audience=config["audience"], clock=clock, fetch=fetch, transport=transport)
+            audience=config["audience"], clock=clock, fetch=fetch, transport=transport,
+            owner_status=owner_status)
 
 
 def enable_diagnostic(expected_sha: str, *, root=ROOT, unit_dir=Path("/etc/systemd/system"),

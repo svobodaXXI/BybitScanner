@@ -30,36 +30,103 @@ def unit_name(request: str) -> str:
     return UNIT_PREFIX + request + ".service"
 
 
-def status(request: str, *, run=subprocess.run, verify_sha: str = "") -> int:
-    unit = unit_name(request)
+def _read_owner_fields(request: str, *, run=subprocess.run) -> dict:
     result = run(
         ["systemctl", "show", "--no-pager",
          "--property=LoadState,ActiveState,SubState,Result,ExecMainStatus,Description",
-         unit],
+         unit_name(request)],
         capture_output=True, text=True, timeout=12, check=False,
     )
     if result.returncode != 0:
-        print("STATUS=UNPROVEN REQUEST_ID=" + request)
-        return 2
-    fields = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
-    if fields.get("LoadState") != "loaded":
-        print("STATUS=UNPROVEN REQUEST_ID=" + request)
-        return 2
+        return {}
+    fields = {}
+    for line in result.stdout.splitlines():
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if key in fields:
+            return {}
+        fields[key] = value
+    return fields if fields.get("LoadState") == "loaded" else {}
+
+
+def _owner_state(fields: dict) -> str:
+    if not fields:
+        return "UNPROVEN"
     if (fields.get("ActiveState") == "active"
             and fields.get("SubState") == "exited"
             and fields.get("Result") == "success"
             and fields.get("ExecMainStatus") == "0"):
-        state = "FINISHED_OK"
+        return "FINISHED_OK"
     elif fields.get("ActiveState") == "failed" or fields.get("Result") not in ("success", ""):
-        state = "FAILED"
+        return "FAILED"
     elif fields.get("ActiveState") == "activating":
-        state = "RUNNING"
+        return "RUNNING"
     elif fields.get("ActiveState") == "active" and fields.get("SubState") == "running":
-        state = "RUNNING"
+        return "RUNNING"
     else:
         # An inactive/dead or otherwise unexpected unit is not an executing
         # request. Never label an unknown lifecycle state RUNNING.
-        state = "UNPROVEN"
+        return "UNPROVEN"
+
+
+def read_diagnostic_outcome(request: str, action: str, target: str, *, run=subprocess.run) -> dict:
+    """Strict, public-safe read of one existing owner unit. Never submit or retry."""
+    from contextlib import redirect_stdout
+    from io import StringIO
+    from tools.github_diagnostic_protocol import OWNER_ACTIONS, OWNER_RESULTS, EDITOR_ACTIONS
+
+    unit_name(request)
+    if action not in OWNER_ACTIONS or not isinstance(target, str) or SHA.fullmatch(target) is None:
+        raise ValueError("invalid owner observation identity")
+    unknown = dict(owner_request_id=request, owner_action=action, target_sha=target,
+                   state="UNPROVEN", result="UNKNOWN", exit_code=None, postcheck="NOT_RUN")
+    try:
+        fields = _read_owner_fields(request, run=run)
+        expected = "BybitScanner " + action + " " + target + " origin="
+        description = fields.get("Description", "")
+        # Legacy truncated SHA is insufficient for a public authenticated outcome.
+        if not description.startswith(expected) or not ORIGIN.fullmatch(description[len(expected):]):
+            return unknown
+        if not {"ActiveState", "SubState", "Result", "ExecMainStatus"} <= set(fields):
+            return unknown
+        state = _owner_state(fields)
+        if state == "UNPROVEN":
+            return unknown
+        result = fields["Result"] if fields["Result"] in OWNER_RESULTS else "UNKNOWN"
+        code = fields["ExecMainStatus"]
+        code = int(code) if re.fullmatch(r"[0-9]{1,3}", code) and int(code) <= 255 else None
+        if state == "FINISHED_OK" and (result != "success" or code != 0):
+            return unknown
+        if state == "RUNNING":
+            code = None
+        postcheck = "NOT_RUN"
+        if state == "FINISHED_OK":
+            if action in EDITOR_ACTIONS:
+                # Existing canonical verification remains the only source of the
+                # EDITOR_ONLY verdict. Never publish its raw output or exception.
+                postcheck = "BLOCKED"
+                try:
+                    with redirect_stdout(StringIO()) as proof:
+                        rc = verify_update(target)
+                    if rc == 0 and "POSTCHECK=VERIFIED_EDITOR_ONLY" in proof.getvalue().splitlines():
+                        postcheck = "VERIFIED_EDITOR_ONLY"
+                except Exception:
+                    pass
+            else:
+                postcheck = "NOT_APPLICABLE"
+        return dict(unknown, state=state, result=result, exit_code=code, postcheck=postcheck)
+    except Exception:
+        return unknown
+
+
+def status(request: str, *, run=subprocess.run, verify_sha: str = "") -> int:
+    unit = unit_name(request)
+    fields = _read_owner_fields(request, run=run)
+    if not fields:
+        print("STATUS=UNPROVEN REQUEST_ID=" + request)
+        return 2
+    state = _owner_state(fields)
     print("REQUEST_ID=" + request)
     print("UNIT=" + unit)
     print("STATUS=" + state)
