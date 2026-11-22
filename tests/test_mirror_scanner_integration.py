@@ -287,6 +287,50 @@ def test_wick_sweep_later_less_extreme_pivot_does_not_replace_intact_ray(
     assert list(state["records"]) == [original.level_id]
 
 
+def test_wick_sweep_retired_old_ray_allows_later_higher_low_source(
+        root, fixed_levels, monkeypatch):
+    # Owner EVAA/BLESS: a deep pierced low is replaced, then a later
+    # confirmed HIGHER low is also its own valid untouched retest source.
+    old = level_at(100.0, 5 * M, side="lower")
+    fixed_levels["levels"] = [old]
+    clean = (100.6, 100.9, 100.4, 100.6)
+    bars = [clean] * 60
+    bars[23] = (100.6, 100.9, 99.8, 100.6)
+    bars[52] = (100.6, 100.9, 100.2, 100.6)
+    first = {"price": 99.8, "pivot_at_ms": 23 * M,
+             "confirmed_at_ms": 27 * M, "confirmed_index": 26, "index": 23}
+    later = {"price": 100.2, "pivot_at_ms": 52 * M,
+             "confirmed_at_ms": 56 * M, "confirmed_index": 55, "index": 52}
+
+    def pivots(rows):
+        available = [p for p in (first, later)
+                     if int(p["confirmed_at_ms"]) <= int(rows[-1]["close_time_ms"])]
+        return [], available
+
+    monkeypatch.setattr(ms, "confirmed_pivots", pivots)
+    observe(frame(bars[:55]), root)
+    early = ms.load_state("TESTUSDT", "1", root)
+    assert not any(
+        level.boundary.anchor_time_ms == 52 * M
+        for level in ms.LevelRegistry.from_dict(early["registry"]).levels.values()
+    )
+    observe(frame(bars), root)
+    state = ms.load_state("TESTUSDT", "1", root)
+    levels = ms.LevelRegistry.from_dict(state["registry"]).levels
+    fresh = [level for level in levels.values()
+             if level.side == "lower" and level.boundary.anchor_time_ms == 52 * M]
+    assert len(fresh) == 1
+    successor = fresh[0]
+    assert successor.boundary.anchor_price == 100.2
+    assert successor.confirmed_at_ms == 56 * M
+    assert state["records"][successor.level_id]["candidate"] is None
+    assert successor.provenance["source"] == "later_confirmed_swing"
+    # Re-scan preserves identity, does not create duplicate candidate/source.
+    observe(frame(bars), root)
+    repeat = ms.load_state("TESTUSDT", "1", root)
+    assert list(repeat["records"]).count(successor.level_id) == 1
+
+
 def test_wick_sweep_before_confirmation_does_not_cancel_existing_level(root, fixed_levels):
     # An unconfirmed spike can be revised by later bars. Never anticipate
     # the new pivot at the moment of the wick.
