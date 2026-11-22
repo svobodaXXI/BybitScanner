@@ -409,6 +409,32 @@ def test_waiting_level_expires_and_history_gap_rejects(root, fixed_levels):
 
 # --- dedup ------------------------------------------------------------------------------------------
 
+def test_wick_sweep_two_distinct_fresh_levels_one_breakout_candle_are_both_observed(
+        root, fixed_levels):
+    # Owner diagram: separate #1 and #2 extrema can be pierced by the same
+    # naked candle. Their targets differ, so neither is an event duplicate.
+    first = level_at(101.0, 5 * M)
+    second = level_at(102.0, 5 * M)
+    fixed_levels["levels"] = [first, second]
+    summary = observe(frame(flat_bars(30)), root)
+    assert summary["new_candidates"] == 0
+    bars = flat_bars(30)
+    bars.append((100.0, 104.5, 99.9, 104.0))
+    summary = observe(frame(bars), root)
+    state = ms.load_state("TESTUSDT", "1", root)
+    assert {key for key, row in state["records"].items() if row["candidate"]} == {
+        first.level_id, second.level_id
+    }
+    assert summary["new_candidates"] == 2
+    assert {item["level_id"] for item in state["pending_notifications"]} == {
+        first.level_id, second.level_id
+    }
+    # Repeated closed Scanner prefix is idempotent, no duplicate cards.
+    observe(frame(bars), root)
+    repeated = ms.load_state("TESTUSDT", "1", root)
+    assert len(repeated["pending_notifications"]) == 2
+
+
 def test_one_real_level_from_several_sources_and_repeated_scans_is_one_candidate(root, fixed_levels):
     swing = level_at(101.0, 5 * M)
     box_top = level_at(101.1, 8 * M, source="pattern_boundary", pattern="IKIGAI_BOX")
