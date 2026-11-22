@@ -800,6 +800,61 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
                             "reason": "expired_before_breakout"})
         records[level_id] = record
 
+    # After an old horizontal ray has been retired by a proven pierce, later
+    # independently confirmed pivots are valid NEW potential sources even if
+    # they are less extreme than that first successor. EVAA/BLESS owner edits
+    # selected later higher lows after earlier deeper lows. Replaying an old
+    # obsolete ray must never keep the search stuck at its deepest excursion.
+    retired = [
+        (level_id, registry.levels[level_id], rec["superseding_extremum"])
+        for level_id, rec in records.items()
+        if level_id in registry.levels
+        and registry.levels[level_id].is_horizontal
+        and rec.get("rejection") == "superseded_by_confirmed_extremum"
+        and isinstance(rec.get("superseding_extremum"), dict)
+    ]
+    for side, pivots in (("upper", highs), ("lower", lows)):
+        retired_same_side = [(source_id, pivot)
+                             for source_id, source, pivot in retired if source.side == side]
+        if not retired_same_side:
+            continue
+        for pivot in pivots:
+            anchor_time = int(pivot["pivot_at_ms"])
+            known_at = int(pivot["confirmed_at_ms"])
+            if known_at > latest_close or known_at < rows[0]["close_time_ms"]:
+                continue
+            if latest_close - anchor_time > WAITING_EXPIRY_CANDLES * step:
+                continue
+            parent = next((
+                source_id for source_id, obsolete in retired_same_side
+                if anchor_time > int(obsolete["pivot_at_ms"])
+                and known_at > int(obsolete["confirmed_at_ms"])
+            ), None)
+            if parent is None:
+                continue
+            fresh = horizontal_level(
+                symbol=symbol, timeframe=timeframe, source=SOURCE_SWING_ZONE,
+                pattern=None, side=side, price=float(pivot["price"]),
+                anchor_time_ms=anchor_time, confirmed_at_ms=known_at, touches=1,
+                provenance={"renewed_after_invalidated_level_id": parent,
+                            "source": "later_confirmed_swing"},
+            )
+            if fresh.level_id in records:
+                continue
+            registry.add(fresh, merge_tolerance=0.0)
+            records[fresh.level_id] = {
+                **new_record(fresh), "registered_at_ms": known_at,
+                "sources": [_source_entry(fresh)], "lifecycle": LIFECYCLE_TRACKING,
+                "candidate": None, "rejection": None, "freshness": None,
+                "robot": None, "last_event_ms": known_at, "notified": [],
+            }
+            journal.append({"event": "mirror_level_registered", **base,
+                            "level_id": fresh.level_id, "source": fresh.source,
+                            "pattern": None, "side": side,
+                            "anchors": [list(a) for a in fresh.anchors],
+                            "confirmed_at_ms": known_at,
+                            "renewed_after_invalidated_level_id": parent})
+
     # Finished records stay visible for RETENTION_MS; the registry keeps every identity it still
     # needs, so a re-scan inside the window maps a known level back onto it instead of a new one.
     window_start = rows[0]["open_time_ms"]
