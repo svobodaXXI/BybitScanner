@@ -117,3 +117,68 @@ def test_legacy_pending_mirror_does_not_send_text_or_claim_success(monkeypatch):
     assert not state["pending_notifications"]
     assert events[-1]["delivered"] == "legacy_chart_unavailable"
     assert state["records"][level.level_id]["notified"][0]["result"] == "legacy_chart_unavailable"
+
+def test_mirror_owner_card_without_frozen_geometry_never_links_to_live_editor(monkeypatch):
+    """MIRROR PNG delivery can be valid when exact Editor geometry is not."""
+    import notification
+    import telegram_bot
+    import mirror_event_chart
+    import signal_archive
+
+    config = SimpleNamespace(TELEGRAM_ENABLED=True, TELEGRAM_TOKEN="test")
+    monkeypatch.setitem(sys.modules, "config", config)
+    monkeypatch.setenv("BYBITSCANNER_WORKSPACE_URL", "https://terminal.example.org/login")
+    monkeypatch.delenv("BYBITSCANNER_TERMINAL_HTTPS_URL", raising=False)
+    monkeypatch.setattr(mirror, "_MIRROR_SEND_NEXT_AT", 0.0)
+    level = horizontal_level(
+        symbol="MMTUSDT", timeframe="5", source=SOURCE_SWING_ZONE,
+        pattern=None, side="upper", price=0.23,
+        anchor_time_ms=300_000, confirmed_at_ms=600_000,
+    )
+    registry = LevelRegistry()
+    registry.add(level)
+    bars = [
+        {"open_time_ms": t, "open": 0.23, "high": 0.24,
+         "low": 0.22, "close": 0.23}
+        for t in (300_000, 600_000, 900_000)
+    ]
+    frozen = {
+        "symbol": "MMTUSDT", "timeframe": "5", "level_id": level.level_id,
+        "source": SOURCE_SWING_ZONE, "pattern": None, "event_kind": "breakout",
+        "event_open_time_ms": 900_000,
+        "levels": [{**level.to_dict(), "selected": True}],
+        "candles": bars, "geometry_candles": bars,
+    }
+    state = {
+        "registry": registry.to_dict(),
+        "pending_notifications": [
+            {"level_id": level.level_id, "kind": "breakout", "chart": frozen}
+        ],
+        "records": {level.level_id: {
+            "candidate": True, "notified": [],
+            "naked_retest": {"breakout": {
+                "direction": "UP", "campaign_direction": "SHORT",
+            }},
+        }},
+    }
+    monkeypatch.setattr(mirror, "load_state", lambda *a, **k: state)
+    monkeypatch.setattr(mirror, "project_state",
+                        lambda *a, **k: [{"level_id": level.level_id}])
+    monkeypatch.setattr(mirror, "mirror_breakout_allowed", lambda *a: True)
+    monkeypatch.setattr(mirror, "save_state", lambda *a, **k: None)
+    monkeypatch.setattr(mirror, "append_event", lambda *a, **k: None)
+    monkeypatch.setattr(notification, "get_telegram_chat_ids", lambda: ["owner"])
+    monkeypatch.setattr(notification, "get_telegram_owner_chat_id", lambda: "owner")
+    monkeypatch.setattr(signal_archive, "record_original_signal", lambda *a, **k: True)
+    monkeypatch.setattr(signal_archive, "load_frozen_signal_geometry", lambda *a: None)
+    monkeypatch.setattr(mirror_event_chart, "render_mirror_chart",
+                        lambda frozen, path: path.write_bytes(b"PNG"))
+    sent = []
+    monkeypatch.setattr(telegram_bot, "send_photo", lambda *a, **k:
+                        (sent.append(k["reply_markup"]) or {"ok": True}))
+    assert mirror.send_mirror_notifications("MMTUSDT", "5") == 1
+    assert len(sent) == 1
+    controls = [button for row in sent[0]["inline_keyboard"] for button in row]
+    assert any(button["text"] == "↩️ К сигналу" for button in controls)
+    assert any(button["text"] == "🖥 Терминал" for button in controls)
+    assert not any(button["text"] == "✏️ Редактор" for button in controls)
