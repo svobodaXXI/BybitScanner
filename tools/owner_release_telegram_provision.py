@@ -13,8 +13,8 @@ import stat
 import tempfile
 
 from tools.owner_release_telegram_runtime import (
-    OWNER_UNIT_NAMES, STATE, _check_ledger, _check_sources, _check_units,
-    _check_relay_inbox, _private_dir,
+    OWNER_UNIT_NAMES, CONFIG, STATE, _check_ledger, _check_sources, _check_units,
+    _check_relay_inbox, _private_dir, _private_json,
 )
 from tools.owner_update_grant import GrantLedger
 from tools.telegram_release_inbox import INBOX
@@ -75,10 +75,12 @@ def _new_exact_file(path: Path, payload: bytes, *, uid: int, mode: int) -> None:
 
 def prepare(expected_sha: str, *, root=ROOT, manifest_path=MANIFEST,
             unit_dir=Path("/etc/systemd/system"),
-            state=STATE, inbox=INBOX, uid=0, relay_uid=None) -> str:
+            state=STATE, inbox=INBOX, config=CONFIG, uid=0, relay_uid=None) -> str:
     """Install only disabled, exact-pinned files and empty private journals."""
     if os.geteuid() != uid or type(expected_sha) is not str or not SHA40.fullmatch(expected_sha):
         raise ValueError("owner or exact SHA required")
+    if os.path.lexists(config):
+        raise ValueError("owner release config already present; no preparation")
     installed = verify_release(root, manifest_path, require_protected_manifest=(uid == 0))
     if installed != expected_sha:
         raise ValueError("installed release changed")
@@ -108,8 +110,8 @@ def prepare(expected_sha: str, *, root=ROOT, manifest_path=MANIFEST,
     existing = state.exists() or state.is_symlink()
     if existing:
         _private_dir(state)
-        if not (state / "pending.json").exists():
-            raise ValueError("existing approval state missing pending receipt")
+        if _private_json(state / "pending.json") != {"pending": None}:
+            raise ValueError("existing approval state not idle")
         for name in ("prompts", "grants"):
             _check_ledger(state / name, uid=uid)
 
@@ -123,7 +125,6 @@ def prepare(expected_sha: str, *, root=ROOT, manifest_path=MANIFEST,
 
     _check_ledger(state / "prompts", uid=uid)
     _check_ledger(state / "grants", uid=uid)
-    inbox_existing = inbox.exists() or inbox.is_symlink()
     _directory(inbox, uid=uid, owner=relay_uid)
     _check_relay_inbox(inbox, relay_uid)
 
