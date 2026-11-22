@@ -648,6 +648,17 @@ class MarketDataHub:
         request_id = message.get("req_id")
         if not isinstance(request_id, str):
             return
+        if request_id.startswith("flowbook:") and request_id.endswith(":capture"):
+            # The socket may accept send() yet reject the book subscription.
+            # Keep publicTrade intact; permit the next sync to retry L2.
+            symbol = request_id[len("flowbook:"):-len(":capture")]
+            if message.get("success") is not True:
+                with self._lock:
+                    flow = self._flow_only.get(symbol)
+                    if flow is not None:
+                        flow.book_frames.clear()
+                        flow.capture_book = False
+            return
         if request_id.startswith("flow:"):
             symbol = request_id.removeprefix("flow:")
             with self._lock:
