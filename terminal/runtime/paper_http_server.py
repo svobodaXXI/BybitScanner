@@ -75,7 +75,7 @@ from terminal.diary.robot_pattern_lineage import attach_verified_robot_pattern_s
 from terminal.diary.ticker_finrez import (
     EpisodeFactsNotFound, EpisodeFactsSourceChanged,
     attach_verified_entry_notional_returns, attach_verified_episode_patterns,
-    project_paper_closed_episode_facts, project_paper_ticker_pnl,
+    custom_period_bounds_ms, project_paper_closed_episode_facts, project_paper_ticker_pnl,
 )
 from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
 from terminal.market_data.hub import MarketDataHub, SymbolContext
@@ -3417,24 +3417,36 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             # Read-only PAPER execution/attribution projection. This backend is
             # never a source of MAIN-account history or unscoped robot PnL.
             params = parse_qs(parsed.query, keep_blank_values=True)
-            if (set(params) != {"account_id", "owner", "period"}
+            custom = params.get("period") == ["CUSTOM"]
+            required = {"account_id", "owner", "period"}
+            if custom:
+                required |= {"date_from", "date_to"}
+            if (set(params) != required
                     or any(len(values) != 1 for values in params.values())
-                    or params["period"][0] not in {"TODAY", "DAY", "WEEK", "MONTH", "YEAR", "ALL"}
+                    or params["period"][0] not in {"TODAY", "DAY", "WEEK", "MONTH", "YEAR", "ALL", "CUSTOM"}
                     or params["owner"][0] not in {"MANUAL", "ROBOT"}):
                 self._json_response(400, {"ok": False, "error": "finrez_scope_required"})
                 return
             if params["account_id"][0] != "paper":
                 self._json_response(404, {"ok": False, "error": "finrez_scope_unavailable"})
                 return
+            now_ms = int(time.time() * 1000)
+            range_args = {}
+            if custom:
+                range_args = {"date_from": params["date_from"][0], "date_to": params["date_to"][0]}
+                try:
+                    custom_period_bounds_ms(now_ms=now_ms, **range_args)
+                except ValueError:
+                    self._json_response(400, {"ok": False, "error": "finrez_range_invalid"})
+                    return
             try:
-                now_ms = int(time.time() * 1000)
                 snapshot = load_paper_source_snapshot(
                     self.server.diary_source_db_path,
                     include_wedge_evidence=params["owner"][0] == "ROBOT",
                 )
                 projection = project_paper_ticker_pnl(
                     snapshot, account_id="paper", owner=params["owner"][0],
-                    period=params["period"][0], now_ms=now_ms,
+                    period=params["period"][0], now_ms=now_ms, **range_args,
                 )
                 projection = attach_verified_entry_notional_returns(snapshot, projection)
                 projection = attach_verified_episode_patterns(
