@@ -290,9 +290,15 @@ def _prior_wick_rejection(level: MirrorLevel, rows, breakout_open_ms: int) -> st
     """
     anchor_ms = max(at for at, _ in level.anchors)
     step = timeframe_ms(level.timeframe)
-    # Source formation touches are not prior invalidations. The boundary
-    # becomes actionable only after its causal confirmation close.
-    first = max(anchor_ms + step, int(level.confirmed_at_ms))
+    # For multi-touch swing zones the first anchor is obsolete when a
+    # subsequent formative wick has already pierced it. Checking only AFTER
+    # the second pivot confirmation silently reuses this stale anchor.
+    # A standalone one-pivot source, or a pattern, starts at its own
+    # causal confirmation instead; never count pre-source formation there.
+    source_pivots = level.provenance.get("pivots") or ()
+    first = (anchor_ms + step
+             if level.source == SOURCE_SWING_ZONE and len(source_pivots) >= 2
+             else max(anchor_ms + step, int(level.confirmed_at_ms)))
     if first >= breakout_open_ms:
         return None
     earlier = [r for r in rows if first <= int(r["open_time_ms"]) < breakout_open_ms]
@@ -313,6 +319,52 @@ def _prior_wick_rejection(level: MirrorLevel, rows, breakout_open_ms: int) -> st
     if cursor != breakout_open_ms:
         return "prior_wick_history_unavailable"
     return None
+
+
+def _fresh_pivots_inside_confirmed_zones(levels, highs, lows, rows) -> list[MirrorLevel]:
+    """Reveal untouched confirmed pivots when a two-touch swing zone becomes known.
+
+    The two-touch zone is an evidence source, NOT permission to reuse its
+    earlier wick anchor after that ray has already been pierced. A pivot
+    within the formation can be a separate dated mirror target, but it is
+    only published once the parent zone was causally confirmed. Require
+    complete closed OHLC from the pivot through that confirmation to prove
+    the newly proposed ray remained untouched.
+    """
+    by_time = {int(c["open_time_ms"]): c for c in rows}
+    result: dict[str, MirrorLevel] = {}
+    for zone in levels:
+        if zone.source != SOURCE_SWING_ZONE or len(zone.provenance.get("pivots") or ()) < 2:
+            continue
+        step = timeframe_ms(zone.timeframe)
+        origin = int(zone.anchors[0][0])
+        known = int(zone.confirmed_at_ms)
+        for pivot in (highs if zone.side == "upper" else lows):
+            t, p = int(pivot["pivot_at_ms"]), float(pivot["price"])
+            if not (origin < t and int(pivot["confirmed_at_ms"]) <= known):
+                continue
+            cursor = t + step
+            untouched = True
+            while cursor < known:
+                row = by_time.get(cursor)
+                if (row is None or int(row["close_time_ms"]) != cursor + step
+                        or (float(row["high"]) >= p if zone.side == "upper"
+                            else float(row["low"]) <= p)):
+                    untouched = False
+                    break
+                cursor += step
+            if not untouched or cursor != known:
+                continue
+            renewed = horizontal_level(
+                symbol=zone.symbol, timeframe=zone.timeframe,
+                source=SOURCE_SWING_ZONE, pattern=None, side=zone.side,
+                price=p, anchor_time_ms=t, confirmed_at_ms=known, touches=1,
+                provenance={"source": "untouched_confirmed_pivot_in_swing_zone",
+                            "formation_level_id": zone.level_id,
+                            "pivot_confirmed_at_ms": int(pivot["confirmed_at_ms"])},
+            )
+            result[renewed.level_id] = renewed
+    return list(result.values())
 
 
 def _judge_breakout(level: MirrorLevel, record: Mapping[str, Any], latest_close_ms: int, step: int, *, prior_rows=None) -> str | None:
@@ -634,11 +686,12 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
     journal: list[dict[str, Any]] = []
     base = {"symbol": symbol, "timeframe": timeframe}
 
-    for level in sorted(collect_levels(symbol, timeframe, candles, wedge_result=wedge_result,
-                                       horn_observation=horn_observation,
-                                       l_shape_observation=l_shape_observation,
-                                       box_source=box_source),
-                        key=lambda x: (x.confirmed_at_ms, x.level_id)):
+    sources = collect_levels(symbol, timeframe, candles, wedge_result=wedge_result,
+                             horn_observation=horn_observation,
+                             l_shape_observation=l_shape_observation,
+                             box_source=box_source)
+    sources += _fresh_pivots_inside_confirmed_zones(sources, highs, lows, rows)
+    for level in sorted(sources, key=lambda x: (x.confirmed_at_ms, x.level_id)):
         if not mirror_level_allowed(level):
             continue
         # Do not alias a newly confirmed replacement to an invalidated
