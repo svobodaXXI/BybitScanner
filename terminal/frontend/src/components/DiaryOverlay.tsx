@@ -608,7 +608,7 @@ function SimulatorLaunchAction({ episodeId, allowLocalLaunch, owner = null, sour
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [pairingBusy, setPairingBusy] = useState(false);
-  const [pairingUrl, setPairingUrl] = useState<string | null>(null);
+  const [pairingCode, setPairingCode] = useState<string | null>(null);
   const [pairingNotice, setPairingNotice] = useState("");
 
   function copyEpisodeId() {
@@ -629,12 +629,12 @@ function SimulatorLaunchAction({ episodeId, allowLocalLaunch, owner = null, sour
 
   async function preparePairing(deviceId: "owner-pc" | "owner-laptop") {
     if (pairingBusy || !allowLocalLaunch) return;
-    setPairingBusy(true); setPairingUrl(null); setPairingNotice("");
+    setPairingBusy(true); setPairingCode(null); setPairingNotice("");
     let failure = "Нет ответа сервера (сеть или шлюз)";
     try {
       // Owner-authenticated HTTPS request, never an unauthenticated device
       // endpoint. Existing provisioned device slot; no new enrollment state.
-      const response = await fetch("/api/diary/simulator-bridge/pair", {
+      const response = await fetch("/api/diary/simulator-bridge/pair-code", {
         method: "POST", credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ device_id: deviceId }),
@@ -647,31 +647,21 @@ function SimulatorLaunchAction({ episodeId, allowLocalLaunch, owner = null, sour
       const raw: unknown = await response.json();
       const pair = raw as Record<string, unknown>;
       if (!raw || typeof raw !== "object" || pair.ok !== true
-          || pair.device_id !== deviceId || typeof pair.token !== "string"
-          || !/^[A-Za-z0-9_-]{48,256}$/.test(pair.token)) {
+          || pair.device_id !== deviceId || typeof pair.code !== "string"
+          || !/^[A-Z2-7]{24}$/.test(pair.code)
+          || pair.expires_in_seconds !== 90) {
         failure = "Ответ сервера не прошёл проверку (HTTP 200)";
         throw new Error("pairing_invalid_response");
       }
-      setPairingUrl("bybitscanner-simulator://pair?device_id="
-        + encodeURIComponent(deviceId) + "&token=" + encodeURIComponent(pair.token));
-      setPairingNotice("Ключ подготовлен. Нажмите «Подтвердить подключение» на этом компьютере.");
+      setPairingCode(pair.code);
+      setPairingNotice("Введите одноразовый код в открытой «Машине времени» на этом ПК. Действует 90 секунд.");
+      window.setTimeout(() => setPairingCode(current => current === pair.code ? null : current), 90_000);
     } catch {
       setPairingNotice("Подключение пока недоступно: " + failure
         + ". Запуск Симулятора и копирование ID остаются доступны.");
     } finally {
       setPairingBusy(false);
     }
-  }
-
-  function openPairingLink() {
-    if (!pairingUrl) return;
-    // Let the trusted user click perform native navigation in the current
-    // frame. A synthetic click on a _blank link can be swallowed by WebView.
-    // Never infer successful OS dispatch from the DOM event.
-    const usedUrl = pairingUrl;
-    setPairingNotice("Запрошено открытие локального адаптера. Подключение пока не подтверждено.");
-    // Clear the credential only after the anchor's default action can run.
-    window.setTimeout(() => setPairingUrl(current => current === usedUrl ? null : current), 0);
   }
 
   async function requestLaunch() {
@@ -804,10 +794,7 @@ function SimulatorLaunchAction({ episodeId, allowLocalLaunch, owner = null, sour
             onClick={() => void preparePairing("owner-pc")}>Связать ПК</button>
           <button type="button" className="diary-detail-back" disabled={pairingBusy}
             onClick={() => void preparePairing("owner-laptop")}>Связать ноутбук</button>
-          {pairingUrl ? <a className="diary-detail-back" href={pairingUrl}
-            target="_self" rel="noreferrer" referrerPolicy="no-referrer"
-            style={{ textDecoration: "none" }}
-            onClick={openPairingLink}>Подтвердить подключение</a> : null}
+          {pairingCode ? <code role="status" aria-label="Одноразовый код сопряжения">{pairingCode}</code> : null}
           {pairingNotice ? <p className="diary-finrez-coverage" role="status">{pairingNotice}</p> : null}
         </div>
       ) : null}
