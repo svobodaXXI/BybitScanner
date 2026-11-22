@@ -649,6 +649,31 @@ class RobotBePartialOwnerPaperTests(unittest.TestCase):
             1,
         )
 
+    def test_restart_after_partial_rejects_unproven_intent(self):
+        from terminal.application.robot_recovery import RobotRecoveryCoordinator
+
+        self.assertEqual(self.run_partial().status, CommandResultStatus.COMPLETED)
+        record = self.runtime.store.get_robot_candidate(self.candidate_id)
+        state = dict(record.robot_state)
+        execution = dict(state["execution"])
+        intent = dict(execution["wedge_be_partial_intent"])
+        intent["partial_quantity"] = str(self.initial)
+        execution["wedge_be_partial_intent"] = intent
+        state["execution"] = execution
+        self.runtime.store.save_robot_candidate_state(
+            self.candidate_id, status="OPEN", robot_state=state,
+            expected_revision=record.state_revision, updated_at_ms=int(time.time() * 1000),
+        )
+        before = len(self.runtime.store.load_executions())
+        result = RobotRecoveryCoordinator(
+            self.runtime.store, self.account, clock_ms=lambda: int(time.time() * 1000),
+        ).recover()
+        self.assertFalse(result.admission_ready)
+        self.assertEqual(result.runtime_state.recovery_status, "RECONCILIATION_REQUIRED")
+        self.assertEqual(len(self.runtime.store.load_executions()), before)
+        self.assertEqual(self.runtime.store.get_protection_projection(self.key).stop_loss,
+                         Decimal("64000"))
+
     def test_reopened_runtime_resumes_filled_partial_to_tighter_stop_once(self):
         """Recovered filled partial gets STOP after independent READY proof."""
         from unittest.mock import patch
@@ -664,9 +689,11 @@ class RobotBePartialOwnerPaperTests(unittest.TestCase):
         self.runtime.close()
         reopened = _runtime(self.db)
         self.addCleanup(reopened.close)
-        # The owner/operator must independently reestablish READY after
-        # startup recovery; a BE handler must never grant itself admission.
-        _set_admission(reopened, mode="ROBOT_RUNNING", recovery_status="READY")
+        from terminal.application.robot_recovery import RobotRecoveryCoordinator
+        recovered = RobotRecoveryCoordinator(
+            reopened.store, self.account, clock_ms=lambda: int(time.time() * 1000),
+        ).recover()
+        self.assertTrue(recovered.admission_ready, recovered.runtime_state.reason)
         reopened._wedge_be_auto_paper_enabled = True
         with patch.object(
             reopened._robot_api, "full_close",
@@ -847,7 +874,11 @@ class RobotBeShortOwnerPaperTests(unittest.TestCase):
         self.runtime.close()
         reopened = _runtime(self.db)
         self.addCleanup(reopened.close)
-        _set_admission(reopened, mode="ROBOT_RUNNING", recovery_status="READY")
+        from terminal.application.robot_recovery import RobotRecoveryCoordinator
+        recovered = RobotRecoveryCoordinator(
+            reopened.store, self.account, clock_ms=lambda: int(time.time() * 1000),
+        ).recover()
+        self.assertTrue(recovered.admission_ready, recovered.runtime_state.reason)
         reopened._wedge_be_auto_paper_enabled = True
         with patch.object(
             reopened._robot_api, "full_close",
