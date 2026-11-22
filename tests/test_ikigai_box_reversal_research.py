@@ -5,8 +5,11 @@ from types import SimpleNamespace as NS
 import unittest
 
 from robot_entry_flow_evidence import FlowWindow
+from terminal.market_data.sustained_absorption import (
+    AbsorptionObservation, RecoveryWindow,
+)
 from terminal.market_data.ikigai_box_reversal_research import (
-    BoxFlowObservation, observe_box_reversal_flow,
+    BoxFlowObservation, BoxBoundAbsorption, observe_box_reversal_flow,
     BoxSecondLegExtreme, preview_box_reversal_handoff,
 )
 
@@ -46,6 +49,28 @@ def case(direction="LONG", book=True):
     return candidate, tuple(windows)
 
 
+
+def stable_band(record, windows, *, adverse=False, min_depth="60",
+                second_recovery="25"):
+    """Two completed halves of the original fade window; diagnostic only."""
+    fade = windows[1].window
+    half = (fade.start_ms + fade.end_ms) // 2
+    metric = AbsorptionObservation(
+        "BTCUSDT", record.signal_snapshot["identity"]["direction"], 0,
+        fade.end_ms, tuple(map(D, ("91", "92", "93", "94", "95"))),
+        D("100"), D(min_depth), D("80"), adverse,
+        (
+            RecoveryWindow(fade.start_ms, half, D("100"), D("60"), D("25")),
+            RecoveryWindow(half, fade.end_ms, D("100"), D("60"),
+                           D(second_recovery)),
+        ),
+    )
+    return BoxBoundAbsorption(
+        record.candidate_id, record.state_revision,
+        record.snapshot_sha256, "BTCUSDT", 0, fade.end_ms, metric,
+    )
+
+
 def observe(record, windows, **kwargs):
     return observe_box_reversal_flow(
         record, windows, **({"decision_ms": 4000, "max_source_age_ms": 100} | kwargs))
@@ -56,14 +81,53 @@ class BoxReversalFlowResearchTests(unittest.TestCase):
         for direction in ("LONG", "SHORT"):
             with self.subTest(direction=direction):
                 record, windows = case(direction)
-                result = observe(record, windows)
+                result = observe(record, windows, fixed_band=stable_band(record, windows))
                 self.assertEqual(result.status, "HANDOFF_CANDIDATE")
                 self.assertEqual(result.direction, direction)
                 self.assertTrue(result.opposing_impact_fading)
                 self.assertTrue(result.absorption_candidate)
+                self.assertTrue(result.sustained_absorption_observed)
                 self.assertTrue(result.initiative_flip_observed)
                 self.assertFalse(result.source_complete)
                 self.assertFalse(result.trading_authorized)
+
+    def test_refill_ratio_alone_never_promotes_handoff(self):
+        record, windows = case()
+        result = observe(record, windows)
+        self.assertEqual(result.status, "WAIT_SUSTAINED_ABSORPTION")
+        self.assertTrue(result.absorption_candidate)
+        self.assertFalse(result.sustained_absorption_observed)
+        self.assertFalse(result.trading_authorized)
+
+    def test_fixed_band_break_zero_depth_and_churn_do_not_promote(self):
+        record, windows = case()
+        for band in (
+            stable_band(record, windows, adverse=True),
+            stable_band(record, windows, min_depth="0"),
+            stable_band(record, windows, second_recovery="0"),
+        ):
+            result = observe(record, windows, fixed_band=band)
+            self.assertEqual(result.status, "WAIT_SUSTAINED_ABSORPTION")
+            self.assertFalse(result.sustained_absorption_observed)
+
+    def test_fixed_band_wrong_identity_time_or_future_is_rejected(self):
+        record, windows = case()
+        good = stable_band(record, windows)
+        for bad in (
+            replace(good, candidate_id="other"),
+            replace(good, state_revision=4),
+            replace(good, snapshot_sha256="b"*64),
+            replace(good, symbol="ETHUSDT"),
+            replace(good, generation=2),
+            replace(good, available_at_ms=4001),
+            replace(good, observation=replace(good.observation, direction="SHORT")),
+            replace(good, observation=replace(good.observation, generation=2)),
+            replace(good, observation=replace(good.observation, decision_ms=2999)),
+            replace(good, observation=replace(good.observation,
+                                            windows=(good.observation.windows[0],))),
+        ):
+            with self.subTest(bad=bad):
+                self.assertIsNone(observe(record, windows, fixed_band=bad))
 
     def test_missing_book_does_not_prove_absorption(self):
         record, windows = case(book=False)
@@ -80,7 +144,8 @@ class BoxReversalFlowResearchTests(unittest.TestCase):
         self.assertFalse(result.absorption_candidate)
         no_flip = replace(c, window=replace(c.window, buy_notional_usdt=D("5"),
                                             sell_notional_usdt=D("150")))
-        result = observe(record, (a, b, no_flip))
+        result = observe(record, (a, b, no_flip),
+                         fixed_band=stable_band(record, (a,b,no_flip)))
         self.assertEqual(result.status, "ABSORPTION_CANDIDATE")
         self.assertFalse(result.initiative_flip_observed)
 
@@ -152,6 +217,8 @@ class BoxReversalHandoffPreviewTests(unittest.TestCase):
         return record, windows, plan, extreme
 
     def _preview(self, args, **overrides):
+        if "fixed_band" not in overrides and args[1][1].window.book_valid:
+            overrides["fixed_band"] = stable_band(args[0], args[1])
         return preview_box_reversal_handoff(*args, **(dict(
             decision_ms=4000, max_source_age_ms=100, quantity=D("2"),
             qty_step=D("1"), stop_buffer_ticks=10,
@@ -178,6 +245,12 @@ class BoxReversalHandoffPreviewTests(unittest.TestCase):
                 rejected = self._preview(args, maximum_allowed_loss_usdt=D("1"))
                 self.assertEqual(rejected.status, "RISK_BUDGET_EXCEEDED")
                 self.assertFalse(rejected.economics.allowed)
+
+    def test_missing_fixed_band_has_no_hypothetical_economics(self):
+        args = self._case()
+        result = self._preview(args, fixed_band=None)
+        self.assertEqual(result.status, "WAIT_HANDOFF")
+        self.assertIsNone(result.economics)
 
     def test_missing_absorption_has_no_economics(self):
         result = self._preview(self._case(book=False))
