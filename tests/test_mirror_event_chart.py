@@ -334,6 +334,72 @@ def test_long_frozen_history_has_readable_recent_pane(tmp_path, monkeypatch):
     assert any("Исходная опора:" in label for label in captured["origin_labels"])
 
 
+@pytest.mark.parametrize("pattern,selected_side,selected_slope", [
+    ("Falling Wedge", "upper", -1e-10),
+    ("Rising Wedge", "lower", 0.0),
+])
+def test_frozen_mirror_named_pattern_requires_both_exact_sides(
+    pattern, selected_side, selected_slope, tmp_path, monkeypatch
+):
+    pytest.importorskip("matplotlib")
+    from matplotlib.figure import Figure
+    from mirror_event_chart import render_mirror_chart
+
+    snapshot = _old_mirror_source_chart()
+    snapshot["source"] = "pattern_boundary"
+    snapshot["pattern"] = pattern
+    other_side = "lower" if selected_side == "upper" else "upper"
+    first_t = snapshot["geometry_candles"][0]["open_time_ms"]
+
+    def frozen_level(side, selected, slope):
+        price = 1.15 if side == "upper" else 0.95
+        return {
+            "level_id": side, "side": side, "selected": selected,
+            "source": "pattern_boundary", "pattern": pattern,
+            "anchors": [[first_t, price]],
+            "boundary": {
+                "anchor_time_ms": first_t,
+                "anchor_price": price,
+                "slope_per_ms": slope,
+            },
+        }
+
+    selected = frozen_level(selected_side, True, selected_slope)
+    other = frozen_level(other_side, False, 0.0)
+    observed = []
+    original_save = Figure.savefig
+
+    def inspect_save(fig, *args, **kwargs):
+        axis = fig.axes[0]
+        observed.append({
+            "warnings": [t.get_text() for t in axis.texts],
+            "boundary_lines": [(line.get_label(), list(line.get_ydata()))
+                               for line in axis.lines if line.get_label() != "Пробой"],
+            "event_mark": any(line.get_label() == "Пробой" for line in axis.lines),
+        })
+        return original_save(fig, *args, **kwargs)
+
+    monkeypatch.setattr(Figure, "savefig", inspect_save)
+    snapshot["levels"] = [selected]
+    render_mirror_chart(snapshot, tmp_path / "single.png")
+    assert any("Контур паттерна неполон" in label for label in observed[-1]["warnings"])
+    assert observed[-1]["event_mark"]
+    # Do not backfill a synthetic counterpart from candles or a different source.
+    assert len(observed[-1]["boundary_lines"]) == 1
+
+    snapshot["levels"] = [selected, other]
+    render_mirror_chart(snapshot, tmp_path / "paired.png")
+    assert not any("Контур паттерна неполон" in label for label in observed[-1]["warnings"])
+    assert len(observed[-1]["boundary_lines"]) == 2
+    first_line = observed[-1]["boundary_lines"][0][1]
+    assert first_line[0] == pytest.approx(selected["boundary"]["anchor_price"])
+    assert first_line[-1] == pytest.approx(
+        selected["boundary"]["anchor_price"] + selected_slope *
+        (snapshot["geometry_candles"][-1]["open_time_ms"] - first_t)
+    )
+    assert snapshot["levels"] == [selected, other]
+
+
 def test_mirror_old_source_never_accepts_conflicting_or_invented_bars():
     from mirror_event_chart import _visible_event_candles
 
