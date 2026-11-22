@@ -372,8 +372,8 @@ class FrozenWedgeBookResearchTests(CertifiedTapeArcResearchTests):
                 self.assertIsNone(check(f=bad))
         self.assertIsNone(check(a=replace(arc,
                                         tape_receipt_metadata_matched=False)))
-        self.assertIsNone(check(host=replace(record, status="OPEN")))
-        self.assertIsNone(check(host=replace(record, snapshot_sha256="d"*64)))
+        self.assertIsNone(check(host=SimpleNamespace(**(vars(record) | {"status": "OPEN"}))))
+        self.assertIsNone(check(host=SimpleNamespace(**(vars(record) | {"snapshot_sha256": "d"*64}))))
 
 
 if __name__ == "__main__":
