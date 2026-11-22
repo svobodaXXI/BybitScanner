@@ -5581,18 +5581,23 @@ def main() -> None:
         # It must never alter PAPER decisions without an independent,
         # owner-approved activation. OFF creates no session/thread/DB reads.
         pattern_flow_observer = None
-        if pattern_flow_enabled():
+        robot_pattern_flow_enabled = pattern_flow_enabled()
+        wedge_capture_enabled = os.environ.get("BYBITSCANNER_WEDGE_CAPTURE_PAPER") == "1"
+        if robot_pattern_flow_enabled or wedge_capture_enabled:
             pattern_flow_observer = PatternFlowObserver(
                 hub, create_bybit_rest_session(), database_path,
                 wedge_capture_path=(
                     database_path.with_suffix(".wedge-pre-breakout.json")
-                    if os.environ.get("BYBITSCANNER_WEDGE_CAPTURE_PAPER") == "1"
-                    else None
+                    if wedge_capture_enabled else None
                 ),
+                capture_only=not robot_pattern_flow_enabled,
             )
-            runtime.call(lambda owned: owned.bind_robot_pattern_flow_observer(
-                pattern_flow_observer.get,
-            ))
+            if robot_pattern_flow_enabled:
+                # Only the existing owner-approved Robot-flow gate may bind
+                # advisory source evidence into live PAPER decisions.
+                runtime.call(lambda owned: owned.bind_robot_pattern_flow_observer(
+                    pattern_flow_observer.get,
+                ))
         runtime.start_robot_monitor()
         if pattern_flow_observer is not None:
             pattern_flow_observer.start()

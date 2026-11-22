@@ -273,6 +273,7 @@ class PatternFlowObserver:
         *, clock_ms: Callable[[], int] | None = None,
         get_candidates: Callable[[], tuple] | None = None,
         wedge_capture_path: Path | None = None,
+        capture_only: bool = False,
     ) -> None:
         self._hub = hub
         self._rest = rest_session
@@ -294,6 +295,9 @@ class PatternFlowObserver:
         self._started = False
         self._flow_probe_symbol: str | None = None
         self._wedge_capture_path = wedge_capture_path
+        # Private opt-in recorder only: no certified flow or Robot advice.
+        self._capture_only = capture_only
+        self._capture_host_key: tuple[str, int, int, str] | None = None
 
     def _sync_flow_probe(self, candidates: tuple) -> None:
         """Warm one APPROVED candidate, including before its first retest.
@@ -313,7 +317,15 @@ class PatternFlowObserver:
         chosen = None
         priority = None
         for record in candidates:
-            if (record.status not in ("APPROVED", "OPEN")
+            if self._capture_only:
+                # Record only approved, still pre-breakout Wedges. Never
+                # consume the OPEN/retest priority reserved for Robot flow.
+                if (record.status != "APPROVED"
+                        or record.signal_snapshot.get("pattern")
+                        not in ("Falling Wedge", "Rising Wedge")
+                        or (record.robot_state or {}).get("phase") != "WAITING_BREAKOUT"):
+                    continue
+            elif (record.status not in ("APPROVED", "OPEN")
                     or record.signal_snapshot.get("pattern") not in allowed
                     or (record.status == "OPEN" and not _open_wedge_flow_scope(record))):
                 continue
@@ -343,6 +355,20 @@ class PatternFlowObserver:
             if priority is None or score < priority:
                 chosen, priority = record, score
         symbol = chosen.symbol.value if chosen is not None else None
+        if self._capture_only:
+            # A same-symbol APPROVED host can replace its predecessor while
+            # the passive book still starts at the predecessor's snapshot.
+            # A new host must obtain its own post-approval book snapshot.
+            # Release/recreate ONLY the passive research lease; leave all
+            # protected SymbolContexts and Robot admission untouched.
+            key = (
+                chosen.candidate_id, chosen.state_revision,
+                chosen.updated_at_ms, chosen.snapshot_sha256,
+            ) if chosen is not None else None
+            if key != self._capture_host_key and self._flow_probe_symbol is not None:
+                release(self._flow_probe_symbol)
+                self._flow_probe_symbol = None
+            self._capture_host_key = key
         if symbol != self._flow_probe_symbol:
             if self._flow_probe_symbol is not None:
                 release(self._flow_probe_symbol)
@@ -369,9 +395,17 @@ class PatternFlowObserver:
             tape = context.impulse_observation.snapshot()
             if (len(frames) < 2 or not tape["prints"]
                     or tape.get("invalid_frames") != 0
-                    or not context.book_frames or context.book_frames[0] is not frames[0]):
+                    or not context.book_frames or context.book_frames[0] is not frames[0]
+                    # A book's snapshot can be from an earlier APPROVED
+                    # candidate on the same symbol. Never attribute that
+                    # earlier book state to this host or keep its deltas.
+                    or type(record.updated_at_ms) is not int
+                    or frames[0][0] < record.updated_at_ms
+                    or frames[0][1].get("type") != "snapshot"
+                    or any(left[0] > right[0]
+                           for left, right in zip(frames, frames[1:]))):
                 return
-            since_ms = max(frames[0][0], record.updated_at_ms)
+            since_ms = frames[0][0]
             until_ms = frames[-1][0]
             prints = [
                 asdict(item) for item in tape["prints"]
@@ -380,6 +414,9 @@ class PatternFlowObserver:
             if not prints or not any(
                 current.candidate_id == record.candidate_id
                 and current.state_revision == record.state_revision
+                and current.updated_at_ms == record.updated_at_ms
+                and current.snapshot_sha256 == record.snapshot_sha256
+                and current.symbol.value == record.symbol.value
                 and current.status == "APPROVED"
                 and (current.robot_state or {}).get("phase") == "WAITING_BREAKOUT"
                 for current in self._get_candidates()
@@ -620,6 +657,11 @@ class PatternFlowObserver:
         """At most one existing approved Robot pattern per M1; zero owner/DB writes."""
         now = self._clock()
         if type(now) is not int or now < 180_000:
+            return 0
+        if self._capture_only:
+            # Diagnostic topic/files only: no REST reads, certification,
+            # cached entry evidence or Robot binding.
+            self._sync_flow_probe(tuple(self._get_candidates()))
             return 0
         closed = now // 60_000 * 60_000
         with self._lock:
