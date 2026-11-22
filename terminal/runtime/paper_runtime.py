@@ -4683,9 +4683,29 @@ class PaperRuntime:
                 )
             partial = fade_choice.partial_quantity
             remaining = position.quantity.value - partial
+            # Preview the exact same PAPER matcher with the same book and
+            # quantity as the reduce-only dispatch below. Top-of-book is
+            # insufficient when the partial must consume several levels.
+            from dataclasses import replace
+            from terminal.paper.matching import (
+                PaperBookUnavailable, PaperInsufficientLiquidity, match_market_order,
+            )
+
+            try:
+                match = match_market_order(
+                    book, side=OrderSide.SELL if trade.direction == "LONG" else OrderSide.BUY,
+                    quantity=Quantity(partial),
+                )
+            except (PaperBookUnavailable, PaperInsufficientLiquidity):
+                return CommandResult(
+                    "be-fade-depth-" + candidate.candidate_id,
+                    CommandResultStatus.BLOCKED, "be_fade_unproven",
+                    "Incomplete executable depth for the exact partial quantity",
+                )
+            vwap = match.vwap.value
             adverse_price = (
-                price - tick * 2 if trade.direction == "LONG"
-                else price + tick * 2
+                vwap - tick * 2 if trade.direction == "LONG"
+                else vwap + tick * 2
             )
             if adverse_price <= 0:
                 raise RuntimeError("BE fade adverse exit price is invalid")
@@ -4693,6 +4713,22 @@ class PaperRuntime:
                 (adverse_price - trade.average_entry) * partial
                 if trade.direction == "LONG"
                 else (trade.average_entry - adverse_price) * partial
+            )
+            entry_fees = sum((f.fee for f in fills), Decimal(0))
+            adverse_exit_fee = adverse_price * partial * fee
+            conservative_net = (
+                gross - entry_fees * partial / trade.entry_quantity
+                - adverse_exit_fee
+            )
+            if conservative_net <= 0:
+                return CommandResult(
+                    "be-fade-net-" + candidate.candidate_id,
+                    CommandResultStatus.BLOCKED, "be_fade_unproven",
+                    "Partial is not profitable after sweeping depth, fees and adverse ticks",
+                )
+            fade_choice = replace(
+                fade_choice, quote_price=vwap,
+                estimated_partial_net_usdt=conservative_net,
             )
             # Strict preflight: after a WORSE partial fill, the unchanged
             # remaining STOP must still be tighten-able to net BE. Actual
@@ -4705,7 +4741,7 @@ class PaperRuntime:
                     remaining_quantity=remaining,
                     realized_gross_pnl=gross,
                     total_entry_fees=sum((f.fee for f in fills), Decimal(0)),
-                    realized_exit_fees=price * partial * fee,
+                    realized_exit_fees=adverse_exit_fee,
                     stop_exit_fee_rate=fee, tick_size=tick,
                     current_stop=protection.stop_loss,
                     executable_price=price,
