@@ -5,6 +5,7 @@ import os
 import re
 import time
 from urllib.request import Request, HTTPRedirectHandler, build_opener
+from urllib.error import HTTPError
 
 from Crypto.Signature import eddsa
 from tools import github_diagnostic_protocol as protocol
@@ -66,18 +67,35 @@ def publish(wire, token):
 
 
 def main():
+    stage = "ROUTE"
     try:
         if (os.environ.get("GITHUB_REPOSITORY") != "svobodaXXI/BybitScanner"
                 or os.environ.get("GITHUB_REF") != "refs/heads/diagnostic-issuer"
                 or os.environ.get("GITHUB_EVENT_NAME") != "push"):
             raise ValueError("untrusted issuer route")
-        wire = make_request(_object(PUBLIC), _object(REQUEST),
-                            os.environ["DIAGNOSTIC_ISSUER_SEED"], int(time.time()))
+        stage = "INPUT"
+        public, request = _object(PUBLIC), _object(REQUEST)
+        stage = "SEED_FORMAT"
+        seed = os.environ.get("DIAGNOSTIC_ISSUER_SEED", "")
+        if not HEX64.fullmatch(seed):
+            raise ValueError("invalid seed")
+        stage = "KEY_PIN"
+        key = eddsa.import_private_key(bytes.fromhex(seed))
+        if key.public_key().export_key(format="raw").hex() != public.get("issuer_public"):
+            raise ValueError("issuer key mismatch")
+        stage = "REQUEST_VALIDATION"
+        wire = make_request(public, request, seed, int(time.time()))
+        stage = "PUBLISH"
         publish(wire, os.environ["DIAGNOSTIC_GITHUB_TOKEN"])
         print("SIGNED_OBSERVATION_REQUEST_PUBLISHED")
         return 0
+    except HTTPError as exc:
+        # Numeric HTTP status only. Never log headers, body, URL or exceptions.
+        code = exc.code if type(exc.code) is int and 100 <= exc.code <= 599 else 0
+        print("SIGNED_OBSERVATION_REQUEST_BLOCKED stage=" + stage + " http=" + str(code))
+        return 2
     except Exception:
-        print("SIGNED_OBSERVATION_REQUEST_BLOCKED")
+        print("SIGNED_OBSERVATION_REQUEST_BLOCKED stage=" + stage)
         return 2
 
 
