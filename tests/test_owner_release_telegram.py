@@ -190,7 +190,7 @@ def test_ordinary_poller_only_carries_bounded_receipt(tmp_path, context):
 
 def test_read_only_activation_preflight_checks_actual_unit_bytes(tmp_path):
     import os
-    from pathlib import Path
+    from tools.vps_release_identity import git_blob_hash
     root = tmp_path / "release"
     units = tmp_path / "systemd"
     root.mkdir()
@@ -203,9 +203,7 @@ def test_read_only_activation_preflight_checks_actual_unit_bytes(tmp_path):
         tracked.write_bytes(("unit=" + name).encode())
         installed = units / name
         installed.write_bytes(tracked.read_bytes())
-        blobs[rel] = grants.hashlib.sha1(
-            b"blob " + str(len(tracked.read_bytes())).encode() + b"\0"
-            + tracked.read_bytes()).hexdigest()
+        blobs[rel] = git_blob_hash(tracked.read_bytes())
     manifest = dict(build_sha="a" * 40,
                     blobs={**blobs, "tools/vps_release_identity.py": "b"*40,
                            "terminal/runtime/paper_http_server.py": "c"*40})
