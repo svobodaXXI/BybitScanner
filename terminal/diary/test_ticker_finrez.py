@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 
 from terminal.diary.ticker_finrez import (
     EpisodeFactsNotFound, EpisodeFactsSourceChanged,
-    aggregate_ticker_pnl, period_start_ms, project_paper_closed_episode_facts,
+    aggregate_ticker_pnl, custom_period_bounds_ms, period_start_ms, project_paper_closed_episode_facts,
     project_paper_ticker_pnl,
 )
 from terminal.diary.models import (
@@ -129,6 +129,47 @@ def _scoped_episode(
         execution_fees=Decimal("0.1") * len(allocations), allocations=tuple(allocations),
     )
     return episode, origins
+
+
+class CustomFinrezPeriodTests(unittest.TestCase):
+    def test_inclusive_moscow_days_and_now_cap(self):
+        self.assertEqual(custom_period_bounds_ms(
+            date_from="2026-11-09", date_to="2026-11-09", now_ms=_ms(10, 12),
+        ), (_ms(9, 0), _ms(10, 0) - 1))
+        self.assertEqual(custom_period_bounds_ms(
+            date_from="2026-11-09", date_to="2026-11-10", now_ms=_ms(10, 12),
+        ), (_ms(9, 0), _ms(10, 12)))
+        for first, last in (("2026-11-10", "2026-11-09"),
+                            ("2026-11-09", "2026-11-11"),
+                            ("2026-11-31", "2026-11-10"),
+                            ("20261109", "2026-11-10")):
+            with self.assertRaises(ValueError):
+                custom_period_bounds_ms(date_from=first, date_to=last, now_ms=_ms(10, 12))
+
+    def test_range_uses_close_timestamp_for_index_ticker_and_unknown_coverage(self):
+        roles = [(AllocationRole.OPEN, Origin.ROBOT), (AllocationRole.CLOSE, Origin.ROBOT)]
+        prior, prior_origins = _scoped_episode("before", "BTCUSDT", roles,
+            opened_at=_ms(8, 0), closed_at=_ms(9, 0) - 1)
+        first, first_origins = _scoped_episode("first", "BTCUSDT", roles,
+            opened_at=_ms(8, 12), closed_at=_ms(9, 0))
+        last, last_origins = _scoped_episode("last", "BTCUSDT", roles,
+            opened_at=_ms(9, 12), closed_at=_ms(10, 0) - 1)
+        outside, _ = _scoped_episode("outside", "BTCUSDT", roles,
+            opened_at=_ms(9, 12), closed_at=_ms(10, 0))
+        snapshot = PaperSourceSnapshot(7, (prior, first, last, outside),
+            {**prior_origins, **first_origins, **last_origins})
+        report = project_paper_ticker_pnl(snapshot, account_id="paper", owner="ROBOT",
+            period="CUSTOM", date_from="2026-11-09", date_to="2026-11-09", now_ms=_ms(10, 12))
+        self.assertEqual(report["period_start_ms"], _ms(9, 0))
+        self.assertEqual(report["period_end_ms"], _ms(10, 0) - 1)
+        self.assertEqual(report["date_from"], "2026-11-09")
+        self.assertEqual(report["date_to"], "2026-11-09")
+        self.assertEqual(report["as_of_ms"], _ms(10, 12))
+        self.assertEqual(report["tickers"], [
+            {"symbol": "BTCUSDT", "pnl_usdt": "9.6", "trade_count": 2},
+        ])
+        self.assertEqual({r["trade_episode_id"] for r in report["closed_episodes"]}, {"first", "last"})
+        self.assertEqual(report["attribution_coverage"]["status"], "COMPLETE")
 
 
 class FinrezMixedControllerTests(unittest.TestCase):

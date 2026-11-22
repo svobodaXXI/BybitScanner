@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { marketApiRoutes } from "../marketData/apiRoutes";
 import { AccountMenu } from "./AccountMenu";
 import { OriginalEpisodeSignalChart } from "./OriginalEpisodeSignalChart";
@@ -7,7 +7,16 @@ import "./DiaryOverlay.css";
 export type DiarySection = "FINREZ" | "PATTERNS" | "DEALS" | "TRADES" | "SETUPS" | "STATISTICS" | "MIRROR";
 export type DiaryAccountMenuProps = Pick<ComponentProps<typeof AccountMenu>,
   "workspaceProjection" | "mode" | "selectedAccountId" | "onSelectAccount" | "modeAccountError">;
-type FinrezPeriod = "DAY" | "WEEK" | "MONTH" | "YEAR" | "ALL";
+type FinrezPeriod = "DAY" | "WEEK" | "MONTH" | "YEAR" | "ALL" | "CUSTOM";
+type FinrezDateRange = { from: string; to: string };
+
+function moscowToday(): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Moscow", year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(new Date());
+  const part = (type: string) => parts.find(value => value.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
 type FinrezPnlFilter = "ALL" | "PROFIT" | "LOSS";
 type FinrezSideFilter = "ALL" | "LONG" | "SHORT";
 const NO_VERIFIED_PATTERN_FILTER = "__NO_VERIFIED_PATTERN__";
@@ -192,6 +201,9 @@ type FinrezResponse = {
   owner: "MANUAL" | "ROBOT";
   period: FinrezPeriod;
   period_start_ms: number;
+  period_end_ms?: number;
+  date_from?: string;
+  date_to?: string;
   as_of_ms: number;
   source_revision: number;
   source: "PAPER_EXECUTIONS_ATTRIBUTED";
@@ -1040,7 +1052,8 @@ function validClosedEpisodes(report: FinrezResponse): boolean {
       || deal.replay_evidence !== "EPISODE_INDEX_ONLY"
       || !Number.isSafeInteger(deal.opened_at_ms) || deal.opened_at_ms < 0
       || !Number.isSafeInteger(deal.closed_at_ms) || deal.closed_at_ms < deal.opened_at_ms
-      || deal.closed_at_ms < report.period_start_ms || deal.closed_at_ms > report.as_of_ms
+      || deal.closed_at_ms < report.period_start_ms
+      || deal.closed_at_ms > (report.period_end_ms ?? report.as_of_ms)
       || !Number.isSafeInteger(deal.execution_count) || deal.execution_count < 1
       || typeof deal.pnl_usdt !== "string" || !deal.pnl_usdt.trim()
       || !Number.isFinite(Number(deal.pnl_usdt))) return false;
@@ -1063,6 +1076,23 @@ function compactDealPattern(pattern: string | null): string {
   return pattern ?? "не установлен";
 }
 
+
+/** Essential coverage stays visible; explanations expand only on demand. */
+function CompactCoverage({ label, children }: { label: string; children: ReactNode }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className="diary-finrez-coverage diary-compact-coverage">
+      <button type="button" className="diary-coverage-toggle" aria-expanded={expanded}
+        onClick={() => setExpanded(value => !value)}>
+        <span>{label}</span>
+        <svg viewBox="0 0 16 16" aria-hidden="true" className={expanded ? "expanded" : ""}>
+          <path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.5" />
+        </svg>
+      </button>
+      {expanded && <div className="diary-coverage-details">{children}</div>}
+    </div>
+  );
+}
 
 /** One accessible, proportional control for either pattern cards or closed deals. */
 function OutcomeSplitBar({ kind, wins, losses, breakeven, filter, onFilter }: {
@@ -1393,10 +1423,10 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, pnlFilter, sideF
         </div>
       ) : null}
       {report.attribution_coverage.status === "PARTIAL" ? (
-        <p className="diary-finrez-coverage" role="status">
-          Часть истории не включена: у {report.attribution_coverage.excluded_unattributed_episode_count}
-          { " " }закрытых сделок не подтверждено, кто ими управлял.
-        </p>
+        <CompactCoverage label="Не все сделки учтены">
+          Исключено сделок: {report.attribution_coverage.excluded_unattributed_episode_count}.
+          {" "}Не подтверждено, кто ими управлял.
+        </CompactCoverage>
       ) : null}
       <OutcomeSplitBar kind="deals" wins={wins} losses={losses} breakeven={breakeven}
         filter={pnlFilter} onFilter={onPnlFilterChange} />
@@ -1450,9 +1480,6 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, pnlFilter, sideF
       )}
       {filmNotice ? <p className="diary-finrez-coverage" role="status">{filmNotice}</p> : null}
       {downloadError ? <p className="diary-finrez-coverage" role="alert">{downloadError}</p> : null}
-      <p className="diary-finrez-basis">
-        Киноплёнка передаёт подтверждённый JSON исполнений по ID при наличии сопряжённого Симулятора. Свечи подгружаются локально с Bybit; полный журнал решений Робота может отсутствовать.
-      </p>
     </div>
   );
 }
@@ -1586,25 +1613,18 @@ function PatternsView({ report, symbolFilter, onSelectPattern }: {
     <section className="diary-finrez" aria-label="Паттерны по подтверждённым сделкам">
       <OutcomeSplitBar kind="patterns" wins={wins} losses={losses} breakeven={breakeven}
         filter={resultFilter} onFilter={setResultFilter} />
-      <p className="diary-finrez-basis">
-        Здесь показаны только паттерны, которые удалось достоверно связать с закрытой сделкой Робота.
-        Сделка без подтверждённой связи с паттерном не включается в эту вкладку.
-      </p>
-      <p className="diary-finrez-coverage" role="status">
-        С подтверждённым паттерном: {provenCount} из {episodes.length} закрытых сделок за период.
+      <CompactCoverage label={`Подтверждено: ${provenCount} из ${episodes.length} сделок`}>
+        Здесь показаны только сделки с достоверно подтверждённым паттерном.
         Остальные сделки не считаются убыточными или нулевыми.
         {report.attribution_coverage.status === "PARTIAL"
-          ? " Сам финансовый отчёт также имеет неполное покрытие атрибуции."
+          ? " Не все сделки включены в финансовый отчёт: происхождение части исполнений не подтверждено."
           : ""}
-      </p>
+      </CompactCoverage>
       {rows.length === 0 ? <p className="diary-state">
         {ranked.length === 0 ? "Нет сделок с подтверждённым паттерном за выбранный период"
           : "Нет паттернов с выбранным финансовым результатом"}
       </p> : (
         <>
-          <p className="diary-finrez-basis">
-            Кнопка списка открывает все подтверждённые сделки с паттерном, включая другие категории управления.
-          </p>
           <div className="diary-finrez-list">
             {rows.map((row) => {
               const wins = row.deals.filter((deal) => verifiedPnlSign(deal.pnl_usdt) > 0).length;
@@ -1660,12 +1680,12 @@ function FinrezMoneyBar({ report, filter, onFilter }: {
   onFilter: (next: FinrezPnlFilter) => void;
 }) {
   const totals = verifiedFinrezMoneyTotals(report);
-  if (totals === null) return <p className="diary-finrez-coverage" role="status">
+  if (totals === null) return <CompactCoverage label="Финансовая полоса недоступна">
     {report.tickers.length === 0
-      ? "Нет подтверждённого результата для финансовой полосы за этот период."
-      : "Полоса прибыли и убытка пока недоступна: суммы сделок и тикеров не удалось подтвердить как одинаковые."}
+      ? "Нет подтверждённого результата за этот период."
+      : "Суммы сделок и тикеров не удалось сверить."}
     {" "}Это не нулевой результат.
-  </p>;
+  </CompactCoverage>;
   const gross = Number(totals.profit) + Number(totals.loss);
   const profitPct = gross > 0 ? Number(totals.profit) / gross * 100 : 0;
   const lossPct = gross > 0 ? 100 - profitPct : 0;
@@ -1726,15 +1746,14 @@ function FinrezView({ report, symbolFilter, onSelectTicker }: {
     <div className="diary-finrez" aria-label="Финансовый результат по тикерам">
       <FinrezMoneyBar report={report} filter={resultFilter} onFilter={setResultFilter} />
       <p className="diary-finrez-basis">
-        {report.owner === "ROBOT" ? "Только полностью роботизированные сделки" : "Только ручные сделки"}
-        {" · "}Реализованный PnL (цена − комиссии исполнений) · USDT
+        {report.owner === "ROBOT" ? "Сделки робота" : "Ручные сделки"}
       </p>
       {report.attribution_coverage.status === "PARTIAL" ? (
-        <p className="diary-finrez-coverage" role="status">
-          Не все сделки учтены: у {report.attribution_coverage.excluded_unattributed_episode_count}
-          { " " }закрытых сделок ({report.attribution_coverage.excluded_unattributed_execution_count} исполнений)
-          не подтверждено, кто ими управлял. Показанная прибыль — только по проверенным сделкам.
-        </p>
+        <CompactCoverage label="Не все сделки учтены">
+          Исключено сделок: {report.attribution_coverage.excluded_unattributed_episode_count}
+          {" "}({report.attribution_coverage.excluded_unattributed_execution_count} исполнений).
+          {" "}Не подтверждено, кто ими управлял. Показанный PnL — только по проверенным сделкам.
+        </CompactCoverage>
       ) : null}
       {visibleTickers.length === 0 ? (
         <p className="diary-state">
@@ -1812,6 +1831,13 @@ export function DiaryOverlay({
   const [statistics, setStatistics] = useState<DiaryStatistics | null>(null);
   const [finrez, setFinrez] = useState<FinrezResponse | null>(null);
   const [finrezPeriod, setFinrezPeriod] = useState<FinrezPeriod>("DAY");
+  const [finrezRange, setFinrezRange] = useState<FinrezDateRange | null>(null);
+  const [calendarOpen, setCalendarOpen] = useState(false);
+  const [dateDraft, setDateDraft] = useState<FinrezDateRange>({ from: "", to: "" });
+  const today = moscowToday();
+  const validDateDraft = /^\d{4}-\d{2}-\d{2}$/.test(dateDraft.from)
+    && /^\d{4}-\d{2}-\d{2}$/.test(dateDraft.to)
+    && dateDraft.from >= "1970-01-02" && dateDraft.to >= dateDraft.from && dateDraft.to <= today;
   const [finrezSymbolFilter, setFinrezSymbolFilter] = useState("");
   const [finrezPatternFilter, setFinrezPatternFilter] = useState("");
   const [finrezPnlFilter, setFinrezPnlFilter] = useState<FinrezPnlFilter>("ALL");
@@ -1841,6 +1867,7 @@ export function DiaryOverlay({
         if (!statisticsScope) throw new Error("finrez scope required");
         const response = await fetch(marketApiRoutes.diaryTickerFinrez(
           statisticsScope.accountId, statisticsScope.owner, finrezPeriod,
+          finrezPeriod === "CUSTOM" ? finrezRange ?? undefined : undefined,
         ));
         if (!response.ok) throw new Error("finrez report unavailable");
         const result = (await response.json()) as FinrezResponse;
@@ -1853,6 +1880,12 @@ export function DiaryOverlay({
           || !Number.isSafeInteger(result.source_revision) || result.source_revision < 1
           || !Number.isSafeInteger(result.period_start_ms) || result.period_start_ms < 0
           || !Number.isSafeInteger(result.as_of_ms) || result.as_of_ms < result.period_start_ms
+          || (finrezPeriod === "CUSTOM" && (!finrezRange
+            || result.date_from !== finrezRange.from || result.date_to !== finrezRange.to
+            || !Number.isSafeInteger(result.period_end_ms)
+            || result.period_end_ms! < result.period_start_ms
+            || result.period_end_ms! > result.as_of_ms || !validClosedEpisodes(result)))
+          || (finrezPeriod !== "CUSTOM" && result.period_end_ms !== undefined)
           || !result.attribution_coverage
           || !["COMPLETE", "PARTIAL"].includes(result.attribution_coverage.status)
           || !Number.isSafeInteger(result.attribution_coverage.excluded_unattributed_episode_count)
@@ -1957,7 +1990,7 @@ export function DiaryOverlay({
     } finally {
       if (current()) setLoading(false);
     }
-  }, [section, statisticsScope?.accountId, statisticsScope?.owner, finrezPeriod]);
+  }, [section, statisticsScope?.accountId, statisticsScope?.owner, finrezPeriod, finrezRange]);
 
   useEffect(() => {
     setStatistics(null);
@@ -2022,10 +2055,39 @@ export function DiaryOverlay({
                 ["MONTH", "Месяц"], ["YEAR", "Год"], ["ALL", "Всё время"],
               ] as const).map(([period, label]) => (
                 <button key={period} aria-pressed={finrezPeriod === period} type="button"
-                  onClick={() => setFinrezPeriod(period)}>{label}</button>
+                  onClick={() => { setCalendarOpen(false); setFinrezPeriod(period); }}>{label}</button>
               ))}
+              <button type="button" className="diary-calendar-button" aria-label="Выбрать период"
+                title={finrezPeriod === "CUSTOM" && finrezRange
+                  ? `${finrezRange.from} — ${finrezRange.to} (МСК)` : "Выбрать даты"}
+                aria-pressed={finrezPeriod === "CUSTOM"} aria-expanded={calendarOpen}
+                onClick={() => {
+                  if (!calendarOpen) setDateDraft(finrezRange ?? { from: today, to: today });
+                  setCalendarOpen(value => !value);
+                }}>
+                <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.7">
+                  <rect x="3" y="5" width="18" height="16" rx="2"/>
+                  <path d="M7 3v4m10-4v4M3 10h18m-13 4h2m4 0h2m-8 3h2"/>
+                </svg>
+              </button>
             </nav>
           ) : null}
+          {calendarOpen && (section === "FINREZ" || section === "PATTERNS" || section === "DEALS") && (
+            <div className="diary-calendar-range" role="group" aria-label="Диапазон дат (МСК)">
+              <label>От<input type="date" aria-label="Дата от" value={dateDraft.from}
+                min="1970-01-02" max={dateDraft.to || today}
+                onChange={event => setDateDraft(prior => ({ ...prior, from: event.target.value }))}/></label>
+              <label>До<input type="date" aria-label="Дата до" value={dateDraft.to}
+                min={dateDraft.from || "1970-01-02"} max={today}
+                onChange={event => setDateDraft(prior => ({ ...prior, to: event.target.value }))}/></label>
+              <button type="button" disabled={!validDateDraft} onClick={() => {
+                if (!validDateDraft) return;
+                setFinrezRange({ ...dateDraft });
+                setFinrezPeriod("CUSTOM");
+                setCalendarOpen(false);
+              }}>Применить</button>
+            </div>
+          )}
           <nav className="diary-primary-nav" aria-label="Разделы статистики">
             <button aria-current={section === "FINREZ" || section === "STATISTICS" ? "page" : undefined} onClick={() => { setSelectedTradeId(null); setSection("FINREZ"); }} type="button">Финрез</button>
             <button aria-current={section === "PATTERNS" || section === "SETUPS" ? "page" : undefined} onClick={() => { setSelectedTradeId(null); setSection("PATTERNS"); }} type="button">Паттерны</button>
