@@ -245,6 +245,58 @@ def test_completed_naked_breakout_is_not_retroactively_revoked_by_later_pivot(ro
     assert state["rejection"] != "superseded_by_confirmed_extremum"
 
 
+@pytest.mark.parametrize("side,clean,broken,signal", [
+    ("upper", (99.5, 99.8, 99.2, 99.5), (99.5, 101.2, 99.2, 99.5),
+     (99.5, 103.5, 99.3, 103.0)),
+    ("lower", (100.5, 100.8, 100.2, 100.5), (100.5, 100.8, 98.8, 100.5),
+     (100.5, 100.7, 96.5, 97.0)),
+])
+def test_owner_mirror_prior_wick_breach_rejects_old_horizontal_level(
+        root, fixed_levels, side, clean, broken, signal):
+    level = level_at(100.0, 5 * M, side=side)
+    fixed_levels["levels"] = [level]
+    # The real body stays on the original side and the final candle crosses.
+    # Its predecessor's wick alone must still retire eligibility.
+    bars = [clean] * 29 + [broken, signal]
+    summary = observe(frame(bars), root)
+    record = ms.load_state("TESTUSDT", "1", root)["records"][level.level_id]
+    assert record["naked_retest"]["breakout"] is not None
+    assert record["candidate"] is False
+    assert record["rejection"] == "prior_wick_breached_level"
+    assert summary["new_candidates"] == 0
+    assert ms.load_state("TESTUSDT", "1", root)["pending_notifications"] == []
+
+
+def test_owner_mirror_previous_wick_pierces_sloped_triangle_upper_ray(root, fixed_levels):
+    # 5m-style RAREUSDT geometry: previous wick pierced the descending
+    # upper line, but the next candle has a valid real-body crossing.
+    level = line_level(symbol="TESTUSDT", timeframe="1",
+                       pattern="Triangle Compression", side="upper",
+                       first=(0, 102.0), second=(5 * M, 101.5),
+                       confirmed_at_ms=6 * M)
+    fixed_levels["levels"] = [level]
+    bars = [(99.5, 100.0, 99.1, 99.5)] * 29
+    bars.append((99.5, 101.0, 99.4, 99.5))  # wick above descending line
+    bars.append((99.5, 104.0, 99.4, 103.0))  # full-body breakout
+    summary = observe(frame(bars), root)
+    record = ms.load_state("TESTUSDT", "1", root)["records"][level.level_id]
+    assert record["rejection"] == "prior_wick_breached_level"
+    assert record["candidate"] is False and summary["new_candidates"] == 0
+
+
+def test_owner_mirror_pristine_slope_still_allows_breakout(root, fixed_levels):
+    level = line_level(symbol="TESTUSDT", timeframe="1",
+                       pattern="Triangle Compression", side="upper",
+                       first=(0, 102.0), second=(5 * M, 101.5),
+                       confirmed_at_ms=6 * M)
+    fixed_levels["levels"] = [level]
+    bars = [(99.5, 100.0, 99.1, 99.5)] * 30
+    bars.append((99.5, 104.0, 99.4, 103.0))
+    summary = observe(frame(bars), root)
+    record = ms.load_state("TESTUSDT", "1", root)["records"][level.level_id]
+    assert record["candidate"] is True and summary["new_candidates"] == 1
+
+
 def test_level_without_parent_fresh_breakout_becomes_candidate_and_first_retest_is_terminal(root, fixed_levels):
     level = level_at(101.0, 5 * M)
     fixed_levels["levels"] = [level]
