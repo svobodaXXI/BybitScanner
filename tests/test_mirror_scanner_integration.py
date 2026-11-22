@@ -334,9 +334,20 @@ def test_wick_sweep_retired_old_ray_allows_later_higher_low_source(
     triggered = [*bars, (100.6, 100.9, 96.7, 97.0)]
     summary = observe(frame(triggered), root)
     active = ms.load_state("TESTUSDT", "1", root)["records"]
-    assert summary["new_candidates"] == 1
-    assert active[successor.level_id]["candidate"] is True
+    # The earlier deeper pivot at 99.8 is also untouched; the owner explicitly
+    # permits both independent targets rather than one duplicate event.
+    first_successor = next(level for level in levels.values()
+                           if level.side == "lower"
+                           and level.boundary.anchor_time_ms == 23 * M)
+    assert summary["new_candidates"] == 2
+    assert {level_id for level_id, row in active.items() if row["candidate"]} == {
+        first_successor.level_id, successor.level_id
+    }
     assert active[old.level_id]["candidate"] is False
+    observed = ms.load_state("TESTUSDT", "1", root)["pending_notifications"]
+    assert {item["level_id"] for item in observed} == {
+        first_successor.level_id, successor.level_id
+    }
 
 
 def test_wick_sweep_before_confirmation_does_not_cancel_existing_level(root, fixed_levels):
