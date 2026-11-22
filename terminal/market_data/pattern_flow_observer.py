@@ -1,18 +1,20 @@
 """Read-only market-flow overlay for already approved Robot pattern candidates.
 
-One strictly bounded publicTrade-only probe on the EXISTING WebSocket,
-or reuse an existing context. No extra orderbook, Scanner signal, candidate,
+One bounded public-data probe on the existing WebSocket, or reuse an
+existing context. No Scanner signal, candidate,
 order, admission or STOP/TAKE authority. REST reads stay off-owner.
 Missing or uncertain data never creates independent IMPULSE_FLOW trading.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sqlite3
+import tempfile
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable, Mapping
 
@@ -270,6 +272,7 @@ class PatternFlowObserver:
         self, hub, rest_session, database_path: Path,
         *, clock_ms: Callable[[], int] | None = None,
         get_candidates: Callable[[], tuple] | None = None,
+        wedge_capture_path: Path | None = None,
     ) -> None:
         self._hub = hub
         self._rest = rest_session
@@ -290,6 +293,7 @@ class PatternFlowObserver:
         )
         self._started = False
         self._flow_probe_symbol: str | None = None
+        self._wedge_capture_path = wedge_capture_path
 
     def _sync_flow_probe(self, candidates: tuple) -> None:
         """Warm one APPROVED candidate, including before its first retest.
@@ -337,15 +341,78 @@ class PatternFlowObserver:
                 str(record.candidate_id),
             )
             if priority is None or score < priority:
-                chosen, priority = symbol, score
-        if chosen != self._flow_probe_symbol:
+                chosen, priority = record, score
+        symbol = chosen.symbol.value if chosen is not None else None
+        if symbol != self._flow_probe_symbol:
             if self._flow_probe_symbol is not None:
                 release(self._flow_probe_symbol)
             self._flow_probe_symbol = None
-        if chosen is not None:
-            context = subscribe(chosen)
+        if symbol is not None:
+            capture = (
+                self._wedge_capture_path is not None
+                and chosen.status == "APPROVED"
+                and chosen.signal_snapshot.get("pattern") in ("Falling Wedge", "Rising Wedge")
+                and (chosen.robot_state or {}).get("phase") == "WAITING_BREAKOUT"
+            )
+            context = subscribe(symbol, capture_book=True) if capture else subscribe(symbol)
             if context is not None:
-                self._flow_probe_symbol = chosen
+                self._flow_probe_symbol = symbol
+                if capture:
+                    self._save_wedge_capture(chosen, context)
+
+    def _save_wedge_capture(self, record, context) -> None:
+        path = self._wedge_capture_path
+        if path is None or not getattr(context, "capture_book", False):
+            return
+        try:
+            frames = tuple(context.book_frames)
+            tape = context.impulse_observation.snapshot()
+            if (len(frames) < 2 or not tape["prints"]
+                    or tape.get("invalid_frames") != 0
+                    or not context.book_frames or context.book_frames[0] is not frames[0]):
+                return
+            since_ms = max(frames[0][0], record.updated_at_ms)
+            until_ms = frames[-1][0]
+            prints = [
+                asdict(item) for item in tape["prints"]
+                if item.received_at_ms is not None and since_ms <= item.received_at_ms <= until_ms
+            ]
+            if not prints or not any(
+                current.candidate_id == record.candidate_id
+                and current.state_revision == record.state_revision
+                and current.status == "APPROVED"
+                and (current.robot_state or {}).get("phase") == "WAITING_BREAKOUT"
+                for current in self._get_candidates()
+            ):
+                return
+            evidence = {
+                "schema": "PAPER_WEDGE_PRE_BREAKOUT_CAPTURE_V1",
+                "captured_at_ms": self._clock(),
+                "candidate_id": record.candidate_id,
+                "state_revision": record.state_revision,
+                "candidate_updated_at_ms": record.updated_at_ms,
+                "snapshot_sha256": record.snapshot_sha256,
+                "symbol": record.symbol.value,
+                "signal_snapshot": record.signal_snapshot,
+                "robot_state": record.robot_state,
+                "trade_generation": tape["generation"],
+                "source_complete": False,
+                "trading_authorized": False,
+                "book_frames": frames,
+                "prints": prints,
+            }
+            with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", dir=path.parent, delete=False,
+            ) as output:
+                temporary = Path(output.name)
+                try:
+                    json.dump(evidence, output, default=str, separators=(",", ":"))
+                    output.close()
+                    temporary.replace(path)
+                finally:
+                    temporary.unlink(missing_ok=True)
+        except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as error:
+            LOGGER.warning("Wedge diagnostic capture skipped: %s", type(error).__name__)
 
     def start(self) -> None:
         if self._started:
