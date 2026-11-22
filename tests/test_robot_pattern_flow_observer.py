@@ -1,6 +1,8 @@
 """Passive same-candidate pattern flow observer: zero new Scanner/Robot actions."""
 import os
+import tempfile
 import unittest
+from dataclasses import make_dataclass
 from pathlib import Path
 from decimal import Decimal
 from types import SimpleNamespace
@@ -110,6 +112,58 @@ class ObserverTests(unittest.TestCase):
             self.assertEqual(requests[-1], ("release", "BTCUSDT"))
         finally:
             observer.close()
+
+    def test_wedge_capture_requires_postapproval_snapshot_and_exact_host(self):
+        """A prior candidate's L2 snapshot may not become today's proof."""
+        receipt = make_dataclass(
+            "TestReceipt", [("received_at_ms", int), ("trade_id", str)],
+        )(105_000, "print-1")
+        frames = [
+            (90_000, {"type": "snapshot", "topic": "orderbook.200.BTCUSDT"}),
+            (110_000, {"type": "delta", "topic": "orderbook.200.BTCUSDT"}),
+        ]
+        context = SimpleNamespace(
+            capture_book=True, book_frames=frames,
+            impulse_observation=SimpleNamespace(snapshot=lambda: {
+                "prints": (receipt,), "invalid_frames": 0, "generation": 0,
+            }),
+        )
+        approved = _candidate(phase="WAITING_BREAKOUT")
+        approved.updated_at_ms = 100_000
+        approved.snapshot_sha256 = "a" * 64
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "private-book.json"
+            observer = PatternFlowObserver(
+                SimpleNamespace(), _REST(None, None, None), "unused",
+                clock_ms=lambda: 120_000,
+                get_candidates=lambda: (approved,),
+                wedge_capture_path=destination, capture_only=True,
+            )
+            try:
+                observer._save_wedge_capture(approved, context)
+                self.assertFalse(destination.exists(), "old book snapshot rejected")
+                # A new snapshot received after approval is eligible.
+                frames[0] = (101_000, frames[0][1])
+                observer._save_wedge_capture(approved, context)
+                self.assertTrue(destination.exists())
+                with destination.open(encoding="utf-8") as source:
+                    body = __import__("json").load(source)
+                self.assertEqual(
+                    [entry[0] for entry in body["book_frames"]],
+                    [101_000, 110_000],
+                )
+                self.assertEqual(body["candidate_id"], approved.candidate_id)
+                self.assertFalse(body["source_complete"])
+                self.assertFalse(body["trading_authorized"])
+                destination.unlink()
+                # A different immutable host snapshot with same id/revision
+                # cannot borrow the original approved candidate's book.
+                foreign = SimpleNamespace(**vars(approved))
+                foreign.snapshot_sha256 = "b" * 64
+                observer._save_wedge_capture(foreign, context)
+                self.assertFalse(destination.exists(), "foreign snapshot rejected")
+            finally:
+                observer.close()
 
     def test_wedge_diagnostic_flag_alone_never_enables_robot_flow(self):
         with patch.dict(os.environ, {
