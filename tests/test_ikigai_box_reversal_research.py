@@ -167,6 +167,19 @@ class BoxReversalFlowResearchTests(unittest.TestCase):
         self.assertIsNone(observe(record, (a, b, c), decision_ms=3999))
         self.assertIsNone(observe(record, (a, b)))
 
+    def test_preapproval_flow_cannot_be_attributed_to_approved_box(self):
+        # A historical Box snapshot can carry the OPEN time of its final
+        # candle, earlier than the approval that created the Robot host.
+        # Completed trade windows from that interval are not proof of
+        # post-approval observation, even when their receipt is later.
+        for direction in ("LONG", "SHORT"):
+            with self.subTest(direction=direction):
+                record, windows = case(direction)
+                self.assertIsNotNone(observe(record, windows))
+                for approved_at_ms in (1001, 2001):
+                    late = NS(**(vars(record) | {"approved_at_ms": approved_at_ms}))
+                    self.assertIsNone(observe(late, windows))
+
     def test_only_original_confirmed_paper_box(self):
         record, windows = case()
         for key, bad in (
