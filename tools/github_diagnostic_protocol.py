@@ -26,6 +26,7 @@ OWNER_ACTIONS = frozenset(("update", "update-take-closed", "update-and-start", "
                           "stop", "telegram-recover", "provision-owner-pc",
                           "github-status-enable", "github-diagnostic-enable"))
 EDITOR_ACTIONS = frozenset(("update", "update-take-closed"))
+START_ACTIONS = frozenset(("start", "update-and-start"))
 OWNER_STATES = frozenset(("FINISHED_OK", "RUNNING", "FAILED", "UNPROVEN"))
 OWNER_RESULTS = frozenset(("success", "exit-code", "signal", "core-dump", "timeout",
                           "watchdog", "resources", "start-limit-hit", "oom-kill",
@@ -135,8 +136,12 @@ def _safe_owner_snapshot(raw, request):
         raise ValueError("running owner outcome has no final exit")
     if state == "FINISHED_OK" and (result != "success" or code != 0):
         raise ValueError("owner success unproven")
+    # Old signed START receipts remain readable in the durable journal.
+    # NOT_APPLICABLE is historical lifecycle evidence only, never PAPER proof.
     expected = ({"VERIFIED_EDITOR_ONLY", "BLOCKED"} if state == "FINISHED_OK"
                 and raw["owner_action"] in EDITOR_ACTIONS else
+                {"VERIFIED_PAPER_READY", "BLOCKED", "NOT_APPLICABLE"}
+                if state == "FINISHED_OK" and raw["owner_action"] in START_ACTIONS else
                 {"NOT_APPLICABLE"} if state == "FINISHED_OK" else {"NOT_RUN"})
     if postcheck not in expected:
         raise ValueError("owner postcheck inconsistent")
