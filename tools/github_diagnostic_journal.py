@@ -165,7 +165,7 @@ class DiagnosticJournal:
             if protocol._verify("request", request, issuer_public)["request_id"] != rid:
                 raise ValueError("receipt identity mismatch")
             if post(request, response) is not True:
-                break
+                raise ValueError("delivery acknowledgement unproven")
             with self._lock():
                 state = self._load()
                 entry = state["entries"][rid]
@@ -175,3 +175,43 @@ class DiagnosticJournal:
                 _save(self.path, state)
             count += 1
         return count
+
+
+    def run_once(self, *, enabled, issuer_public, responder_key, audience,
+                 clock, fetch, transport):
+        """Drain pending replies first, then consume at most one new request.
+
+        The caller provides the trusted local enable decision and pinned keys.
+        No service installation, credential retrieval or trading action.
+        """
+        if enabled is not True:
+            return {"enabled": False, "observed": 0, "delivered": 0}
+        protocol._key(issuer_public, False)
+        protocol._key(responder_key, True)
+        if issuer_public == responder_key.public_key():
+            raise ValueError("request and response keys must differ")
+        delivery = dict(issuer_public=issuer_public,
+                        responder_public=responder_key.public_key(),
+                        audience=audience, clock=clock, post=transport.post)
+        delivered = self.deliver_pending(**delivery)
+        if delivered == MAX_DELIVERY:
+            return {"enabled": True, "observed": 0, "delivered": delivered}
+        wires = transport.requests(clock())
+        if type(wires) is not list or len(wires) > 300:
+            raise ValueError("unbounded request batch")
+        with self._lock():
+            consumed = set(self._load()["entries"])
+        for wire in wires:
+            try:
+                request = protocol._verify("request", wire, issuer_public)
+                protocol._request(request, audience, clock())
+            except ValueError:
+                continue
+            if request["request_id"] in consumed:
+                continue
+            self.process(wire, issuer_public=issuer_public,
+                         responder_key=responder_key, audience=audience,
+                         clock=clock, fetch=fetch)
+            return {"enabled": True, "observed": 1,
+                    "delivered": delivered + self.deliver_pending(**delivery)}
+        return {"enabled": True, "observed": 0, "delivered": delivered}
