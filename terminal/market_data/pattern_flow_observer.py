@@ -297,6 +297,7 @@ class PatternFlowObserver:
         self._wedge_capture_path = wedge_capture_path
         # Private opt-in recorder only: no certified flow or Robot advice.
         self._capture_only = capture_only
+        self._capture_host_key: tuple[str, int, int, str] | None = None
 
     def _sync_flow_probe(self, candidates: tuple) -> None:
         """Warm one APPROVED candidate, including before its first retest.
@@ -354,6 +355,20 @@ class PatternFlowObserver:
             if priority is None or score < priority:
                 chosen, priority = record, score
         symbol = chosen.symbol.value if chosen is not None else None
+        if self._capture_only:
+            # A same-symbol APPROVED host can replace its predecessor while
+            # the passive book still starts at the predecessor's snapshot.
+            # A new host must obtain its own post-approval book snapshot.
+            # Release/recreate ONLY the passive research lease; leave all
+            # protected SymbolContexts and Robot admission untouched.
+            key = (
+                chosen.candidate_id, chosen.state_revision,
+                chosen.updated_at_ms, chosen.snapshot_sha256,
+            ) if chosen is not None else None
+            if key != self._capture_host_key and self._flow_probe_symbol is not None:
+                release(self._flow_probe_symbol)
+                self._flow_probe_symbol = None
+            self._capture_host_key = key
         if symbol != self._flow_probe_symbol:
             if self._flow_probe_symbol is not None:
                 release(self._flow_probe_symbol)
