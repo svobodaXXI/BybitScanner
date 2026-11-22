@@ -34,6 +34,7 @@ PROPOSAL_URL = ("https://raw.githubusercontent.com/svobodaXXI/BybitScanner/"
 CONFIG_FIELDS = {"enabled", "owner_id", "bot_id", "audience",
                  "callback_public", "approval_seed"}
 PINNED = ("tools/owner_release_telegram_runtime.py", "tools/owner_release_telegram.py",
+          "tools/owner_release_telegram_provision.py",
           "tools/owner_update_grant.py", "tools/telegram_release_inbox.py",
           "tools/vps_owner_control.py", "tools/paper_maintenance.py",
           "tools/vps_release_identity.py", "tools/vps_gitless_release_activate.py",
