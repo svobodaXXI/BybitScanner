@@ -240,5 +240,14 @@ class TelegramGatewayTests(unittest.TestCase):
 
 
 
+
+    @patch("telegram_gateway_client.requests.Session")
+    def test_owner_approval_unknown_send_never_retries(self, session_cls):
+        session_cls.return_value.post.side_effect = gateway.requests.ConnectTimeout("lost")
+        with self.assertRaises(gateway.requests.ConnectTimeout):
+            gateway.send_text("12345", "Exact PAPER approval", retry=False)
+        self.assertEqual(session_cls.return_value.post.call_count, 1)
+
+
 if __name__ == "__main__":
     unittest.main()

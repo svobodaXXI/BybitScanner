@@ -29,6 +29,51 @@ function matches(a, b) {
   for (let i = 0; i < size; i++) difference |= (x[i] || 0) ^ (y[i] || 0);
   return difference === 0;
 }
+// The shared Gateway bearer and unprivileged consumer cannot sign grants.
+// Only a separately provisioned key attests real upstream Telegram callbacks.
+// Never accept a client-provided callback or add a second getUpdates consumer.
+const toHex = bytes => Array.from(new Uint8Array(bytes), n => n.toString(16).padStart(2,"0")).join("");
+const fromHex = text => Uint8Array.from(text.match(/../g), part => parseInt(part,16));
+async function attachOwnerReleaseReceipts(payload, env) {
+  if (payload?.ok !== true || !Array.isArray(payload.result)) return;
+  for (const update of payload.result) {
+    if (update && typeof update === "object") delete update.owner_release_receipt;
+  }
+  if (env.OWNER_RELEASE_CALLBACK_ENABLED !== "1" ||
+      !/^[a-f0-9]{64}$/.test(env.OWNER_RELEASE_CALLBACK_SEED || "")) return;
+  const owner = String(env.TELEGRAM_CHAT_ID || "");
+  const bot = String(env.TELEGRAM_BOT_TOKEN || "").split(":")[0];
+  if (!/^[1-9][0-9]{0,15}$/.test(owner) || !/^[1-9][0-9]{0,15}$/.test(bot) || owner === bot) return;
+  let key;
+  const encoder = new TextEncoder();
+  for (const update of payload.result) {
+    const q = update?.callback_query;
+    const match = typeof q?.data === "string" && /^owner-release:(yes|no):([a-f0-9]{32})$/.exec(q.data);
+    const m = q?.message;
+    if (!match || q?.from?.is_bot !== false || String(q.from.id) !== owner ||
+        m?.chat?.type !== "private" || String(m.chat.id) !== owner ||
+        m?.from?.is_bot !== true || String(m.from.id) !== bot ||
+        !Number.isSafeInteger(m.date) || m.date <= 0 ||
+        !Number.isSafeInteger(m.message_id) || m.message_id <= 0 ||
+        !Number.isSafeInteger(update.update_id) || update.update_id < 0 ||
+        typeof m.text !== "string" || m.text.length > 4096) continue;
+    try {
+      if (!key) {
+        // RFC 8410 PKCS#8 wrapper for the independent Ed25519 seed.
+        key = await crypto.subtle.importKey("pkcs8",
+          fromHex("302e020100300506032b657004220420" + env.OWNER_RELEASE_CALLBACK_SEED),
+          {name:"Ed25519"}, false, ["sign"]);
+      }
+      const receipt = {version:1,nonce:match[2],decision:match[1],owner_id:owner,bot_id:bot,
+        message_id:m.message_id,text_sha256:toHex(await crypto.subtle.digest("SHA-256",encoder.encode(m.text))),
+        observed_at:Math.floor(Date.now()/1000),update_id:update.update_id};
+      const sorted = Object.fromEntries(Object.keys(receipt).sort().map(k => [k,receipt[k]]));
+      const signature = toHex(await crypto.subtle.sign("Ed25519",key,
+        encoder.encode("BybitScanner-Telegram-Release-Callback-v1\x00" + JSON.stringify(sorted))));
+      update.owner_release_receipt = {payload:sorted,signature};
+    } catch (_) { /* Preserve monitoring; missing proof never authorizes a release. */ }
+  }
+}
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -56,9 +101,10 @@ export default {
       params.set("allowed_updates", JSON.stringify(["callback_query","message"]));
       try {
         const remote = await fetch("https://api.telegram.org/bot" + env.TELEGRAM_BOT_TOKEN + "/getUpdates?" + params, {
-          signal: AbortSignal.timeout(38000)
+          signal: AbortSignal.timeout(38000), redirect:"error"
         });
         const payload = await remote.json();
+        if (remote.ok && !remote.redirected) await attachOwnerReleaseReceipts(payload, env);
         return reply(200, payload);
       } catch (_) { return reply(503, {ok:false,error:"telegram_poll_unavailable"}); }
     }

@@ -72,7 +72,7 @@ def _gateway_json(response):
     return value
 
 
-def send_text(chat_id, text, *, reply_markup=None):
+def send_text(chat_id, text, *, reply_markup=None, retry=True):
     """Preserve the Telegram response shape; no direct fallback."""
     url = os.getenv("BYBITSCANNER_TELEGRAM_GATEWAY_URL", "").strip()
     key = os.getenv("BYBITSCANNER_TELEGRAM_GATEWAY_SECRET", "").strip()
@@ -100,7 +100,12 @@ def send_text(chat_id, text, *, reply_markup=None):
             timeout=12, allow_redirects=False,
         )
 
-    result = _gateway_json(_send_outbound(post))
+    # Owner-release approval prompts must never be duplicated after an
+    # ambiguous network response. Ordinary monitoring notices retain retry.
+    response = _send_outbound(post) if retry else post()
+    if response.status_code != 200:
+        raise TelegramGatewayError("Gateway text outcome unproven")
+    result = _gateway_json(response)
     if (result.get("ok") is not True or result.get("event_id") != event_id
             or result.get("stage") != "accepted_by_telegram_api"):
         raise TelegramGatewayError(

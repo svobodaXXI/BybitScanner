@@ -1,0 +1,12 @@
+# Explicit owner activation only; no second Telegram poller.
+[Unit]
+Description=Bounded owner release confirmation adapter
+
+[Timer]
+OnBootSec=45s
+OnUnitInactiveSec=15s
+AccuracySec=2s
+Unit=bybitscanner-owner-release-approval.service
+
+[Install]
+WantedBy=timers.target
