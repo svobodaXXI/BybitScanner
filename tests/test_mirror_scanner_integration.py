@@ -329,6 +329,14 @@ def test_wick_sweep_retired_old_ray_allows_later_higher_low_source(
     observe(frame(bars), root)
     repeat = ms.load_state("TESTUSDT", "1", root)
     assert list(repeat["records"]).count(successor.level_id) == 1
+    # Once the newer source exists, its own first clean naked breakout is
+    # detectable. The already-invalid older ray must remain non-candidate.
+    triggered = [*bars, (100.6, 100.9, 96.7, 97.0)]
+    summary = observe(frame(triggered), root)
+    active = ms.load_state("TESTUSDT", "1", root)["records"]
+    assert summary["new_candidates"] == 1
+    assert active[successor.level_id]["candidate"] is True
+    assert active[old.level_id]["candidate"] is False
 
 
 def test_wick_sweep_before_confirmation_does_not_cancel_existing_level(root, fixed_levels):
