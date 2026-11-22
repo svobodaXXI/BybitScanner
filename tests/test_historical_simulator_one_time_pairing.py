@@ -153,23 +153,13 @@ class LocalPairingHttpTests(unittest.TestCase):
 
 
 class IngressPairingContractTests(unittest.TestCase):
-    def test_unauthed_exact_claim_only_and_owner_auth_issuance(self):
+    def test_new_claim_route_stays_owner_authenticated_until_reviewed_gateway(self):
         from pathlib import Path
-        import re
         config = (Path(__file__).resolve().parents[1] /
                   "deploy/terminal_ingress/nginx-authenticated.conf").read_text()
-        match = re.search(
-            r"location = /api/diary/simulator-bridge/pair-claim \{(.*?)\n    \}",
-            config, re.DOTALL)
-        self.assertIsNotNone(match)
-        route = match.group(1)
-        for text in ('limit_except POST { deny all; }',
-                     'proxy_set_header Cookie "";',
-                     'proxy_set_header Authorization "";',
-                     'proxy_pass http://127.0.0.1:8765;'):
-            self.assertIn(text, route)
-        self.assertNotIn("auth_request", route)
-        self.assertNotIn("allow all", route)
+        # The local adapter cannot claim on the deployed ingress until the
+        # MONOLITH release owner adds a separately reviewed exact exception.
+        self.assertNotIn("location = /api/diary/simulator-bridge/pair-claim {", config)
         self.assertNotIn("location = /api/diary/simulator-bridge/pair-code {", config)
         self.assertIn("location /api/ {\n        auth_request /_auth;", config)
 
