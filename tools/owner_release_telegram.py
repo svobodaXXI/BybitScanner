@@ -138,6 +138,10 @@ def confirm(wire, *, challenge, callback_public, owner_id, bot_id, approval_key,
     p = challenge["proposal"]
     if installed_sha() != p["expected_installed_sha"]:
         raise ValueError("installed release changed before confirmation")
+    # Release verification may be slow. Re-prove freshness immediately
+    # before consuming the challenge, not only before checking the release.
+    verify_callback(wire, challenge=challenge, callback_public=callback_public,
+                    owner_id=owner_id, bot_id=bot_id, now=clock())
     if consume() is not True:
         raise ValueError("challenge already consumed or persistence unproven")
     if decision == "no":
