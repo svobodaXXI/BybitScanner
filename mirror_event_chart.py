@@ -22,7 +22,11 @@ def _visible_event_candles(snapshot: Mapping) -> Sequence[Mapping]:
                 if level.get("selected") is True]
     if len(selected) != 1 or not selected[0].get("anchors"):
         return recent
-    source_anchor = min(int(anchor[0]) for anchor in selected[0]["anchors"])
+    # The paired boundary may predate the selected breakout boundary. Include
+    # every provenance-matched frozen level, not only the selected ray.
+    source_anchor = min(int(anchor[0])
+                        for level in snapshot.get("levels", ())
+                        for anchor in level.get("anchors", ()))
     if source_anchor >= int(recent[0]["open_time_ms"]):
         return recent
     history = snapshot.get("geometry_candles") or ()
@@ -96,8 +100,15 @@ def render_mirror_chart(snapshot: Mapping, output_path: str | Path) -> None:
             and level.get("pattern") == snapshot.get("pattern")
             and level.get("side") in ("upper", "lower")
         }
-        incomplete_contour = two_sided and source_sides != {"upper", "lower"}
-        source_missing = False
+        # Having two named sides alone does not prove their original pivots
+        # survived the immutable OHLC snapshot.
+        source_missing = any(
+            level.get("anchors") and
+            min(int(anchor[0]) for anchor in level["anchors"]) not in times
+            for level in levels
+        )
+        incomplete_contour = two_sided and (
+            source_sides != {"upper", "lower"} or source_missing)
         for level in levels:
             boundary = level["boundary"]
             anchor_t = int(boundary["anchor_time_ms"])
