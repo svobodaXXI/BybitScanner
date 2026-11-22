@@ -108,6 +108,39 @@ def _send_text(chat_id, text, **kwargs):
     return telegram_bot.send_message(config.TELEGRAM_TOKEN, chat_id, text, **kwargs)
 
 
+_MARKET_REQUEST_LOCK = threading.Lock()
+
+
+def _send_market(chat_id):
+    """One bounded owner-requested read; the Telegram poller stays responsive."""
+    if not _MARKET_REQUEST_LOCK.acquire(blocking=False):
+        return
+    try:
+        threading.Thread(target=_market_worker, args=(chat_id,),
+                         name="telegram-market-request", daemon=True).start()
+    except Exception:
+        _MARKET_REQUEST_LOCK.release()
+        raise
+
+
+def _market_worker(chat_id):
+    try:
+        try:
+            import bybit_api
+            from telegram_market import collect_market, format_market
+            if _SHUTDOWN_REQUESTED.is_set():
+                return
+            snapshot = collect_market(bybit_api.get_symbols, bybit_api.get_candles,
+                                      _SHUTDOWN_REQUESTED)
+            message = format_market(snapshot, now_ms=int(time.time() * 1000))
+        except Exception:
+            message = "Рынок: подтверждённые данные Bybit недоступны."
+        if not _SHUTDOWN_REQUESTED.is_set():
+            _send_text(chat_id, message)
+    finally:
+        _MARKET_REQUEST_LOCK.release()
+
+
 def _send_scanner_control(chat_id):
     """RUNNING pauses the live pass; anything else is the SCANNER runtime intent."""
     try:
@@ -1163,6 +1196,8 @@ def _process_message(message) -> bool:
     text = str(message.get("text", "")).strip()
     command = text.split("@", 1)[0]
     handlers = {
+        "/market": _send_market,
+        "Рынок": _send_market,
         "/terminal": _send_workspace,
         "/scanner": _send_scanner_control,
         "/scanner_stop": _send_scanner_stop,
@@ -1261,6 +1296,7 @@ def refresh_command_menu() -> None:
             {"command": "scanner", "description": scanner_label},
             {"command": "scanner_stop", "description": "⏹ Остановить сканер"},
             {"command": "terminal", "description": "Терминал"},
+            {"command": "market", "description": "Рынок"},
         ],
         ensure_ascii=False,
     )

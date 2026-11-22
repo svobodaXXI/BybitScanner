@@ -355,7 +355,7 @@ class TelegramMonitoringTests(unittest.TestCase):
             self.assertEqual(
                 [item["command"] for item in commands],
                 ["positions", "monitoring", "robot", "robot_start", "all",
-                 "scanner", "scanner_stop", "terminal"],
+                 "scanner", "scanner_stop", "terminal", "market"],
             )
             self.assertEqual(commands[0]["description"], "Все открытые позиции")
             self.assertEqual(commands[1]["description"], "Мониторинг кандидатов")
@@ -365,6 +365,7 @@ class TelegramMonitoringTests(unittest.TestCase):
             self.assertEqual(commands[5]["description"], label)
             self.assertEqual(commands[6]["description"], "⏹ Остановить сканер")
             self.assertEqual(commands[7]["description"], "Терминал")
+            self.assertEqual(commands[8]["description"], "Рынок")
         self.assertEqual(telegram.call_count, 2)
 
     @patch("telegram_monitoring._telegram_request", return_value={"ok": True})
@@ -1447,6 +1448,98 @@ class TelegramWorkerSingletonReadinessTests(unittest.TestCase):
                                                 "status": "ready",
                                                 "database_identity": self.identity}))
         self.assertNotIn("test", json.dumps(body))
+
+
+class TelegramMarketTests(unittest.TestCase):
+    def test_owner_only_market_command(self):
+        with patch.object(monitoring.config, "TELEGRAM_CHAT_ID", "123", create=True), \
+                patch.object(monitoring, "_send_market") as send:
+            for user, chat in ((456, 123), (123, -100), (123, 123)):
+                monitoring._process_message({"from": {"id": user}, "chat": {"id": chat},
+                                             "text": "/market"})
+            send.assert_called_once_with(123)
+
+    def test_single_flight_does_not_block_poller_or_spawn_duplicate(self):
+        with patch.object(monitoring.threading, "Thread") as thread:
+            monitoring._send_market(123)
+            try:
+                monitoring._send_market(123)
+                thread.assert_called_once_with(target=monitoring._market_worker, args=(123,),
+                                               name="telegram-market-request", daemon=True)
+                thread.return_value.start.assert_called_once_with()
+            finally:
+                monitoring._MARKET_REQUEST_LOCK.release()
+
+    def test_market_ranking_exact_windows_activity_coverage_and_staleness(self):
+        from telegram_market import (PERIOD_MS, HISTORY_BARS, MAX_AGE_MS,
+                                     MarketSnapshot, rank_candles, format_market)
+        cutoff = 2_000 * PERIOD_MS
+
+        class Frame:
+            def __init__(self, direction):
+                self.rows = [
+                    {"time": cutoff - (HISTORY_BARS - i) * PERIOD_MS,
+                     "open": 100, "high": 101, "low": 99, "close": 100,
+                     "turnover": "100"} for i in range(HISTORY_BARS)
+                ]
+                self.rows[-1].update(high=105, low=95, close=100 + direction * 4,
+                                     turnover="300")
+
+            def to_dict(self, orient):
+                assert orient == "records"
+                return self.rows
+
+        up = rank_candles("AAAUSDT", Frame(1), cutoff)
+        down = rank_candles("BBBUSDT", Frame(-1), cutoff)
+        self.assertIsNotNone(up)
+        self.assertIsNotNone(down)
+        self.assertEqual(up.turnover_ratio, 3)
+        self.assertEqual(down.range_ratio, 5)
+        for pct in up.changes:
+            self.assertAlmostEqual(pct, 4)
+        for pct in down.changes:
+            self.assertAlmostEqual(pct, -4)
+        gap = Frame(1)
+        gap.rows[4]["time"] += PERIOD_MS
+        self.assertIsNone(rank_candles("GAPUSDT", gap, cutoff))
+        future = Frame(1)
+        future.rows[-1]["time"] = cutoff
+        self.assertIsNone(rank_candles("FUTUREUSDT", future, cutoff))
+        invalid = Frame(1)
+        invalid.rows[-1]["turnover"] = "nan"
+        self.assertIsNone(rank_candles("BADUSDT", invalid, cutoff))
+        snapshot = MarketSnapshot(cutoff, 3, (down, up))
+        card = format_market(snapshot, now_ms=cutoff + 1000)
+        self.assertIn("Покрытие: 2/3", card)
+        self.assertIn("Неполный охват", card)
+        active, rest = card.split("🟢 Лидеры роста")
+        growth, decline = rest.split("🔴 Лидеры падения")
+        self.assertIn("AAAUSDT", active)
+        self.assertIn("BBBUSDT", active)
+        self.assertIn("AAAUSDT +4.00%", growth)
+        self.assertNotIn("BBBUSDT", growth)
+        self.assertIn("BBBUSDT -4.00%", decline)
+        self.assertNotIn("AAAUSDT", decline)
+        self.assertNotIn("AAAUSDT", format_market(snapshot, now_ms=cutoff + MAX_AGE_MS + 1))
+
+    def test_market_collection_reuses_canonical_source_and_fixed_cutoff(self):
+        from telegram_market import PERIOD_MS, HISTORY_BARS, collect_market
+        cutoff = 2000 * PERIOD_MS
+        get_symbols = lambda: ["AAAUSDT", "BBBUSDT"]
+        from unittest.mock import Mock
+        candles = Mock(return_value=None)
+        event = Mock()
+        event.is_set.return_value = False
+        event.wait.return_value = False
+        result = collect_market(get_symbols, candles, event,
+                                clock=lambda: (cutoff + 1234) / 1000,
+                                monotonic=lambda: 0)
+        self.assertEqual(result.as_of_ms, cutoff)
+        self.assertEqual(result.expected, 2)
+        self.assertEqual(result.rows, ())
+        self.assertEqual(candles.call_count, 2)
+        candles.assert_any_call("AAAUSDT", "15", HISTORY_BARS, end_ms=cutoff - 1)
+        candles.assert_any_call("BBBUSDT", "15", HISTORY_BARS, end_ms=cutoff - 1)
 
 
 if __name__ == "__main__":
