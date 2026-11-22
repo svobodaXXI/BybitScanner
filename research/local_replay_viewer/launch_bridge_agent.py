@@ -326,20 +326,46 @@ def pair_device(device_id: str, token: str) -> None:
     install_if_configured()
 
 
+def _expected_autostart_command() -> str:
+    """Canonical per-user Windows Run entry for THIS installed release."""
+    path = Path(__file__).resolve()
+    candidate = Path(sys.executable).with_name("pythonw.exe")
+    executable = candidate if candidate.is_file() else Path(sys.executable).resolve()
+    return f'"{executable}" -B "{path}" --poll'
+
+
+def _this_release_still_registered() -> bool:
+    """Old release retires voluntarily when START_LOCAL registers a successor."""
+    if os.name != "nt":
+        return False
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                            r"Software\Microsoft\Windows\CurrentVersion\Run") as key:
+            value, kind = winreg.QueryValueEx(key, AGENT_RUN_NAME)
+        return kind == winreg.REG_SZ and value == _expected_autostart_command()
+    except OSError:
+        return False  # Never poll or launch when local ownership is unproven.
+
+
 def _acquire_windows_singleton():
     if os.name != "nt":
         raise OSError("Windows_only")
-    # One lightweight adapter per interactive Windows session; never stop or
-    # replace unrelated processes. Hold the handle until process exit.
-    handle = ctypes.windll.kernel32.CreateMutexW(
-        None, False, r"Local\BybitScannerMachineTimeLaunchAdapter"
-    )
-    if not handle:
-        raise OSError("local_simulator_mutex_unavailable")
-    if ctypes.windll.kernel32.GetLastError() == 183:
+    # Wait only for the existing same-product agent to release its handle.
+    # The old version checks the Run registration and exits on supersession.
+    # No process is killed, no file deleted, and no second poller may run.
+    for attempt in range(6):
+        handle = ctypes.windll.kernel32.CreateMutexW(
+            None, False, r"Local\BybitScannerMachineTimeLaunchAdapter"
+        )
+        if not handle:
+            raise OSError("local_simulator_mutex_unavailable")
+        if ctypes.windll.kernel32.GetLastError() != 183:
+            return handle
         ctypes.windll.kernel32.CloseHandle(handle)
-        return None
-    return handle
+        if attempt < 5:
+            time.sleep(POLL_SECONDS)
+    return None
 
 
 def install_if_configured() -> bool:
@@ -351,11 +377,10 @@ def install_if_configured() -> bool:
         raise OSError("Windows_only")
     import winreg
 
-    path = Path(__file__).resolve()
-    candidate = Path(sys.executable).with_name("pythonw.exe")
-    executable = candidate if candidate.is_file() else Path(sys.executable).resolve()
     # Known installed script only; no arguments from a remote URL.
-    command = f'"{executable}" -B "{path}" --poll'
+    command = _expected_autostart_command()
+    executable = Path(command.split('"', 2)[1])
+    path = Path(__file__).resolve()
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER,
                           r"Software\Microsoft\Windows\CurrentVersion\Run") as key:
         winreg.SetValueEx(key, AGENT_RUN_NAME, 0, winreg.REG_SZ, command)
@@ -374,7 +399,7 @@ def run_poll_loop(config: dict[str, str]) -> None:
     if mutex is None:
         return
     try:
-        while True:
+        while _this_release_still_registered():
             try:
                 poll_once(config)
             except HTTPError as error:
