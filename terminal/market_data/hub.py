@@ -225,6 +225,12 @@ class _ProtectedResearchCapture:
     book_frames: deque[tuple[int, dict]] = field(
         default_factory=lambda: deque(maxlen=1024),
     )
+    # Never presented as a reconstructed book: delta-only ingress is a
+    # bounded candidate tape for a future independently verified REST anchor.
+    # A host must match exact vendor u/seq/cts before using any such delta.
+    rest_anchor_candidates: deque[tuple[int, dict]] = field(
+        default_factory=lambda: deque(maxlen=1024),
+    )
     _active: bool = True
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -237,25 +243,39 @@ class _ProtectedResearchCapture:
             if not self._active:
                 return
             kind = frame.get("type")
-            if applied != "APPLIED" or kind == "snapshot":
+            if applied != "APPLIED" or kind not in ("snapshot", "delta"):
                 self.book_frames.clear()
-            if applied != "APPLIED":
+                self.rest_anchor_candidates.clear()
                 return
-            if kind != "snapshot" and (kind != "delta" or not self.book_frames):
-                return
-            if len(self.book_frames) == self.book_frames.maxlen:
+            if kind == "snapshot":
                 self.book_frames.clear()
-                return  # No prefix truncation masquerading as continuity.
-            self.book_frames.append((received_at_ms, frame))
+                self.rest_anchor_candidates.clear()
+                self.book_frames.append((received_at_ms, frame))
+                return
+            if self.book_frames:
+                if len(self.book_frames) == self.book_frames.maxlen:
+                    self.book_frames.clear()
+                    self.rest_anchor_candidates.clear()
+                    return  # No prefix truncation masquerading as continuity.
+                self.book_frames.append((received_at_ms, frame))
+                return
+            # An orphan delta is NOT a book state. Retain it only for a
+            # separate source-provenance matcher; do not export as L2 proof.
+            if len(self.rest_anchor_candidates) == self.rest_anchor_candidates.maxlen:
+                self.rest_anchor_candidates.clear()
+                return
+            self.rest_anchor_candidates.append((received_at_ms, frame))
 
     def reset(self) -> None:
         with self._lock:
             self.book_frames.clear()
+            self.rest_anchor_candidates.clear()
 
     def close(self) -> None:
         with self._lock:
             self._active = False
             self.book_frames.clear()
+            self.rest_anchor_candidates.clear()
 
 
 class MarketDataHub:
