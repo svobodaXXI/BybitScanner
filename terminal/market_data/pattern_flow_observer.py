@@ -299,6 +299,16 @@ class PatternFlowObserver:
         self._capture_only = capture_only
         self._capture_host_key: tuple[str, int, int, str] | None = None
 
+    def _release_flow_probe(self, symbol: str) -> None:
+        """Detach the optional witness, never a protected subscription."""
+        if self._capture_only:
+            end = getattr(self._hub, "end_protected_research_capture", None)
+            if end is not None:
+                end(symbol)
+        release = getattr(self._hub, "release_flow_only", None)
+        if release is not None:
+            release(symbol)
+
     def _sync_flow_probe(self, candidates: tuple) -> None:
         """Warm one APPROVED candidate, including before its first retest.
 
@@ -366,12 +376,12 @@ class PatternFlowObserver:
                 chosen.updated_at_ms, chosen.snapshot_sha256,
             ) if chosen is not None else None
             if key != self._capture_host_key and self._flow_probe_symbol is not None:
-                release(self._flow_probe_symbol)
+                self._release_flow_probe(self._flow_probe_symbol)
                 self._flow_probe_symbol = None
             self._capture_host_key = key
         if symbol != self._flow_probe_symbol:
             if self._flow_probe_symbol is not None:
-                release(self._flow_probe_symbol)
+                self._release_flow_probe(self._flow_probe_symbol)
             self._flow_probe_symbol = None
         if symbol is not None:
             capture = (
@@ -381,6 +391,13 @@ class PatternFlowObserver:
                 and (chosen.robot_state or {}).get("phase") == "WAITING_BREAKOUT"
             )
             context = subscribe(symbol, capture_book=True) if capture else subscribe(symbol)
+            if (capture and self._capture_only and context is not None
+                    and not getattr(context, "capture_book", False)):
+                # Existing protected SymbolContext is immutable as a Robot
+                # book owner. Attach only a raw ingress witness, without new
+                # WebSocket topics or reconstructed book snapshots.
+                attach = getattr(self._hub, "begin_protected_research_capture", None)
+                context = attach(symbol) if attach is not None else None
             if context is not None:
                 self._flow_probe_symbol = symbol
                 if capture:
@@ -461,9 +478,8 @@ class PatternFlowObserver:
         self._stop.set()
         if self._started and self._thread is not threading.current_thread():
             self._thread.join(timeout=18)
-        release = getattr(self._hub, "release_flow_only", None)
-        if release is not None and self._flow_probe_symbol is not None:
-            release(self._flow_probe_symbol)
+        if self._flow_probe_symbol is not None:
+            self._release_flow_probe(self._flow_probe_symbol)
             self._flow_probe_symbol = None
         # Never close a requests.Session while the observer is still using it.
         if not self._thread.is_alive():
