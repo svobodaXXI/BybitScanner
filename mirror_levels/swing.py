@@ -43,6 +43,26 @@ def confirmed_pivots(candles: Sequence[Mapping], *, left: int = PIVOT_LEFT,
     frame = pd.DataFrame({"high": [float(c["high"]) for c in candles],
                           "low": [float(c["low"]) for c in candles]})
     highs, lows = find_pivots(frame, left=left, right=right, min_change=0)
+    # The generic pivot detector requires a strictly unique extremum. A
+    # double high/low made on adjacent candles is a real plateau, not an
+    # absence of an extremum. MIRROR alone uses the rightmost equal wick as
+    # the source anchor, after the normal right-side confirmation candles.
+    # This keeps the shared Scanner/pattern geometry detector unchanged.
+    for column, points, upper in (("high", highs, True), ("low", lows, False)):
+        values = [float(v) for v in frame[column]]
+        i = 0
+        while i < len(values):
+            j = i + 1
+            while j < len(values) and values[j] == values[i]:
+                j += 1
+            if j - i > 1 and i >= left and j + right <= len(values):
+                earlier, later = values[i-left:i], values[j:j+right]
+                if ((all(values[i] > v for v in (*earlier, *later)) if upper
+                     else all(values[i] < v for v in (*earlier, *later)))):
+                    points.append({"index": j - 1, "price": values[i],
+                                   "type": "high" if upper else "low"})
+            i = j
+        points.sort(key=lambda p: p["index"])
     out = []
     for points in (highs, lows):
         out.append([{
