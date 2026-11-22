@@ -269,6 +269,35 @@ def test_mirror_telegram_chart_frames_original_frozen_anchor_and_right_margin(tm
     assert observed["height"] >= 7.0
 
 
+def test_mirror_png_discloses_absent_source_and_labels_exact_present_anchor(tmp_path, monkeypatch):
+    pytest.importorskip("matplotlib")
+    from matplotlib.figure import Figure
+    from mirror_event_chart import render_mirror_chart
+
+    observed = []
+    original_save = Figure.savefig
+
+    def inspect_save(fig, *args, **kwargs):
+        axis = fig.axes[0]
+        observed.append([label.get_text() for label in axis.texts])
+        return original_save(fig, *args, **kwargs)
+
+    monkeypatch.setattr(Figure, "savefig", inspect_save)
+    snapshot = _old_mirror_source_chart()
+    render_mirror_chart(snapshot, tmp_path / "complete.png")
+    assert any("Исходная опора:" in label and "UTC" in label
+               for label in observed[-1])
+    assert not any("недостаточно доказательств" in label for label in observed[-1])
+
+    # Source time is absent from the immutable retained history; no live
+    # candle lookup, synthetic replacement or misleading left-edge anchor.
+    snapshot = {**snapshot, "geometry_candles": snapshot["geometry_candles"][-125:]}
+    render_mirror_chart(snapshot, tmp_path / "truncated.png")
+    assert any("Исходный экстремум вне сохранённого окна" in label
+               for label in observed[-1])
+    assert not any("Исходная опора:" in label for label in observed[-1])
+
+
 def test_mirror_old_source_never_accepts_conflicting_or_invented_bars():
     from mirror_event_chart import _visible_event_candles
 
