@@ -176,3 +176,21 @@ test count and documentation do not earn XP by themselves.
   counted again; open draft PR #267 (position-card presentation) is not
   reward-eligible until its required acceptance/merge boundary is satisfied.
 
+### REWARD-MACHINE-TIME-STARTUP-20261122
+
+- Date: 2026-11-22
+- Type: quest stage
+- Outcome: owner accepted immediate opening of Machine Time on PC after installing
+  verified desktop release `0dc3e5270fb90e6838b393bb8a9c015972591892`.
+- Evidence: [owner installation and startup checkpoint](https://github.com/svobodaXXI/BybitScanner/issues/1077#issuecomment-7076389305);
+  #1246 and #1251, release workflow 44998080571 SUCCESS.
+- XP before: 285
+- XP delta: +25
+- XP after: 310
+- Level after: **3 — Следопыт клиньев**
+- Achievement changes: none
+- Loot: versioned private analytical environment, publication-order regression
+  contract, verified create-only local upgrade path.
+- Boundary: subjective startup acceptance, not measured latency, later-release
+  cache reuse, device pairing, exact episode E2E or PAPER/runtime acceptance.
+
