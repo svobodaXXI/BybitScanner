@@ -273,6 +273,7 @@ class PatternFlowObserver:
         *, clock_ms: Callable[[], int] | None = None,
         get_candidates: Callable[[], tuple] | None = None,
         wedge_capture_path: Path | None = None,
+        capture_only: bool = False,
     ) -> None:
         self._hub = hub
         self._rest = rest_session
@@ -294,6 +295,8 @@ class PatternFlowObserver:
         self._started = False
         self._flow_probe_symbol: str | None = None
         self._wedge_capture_path = wedge_capture_path
+        # Private opt-in recorder only: no certified flow or Robot advice.
+        self._capture_only = capture_only
 
     def _sync_flow_probe(self, candidates: tuple) -> None:
         """Warm one APPROVED candidate, including before its first retest.
@@ -313,7 +316,15 @@ class PatternFlowObserver:
         chosen = None
         priority = None
         for record in candidates:
-            if (record.status not in ("APPROVED", "OPEN")
+            if self._capture_only:
+                # Record only approved, still pre-breakout Wedges. Never
+                # consume the OPEN/retest priority reserved for Robot flow.
+                if (record.status != "APPROVED"
+                        or record.signal_snapshot.get("pattern")
+                        not in ("Falling Wedge", "Rising Wedge")
+                        or (record.robot_state or {}).get("phase") != "WAITING_BREAKOUT"):
+                    continue
+            elif (record.status not in ("APPROVED", "OPEN")
                     or record.signal_snapshot.get("pattern") not in allowed
                     or (record.status == "OPEN" and not _open_wedge_flow_scope(record))):
                 continue
@@ -620,6 +631,11 @@ class PatternFlowObserver:
         """At most one existing approved Robot pattern per M1; zero owner/DB writes."""
         now = self._clock()
         if type(now) is not int or now < 180_000:
+            return 0
+        if self._capture_only:
+            # Diagnostic topic/files only: no REST reads, certification,
+            # cached entry evidence or Robot binding.
+            self._sync_flow_probe(tuple(self._get_candidates()))
             return 0
         closed = now // 60_000 * 60_000
         with self._lock:
