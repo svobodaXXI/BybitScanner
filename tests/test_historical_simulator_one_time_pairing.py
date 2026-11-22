@@ -153,13 +153,13 @@ class LocalPairingHttpTests(unittest.TestCase):
 
 
 class IngressPairingContractTests(unittest.TestCase):
-    def test_new_claim_route_stays_owner_authenticated_until_reviewed_gateway(self):
+    def test_pair_code_stays_owner_authenticated_across_monolith_ingress_upgrade(self):
         from pathlib import Path
         config = (Path(__file__).resolve().parents[1] /
                   "deploy/terminal_ingress/nginx-authenticated.conf").read_text()
-        # The local adapter cannot claim on the deployed ingress until the
-        # MONOLITH release owner adds a separately reviewed exact exception.
-        self.assertNotIn("location = /api/diary/simulator-bridge/pair-claim {", config)
+        # /pair-code remains owner-authenticated under the generic /api/ route.
+        # MONOLITH independently tests the exact /pair-claim exception, so this
+        # invariant must hold before and after its protected ingress upgrade.
         self.assertNotIn("location = /api/diary/simulator-bridge/pair-code {", config)
         self.assertIn("location /api/ {\n        auth_request /_auth;", config)
 
