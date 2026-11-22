@@ -3249,7 +3249,7 @@ def _stop_exact_installed_paper_once(
 def main(argv=None) -> int:
     parser = _MaintenanceParser(description="Fail-closed one-action PAPER maintenance")
     parser.add_argument("sha")
-    parser.add_argument("--action", choices=("stop", "start", "update", "update-and-start", "provision-owner-pc", "telegram-recover", "update-take-closed", "github-status-enable", "github-diagnostic-enable"),
+    parser.add_argument("--action", choices=("stop", "start", "update", "update-and-start", "provision-owner-pc", "telegram-recover", "update-take-closed", "github-status-enable", "github-diagnostic-enable", "owner-release-prepare"),
                         help="single owner action: canonical STOP, PAPER START, or exact stable UPDATE")
     parser.add_argument("--env-file", type=Path, default=Path("/etc/bybitscanner/paper.env"))
     parser.add_argument("--wait-seconds", type=float, default=0)
@@ -3322,6 +3322,18 @@ def main(argv=None) -> int:
                     status = enable_observer(args.sha)
                     print(status)
                     return 0 if status.startswith("READY:") else 2
+                if args.action == "owner-release-prepare":
+                    # Explicit owner UUID under the existing global lock.
+                    # Prepare only disabled local files; never STOP, START,
+                    # enable a timer or adopt/overwrite credentials.
+                    from tools.owner_release_telegram_provision import prepare
+                    try:
+                        status = prepare(args.sha)
+                    except (OSError, ValueError, BlockingIOError):
+                        print("BLOCKED: owner_release_prepare_unproven; no runtime change")
+                        return 2
+                    print(status)
+                    return 0
                 if args.action == "telegram-recover":
                     # One owner-controlled action: no global resume, gateway, release
                     # switch, STOP, reconcile or trading mutation.
