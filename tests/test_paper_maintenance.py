@@ -4938,3 +4938,79 @@ def test_owner_github_status_enable_dispatch_is_isolated(monkeypatch):
     assert calls == ["a" * 40]
     monkeypatch.setattr(reporter, "enable_observer", lambda sha: "BLOCKED: no token")
     assert maintenance.main(["a" * 40, "--action", "github-status-enable"]) == 2
+
+
+@pytest.mark.parametrize("stopped_proof", [True, False])
+def test_owner_start_after_stop_handles_actual_unreachable_health(
+    monkeypatch, tmp_path, capsys, stopped_proof,
+):
+    """Regression: STOP succeeded, health connection refused before START.
+
+    Exercise the real active-owner probe/Unreachable boundary, not a mock
+    returning None. An unavailable active listener must not authorize resume.
+    """
+    from tools import paper_maintenance as maintenance
+    from tools import runtime_intent as intent
+    from tools import vps_release_identity as release
+    from tools import vps_release_resume as resume
+
+    target = "a" * 40
+    identity = "d" * 64
+    calls = []
+    monkeypatch.setattr(maintenance, "REPO", tmp_path)
+    monkeypatch.setattr(release, "verify_release", lambda *_a, **_kw: target)
+    monkeypatch.setattr(intent, "expected_database_identity",
+                        lambda *_a, **_kw: identity)
+
+    def unavailable(*_a, **_kw):
+        raise intent.Unreachable("connection refused")
+
+    monkeypatch.setattr(intent, "http_get", unavailable)
+    monkeypatch.setattr(maintenance, "_durable_editor_freeze",
+                        lambda *_a, **_kw: identity)
+    monkeypatch.setattr(maintenance, "_editor_backend_ready",
+                        lambda *_a, **_kw: False)
+    monkeypatch.setattr(maintenance, "_editor_runtime_ready",
+                        lambda *_a, **_kw: False)
+
+    def stopped_gate(*_a, **_kw):
+        calls.append("stopped-proof")
+        if not stopped_proof:
+            raise resume.ResumeBlocked("PAPER_unit_not_stopped")
+        return "RESUME_READY: exact stopped release"
+
+    monkeypatch.setattr(resume, "check_resume", stopped_gate)
+    original_resume = maintenance.resume_installed_release
+    editor_ready = [False]
+
+    def runner(argv, **_kw):
+        calls.append(argv[-1])
+        if argv[-1] == "bybitscanner-telegram.service":
+            editor_ready[0] = True
+        return SimpleNamespace(returncode=0)
+
+    def resume_editor(*args, **kwargs):
+        return original_resume(*args, **kwargs, runner=runner,
+                               runtime_ready=lambda *_a: editor_ready[0])
+
+    monkeypatch.setattr(maintenance, "resume_installed_release", resume_editor)
+    monkeypatch.setattr(maintenance, "_complete_stop_intent",
+                        lambda *_a, **_kw: None)
+    monkeypatch.setattr(maintenance, "start_installed_paper_from_editor",
+                        lambda *_a, **_kw: (calls.append("paper"), "READY: full PAPER")[1])
+    monkeypatch.setattr(maintenance, "_prepare_approved_editor_stage",
+                        lambda *_a, **_kw: pytest.fail("START must not stage a release"))
+    monkeypatch.setattr(maintenance, "_stop_exact_installed_paper_once",
+                        lambda *_a, **_kw: pytest.fail("never replay STOP"))
+
+    result = maintenance.main([target, "--action", "start"])
+    if stopped_proof:
+        assert result == 0
+        assert calls == ["stopped-proof", "tools.vps_systemd_unit_prepare",
+                         "bybitscanner-paper-backend.service",
+                         "bybitscanner-telegram.service", "paper"]
+        assert "READY: full PAPER" in capsys.readouterr().out
+    else:
+        assert result == 2
+        assert calls == ["stopped-proof"]
+        assert "installed_release_not_stopped_and_verified" in capsys.readouterr().out
