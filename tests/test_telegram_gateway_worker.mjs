@@ -172,3 +172,47 @@ test("Telegram 5xx remains a sanitized Gateway 502", async () => {
     }
   } finally { globalThis.fetch = originalFetch; }
 });
+
+
+test("existing getUpdates signs only real private owner release callbacks", async () => {
+  const { createPrivateKey, createPublicKey, verify } = await import("node:crypto");
+  const seed = "ab".repeat(32);
+  const privateKey = createPrivateKey({key:Buffer.from(
+    "302e020100300506032b657004220420" + seed,"hex"),format:"der",type:"pkcs8"});
+  const pub = createPublicKey(privateKey);
+  const nonce = "c".repeat(32);
+  const click = {update_id:42,callback_query:{data:"owner-release:yes:"+nonce,
+    from:{id:12345,is_bot:false},message:{message_id:7,date:1800000000,
+      from:{id:55555,is_bot:true},chat:{id:12345,type:"private"},text:"PAPER exact SHA"}}};
+  const variants = [
+    click,
+    {...click,callback_query:{...click.callback_query,from:{id:12346,is_bot:false}}},
+    {...click,callback_query:{...click.callback_query,message:{...click.callback_query.message,chat:{id:12345,type:"group"}}}},
+    {...click,callback_query:{...click.callback_query,data:"robot:cmd:start"}},
+  ];
+  const prev = globalThis.fetch;
+  try {
+    globalThis.fetch = async url => {
+      assert.match(url,/\/getUpdates\?/);
+      return new Response(JSON.stringify({ok:true,result:variants}),{status:200});
+    };
+    const args = {method:"POST",headers:authenticated,body:"{}"};
+    const configured = {...env,TELEGRAM_BOT_TOKEN:"55555:private",
+      OWNER_RELEASE_CALLBACK_ENABLED:"1",OWNER_RELEASE_CALLBACK_SEED:seed};
+    const response = await worker.fetch(req("/v1/get-updates",args),configured);
+    const result = (await response.json()).result;
+    const signed = result[0].owner_release_receipt;
+    assert.equal(signed.payload.nonce,nonce);
+    assert.equal(signed.payload.message_id,7);
+    assert.equal(signed.payload.owner_id,"12345");
+    assert.equal(signed.payload.decision,"yes");
+    assert.ok(verify(null,Buffer.from("BybitScanner-Telegram-Release-Callback-v1\x00"+
+      JSON.stringify(signed.payload)),pub,Buffer.from(signed.signature,"hex")));
+    assert.ok(result.slice(1).every(update => !update.owner_release_receipt));
+    const disabled = await worker.fetch(req("/v1/get-updates",args),{...configured,OWNER_RELEASE_CALLBACK_ENABLED:"0"});
+    assert.ok((await disabled.json()).result.every(update => !update.owner_release_receipt));
+    const injected = await worker.fetch(req("/v1/get-updates",{...args,
+      body:JSON.stringify({callback_query:click.callback_query})}),configured);
+    assert.equal(injected.status,400);
+  } finally { globalThis.fetch = prev; }
+});
