@@ -439,6 +439,14 @@ class LevelRegistry:
             return known
         if merge_tolerance > 0:
             for existing in sorted(self.levels.values(), key=lambda x: (x.confirmed_at_ms, x.level_id)):
+                # ATR proximity is not level identity. Distinct confirmed
+                # swing extrema on separate candles are separate owner-
+                # observable horizontal targets, even within 0.25 ATR.
+                # Only a source alias of the SAME dated extremum may merge.
+                if (existing.source == SOURCE_SWING_ZONE
+                        and level.source == SOURCE_SWING_ZONE
+                        and existing.anchors != level.anchors):
+                    continue
                 if same_level(existing, level, merge_tolerance):
                     primary, other = ((existing, level)
                                       if prefer_existing or (existing.confirmed_at_ms, existing.level_id)
