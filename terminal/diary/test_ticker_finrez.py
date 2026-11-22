@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import unittest
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, localcontext
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
@@ -70,6 +70,30 @@ class FinrezRankingTests(unittest.TestCase):
             {"symbol": "XRPUSDT", "pnl_usdt": "0", "trade_count": 1},
             {"symbol": "ETHUSDT", "pnl_usdt": "-1.2", "trade_count": 1},
         ])
+
+    def test_ticker_sum_matches_exact_episode_values_beyond_decimal_context(self):
+        # Each individual PnL fits 28 significant digits, but their sum does not.
+        # The former ticker total lost a digit and the exact UI check hid the bar.
+        episodes = [
+            _episode("BTCUSDT", "1.000000000000000000000000001", "0", _ms(9, 0)),
+            _episode("BTCUSDT", "1E-28", "0", _ms(9, 1)),
+            _episode("ETHUSDT", "-1.000000000000000000000000001", "0", _ms(9, 0)),
+            _episode("ETHUSDT", "-1E-28", "0", _ms(9, 1)),
+        ]
+        expected = [
+            {"symbol": "BTCUSDT", "pnl_usdt": "1.0000000000000000000000000011", "trade_count": 2},
+            {"symbol": "ETHUSDT", "pnl_usdt": "-1.0000000000000000000000000011", "trade_count": 2},
+        ]
+        with localcontext() as ctx:
+            ctx.prec = 28
+            for period in ("DAY", "WEEK", "MONTH", "YEAR", "ALL"):
+                for ordered in (episodes, list(reversed(episodes))):
+                    _, rows = aggregate_ticker_pnl(ordered, period=period, now_ms=_ms(9, 12))
+                    self.assertEqual(rows, expected)
+            _, rows = aggregate_ticker_pnl(episodes, period="CUSTOM", now_ms=_ms(9, 12),
+                                          window=(_ms(9, 0), _ms(9, 12)))
+            self.assertEqual(rows, expected)
+            self.assertEqual(ctx.prec, 28)
 
     def test_calendar_periods_use_moscow_boundaries(self):
         now = _ms(12, 12)  # Thursday 12 Nov 2026
