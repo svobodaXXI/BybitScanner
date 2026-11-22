@@ -2,7 +2,7 @@
 
 The caller must supply a dedicated, owner-protected directory on a local
 filesystem supporting flock, atomic rename and fsync. Never auto-initialize
-an absent journal during processing. No retention/deletion in this slice.
+an absent journal during processing. Expired, settled receipts are retained for seven days before bounded pruning.
 """
 from contextlib import contextmanager
 import fcntl
@@ -18,6 +18,7 @@ from tools.github_status_reporter import _save
 MAX_ENTRIES = 128
 MAX_STATE = MAX_ENTRIES * (4 * protocol.MAX_WIRE + 256) + 1024
 MAX_DELIVERY = 3
+RETENTION_SECONDS = 7 * 86400
 
 
 def _digest(wire):
@@ -69,7 +70,7 @@ class DiagnosticJournal:
         with self._lock():
             if any(self.directory.iterdir()):
                 raise ValueError("journal directory not empty")
-            _save(self.path, {"version": 1, "entries": {}})
+            _save(self.path, {"version": 1, "last_now": 0, "entries": {}})
 
     def _load(self):
         info = self.path.lstat()  # missing/corrupt is a hard failure
@@ -78,15 +79,17 @@ class DiagnosticJournal:
             raise ValueError("unprotected journal state")
         state = json.loads(self.path.read_text(encoding="utf-8"),
                            object_pairs_hook=protocol._unique_pairs)
-        if (type(state) is not dict or set(state) != {"version", "entries"}
+        if (type(state) is not dict or set(state) != {"version", "last_now", "entries"}
                 or type(state["version"]) is not int or state["version"] != 1
+                or type(state["last_now"]) is not int or state["last_now"] < 0
                 or type(state["entries"]) is not dict
                 or len(state["entries"]) > MAX_ENTRIES):
             raise ValueError("invalid journal state")
         for rid, entry in state["entries"].items():
             if (not protocol._HEX32.fullmatch(rid) or type(entry) is not dict
-                    or set(entry) != {"request", "digest", "response", "delivered"}
+                    or set(entry) != {"request", "digest", "response", "delivered", "expires_at"}
                     or type(entry["delivered"]) is not bool
+                    or type(entry["expires_at"]) is not int or entry["expires_at"] <= 0
                     or _digest(_wire(entry["request"])) != entry["digest"]):
                 raise ValueError("invalid receipt")
             if entry["response"] is not None:
@@ -100,11 +103,28 @@ class DiagnosticJournal:
         def reserve(rid, digest):
             with self._lock():
                 state = self._load()
-                if rid in state["entries"] or len(state["entries"]) >= MAX_ENTRIES:
+                now = clock()
+                request = protocol._verify("request", wire, issuer_public)
+                protocol._request(request, audience, now)
+                if now < state["last_now"]:
+                    raise ValueError("journal clock moved backwards")
+                if rid in state["entries"]:
                     return False
+                # Never prune an undelivered signed receipt. Retain interrupted
+                # reservations and acknowledged receipts past expiry; persisted
+                # high-water time prevents replay after pruning on clock rollback.
+                state["entries"] = {
+                    key: entry for key, entry in state["entries"].items()
+                    if not ((entry["delivered"] or entry["response"] is None)
+                            and now - entry["expires_at"] > RETENTION_SECONDS)
+                }
+                if len(state["entries"]) >= MAX_ENTRIES:
+                    return False
+                state["last_now"] = now
                 state["entries"][rid] = {
                     "request": wire.hex(), "digest": digest,
                     "response": None, "delivered": False,
+                    "expires_at": request["expires_at"],
                 }
                 _save(self.path, state)
                 return True
