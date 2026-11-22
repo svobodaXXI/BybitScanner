@@ -9,6 +9,9 @@ from dataclasses import dataclass, field
 from decimal import Decimal, DecimalException
 
 from robot_entry_flow_evidence import FlowWindow, compare_flow_windows
+from terminal.market_data.sustained_absorption import (
+    AbsorptionObservation, RecoveryWindow,
+)
 from terminal.paper.ikigai_box_plan import (
     BoxReversalEntryPreview, IkigaiBoxPaperPlan, assess_box_reversal_entry,
 )
@@ -26,6 +29,19 @@ class BoxFlowObservation:
 
 
 @dataclass(frozen=True, slots=True)
+class BoxBoundAbsorption:
+    """Bind an independent fixed-level observation to the exact frozen Box."""
+
+    candidate_id: str
+    state_revision: int
+    snapshot_sha256: str
+    symbol: str
+    generation: int
+    available_at_ms: int
+    observation: AbsorptionObservation
+
+
+@dataclass(frozen=True, slots=True)
 class BoxReversalFlowResearch:
     candidate_id: str
     state_revision: int
@@ -36,6 +52,7 @@ class BoxReversalFlowResearch:
     absorption_candidate: bool | None
     initiative_flip_observed: bool
     status: str
+    sustained_absorption_observed: bool = False
     source_complete: bool = field(default=False, init=False)
     trading_authorized: bool = field(default=False, init=False)
 
@@ -46,11 +63,14 @@ def observe_box_reversal_flow(
     *,
     decision_ms: int,
     max_source_age_ms: int,
+    fixed_band: BoxBoundAbsorption | None = None,
 ) -> BoxReversalFlowResearch | None:
     """Compare three completed windows for a previously confirmed Box host.
 
-    First transition: opposing aggression persists but has less price impact;
-    positive refill evidence makes this only an absorption CANDIDATE.
+    First transition: opposing aggression persists but has less price impact.
+    A positive single-window refill ratio is only a provisional observation;
+    it NEVER unlocks a handoff. Exact-host, completed, persistent, print-linked
+    fixed-level evidence must also survive a depth/quote-break check.
     Second transition: an accelerating taker wave in the reversal direction.
     Missing, empty, stale, mixed owner or mixed generation evidence is UNKNOWN
     (None). A wall or a low-volume pause is not passive absorption.
@@ -113,6 +133,82 @@ def observe_box_reversal_flow(
     if decision_ms - observations[-1].window.end_ms > max_source_age_ms:
         return None
     early, fade, flip = observations
+
+    # Research-only #1259 join. Never attribute fills to aggregate L2 depth
+    # or infer the original candidate identity from symbol/time alone.
+    sustained = False
+    if fixed_band is not None:
+        if not isinstance(fixed_band, BoxBoundAbsorption):
+            return None
+        metric = fixed_band.observation
+        if not isinstance(metric, AbsorptionObservation):
+            return None
+        if (
+            fixed_band.candidate_id != candidate_id
+            or type(fixed_band.state_revision) is not int
+            or fixed_band.state_revision != revision
+            or fixed_band.snapshot_sha256 != digest
+            or fixed_band.symbol != symbol
+            or type(fixed_band.generation) is not int
+            or fixed_band.generation != generation
+            or type(fixed_band.available_at_ms) is not int
+            or not fade.window.end_ms <= fixed_band.available_at_ms <= flip.available_at_ms
+            or metric.symbol != symbol or metric.direction != direction
+            or type(metric.generation) is not int or metric.generation != generation
+            or type(metric.decision_ms) is not int
+            or metric.decision_ms != fade.window.end_ms
+            or metric.source_complete is not False
+            or metric.trading_authorized is not False
+            or not isinstance(metric.windows, tuple) or len(metric.windows) < 2
+            or metric.windows[0].start_ms != fade.window.start_ms
+            or metric.windows[-1].end_ms != fade.window.end_ms
+            or not isinstance(metric.frozen_levels, tuple)
+            or len(metric.frozen_levels) != 5
+        ):
+            return None
+        for i, part in enumerate(metric.windows):
+            if (
+                not isinstance(part, RecoveryWindow)
+                or type(part.start_ms) is not int or type(part.end_ms) is not int
+                or part.start_ms >= part.end_ms
+                or (i and part.start_ms != metric.windows[i-1].end_ms)
+            ):
+                return None
+            values = (
+                part.opposing_notional, part.compatible_print_notional,
+                part.compatible_recovery_notional,
+            )
+            if any(
+                not isinstance(v, Decimal) or not v.is_finite() or v < 0
+                for v in values
+            ) or not (
+                part.compatible_recovery_notional
+                <= part.compatible_print_notional
+                <= part.opposing_notional
+            ):
+                return None
+        depth_values = (
+            metric.initial_depth_notional, metric.minimum_depth_notional,
+            metric.final_depth_notional,
+        )
+        if (
+            any(not isinstance(v, Decimal) or not v.is_finite() or v < 0
+                for v in depth_values)
+            or metric.initial_depth_notional <= 0
+            or any(not isinstance(p, Decimal) or not p.is_finite() or p <= 0
+                   for p in metric.frozen_levels)
+            or not isinstance(metric.adverse_quote_break, bool)
+        ):
+            return None
+        sustained = (
+            metric.repeated_recovery_observed
+            and metric.minimum_depth_notional > 0
+            and not metric.adverse_quote_break
+            and sum(
+                w.opposing_notional > 0 and w.compatible_recovery_notional > 0
+                for w in metric.windows
+            ) >= 2
+        )
     try:
         exhaustion = compare_flow_windows(
             early.window, fade.window, decision_ms=fade.available_at_ms,
@@ -131,17 +227,20 @@ def observe_box_reversal_flow(
         absorption = exhaustion.buy_absorption_candidate
         reverse_wave = initiative.sell_wave_accelerating
 
-    if fading and absorption is True and reverse_wave:
+    qualified = sustained and absorption is not False
+    if fading and qualified and reverse_wave:
         status = "HANDOFF_CANDIDATE"
-    elif fading and absorption is True:
+    elif fading and qualified:
         status = "ABSORPTION_CANDIDATE"
+    elif fading and absorption is True:
+        status = "WAIT_SUSTAINED_ABSORPTION"
     elif fading:
         status = "EXHAUSTION_OBSERVED"
     else:
         status = "WAIT_EXHAUSTION"
     return BoxReversalFlowResearch(
         candidate_id, revision, symbol, direction, decision_ms,
-        fading, absorption, reverse_wave, status,
+        fading, absorption, reverse_wave, status, qualified,
     )
 
 
@@ -213,6 +312,7 @@ def preview_box_reversal_handoff(
     adverse_stop_per_unit: Decimal,
     additional_cost_allowance_usdt: Decimal,
     maximum_allowed_loss_usdt: Decimal,
+    fixed_band: BoxBoundAbsorption | None = None,
 ) -> BoxReversalHandoffPreview | None:
     """Compose the existing flow and economics modules for one frozen host.
 
@@ -226,7 +326,7 @@ def preview_box_reversal_handoff(
     """
     flow = observe_box_reversal_flow(
         record, observations, decision_ms=decision_ms,
-        max_source_age_ms=max_source_age_ms,
+        max_source_age_ms=max_source_age_ms, fixed_band=fixed_band,
     )
     if flow is None:
         return None
