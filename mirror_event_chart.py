@@ -122,6 +122,14 @@ def render_mirror_chart(snapshot: Mapping, output_path: str | Path) -> None:
             spine.set_color("#4b5563")
         ax.grid(alpha=0.12)
         title = f"MIRROR · {snapshot.get('symbol', '—')} · {snapshot.get('timeframe', '—')}m\n{subtype}"
+        if snapshot.get("source") == "pattern_boundary" and snapshot.get("pattern") in (
+            "Rising Wedge", "Falling Wedge", "Triangle Compression"
+        ):
+            # A MIRROR line is NOT a verified whole wedge/triangle. Its
+            # companion must be present in this exact frozen source snapshot.
+            sides = {level.get("side") for level in levels}
+            if not {"upper", "lower"}.issubset(sides):
+                title += "\n⚠ Контур паттерна неполон: нет второй исходной границы"
         if snapshot.get("event_kind") == "breakout":
             close = snapshot.get("breakout_close")
             boundary = snapshot.get("breakout_boundary_at_close")
