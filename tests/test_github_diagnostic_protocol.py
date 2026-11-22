@@ -394,3 +394,89 @@ def test_issuer_rejects_invalid_authorization_header(monkeypatch, token):
     monkeypatch.setattr(module, "build_opener", lambda *_: pytest.fail("network forbidden"))
     with pytest.raises(module.InvalidPublicationCredential):
         module.publish(b"signed", token)
+
+
+@pytest.mark.parametrize("defect", [None, "disabled", "missing_receipt", "wrong_predecessor",
+                                    "changed_unit", "wrong_installed_bytes", "unprotected_pin",
+                                    "missing_journal"])
+def test_release_pin_continues_only_with_exact_owner_transaction(tmp_path, context, defect):
+    import os
+    from tools import github_diagnostic_runtime as runtime
+    from tools.github_diagnostic_journal import DiagnosticJournal
+    from tools.vps_release_identity import git_blob_hash
+
+    _, _, _, _, issuer, responder, _, _ = context
+    old, target = "c" * 40, "d" * 40
+    root, config_dir, state_dir, unit_dir, transactions = (
+        tmp_path / name for name in ("release", "config", "state", "units", "transactions"))
+    for directory in (root, config_dir, state_dir, unit_dir, transactions):
+        directory.mkdir(mode=0o700)
+    DiagnosticJournal(state_dir).initialize()
+    journal = DiagnosticJournal(state_dir)
+    before_journal = journal.path.read_bytes()
+    config = {"enabled": defect != "disabled", "release_sha": old, "audience": AUDIENCE,
+              "issuer_public": issuer.public_key().export_key(format="raw").hex(),
+              "responder_seed": responder.seed.hex()}
+    config_path = config_dir / "config.json"
+    config_path.write_text(json.dumps(config))
+    config_path.chmod(0o600)
+    before_config = config_path.read_bytes()
+    blobs = {}
+    for name in (*runtime.PINNED, "terminal/runtime/paper_http_server.py"):
+        file = root / name
+        file.parent.mkdir(parents=True, exist_ok=True)
+        data = name.encode("ascii")
+        file.write_bytes(data)
+        file.chmod(0o644)
+        blobs[name] = git_blob_hash(data)
+    for name in runtime.NAMES:
+        unit = unit_dir / name
+        unit.write_bytes((root / "deploy/systemd" / name).read_bytes())
+        unit.chmod(0o644)
+    target_manifest = {"build_sha": target, "blobs": blobs}
+    previous = {"build_sha": old, "blobs": dict(blobs)}
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(target_manifest))
+    manifest_path.chmod(0o600)
+    transaction = transactions / target
+    transaction.mkdir(mode=0o700)
+    (transactions / ".release.lock").touch(mode=0o600)
+    if defect == "wrong_predecessor":
+        previous["build_sha"] = "e" * 40
+    if defect == "changed_unit":
+        previous["blobs"]["deploy/systemd/" + runtime.NAMES[0]] = "f" * 40
+    for name, data in (("old.json", previous), ("target.json", target_manifest)):
+        file = transaction / name
+        file.write_text(json.dumps(data))
+        file.chmod(0o600)
+    intent = transactions / (".stop-invoked-" + target)
+    intent.write_bytes(b"STOP_INVOKED; not install authorization\n")
+    intent.chmod(0o600)
+    if defect != "missing_receipt":
+        receipt = transactions / (".stop-confirmed-" + target)
+        receipt.write_bytes(f"CANONICAL_ALL_STOP_CONFIRMED:{old}:{target}\n".encode("ascii"))
+        receipt.chmod(0o600)
+    if defect == "wrong_installed_bytes":
+        (root / "terminal/runtime/paper_http_server.py").write_bytes(b"changed")
+    if defect == "unprotected_pin":
+        (root / runtime.PINNED[0]).chmod(0o664)
+    if defect == "missing_journal":
+        journal.path.unlink()
+    kw = dict(root=root, manifest_path=manifest_path, transactions=transactions,
+              config_dir=config_dir, state_dir=state_dir, unit_dir=unit_dir, uid=os.geteuid())
+    if defect is None:
+        assert runtime.carry_forward_pin(**kw) == "ADVANCED"
+        assert json.loads(config_path.read_bytes()) == {**config, "release_sha": target}
+        assert config_path.stat().st_mode & 0o777 == 0o600
+        assert runtime.carry_forward_pin(**kw) == "UNCHANGED"
+    elif defect == "disabled":
+        assert runtime.carry_forward_pin(**kw) == "SKIPPED_DISABLED"
+        assert config_path.read_bytes() == before_config
+    else:
+        with pytest.raises((ValueError, OSError)):
+            runtime.carry_forward_pin(**kw)
+        assert config_path.read_bytes() == before_config
+    if defect == "missing_journal":
+        assert not journal.path.exists()
+    else:
+        assert journal.path.read_bytes() == before_journal
