@@ -894,16 +894,22 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
                 continue
             until = int(breakout["open_time_ms"])
             since = int(source.confirmed_at_ms)
-            if not rows or int(rows[0]["open_time_ms"]) > since:
-                continue  # missing source-to-breakout history: fail closed
-            first_touch = next((
-                candle for candle in rows
-                if since <= int(candle["open_time_ms"]) < until
-                and ((float(candle["high"]) >= source.price_at(int(candle["open_time_ms"])))
-                     if source.side == "upper"
-                     else (float(candle["low"]) <= source.price_at(int(candle["open_time_ms"]))))
-            ), None)
-            if first_touch is not None:
+            # A single observed touch is not sufficient evidence when the
+            # retained source→breakout history has a missing candle.
+            by_open = {int(c["open_time_ms"]): c for c in rows}
+            cursor = since
+            first_touch = None
+            while cursor < until:
+                candle = by_open.get(cursor)
+                if candle is None or int(candle["close_time_ms"]) != cursor + step:
+                    break
+                if (first_touch is None
+                        and ((float(candle["high"]) >= source.price_at(cursor))
+                             if source.side == "upper"
+                             else (float(candle["low"]) <= source.price_at(cursor)))):
+                    first_touch = candle
+                cursor += step
+            if cursor == until and first_touch is not None:
                 retired.append((level_id, source, {
                     "pivot_at_ms": int(first_touch["open_time_ms"]) - step,
                     "confirmed_at_ms": since,
@@ -1026,6 +1032,43 @@ def _standalone_source_authorized(symbol: str, state: Mapping[str, Any], entry: 
         return False
 
 
+def _standalone_multisource_breakout_unresolved(
+    state: Mapping[str, Any], terms: Mapping[str, Any],
+) -> bool:
+    """Fail closed for two tradable MIRROR rays sharing an ungrouped R0 event.
+
+    Scanner/Telegram keep both independent level identities and candidates.
+    Downstream Robot R0 attribution is currently keyed by each level's own
+    campaign ID, so do not prepare *either* standalone trade before an
+    independently approved shared risk-campaign identity exists. The guard
+    also prevents handing a second level after a previously sent entry
+    changed lifecycle or after a process restart.
+    """
+    level_id = terms.get("level_id")
+    breakout_open = terms.get("level_breakout_close_ms")
+    direction = terms.get("level_breakout_direction")
+    if type(breakout_open) is not int or direction not in ("UP", "DOWN"):
+        return True
+    for other_id, record in (state.get("records") or {}).items():
+        if other_id == level_id or not isinstance(record, Mapping):
+            continue
+        other_breakout = (record.get("naked_retest") or {}).get("breakout")
+        if (isinstance(other_breakout, Mapping)
+                and other_breakout.get("close_time_ms") == breakout_open
+                and other_breakout.get("direction") == direction
+                and record.get("candidate") is True):
+            return True
+    for other in state.get("standalone_entries") or ():
+        prior_terms = other.get("terms") if isinstance(other, Mapping) else None
+        if (isinstance(prior_terms, Mapping)
+                and prior_terms.get("level_id") != level_id
+                and prior_terms.get("level_breakout_close_ms") == breakout_open
+                and prior_terms.get("level_breakout_direction") == direction
+                and other.get("handoff") in ("SENT", "HANDED", "FAILED")):
+            return True
+    return False
+
+
 def _hand_off_standalone_entries(
     symbol: str, state: dict[str, Any], root=None, *,
     now_ms: int | None = None, reversal_by_tf: Mapping[str, Any] | None = None,
@@ -1045,6 +1088,16 @@ def _hand_off_standalone_entries(
         if not _standalone_source_authorized(symbol, state, entry):
             entry["handoff"] = "OFF"
             save_state(state, root)
+            continue
+        if _standalone_multisource_breakout_unresolved(state, entry["terms"]):
+            entry["handoff"] = "OFF"
+            entry["block_reason"] = "mirror_multi_source_shared_r0_unproven"
+            save_state(state, root)
+            append_event({
+                "event": "mirror_entry_handoff_blocked",
+                "symbol": symbol, "entry_id": entry["entry_id"],
+                "reason": entry["block_reason"],
+            }, root)
             continue
         # The auxiliary must have been frozen from THIS MIRROR confirmation,
         # not acquired from a newer candle during a retry or restart.
