@@ -1455,6 +1455,19 @@ def poll_updates_once(offset):
             _save_offset(offset)
 
         callback_query = update.get("callback_query")
+        if callback_query and str(callback_query.get("data") or "").startswith("rel:"):
+            # The gateway authenticates actual owner callbacks independently.
+            # This unprivileged worker only relays the signed receipt.
+            try:
+                from tools.telegram_release_relay import relay
+                is_owner = _is_owner((callback_query.get("from") or {}).get("id"))
+                chat = (callback_query.get("message") or {}).get("chat") or {}
+                relayed = is_owner and chat.get("type") == "private" and str(chat.get("id")) == _owner_id() and relay(update)
+                note = "Решение передано монолиту" if relayed else "Новое подтверждение не принято"
+            except Exception:
+                note = "Подтверждение не передано"
+            _answer_callback(callback_query.get("id"), note)
+            continue
         if callback_query:
             # Private metadata for a non-sensitive PAPER close audit trail.
             # The immutable callback id is used only for backend idempotence;
