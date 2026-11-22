@@ -341,7 +341,7 @@ export function ChartPanel({
   const submitToken = useRef<{ content: string; key: string } | null>(null);
   const saveCorrection = async () => {
     if (newSignalMode) return;
-    if (!editorMode || !signalIdentity || !snapshotRevision || !barsSha256 || !onSaveGeometryReview || reviewPending) return;
+    if (!editorMode || !signalIdentity || !snapshotRevision || !barsSha256 || !onSaveGeometryReview || reviewPending || extensionPending) return;
     try {
       if (!correctPattern.trim()) throw new Error("Выберите правильный паттерн");
       const patternChanged = correctPattern !== (originalPattern ?? "");
@@ -1193,7 +1193,7 @@ export function ChartPanel({
               value={reviewNote}
               onChange={(event) => { setReviewNote(event.target.value); markReviewEdited(); }}
             />
-            <button type="button" disabled={reviewPending || !snapshotRevision || !barsSha256 || !onSaveGeometryReview}
+            <button type="button" disabled={extensionPending || reviewPending || !snapshotRevision || !barsSha256 || !onSaveGeometryReview}
               title={reviewStatus.startsWith("Не удалось сохранить:") ? reviewStatus : undefined}
               onClick={() => void saveCorrection()}>
               {reviewPending ? "Сохранение…" : reviewStatus.startsWith("Не удалось сохранить:") ? "Не удалось сохранить" : "Передать исправление"}
@@ -1211,7 +1211,7 @@ export function ChartPanel({
               <div className="editor-bottom-actions">
                 <button type="button" disabled={extensionPending || reviewPending || proposalPending || !onExtendEditorHistory}
                   onClick={() => {
-                    if (!onExtendEditorHistory) return;
+                    if (!onExtendEditorHistory || extensionPending || reviewPending || proposalPending) return;
                     setExtensionPending(true);
                     setExtensionStatus("Загружаются следующие закрытые свечи…");
                     void onExtendEditorHistory()
