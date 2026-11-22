@@ -103,3 +103,26 @@ def test_independent_main_missing_does_not_block_paper_unit_preparation():
     result = prepare_units(run=runner(calls, states=states))
     assert result.startswith("READY:")
     assert not any(UNITS[-1] in call for call in calls)
+
+
+def test_diagnostic_continuation_is_bounded_and_optional(monkeypatch, capsys):
+    import subprocess
+    from tools import vps_systemd_unit_prepare as module
+    calls = []
+    def timed_out(argv, **kwargs):
+        calls.append((argv, kwargs))
+        raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+    assert module._continue_diagnostic_pin(run=timed_out, configured=False) == "SKIPPED_UNCONFIGURED"
+    assert calls == []
+    assert module._continue_diagnostic_pin(run=timed_out, configured=True) == "BLOCKED"
+    assert calls[0][0][-3:] == ["-m", "tools.github_diagnostic_runtime", "--carry-forward"]
+    assert calls[0][1]["timeout"] == 12
+    monkeypatch.setattr(module, "prepare_units", lambda: "READY: reviewed units")
+    monkeypatch.setattr(module, "_continue_diagnostic_pin", lambda: "BLOCKED")
+    assert module.main() == 0
+    assert "DIAGNOSTIC_PIN_CONTINUITY=BLOCKED" in capsys.readouterr().out
+    monkeypatch.setattr(module, "prepare_units", lambda: "BLOCKED: uncertain units")
+    def forbidden():
+        raise AssertionError("must not continue")
+    monkeypatch.setattr(module, "_continue_diagnostic_pin", forbidden)
+    assert module.main() == 2
