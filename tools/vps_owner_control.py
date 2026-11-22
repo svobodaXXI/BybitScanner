@@ -170,7 +170,8 @@ def _verified_take_closed_stage(sha: str) -> Path:
 
 
 def submit(action: str, sha: str, request: str, origin: str,
-           *, run=subprocess.run, uid: int | None = None) -> int:
+           *, run=subprocess.run, uid: int | None = None,
+           expected_installed: str = "") -> int:
     if action not in ACTIONS:
         raise ValueError("invalid_action")
     if sha == "installed" and action in ("start", "stop", "github-status-enable", "github-diagnostic-enable"):
@@ -179,6 +180,12 @@ def submit(action: str, sha: str, request: str, origin: str,
         sha = verify_release(Path(REPO))
     if not isinstance(sha, str) or SHA.fullmatch(sha) is None:
         raise ValueError("invalid_exact_sha")
+    if expected_installed and (action != "update" or origin != "telegram-owner"
+                               or not SHA.fullmatch(expected_installed)
+                               or expected_installed == sha):
+        raise ValueError("invalid_telegram_update_predecessor")
+    if origin == "telegram-owner" and not expected_installed:
+        raise ValueError("telegram_update_predecessor_required")
     if ORIGIN.fullmatch(origin) is None:
         raise ValueError("invalid_origin")
     unit = unit_name(request)
@@ -224,6 +231,8 @@ def submit(action: str, sha: str, request: str, origin: str,
         "--description=" + description,
         PYTHON, "-m", "tools.paper_maintenance", sha, "--action", action,
     ]
+    if expected_installed:
+        cmd.extend(["--expected-installed-sha", expected_installed])
     result = run(cmd, capture_output=True, text=True, timeout=20, check=False)
     print("REQUEST_ID=" + request)
     print("UNIT=" + unit)
