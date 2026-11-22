@@ -1449,10 +1449,19 @@ def poll_updates_once(offset):
     _POLLING_READY.set()
 
     for update in result.get("result", []):
+        # The ordinary worker is only an untrusted courier. It cannot sign
+        # approval grants or invoke the owner monolith.
+        from tools.telegram_release_inbox import relay
+        release_relay = relay(update)
         update_id = update.get("update_id")
         if update_id is not None:
             offset = update_id + 1
             _save_offset(offset)
+        if release_relay is not None:
+            callback_id = (update.get("callback_query") or {}).get("id")
+            _answer_callback(callback_id, "Передано на проверку" if release_relay
+                             else "Подтверждение не доказано")
+            continue
 
         callback_query = update.get("callback_query")
         if callback_query:
