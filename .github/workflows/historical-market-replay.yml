@@ -82,6 +82,7 @@ jobs:
           cp ../../research/local_replay_viewer/protocol_launcher.py ../../research/local_replay_viewer/launch_bridge_agent.py "$RUNNER_TEMP/machine-time/"
           mkdir -p "$RUNNER_TEMP/machine-time/research/local_replay_viewer"
           cp ../../research/local_replay_viewer/public_m5_cache.py "$RUNNER_TEMP/machine-time/research/local_replay_viewer/public_m5_cache.py"
+          cp ../../research/local_replay_viewer/launch_environment.py "$RUNNER_TEMP/machine-time/research/local_replay_viewer/launch_environment.py"
           cp ../../research/local_replay_viewer/paper_episode_local_store.py "$RUNNER_TEMP/machine-time/research/local_replay_viewer/paper_episode_local_store.py"
           cp ../../research/local_replay_viewer/START_LOCAL.cmd "$RUNNER_TEMP/machine-time/START_LOCAL.cmd"
           cp ../../research/local_replay_viewer/README.txt "$RUNNER_TEMP/machine-time/README.txt"
