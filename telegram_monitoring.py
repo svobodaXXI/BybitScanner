@@ -852,12 +852,24 @@ def _format_signal_time(ms) -> str:
 
 
 def _repost_keyboard(symbol: str, timeframe: str, signal_id: str | None = None) -> dict:
-    """Restore normal navigation without reactivating Robot admission."""
+    """Repost the exact source, without inventing an Editor route for a PNG-only archive."""
+    # _repost_editor_source_id resolves lineage but can intentionally fall back
+    # to an image-only candidate/archive ID. A link must carry validated frozen
+    # geometry of this specific symbol/timeframe, never just a ticker.
+    frozen = (signal_archive.load_frozen_signal_geometry(signal_id)
+              if isinstance(signal_id, str) and signal_id else None)
+    exact_source = bool(
+        isinstance(frozen, Mapping)
+        and frozen.get("signal_id") == signal_id
+        and frozen.get("symbol") == symbol
+        and str(frozen.get("timeframe")) == str(timeframe)
+    )
     try:
         rows = build_tradingview_keyboard(
             symbol, timeframe, include_review_actions=True,
             robot_candidate_id=None, robot_status_button=False,
-            signal_id=signal_id,
+            signal_id=signal_id if exact_source else None,
+            editor_available=exact_source,
         )["inline_keyboard"]
     except Exception as exc:
         print("[SIGNAL REPOST NAV ERROR]", symbol, exc)
@@ -874,8 +886,8 @@ def _repost_editor_source_id(original: Mapping) -> str | None:
     legacy frozen source with identical image/text/pattern and near send time,
     may point to the original Editor history. Pre-lineage candidate archives
     with their own validated frozen geometry retain their own identity.
-    If neither exists, keep the archived ID so the
-    Editor reports missing evidence instead of silently opening live candles.
+    If neither exists, retain the archive identity for provenance; the
+    keyboard independently hides Editor unless the exact geometry validates.
     """
     own_id = str(original.get("candidate_id") or "").strip() or None
     linked = original.get("source_formation_ids")
