@@ -550,8 +550,8 @@ def _advance(level: MirrorLevel, record: dict[str, Any], rows, *, atr_at, gaps, 
     for row in rows:
         if cursor is not None and row["close_time_ms"] <= cursor:
             continue
-        # A subsequently CONFIRMED higher high / lower low invalidates an
-        # unbroken horizontal mirror ray, even when only its wick crosses.
+        # A subsequently CONFIRMED swing replaces a horizontal level only
+        # when the old level was already wick-touched after confirmation.
         # Wait until the right-hand pivot candles CLOSE: never look ahead.
         # A breakout already proven before confirmation remains historical;
         # it must not be rewritten using future pivot evidence.
@@ -562,9 +562,21 @@ def _advance(level: MirrorLevel, record: dict[str, Any], rows, *, atr_at, gaps, 
                     continue
                 new_price = float(pivot["price"])
                 old_price = level.price_at(int(pivot["pivot_at_ms"]))
-                superseded = ((level.side == "upper" and new_price > old_price)
-                              or (level.side == "lower" and new_price < old_price))
-                if superseded:
+                pivot_ms = int(pivot["pivot_at_ms"])
+                # A later confirmed swing can replace an already breached
+                # historical ray even when it is a HIGHER low / LOWER high.
+                # Prove the old ray was touched using only candles that had
+                # closed by this pivot's confirmation; never inspect future
+                # OHLC or use pre-confirmation formation touches.
+                prior_breach = any(
+                    int(c["open_time_ms"]) >= level.confirmed_at_ms
+                    and int(c["open_time_ms"]) <= pivot_ms
+                    and int(c["close_time_ms"]) <= int(row["close_time_ms"])
+                    and ((float(c["high"]) >= old_price) if level.side == "upper"
+                         else (float(c["low"]) <= old_price))
+                    for c in rows
+                )
+                if prior_breach:
                     record.update(lifecycle=LIFECYCLE_REJECTED,
                                   rejection="superseded_by_confirmed_extremum",
                                   superseding_extremum={"pivot_at_ms": int(pivot["pivot_at_ms"]),
