@@ -6,9 +6,12 @@ from types import SimpleNamespace
 import unittest
 
 from robot_entry_flow_evidence import CandidateBoundFlowEvidence, FlowTransition
+from terminal.market_data.sustained_absorption import AbsorptionObservation, RecoveryWindow
 from terminal.market_data.wedge_arc_candle_research import (
     observe_closed_wedge_arc_candles,
     observe_wedge_arc_with_certified_tape_receipt,
+    WedgeBoundBookObservation, WedgeBoundInitiative,
+    observe_wedge_reversal_with_fixed_book,
 )
 
 
@@ -23,6 +26,7 @@ class FrozenWedgeArcCandlesTests(unittest.TestCase):
         )
         return SimpleNamespace(
             candidate_id="wedge-arc-1", state_revision=3, status="APPROVED",
+            snapshot_sha256="b" * 64,
             symbol=SimpleNamespace(value="BTCUSDT"),
             signal_snapshot={
                 "pattern": pattern,
@@ -270,6 +274,106 @@ class CertifiedTapeArcResearchTests(FrozenWedgeArcCandlesTests):
         )
         self.assertFalse(preview.source_complete)
         self.assertIsNone(self.joined(receipt=preview))
+
+
+
+class FrozenWedgeBookResearchTests(CertifiedTapeArcResearchTests):
+    @classmethod
+    def bound(cls, direction="LONG", *, depth="50", adverse=False,
+              second="30"):
+        band = AbsorptionObservation(
+            symbol="BTCUSDT", direction=direction, generation=7,
+            decision_ms=360_000,
+            frozen_levels=tuple(Decimal(str(p)) for p in (98, 99, 100, 101, 102)),
+            initial_depth_notional=Decimal("100"),
+            minimum_depth_notional=Decimal(depth),
+            final_depth_notional=Decimal("90"),
+            adverse_quote_break=adverse,
+            windows=(
+                RecoveryWindow(340_000, 350_000,
+                               Decimal("100"), Decimal("75"), Decimal("30")),
+                RecoveryWindow(350_000, 360_000,
+                               Decimal("100"), Decimal("75"), Decimal(second)),
+            ),
+        )
+        book = WedgeBoundBookObservation(
+            "wedge-arc-1", 3, "b"*64, "BTCUSDT", 7, 360_005, band,
+        )
+        transition = replace(cls.flow(direction), known_at_ms=360_010,
+                             buy_wave_accelerating=direction == "LONG",
+                             sell_wave_accelerating=direction == "SHORT")
+        flip = WedgeBoundInitiative(
+            "wedge-arc-1", 3, "b"*64, "BTCUSDT", 7, 360_015, transition,
+        )
+        return book, flip
+
+    def test_both_wedge_directions_are_nonexecuting_research_only(self):
+        for pattern, direction in (("Falling Wedge", "LONG"),
+                                   ("Rising Wedge", "SHORT")):
+            with self.subTest(pattern=pattern):
+                record = self.host(pattern)
+                arc = self.joined(host=record)
+                book, flip = self.bound(direction)
+                result = observe_wedge_reversal_with_fixed_book(
+                    record, arc, book, flip, decision_ms=360_020,
+                )
+                self.assertEqual(result.status, "WEDGE_REVERSAL_RESEARCH_CANDIDATE")
+                self.assertTrue(result.impact_fading)
+                self.assertTrue(result.repeated_book_recovery)
+                self.assertTrue(result.initiative_flip)
+                self.assertFalse(result.source_complete)
+                self.assertFalse(result.trading_authorized)
+
+    def test_break_zero_depth_churn_and_weak_flip_do_not_qualify(self):
+        record = self.host()
+        arc = self.joined(host=record)
+        for kw in (dict(adverse=True), dict(depth="0"), dict(second="0")):
+            with self.subTest(kw=kw):
+                book, flip = self.bound(**kw)
+                result = observe_wedge_reversal_with_fixed_book(
+                    record, arc, book, flip, decision_ms=360_020)
+                self.assertEqual(result.status, "WAIT_BOOK_PERSISTENCE")
+        book, flip = self.bound()
+        flip = replace(flip, transition=replace(
+            flip.transition, buy_wave_accelerating=False))
+        result = observe_wedge_reversal_with_fixed_book(
+            record, arc, book, flip, decision_ms=360_020)
+        self.assertEqual(result.status, "WAIT_REVERSAL_INITIATIVE")
+
+    def test_unknown_or_mismatched_binding_fails_closed(self):
+        record = self.host()
+        arc = self.joined(host=record)
+        book, flip = self.bound()
+        def check(b=book, f=flip, a=arc, host=record):
+            return observe_wedge_reversal_with_fixed_book(
+                host, a, b, f, decision_ms=360_020)
+        for bad in (
+            replace(book, candidate_id="foreign"),
+            replace(book, state_revision=4),
+            replace(book, snapshot_sha256="c"*64),
+            replace(book, symbol="ETHUSDT"),
+            replace(book, generation=8),
+            replace(book, available_at_ms=360_030),
+            replace(book, observation=replace(book.observation, direction="SHORT")),
+            replace(book, observation=replace(book.observation, generation=8)),
+            replace(book, observation=replace(book.observation, decision_ms=360_020)),
+            replace(book, observation=replace(book.observation,
+                windows=(book.observation.windows[0],))),
+        ):
+            with self.subTest(book=bad):
+                self.assertIsNone(check(b=bad))
+        for bad in (replace(flip, candidate_id="wrong"),
+                    replace(flip, snapshot_sha256="c"*64),
+                    replace(flip, generation=8),
+                    replace(flip, available_at_ms=360_050),
+                    replace(flip, transition=replace(flip.transition,
+                                                    known_at_ms=360_030))):
+            with self.subTest(flip=bad):
+                self.assertIsNone(check(f=bad))
+        self.assertIsNone(check(a=replace(arc,
+                                        tape_receipt_metadata_matched=False)))
+        self.assertIsNone(check(host=replace(record, status="OPEN")))
+        self.assertIsNone(check(host=replace(record, snapshot_sha256="d"*64)))
 
 
 if __name__ == "__main__":
