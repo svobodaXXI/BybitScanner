@@ -805,14 +805,40 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
     # they are less extreme than that first successor. EVAA/BLESS owner edits
     # selected later higher lows after earlier deeper lows. Replaying an old
     # obsolete ray must never keep the search stuck at its deepest excursion.
-    retired = [
-        (level_id, registry.levels[level_id], rec["superseding_extremum"])
-        for level_id, rec in records.items()
-        if level_id in registry.levels
-        and registry.levels[level_id].is_horizontal
-        and rec.get("rejection") == "superseded_by_confirmed_extremum"
-        and isinstance(rec.get("superseding_extremum"), dict)
-    ]
+    retired = []
+    for level_id, rec in records.items():
+        source = registry.levels.get(level_id)
+        if source is None or not source.is_horizontal:
+            continue
+        if (rec.get("rejection") == "superseded_by_confirmed_extremum"
+                and isinstance(rec.get("superseding_extremum"), dict)):
+            retired.append((level_id, source, rec["superseding_extremum"]))
+        elif rec.get("rejection") == "prior_wick_breached_level":
+            # A rejected full-body breakout can have finished its invalid
+            # retest campaign BEFORE the offending wick becomes a confirmed
+            # pivot. The old state will never pass through WAITING again.
+            # Recover its FIRST proven, closed pre-breakout touch only from
+            # this available contiguous OHLC history, then allow later
+            # independently confirmed pivots without reviving the old ray.
+            breakout = (rec.get("naked_retest") or {}).get("breakout")
+            if not isinstance(breakout, dict):
+                continue
+            until = int(breakout["open_time_ms"])
+            since = int(source.confirmed_at_ms)
+            if not rows or int(rows[0]["open_time_ms"]) > since:
+                continue  # missing source-to-breakout history: fail closed
+            first_touch = next((
+                candle for candle in rows
+                if since <= int(candle["open_time_ms"]) < until
+                and ((float(candle["high"]) >= source.price_at(int(candle["open_time_ms"])))
+                     if source.side == "upper"
+                     else (float(candle["low"]) <= source.price_at(int(candle["open_time_ms"]))))
+            ), None)
+            if first_touch is not None:
+                retired.append((level_id, source, {
+                    "pivot_at_ms": int(first_touch["open_time_ms"]) - step,
+                    "confirmed_at_ms": since,
+                }))
     for side, pivots in (("upper", highs), ("lower", lows)):
         retired_same_side = [(source_id, pivot)
                              for source_id, source, pivot in retired if source.side == side]
