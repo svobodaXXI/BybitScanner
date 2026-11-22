@@ -120,7 +120,8 @@ def read_diagnostic_outcome(request: str, action: str, target: str, *, run=subpr
         return unknown
 
 
-def status(request: str, *, run=subprocess.run, verify_sha: str = "") -> int:
+def status(request: str, *, run=subprocess.run, verify_sha: str = "",
+           verify_start_sha: str = "") -> int:
     unit = unit_name(request)
     fields = _read_owner_fields(request, run=run)
     if not fields:
@@ -147,6 +148,15 @@ def status(request: str, *, run=subprocess.run, verify_sha: str = "") -> int:
             print("POSTCHECK=BLOCKED_REQUEST_TARGET_MISMATCH")
             return 2
         return verify_update(verify_sha)
+    if state == "FINISHED_OK" and verify_start_sha:
+        match = re.fullmatch(
+            r"BybitScanner (start|update-and-start) ([0-9a-f]{40}) origin=([A-Za-z0-9_.-]{1,64})",
+            fields.get("Description", ""),
+        )
+        if not match or verify_start_sha not in ("installed", match.group(2)):
+            print("POSTCHECK=BLOCKED_REQUEST_TARGET_MISMATCH")
+            return 2
+        return verify_start(match.group(2))
     return 0 if state == "FINISHED_OK" else 3 if state == "RUNNING" else 2
 
 
@@ -322,6 +332,40 @@ def verify_update(target: str) -> int:
         return 2
 
 
+def verify_start(target: str) -> int:
+    """Current read-only readiness, separate from historical START completion.
+
+    Use the same canonical full-PAPER gates as maintenance. A prior successful
+    unit is not proof that the release and trading contour are still ready.
+    Never invoke the start path, reconciliation or service mutations.
+    """
+    if SHA.fullmatch(target) is None:
+        print("POSTCHECK=BLOCKED_INVALID_SHA")
+        return 2
+    try:
+        from tools.vps_release_identity import verify_release
+        from tools.paper_maintenance import _paper_full_readiness
+
+        root = Path(REPO)
+        if verify_release(root) != target:
+            print("POSTCHECK=BLOCKED_SHA_MISMATCH")
+            return 2
+        proof = _paper_full_readiness(
+            root=root, env_file=Path("/etc/bybitscanner/paper.env"),
+            target=target, require_gitless_telegram=True,
+        )
+        print("INSTALLED_SHA=" + target)
+        if proof.startswith("READY:"):
+            print("POSTCHECK=VERIFIED_PAPER_READY")
+            return 0
+        # Do not expose exception text or raw journal data.
+        print("POSTCHECK=BLOCKED_PAPER_READINESS")
+        return 2
+    except Exception as exc:
+        print("POSTCHECK=BLOCKED_UNPROVEN:" + type(exc).__name__)
+        return 2
+
+
 def list_requests(*, run=subprocess.run) -> int:
     result = run(
         ["systemctl", "list-units", "--all", "--plain", "--no-legend",
@@ -347,7 +391,9 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--origin", default="vps-console")
     q = sub.add_parser("status")
     q.add_argument("request_id")
-    q.add_argument("--verify-update", dest="verify_sha", default="")
+    proof = q.add_mutually_exclusive_group()
+    proof.add_argument("--verify-update", dest="verify_sha", default="")
+    proof.add_argument("--verify-start", dest="verify_start_sha", default="")
     sub.add_parser("list")
     v = sub.add_parser("verify-update")
     v.add_argument("sha")
@@ -357,7 +403,8 @@ def main(argv: list[str] | None = None) -> int:
             return submit(args.action, args.sha, args.request_id or uuid.uuid4().hex,
                           args.origin)
         if args.command == "status":
-            return status(args.request_id, verify_sha=args.verify_sha)
+            return status(args.request_id, verify_sha=args.verify_sha,
+                          verify_start_sha=args.verify_start_sha)
         if args.command == "verify-update":
             return verify_update(args.sha)
         return list_requests()
