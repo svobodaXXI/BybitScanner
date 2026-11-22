@@ -8,6 +8,7 @@ No arbitrary URL, branch archive, Git command, token or unverified overwrite.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 import hashlib
 import json
 from pathlib import Path
@@ -83,7 +84,29 @@ def find_asset(kind: str, *, opener=urlopen) -> ReleaseAsset:
                   re.fullmatch(r"desktop-[0-9a-f]{40}", r["tag_name"])]
     if not candidates:
         raise UpdateBlocked("desktop_release_not_published")
-    release = candidates[0]
+    # The API list is not guaranteed to be in publication order. A release
+    # for a newer commit may be published after an older entry in the list.
+    # Never silently fall back on missing or ambiguous publication evidence.
+    approved = [r for r in candidates if r.get("draft") is False
+                and r.get("prerelease") is False]
+    if not approved:
+        raise UpdateBlocked("release_tag_untrusted")
+    dated = []
+    for candidate in approved:
+        value = candidate.get("published_at")
+        if not isinstance(value, str) or not re.fullmatch(
+                r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", value):
+            raise UpdateBlocked("desktop_release_publication_unproven")
+        try:
+            stamp = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
+        except ValueError as exc:
+            raise UpdateBlocked("desktop_release_publication_unproven") from exc
+        dated.append((stamp, candidate))
+    newest = max(stamp for stamp, _ in dated)
+    latest = [candidate for stamp, candidate in dated if stamp == newest]
+    if len(latest) != 1:
+        raise UpdateBlocked("desktop_release_publication_ambiguous")
+    release = latest[0]
     tag = release["tag_name"]
     sha = tag.removeprefix("desktop-")
     if release.get("draft") is not False or release.get("prerelease") is not False:
