@@ -74,7 +74,9 @@ def read_diagnostic_outcome(request: str, action: str, target: str, *, run=subpr
     """Strict, public-safe read of one existing owner unit. Never submit or retry."""
     from contextlib import redirect_stdout
     from io import StringIO
-    from tools.github_diagnostic_protocol import OWNER_ACTIONS, OWNER_RESULTS, EDITOR_ACTIONS
+    from tools.github_diagnostic_protocol import (
+        OWNER_ACTIONS, OWNER_RESULTS, EDITOR_ACTIONS, START_ACTIONS,
+    )
 
     unit_name(request)
     if action not in OWNER_ACTIONS or not isinstance(target, str) or SHA.fullmatch(target) is None:
@@ -111,6 +113,16 @@ def read_diagnostic_outcome(request: str, action: str, target: str, *, run=subpr
                         rc = verify_update(target)
                     if rc == 0 and "POSTCHECK=VERIFIED_EDITOR_ONLY" in proof.getvalue().splitlines():
                         postcheck = "VERIFIED_EDITOR_ONLY"
+                except Exception:
+                    pass
+            elif action in START_ACTIONS:
+                postcheck = "BLOCKED"
+                try:
+                    with redirect_stdout(StringIO()) as proof:
+                        rc = verify_start(target)
+                    if (rc == 0 and
+                            "POSTCHECK=VERIFIED_PAPER_READY" in proof.getvalue().splitlines()):
+                        postcheck = "VERIFIED_PAPER_READY"
                 except Exception:
                     pass
             else:

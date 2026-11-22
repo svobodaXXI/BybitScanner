@@ -455,3 +455,48 @@ def test_diagnostic_owner_outcome_exact_identity_and_canonical_postcheck(monkeyp
     monkeypatch.setattr(control, "verify_update", lambda _: 0)
     assert read()["postcheck"] == "BLOCKED"
     assert all(cmd[0] == "systemctl" and cmd[1] == "show" for cmd in calls)
+
+
+def test_signed_start_owner_outcome_checks_current_readiness_without_mutations(monkeypatch):
+    for action in ("start", "update-and-start"):
+        fields = dict(active="active", sub="exited", result="success", code="0",
+                      description=f"BybitScanner {action} {SHA} origin=private-origin")
+        calls, proofs = [], []
+
+        def run(cmd, **kwargs):
+            calls.append(cmd)
+            assert cmd[:2] == ["systemctl", "show"]
+            assert cmd[-1] == control.unit_name(R)
+            return completed(cmd, out=(
+                f"LoadState=loaded\nActiveState={fields['active']}\n"
+                f"SubState={fields['sub']}\nResult={fields['result']}\n"
+                f"ExecMainStatus={fields['code']}\nDescription={fields['description']}\n"))
+
+        def proof(target):
+            proofs.append(target)
+            print("POSTCHECK=VERIFIED_PAPER_READY")
+            print("PRIVATE_RUNTIME_DETAIL")
+            return 0
+
+        monkeypatch.setattr(control, "verify_start", proof)
+        monkeypatch.setattr(control, "verify_update",
+                            lambda *_: (_ for _ in ()).throw(AssertionError("wrong postcheck")))
+        read = lambda: control.read_diagnostic_outcome(R, action, SHA, run=run)
+        assert read() == dict(owner_request_id=R, owner_action=action, target_sha=SHA,
+                              state="FINISHED_OK", result="success", exit_code=0,
+                              postcheck="VERIFIED_PAPER_READY")
+        assert proofs == [SHA]
+        fields["description"] = f"BybitScanner {action} {'c' * 40} origin=private-origin"
+        assert read()["state"] == "UNPROVEN"
+        fields["description"] = f"BybitScanner {action} {SHA} origin=private-origin"
+        fields.update(active="activating", sub="start")
+        assert read()["postcheck"] == "NOT_RUN"
+        fields.update(active="failed", sub="failed", result="exit-code", code="2")
+        assert read()["postcheck"] == "NOT_RUN"
+        assert proofs == [SHA]
+        fields.update(active="active", sub="exited", result="success", code="0")
+        monkeypatch.setattr(control, "verify_start", lambda _: 0)
+        assert read()["postcheck"] == "BLOCKED"
+        monkeypatch.setattr(control, "verify_start", lambda _: 2)
+        assert read()["postcheck"] == "BLOCKED"
+        assert len(calls) == 6
