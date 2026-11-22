@@ -5312,6 +5312,7 @@ def create_configured_paper_runtime(
     robot_tick_interval_s: float = DEFAULT_ROBOT_TICK_INTERVAL_S,
     wedge_be_auto_paper_enabled: bool = False,
     impulse_early_paper_enabled: bool = False,
+    impulse_fade_paper_enabled: bool = False,
 ) -> PaperRuntime:
     return PaperRuntime(
         database_path,
@@ -5346,6 +5347,7 @@ def create_configured_paper_runtime(
         robot_tick_interval_s=robot_tick_interval_s,
         wedge_be_auto_paper_enabled=wedge_be_auto_paper_enabled,
         impulse_early_paper_enabled=impulse_early_paper_enabled,
+        impulse_fade_paper_enabled=impulse_fade_paper_enabled,
     )
 
 
@@ -5482,6 +5484,8 @@ def main() -> None:
             # Actual trading still requires canonical protected PAPER admission/start.
             wedge_be_auto_paper_enabled=True,
             impulse_early_paper_enabled=impulse_early_paper_enabled(),
+            # Dynamic fade belongs to the same explicitly opted-in Wedge release.
+            impulse_fade_paper_enabled=impulse_early_paper_enabled(),
         ))
         initial_market.add_update_listener(
             WorkspaceMarketDataManager._WORKSPACE_LISTENER, runtime.enqueue_book_update,
