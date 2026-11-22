@@ -237,12 +237,26 @@ CONTROL_MODULE = "cd /opt/BybitScanner && /opt/BybitScanner/venv/bin/python -m t
 
 def gui_owner_status(
     stdout: str, returncode: int, request: str, *,
-    verify_sha: str = "",
+    verify_sha: str = "", verify_start_sha: str = "",
 ) -> str:
-    """Bind successful update status to UUID, exact release and PAPER proof."""
+    """Bind successful owner status to UUID, exact release and PAPER proof."""
     lines = stdout.strip().splitlines()
     states = [line for line in lines if line.startswith("STATUS=")]
     if "REQUEST_ID=" + request not in lines or len(states) != 1:
+        return "unproven"
+    if verify_start_sha and states[0] == "STATUS=FINISHED_OK":
+        descriptions = [line for line in lines if line.startswith("DESCRIPTION=")]
+        match = (re.fullmatch(
+            r"DESCRIPTION=BybitScanner (start|update-and-start) ([0-9a-f]{40}) origin=[A-Za-z0-9_.-]{1,64}",
+            descriptions[0],
+        ) if len(descriptions) == 1 else None)
+        if (returncode == 0 and match
+                and verify_start_sha in ("installed", match.group(2))
+                and [line for line in lines if line.startswith("INSTALLED_SHA=")]
+                    == ["INSTALLED_SHA=" + match.group(2)]
+                and [line for line in lines if line.startswith("POSTCHECK=")]
+                    == ["POSTCHECK=VERIFIED_PAPER_READY"]):
+            return "success"
         return "unproven"
     if verify_sha and states[0] == "STATUS=FINISHED_OK":
         if (returncode == 0 and EXACT_SHA.fullmatch(verify_sha)
@@ -267,6 +281,17 @@ def update_status_target(command: list[str]) -> str:
     )
     return match.group(1) if match else ""
 
+
+
+def start_status_target(command: list[str]) -> str:
+    """Only the generated status request can require exact START proof."""
+    if not command:
+        return ""
+    match = re.fullmatch(
+        re.escape(CONTROL_MODULE) + r" status [0-9a-f]{32} --verify-start (installed|[0-9a-f]{40})",
+        command[-1],
+    )
+    return match.group(1) if match else ""
 
 
 # Only the original request ID is polled. This is read-only monitoring, never
@@ -298,6 +323,7 @@ def watch_owner_request(
     sleep = sleep or time.sleep
     state = "submitted" if initially_submitted else "unproven"
     verify_sha = update_status_target(status_command)
+    verify_start_sha = start_status_target(status_command)
     latest = ""
     unknown = 0
     transport_unknown = 0
@@ -316,10 +342,11 @@ def watch_owner_request(
             return state, latest + "\nSTATUS_UNPROVEN; SSH client unavailable; operation not resubmitted"
         else:
             observed = gui_owner_status(
-                reply.stdout, reply.returncode, request, verify_sha=verify_sha)
+                reply.stdout, reply.returncode, request, verify_sha=verify_sha,
+                verify_start_sha=verify_start_sha)
             if observed in ("success", "failed"):
                 return observed, reply.stdout.strip()
-            if (verify_sha and "STATUS=FINISHED_OK" in reply.stdout.splitlines()
+            if ((verify_sha or verify_start_sha) and "STATUS=FINISHED_OK" in reply.stdout.splitlines()
                     and "REQUEST_ID=" + request in reply.stdout.splitlines()):
                 return "unproven", reply.stdout.strip() + "\nPOSTCHECK_UNPROVEN_NO_RESUBMIT"
             transient = transient_ssh_failure(reply)
@@ -448,7 +475,7 @@ def device_origin() -> str:
 
 def control_ssh_command(host: str, user: str, key: str, operation: str,
                         *, sha: str = "", request_id: str = "",
-                        origin: str = "") -> list[str]:
+                        origin: str = "", verify_start_sha: str = "") -> list[str]:
     argv = ssh_command(host, user, "Состояние", key)
     if operation in CONTROL_ACTIONS.values():
         if sha == "installed" and operation in ("start", "stop"):
@@ -469,6 +496,10 @@ def control_ssh_command(host: str, user: str, key: str, operation: str,
             if EXACT_SHA.fullmatch(sha) is None:
                 raise ValueError("Недопустимый SHA проверки обновления")
             args.extend(["--verify-update", sha])
+        if verify_start_sha:
+            if sha or (verify_start_sha != "installed" and EXACT_SHA.fullmatch(verify_start_sha) is None):
+                raise ValueError("Недопустимый SHA проверки запуска")
+            args.extend(["--verify-start", verify_start_sha])
     elif operation == "list":
         args = ["list"]
     elif operation == "preflight":
@@ -630,12 +661,16 @@ def run_cli(options: argparse.Namespace) -> int:
                                   CONTROL_ACTIONS.values() else
                                   recover_last_request_id() if options.operation == "status" else "")
     sha = options.sha or ("installed" if options.operation in ("start", "stop") else "")
+    verify_start_sha = ""
     if options.operation == "status":
         saved_id, saved_action, saved_sha = recover_last_request_context()
         sha = saved_sha if req == saved_id and saved_action == "update" else ""
+        if req == saved_id and saved_action in ("start", "update-and-start"):
+            verify_start_sha = saved_sha
     try:
         argv = control_ssh_command(host, user, key, options.operation,
-                                   sha=sha, request_id=req)
+                                   sha=sha, request_id=req,
+                                   verify_start_sha=verify_start_sha)
     except ValueError as exc:
         print("BLOCKED: " + str(exc))
         return 2
@@ -702,7 +737,7 @@ def run_cli(options: argparse.Namespace) -> int:
         # or an unrelated/partial reply must remain UNPROVEN.
         if "REQUEST_ID=" + req in lines:
             if (gui_owner_status(output, completed.returncode, req,
-                                 verify_sha=sha) == "success"):
+                                 verify_sha=sha, verify_start_sha=verify_start_sha) == "success"):
                 print("OPERATION_FINISHED_OK; request_id=" + req)
                 mark_request_terminal(req)
                 return 0
@@ -730,7 +765,8 @@ def run_cli(options: argparse.Namespace) -> int:
             return 2
         proof_cmd = control_ssh_command(
             host, user, key, "status", request_id=req,
-            sha=sha if options.operation == "update" else "")
+            sha=sha if options.operation == "update" else "",
+            verify_start_sha=sha if options.operation in ("start", "update-and-start") else "")
         state, proof = watch_owner_request(
             proof_cmd, req, initially_submitted=submitted)
         print(proof)
@@ -990,14 +1026,18 @@ class VPSManager(tk.Tk):
         if mode in ("status", "resume") and not request:
             messagebox.showinfo("VPS Manager", "Введите точный ID операции (32 символа)")
             return
+        verify_start_sha = ""
         if mode in ("status", "resume"):
             prior_id, prior_action, prior_sha = recover_last_request_context()
             sha = prior_sha if prior_id == request and prior_action == "update" else ""
+            if prior_id == request and prior_action in ("start", "update-and-start"):
+                verify_start_sha = prior_sha
         try:
             command = control_ssh_command(
                 self.host.get(), self.user.get(), self.key.get(),
                 "status" if mode == "resume" else mode,
-                sha=sha, request_id=request, origin=self.origin)
+                sha=sha, request_id=request, origin=self.origin,
+                verify_start_sha=verify_start_sha)
         except ValueError as exc:
             messagebox.showerror("VPS Manager", str(exc))
             return
@@ -1064,7 +1104,8 @@ class VPSManager(tk.Tk):
                 if mode in ("status", "resume"):
                     state = gui_owner_status(
                         output, result.returncode, request,
-                        verify_sha=update_status_target(command))
+                        verify_sha=update_status_target(command),
+                        verify_start_sha=start_status_target(command))
                     if transient_ssh_failure(result):
                         # Only retry the same read-only UUID status query.
                         state, output = watch_owner_request(
@@ -1111,8 +1152,14 @@ class VPSManager(tk.Tk):
                 r" submit update ([0-9a-f]{40})(?: |$)", command[-1]
             ) if mode == "update" else None
             verify_sha = target.group(1) if target else ""
+            start_target = re.search(
+                r" submit (?:start|update-and-start) (installed|[0-9a-f]{40})(?: |$)",
+                command[-1],
+            ) if mode in ("start", "update-and-start") else None
+            verify_start_sha = start_target.group(1) if start_target else ""
             status_command = [*command[:-1], CONTROL_MODULE + " status " + request
-                              + (" --verify-update " + verify_sha if verify_sha else "")]
+                              + (" --verify-update " + verify_sha if verify_sha else "")
+                              + (" --verify-start " + verify_start_sha if verify_start_sha else "")]
             state = ("submitted" if result.returncode == 0
                      and "REQUEST_ID=" + request in output.splitlines()
                      and any(line.startswith("SUBMISSION=ACCEPTED")
@@ -1126,6 +1173,11 @@ class VPSManager(tk.Tk):
                                      and "POSTCHECK=VERIFIED_EDITOR_ONLY" not in details):
                 state = "unproven"
                 details += "\nPOSTCHECK=UNPROVEN_TARGET_OR_RECEIPT"
+            if mode in ("start", "update-and-start") and (
+                    not verify_start_sha or state == "success"
+                    and "POSTCHECK=VERIFIED_PAPER_READY" not in details):
+                state = "unproven"
+                details += "\nPOSTCHECK=UNPROVEN_START_TARGET_OR_RECEIPT"
             if state in ("success", "failed"):
                 mark_request_terminal(request)
             self.events.put((state, (precheck_receipt + "\n" if precheck_receipt else "")
