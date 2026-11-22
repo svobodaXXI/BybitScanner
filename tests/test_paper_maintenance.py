@@ -5014,3 +5014,96 @@ def test_owner_start_after_stop_handles_actual_unreachable_health(
         assert result == 2
         assert calls == ["stopped-proof"]
         assert "installed_release_not_stopped_and_verified" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("configured,loaded,changed,expected", [
+    (("1", "1"), ("1", "1"), False, None),
+    (("1", "1"), ("1", "0"), False, "preset_not_loaded"),
+    (("0", "0"), ("1", "1"), False, "preset_not_loaded"),
+    (("1", "0"), ("1", "0"), False, None),
+    (("0", "1"), ("0", "1"), False, "preset_invalid"),
+    (("yes", "1"), ("1", "1"), False, "preset_invalid"),
+    (("1", "1"), ("1", "1"), True, "preset_process_unproven"),
+])
+def test_explicit_paper_impulse_preset_matches_exact_running_owner(
+    monkeypatch, configured, loaded, changed, expected,
+):
+    from tools import paper_maintenance as m
+    from tools import flat_paper_recovery_transition as proof
+
+    target = "a" * 40
+    keys = m._IMPULSE_PRESET_KEYS
+    env = dict(zip(keys, configured))
+    process = dict(zip(keys, loaded))
+    process["BYBITSCANNER_BUILD_SHA"] = target
+    pids = iter((101, 102 if changed else 101))
+    monkeypatch.setattr(proof, "_service_pid", lambda: next(pids))
+    monkeypatch.setattr(proof, "_process_start_token", lambda _pid: "123")
+    monkeypatch.setattr(proof, "_has_exact_local_listener", lambda _pid: True)
+    monkeypatch.setattr(m, "_read_impulse_process_env", lambda _pid: process)
+    observed = m._impulse_preset_blocker(env, target)
+    if expected is None:
+        assert observed is None
+    else:
+        assert expected in observed
+
+
+def test_preset_proof_does_not_expose_other_environment_values(monkeypatch):
+    from tools import paper_maintenance as m
+    from pathlib import Path
+
+    key = m._IMPULSE_PRESET_KEYS[0]
+    raw = (key + "=1\0BYBITSCANNER_BUILD_SHA=" + "a" * 40
+           + "\0SECRET_TOKEN=DO_NOT_EXPORT\0").encode("ascii")
+    monkeypatch.setattr(Path, "read_bytes", lambda _path: raw)
+    assert m._read_impulse_process_env(101) == {
+        key: "1", "BYBITSCANNER_BUILD_SHA": "a" * 40,
+    }
+    monkeypatch.setattr(Path, "read_bytes", lambda _path: raw + (key + "=0\0").encode("ascii"))
+    with pytest.raises(ValueError, match="ambiguous_PAPER_process_environment"):
+        m._read_impulse_process_env(101)
+
+
+def test_preset_mismatch_blocks_start_without_stop_restart_or_admission(monkeypatch, tmp_path):
+    from tools import paper_maintenance as m
+    from tools import vps_release_identity as release
+    target = "a" * 40
+    monkeypatch.setattr(release, "verify_release", lambda *_: target)
+    monkeypatch.setattr(m, "_durable_editor_freeze", lambda *_: "d" * 64)
+    monkeypatch.setattr(m, "_editor_runtime_ready", lambda *_: True)
+    monkeypatch.setattr(m, "_environment", lambda *_: dict.fromkeys(m._IMPULSE_PRESET_KEYS, "1"))
+    monkeypatch.setattr(m, "_read_impulse_process_env", lambda *_: {})
+    from tools import flat_paper_recovery_transition as proof
+    monkeypatch.setattr(proof, "_service_pid", lambda: 101)
+    monkeypatch.setattr(proof, "_process_start_token", lambda _pid: "123")
+    monkeypatch.setattr(proof, "_has_exact_local_listener", lambda _pid: True)
+    monkeypatch.setattr(m, "_paper_start_quiescent", lambda *_: pytest.fail("must not start admission"))
+    assert "preset_process_unproven" in m.start_installed_paper_from_editor(
+        target, root=tmp_path, editor_status="READY: exact editor",
+        runner=lambda *_a, **_kw: pytest.fail("must not invoke start"),
+    )
+
+
+def test_active_start_with_saved_preset_mismatch_never_restarts(monkeypatch, tmp_path, capsys):
+    from tools import paper_maintenance as m
+    from tools import vps_release_identity as release
+    target = "a" * 40
+    monkeypatch.setattr(m, "REPO", tmp_path)
+    monkeypatch.setattr(release, "verify_release", lambda *_: target)
+    monkeypatch.setattr(m, "_paper_full_readiness", lambda **_kw: "BLOCKED: not ready")
+    monkeypatch.setattr(m, "_active_exact_paper_blocker", lambda *_a, **_kw:
+                        "BLOCKED: active_exact_PAPER_not_ready; Robot=ROBOT_RUNNING/READY")
+    monkeypatch.setattr(m, "_environment", lambda *_: dict.fromkeys(m._IMPULSE_PRESET_KEYS, "1"))
+    monkeypatch.setattr(m, "_impulse_preset_blocker", lambda *_: "BLOCKED: PAPER_impulse_preset_not_loaded")
+    for name in ("_recover_active_ingress_overflow", "resume_installed_release",
+                 "_stop_exact_installed_paper_once", "_start_active_stopped_paper"):
+        monkeypatch.setattr(m, name, lambda *_a, **_kw: pytest.fail("config drift must not mutate"))
+    assert m.main([target, "--action", "start"]) == 2
+    assert "preset_not_loaded" in capsys.readouterr().out
+
+
+def test_legacy_no_explicit_impulse_configuration_retains_existing_default(monkeypatch):
+    from tools import paper_maintenance as m
+    from tools import flat_paper_recovery_transition as proof
+    monkeypatch.setattr(proof, "_service_pid", lambda: pytest.fail("no new opt-in"))
+    assert m._impulse_preset_blocker({}, "a" * 40) is None

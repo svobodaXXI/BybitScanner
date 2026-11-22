@@ -1513,6 +1513,66 @@ def run_maintenance(target: str, *, root: Path = REPO, runner=subprocess.run,
                                  target=target)
 
 
+# These are the existing two independent PAPER opt-ins, not a new strategy
+# policy. Keep their defaults and owner revocation intact. Only prove the
+# already explicit configuration; never manufacture consent by writing env.
+_IMPULSE_PRESET_KEYS = (
+    "BYBITSCANNER_ROBOT_PATTERN_FLOW_PAPER_AUTO",
+    "BYBITSCANNER_ROBOT_IMPULSE_EARLY_PAPER_AUTO",
+)
+
+
+def _read_impulse_process_env(pid: int) -> dict[str, str]:
+    # /proc contains secrets. Extract only this allowlist, never expose raw
+    # environment bytes, runner stdout, or rejected values in a receipt.
+    keys = (*_IMPULSE_PRESET_KEYS, "BYBITSCANNER_BUILD_SHA")
+    allowed = {key.encode("ascii"): key for key in keys}
+    result = {}
+    for entry in Path(f"/proc/{pid}/environ").read_bytes().split(b"\0"):
+        key, sep, value = entry.partition(b"=")
+        if key not in allowed:
+            continue
+        name = allowed[key]
+        if not sep or name in result:
+            raise ValueError("ambiguous_PAPER_process_environment")
+        result[name] = value.decode("ascii")
+    return result
+
+
+def _impulse_preset_blocker(env, target: str) -> str | None:
+    """Attest the explicitly saved impulse settings on the exact PAPER owner.
+
+    Systemd already loads paper.env on each legitimate Backend start. Never
+    rewrite it, enable an absent opt-in or restart a running owner for config.
+    Older configurations with neither opt-in explicit retain prior semantics.
+    """
+    if not any(key in env for key in _IMPULSE_PRESET_KEYS):
+        return None
+    expected = tuple(env.get(key, "0") for key in _IMPULSE_PRESET_KEYS)
+    if any(value not in ("0", "1") for value in expected) or expected == ("0", "1"):
+        return "BLOCKED: PAPER_impulse_preset_invalid; no automatic override"
+    from tools.flat_paper_recovery_transition import (
+        FlatRecoveryBlocked, _service_pid, _process_start_token,
+        _has_exact_local_listener,
+    )
+    try:
+        pid = _service_pid()
+        token = _process_start_token(pid)
+        if not _has_exact_local_listener(pid):
+            raise ValueError("PAPER_listener_unproven")
+        running = _read_impulse_process_env(pid)
+        if (_service_pid() != pid or _process_start_token(pid) != token
+                or not _has_exact_local_listener(pid)
+                or running.get("BYBITSCANNER_BUILD_SHA") != target):
+            raise ValueError("PAPER_process_identity_changed")
+        actual = tuple(running.get(key, "0") for key in _IMPULSE_PRESET_KEYS)
+        if actual != expected:
+            return "BLOCKED: PAPER_impulse_preset_not_loaded; preserve current Backend"
+    except (FlatRecoveryBlocked, OSError, ValueError, subprocess.SubprocessError):
+        return "BLOCKED: PAPER_impulse_preset_process_unproven; preserve current Backend"
+    return None
+
+
 def _paper_full_readiness(*, root: Path, env_file: Path | None, readiness=None,
                           target: str | None = None,
                           require_gitless_telegram: bool = False) -> str:
@@ -1550,11 +1610,16 @@ def _paper_full_readiness(*, root: Path, env_file: Path | None, readiness=None,
                       if require_gitless_telegram
                       else "BLOCKED: PAPER_backend_database_identity_unproven")
     try:
-        expected = expected_database_identity(root, _environment(env_file))
+        env = _environment(env_file)
+        expected = expected_database_identity(root, env)
         if h.get("database_identity") != expected:
             return identity_block
         if require_gitless_telegram and not _editor_telegram_ready(expected):
             return identity_block
+        if target is not None:
+            preset = _impulse_preset_blocker(env, target)
+            if preset is not None:
+                return preset
     except (OSError, ValueError, TypeError, sqlite3.Error):
         return identity_block
     # An enabled Autopilot is not proof that Robot can admit trades.
@@ -1922,6 +1987,9 @@ def start_installed_paper_from_editor(
         identity = _durable_editor_freeze(root, env_file)
         if not _editor_runtime_ready(target, identity):
             return "BLOCKED: editor_only_runtime_not_proven"
+        preset = _impulse_preset_blocker(_environment(env_file), target)
+        if preset is not None:
+            return preset
         if not _paper_start_quiescent(root, env_file):
             # Resume the *observed* phase. A prior successful reconcile may
             # have left PAUSED with inert APPROVED rows; it cannot be replayed.
@@ -3513,6 +3581,16 @@ def main(argv=None) -> int:
                     # inactive unit and absent-listener resume gates.
                     blocked = None
                 if blocked is not None:
+                    # Before selecting any active-owner START/recovery path,
+                    # compare configured flags with the proven current process.
+                    # A mismatch is not authorization for STOP or a restart.
+                    try:
+                        preset = _impulse_preset_blocker(_environment(args.env_file), args.sha)
+                    except (OSError, ValueError):
+                        preset = "BLOCKED: PAPER_impulse_preset_configuration_unproven"
+                    if preset is not None:
+                        print(preset)
+                        return 2
                     if blocked.startswith(
                         "BLOCKED: active_exact_PAPER_not_ready; "
                         "Robot=ROBOT_STOPPED/ROBOT_STOPPED"
