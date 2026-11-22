@@ -9,6 +9,7 @@ from urllib.error import HTTPError
 
 from Crypto.Signature import eddsa
 from tools import github_diagnostic_protocol as protocol
+from tools import telegram_release_approval as release
 from tools.github_diagnostic_transport import REQUEST_MARKER
 from tools.github_status_reporter import ISSUE_URL
 
@@ -34,11 +35,16 @@ def make_request(public, request, seed, now):
             or type(seed) is not str or not HEX64.fullmatch(seed)
             or type(request) is not dict
             or set(request) not in ({"request_id", "issued_at", "expires_at"},
-                                    {"request_id", "issued_at", "expires_at"} | protocol.OWNER_STATUS_FIELDS)):
+                                    {"request_id", "issued_at", "expires_at"} | protocol.OWNER_STATUS_FIELDS,
+                                    release.PROPOSAL_FIELDS - {"version", "operation", "audience"})):
         raise ValueError("invalid issuer configuration")
     key = eddsa.import_private_key(bytes.fromhex(seed))
     if key.public_key().export_key(format="raw").hex() != public["issuer_public"]:
         raise ValueError("issuer key pin mismatch")
+    if set(request) == release.PROPOSAL_FIELDS - {"version", "operation", "audience"}:
+        return release.sign_proposal(dict(request, version=1, operation="propose_update",
+                                          audience=public["audience"]),
+                                     issuer_key=key, audience=public["audience"], now=now)
     operation = "owner_status" if protocol.OWNER_STATUS_FIELDS <= set(request) else "observe"
     payload = dict(request, version=1, operation=operation, audience=public["audience"])
     return protocol.sign_request(payload, issuer_key=key, audience=public["audience"], now=now)
@@ -57,7 +63,9 @@ def publish(wire, token):
     if (type(token) is not str or not token
             or any(not 33 <= ord(c) <= 126 for c in token)):
         raise InvalidPublicationCredential("credential missing or malformed")
-    body = REQUEST_MARKER + wire.decode("ascii")
+    # The proposal domain carries notification only, never owner consent.
+    marker = release.MARKER if json.loads(wire)["payload"]["operation"] == "propose_update" else REQUEST_MARKER
+    body = marker + wire.decode("ascii")
     request = Request(ISSUE_URL, data=json.dumps({"body": body}).encode("utf-8"),
                       headers={"Authorization": "Bearer " + token,
                                "Accept": "application/vnd.github+json",
