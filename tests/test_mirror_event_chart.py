@@ -254,7 +254,7 @@ def test_mirror_pattern_card_exposes_incomplete_contour_without_fake_line(
         "event_kind": "breakout", "event_open_time_ms": 14 * 60_000,
         "candles": rows, "levels": [upper, *([lower] if include_lower else [])],
     }, target)
-    assert target.read_bytes().startswith(b"\\x89PNG")
+    assert target.read_bytes().startswith(b"\x89PNG")
     assert ("Контур паттерна неполон" in observed["title"]) is expect_warning
     assert observed["lines"] == (2 if include_lower else 1)
     assert ("Граница источника" in observed["legend"]) is include_lower
