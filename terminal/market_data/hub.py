@@ -7,6 +7,7 @@ import logging
 import re
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Callable, Protocol
@@ -183,9 +184,9 @@ class SymbolContext:
 
 @dataclass(slots=True)
 class _FlowOnlyContext:
-    """One opt-in publicTrade-only watch; NEVER a protection/book subscription.
+    """One passive public-data watch, separate from protection coverage.
 
-    No book buffer, 15s candle producer, native kline threads, owner listener,
+    No trading book buffer, 15s candle producer, native kline threads, owner listener,
     entry right or independent WebSocket. Existing full SymbolContext always
     takes precedence, including on later Robot coverage arm.
     """
@@ -193,6 +194,18 @@ class _FlowOnlyContext:
     trades_subscription_state: str = "NOT_SUBSCRIBED"
     trade_bootstrap_complete: bool = False
     impulse_observation: PublicTradeObservation = field(init=False)
+    capture_book: bool = False
+    book_frames: deque[tuple[int, dict]] = field(default_factory=lambda: deque(maxlen=1024))
+
+    @property
+    def book_topic(self) -> str:
+        return f"orderbook.200.{self.symbol}"
+
+    def topics(self) -> list[str]:
+        topics = [f"publicTrade.{self.symbol}"]
+        if self.capture_book:
+            topics.append(self.book_topic)
+        return topics
 
     def __post_init__(self) -> None:
         self.impulse_observation = PublicTradeObservation(self.symbol)
@@ -247,6 +260,17 @@ class MarketDataHub:
                 former = self._flow_only.pop(normalized, None)
                 context = self._context_factory(normalized, instrument.tick_size)
                 if former is not None:
+                    if former.capture_book and self._ws is not None:
+                        try:
+                            with self._send_lock:
+                                self._ws.send(json.dumps({
+                                    "op": "unsubscribe",
+                                    "req_id": f"flow:{normalized}:book-release",
+                                    "args": [former.book_topic],
+                                }))
+                        except Exception:
+                            pass
+                    former.book_frames.clear()
                     context.impulse_observation = former.impulse_observation
                     context.trades_subscription_state = former.trades_subscription_state
                     context.trade_bootstrap_complete = former.trade_bootstrap_complete
@@ -262,11 +286,13 @@ class MarketDataHub:
                 self._send_subscribe(ws, context)
         return context
 
-    def subscribe_flow_only(self, symbol: str) -> _FlowOnlyContext | SymbolContext | None:
-        """Owner-approved flow observer only: one bounded extra trade topic.
+    def subscribe_flow_only(
+        self, symbol: str, *, capture_book: bool = False,
+    ) -> _FlowOnlyContext | SymbolContext | None:
+        """Owner-approved flow observer only: one bounded passive symbol.
 
         Never call the full context_factory: it starts several REST/kline
-        workers and adds an orderbook which is not needed for taker flow.
+        workers and creates the protected book buffer.
         This method has NO effect on protected contexts or their listeners.
         """
         normalized = self._instruments.get(symbol).symbol
@@ -279,7 +305,7 @@ class MarketDataHub:
                 return passive
             if self._stop.is_set() or self._flow_only:
                 return None
-            passive = _FlowOnlyContext(normalized)
+            passive = _FlowOnlyContext(normalized, capture_book=capture_book)
             self._flow_only[normalized] = passive
             ws = self._ws
         if ws is not None:
@@ -299,6 +325,7 @@ class MarketDataHub:
             passive.trade_bootstrap_complete = False
             passive.trades_subscription_state = "NOT_SUBSCRIBED"
             passive.impulse_observation.mark_gap()
+            passive.book_frames.clear()
             # Atomically fence promotion of a protected full context until
             # this unsubscribe has been queued on the SAME socket.
             ws = self._ws
@@ -308,7 +335,7 @@ class MarketDataHub:
                         ws.send(json.dumps({
                             "op": "unsubscribe",
                             "req_id": f"flow:{symbol}:release",
-                            "args": [f"publicTrade.{symbol}"],
+                            "args": passive.topics(),
                         }))
                 except Exception:
                     pass  # disconnect/reconnect still fences the source
@@ -427,7 +454,7 @@ class MarketDataHub:
         with self._send_lock:
             ws.send(json.dumps({
                 "op": "subscribe", "req_id": f"flow:{context.symbol}",
-                "args": [f"publicTrade.{context.symbol}"],
+                "args": context.topics(),
             }))
 
     def _send_book_only(self, ws, context: SymbolContext) -> None:
@@ -493,6 +520,7 @@ class MarketDataHub:
                         flow.trades_subscription_state = "DISCONNECTED"
                         flow.trade_bootstrap_complete = False
                         flow.impulse_observation.mark_gap()
+                        flow.book_frames.clear()
                     for context in contexts:
                         context.subscription_state = "DISCONNECTED"
                         context.book_subscription_state = "DISCONNECTED"
@@ -548,6 +576,17 @@ class MarketDataHub:
             context = self._contexts.get(symbol)
             flow = self._flow_only.get(symbol) if context is None else None
         if context is None:
+            if flow is not None and flow.capture_book and topic == flow.book_topic:
+                frame_type = message.get("type")
+                if frame_type == "snapshot":
+                    flow.book_frames.clear()
+                elif frame_type != "delta" or not flow.book_frames:
+                    return
+                elif len(flow.book_frames) == flow.book_frames.maxlen:
+                    flow.book_frames.clear()
+                    return
+                flow.book_frames.append((int(time.time() * 1000), message))
+                return
             if flow is not None and topic == f"publicTrade.{flow.symbol}":
                 result = flow.impulse_observation.observe(
                     message, received_at_ms=int(time.time() * 1000),
@@ -556,7 +595,7 @@ class MarketDataHub:
                     flow.trades_subscription_state = "SUBSCRIBED"
                     flow.trade_bootstrap_complete = True
             return
-        if topic.startswith("orderbook."):
+        if topic == f"orderbook.{context.public_orderbook.depth}.{symbol}":
             applied = context.public_orderbook.apply_message(message)
             component = "book"
         elif topic.startswith("publicTrade."):
@@ -602,6 +641,7 @@ class MarketDataHub:
                 flow.trades_subscription_state = "DEGRADED"
                 flow.trade_bootstrap_complete = False
                 flow.impulse_observation.mark_gap()
+                flow.book_frames.clear()
             return
         if not request_id.startswith("workspace:"):
             return
