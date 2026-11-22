@@ -450,7 +450,7 @@ def test_release_pin_continues_only_with_exact_owner_transaction(tmp_path, conte
         file.write_text(json.dumps(data))
         file.chmod(0o600)
     intent = transactions / (".stop-invoked-" + target)
-    intent.write_bytes(b"STOP_INVOKED; not install authorization\n")
+    intent.write_bytes(b"STOP_INVOKED; not install authorization\\n")
     intent.chmod(0o600)
     if defect != "missing_receipt":
         receipt = transactions / (".stop-confirmed-" + target)
