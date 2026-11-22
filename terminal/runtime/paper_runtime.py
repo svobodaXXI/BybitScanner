@@ -22,7 +22,9 @@ from terminal.api.rest import TerminalCommandApi
 import robot_protection
 from robot_entry_limit import IMPULSE_ENTRY_LIMIT_MAX_AGE_MS
 from terminal.application.command_identity import CommandIdentityCandidate
-from terminal.application.robot_trade_ledger import prove_robot_open_trade_ledger
+from terminal.application.robot_trade_ledger import (
+    attest_wedge_partial, prove_robot_open_trade_ledger, prove_wedge_partial_remainder,
+)
 from terminal.api.models import (
     ClientActionId, CloseAllCommandRequest, CloseAllCommandResponse, CommandResult, CommandResultStatus,
     FullCloseCommandRequest, LimitCommandRequest, PaperLimitAmendRequest, PaperLimitCancelRequest,
@@ -3547,84 +3549,9 @@ class PaperRuntime:
     def _attested_wedge_partial_for_protection(
         self, trade: RobotTradeRecord, *, remaining_quantity: Decimal,
     ) -> robot_protection.AttestedPartialEconomics:
-        """Exact one-trade reduction lineage for STOP/TAKE and final PnL.
-
-        Called ONLY for a Wedge carrying a durable partial intent. The entry
-        orders, filled reduce-only command, exit order, quantity, direction,
-        prices and fees must all be independently recoverable from PAPER.
-        A pending/foreign/ambiguous partial cannot authorize STOP dispatch or
-        close financial finalization.
-        """
-        if (trade.pattern not in ("Falling Wedge", "Rising Wedge")
-                or trade.entry_quantity is None or trade.entry_quantity <= 0
-                or not isinstance(remaining_quantity, Decimal)
-                or not remaining_quantity.is_finite()
-                or not Decimal(0) < remaining_quantity < trade.entry_quantity):
-            raise RuntimeError("Wedge partial remainder not proven")
-        candidate = self.store.get_robot_candidate(trade.candidate_id)
-        if (candidate is None or candidate.status != "OPEN"
-                or candidate.trading_account_id != trade.trading_account_id
-                or candidate.symbol != trade.symbol
-                or candidate.signal_snapshot.get("pattern") != trade.pattern
-                or not isinstance(candidate.robot_state, Mapping)):
-            raise RuntimeError("Wedge partial candidate owner not proven")
-        state = candidate.robot_state
-        execution = state.get("execution") or {}
-        if not isinstance(execution, Mapping):
-            raise RuntimeError("Wedge partial execution state invalid")
-        intent = execution.get("wedge_be_partial_intent")
-        if not isinstance(intent, Mapping):
-            raise RuntimeError("Wedge partial intent missing")
-        robot_protection.restore_wedge_be_partial_intent(
-            intent, account_id=trade.trading_account_id.value,
-            trade_id=trade.trade_id, candidate_id=trade.candidate_id,
-            symbol=trade.symbol.value, direction=trade.direction,
-            original_quantity=trade.entry_quantity,
-            remaining_quantity=trade.entry_quantity,
+        return attest_wedge_partial(
+            self.store, trade, remaining_quantity=remaining_quantity,
         )
-        command = self.store.get_command(CommandId(intent["command_id"]))
-        exit_side = OrderSide.SELL if trade.direction == "LONG" else OrderSide.BUY
-        if (
-            command is None or command.current_state.value != "filled"
-            or command.trading_account_id != trade.trading_account_id
-            or command.symbol != trade.symbol
-            or command.order_link_id != intent["order_link_id"]
-            or command.command_kind != "create_market"
-            or command.side is not exit_side
-            or command.normalized_quantity is None
-            or command.normalized_quantity.value != Decimal(intent["partial_quantity"])
-        ):
-            raise RuntimeError("Wedge reduce-only partial command not confirmed")
-        entry_orders = robot_entry_order_ids(
-            self.store, trade.trading_account_id, candidate, execution,
-            entry_path=trade.entry_path,
-        )
-        if not entry_orders:
-            raise RuntimeError("Wedge entry order identity unproven")
-        entry_fills = tuple(
-            fill for order_id in entry_orders
-            for fill in self.store.load_executions_for_order(
-                trade.trading_account_id, order_id,
-            )
-        )
-        exit_id = OrderId("paper-order-" + str(intent["order_link_id"]))
-        partial_fills = self.store.load_executions_for_order(
-            trade.trading_account_id, exit_id,
-        )
-        facts = robot_protection.summarize_attested_robot_partial(
-            trade.direction, trading_account_id=trade.trading_account_id,
-            symbol=trade.symbol,
-            entry_order_ids=tuple(order_id.value for order_id in entry_orders),
-            partial_order_id=exit_id.value,
-            entry_executions=entry_fills, partial_executions=partial_fills,
-            actual_remaining_quantity=remaining_quantity,
-        )
-        if (facts.original_quantity != trade.entry_quantity
-                or facts.average_entry != trade.average_entry
-                or facts.closed_quantity != Decimal(intent["partial_quantity"])
-                or facts.latest_partial_fill_ms <= int(intent["trigger_candle_end_ms"])):
-            raise RuntimeError("Wedge partial fills contradict durable trade/intent")
-        return facts
 
     def _finalize_paper_protection_obligation(
         self, obligation: PaperProtectionObligationRecord, trade: RobotTradeRecord,
@@ -6386,6 +6313,20 @@ class PaperRuntime:
                                 break
                     if not paired_ok:
                         unresolved_trade_ids.add(trade.trade_id)
+                    continue
+
+                execution_state = (candidate.robot_state or {}).get("execution") or {}
+                if (isinstance(execution_state, Mapping)
+                        and "wedge_be_partial_intent" in execution_state):
+                    try:
+                        prove_wedge_partial_remainder(
+                            self.store, trade, position,
+                            self.store.get_protection_projection(position_key),
+                        )
+                    except Exception:
+                        unresolved_trade_ids.add(trade.trade_id)
+                    # Explicit reconciliation remains PAUSED; no STOP/TAKE
+                    # mutation or second partial may be performed here.
                     continue
 
                 if (
