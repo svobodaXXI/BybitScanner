@@ -1,4 +1,14 @@
-## 🎯 Активный квест MONOLITH — 22.11.2026: «Релиз одним разрешением»
+## 🎯 Активный квест MONOLITH — 22.11.2026: «Единый запуск PAPER»
+
+**Приоритет владельца:** рабочая PAPER-торговля выше разработки автоматизации. Не останавливать торговлю ради разработки. Штатный START должен поднимать все компоненты и сохранять явно разрешённые параметры импульса совместно, без отдельной постоянной процедуры. LIVE запрещён.
+
+**Доказанный результат:** точный релиз `4234423a602d32e8f6a5f2e2df05ec31926124d3` установлен, UPDATE UUID `75a0ea3530d641af9af63700462e0f2c` завершён FINISHED_OK / VERIFIED_EDITOR_ONLY ([receipt](https://github.com/svobodaXXI/BybitScanner/issues/1212#issuecomment-7074902093)). Разовый owner STOP `a50a3f883c87448d902de4621f473734` FINISHED_OK; два PAPER impulse opt-in присвоены 1. Первый START `c5a09b839eaa41c8b83f78d6ed5a4ba6` завершился с Unreachable до запуска служб. После штатного EDITOR_ONLY resume, START `78db58967efe40219795d935f67fb044` FINISHED_OK; [наблюдение VPS](https://github.com/svobodaXXI/BybitScanner/issues/1212#issuecomment-7075053503) 05:58:28 UTC подтверждает ROBOT_RUNNING/READY, SCANNER_RUNNING, PAPER_AUTO, Telegram READY. Фактические новые импульсные сделки ещё не доказаны; независимая owner acceptance сохраняется.
+
+**Следующий результат:** [#1247](https://github.com/svobodaXXI/BybitScanner/pull/1247) — устранение исключения START на остановленном Backend с использованием существующих строгих resume gates; CI, отдельное разрешение merge, установка только в следующем согласованном релизе. Уже включённые параметры не сбрасывать. Не повторять STOP из-за недоступности HTTP. Автоматизация owner UPDATE отложена; незавершённая разработка сохранена в ветке `monolith/owner-update-grant`, вне stable. Подписанный диагностический мост остаётся OBSERVATION_ONLY, RISK-MONOLITH-01 открыт. XP и новая торговая приёмка не заявлены.
+
+---
+
+## ⏸️ Предыдущий квест MONOLITH — 22.11.2026: «Релиз одним разрешением»
 
 **Доказанный этап «Двусторонний мост»:** действующий подписанный read-only roundtrip GitHub → VPS → GitHub с исходными независимыми Ed25519 ключами, сохранённый при штатном UPDATE #1236. [Первый ответ](https://github.com/svobodaXXI/BybitScanner/issues/1212#issuecomment-7072864926), [ответ после обновления](https://github.com/svobodaXXI/BybitScanner/issues/1212#issuecomment-7073392582): exact SHA `820d5a2dd5538aac680af13fe75afadb812024ce`, 28 секунд, подписи, digest/ID/audience/TTL проверены. Владелец передал только команду UPDATE с UUID `c0da73a246bb4ae8a88e9dfc84f13a29`; ручной repin не потребовался. [Checkpoint #1077](https://github.com/svobodaXXI/BybitScanner/issues/1077#issuecomment-7073397471). Отчёт не заменяет доказательство FINISHED_OK и полный canonical postcheck конкретной операции.
 

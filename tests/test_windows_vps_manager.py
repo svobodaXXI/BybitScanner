@@ -1241,5 +1241,51 @@ class TestWindowsVpsManager(unittest.TestCase):
 
 
 
+
+
+class StartReceiptWindowsTests(unittest.TestCase):
+    def test_start_watcher_requires_exact_runtime_receipt_after_reconnect(self):
+        from tools.windows_vps_manager import CONTROL_MODULE, watch_owner_request
+
+        request = "a" * 32
+        target = "b" * 40
+        cmd = ["ssh", CONTROL_MODULE + " status " + request + " --verify-start installed"]
+        base = ("REQUEST_ID=" + request + "\nSTATUS=FINISHED_OK\n"
+                "DESCRIPTION=BybitScanner start " + target + " origin=win-laptop\n"
+                "INSTALLED_SHA=" + target + "\n")
+        for suffix, code, expected in (
+            ("POSTCHECK=VERIFIED_PAPER_READY\n", 0, "success"),
+            ("POSTCHECK=BLOCKED_PAPER_READINESS\n", 2, "unproven"),
+            ("", 0, "unproven"),
+            ("POSTCHECK=VERIFIED_EDITOR_ONLY\n", 0, "unproven"),
+        ):
+            runner = Mock(side_effect=[
+                subprocess.TimeoutExpired("ssh", 20),
+                subprocess.CompletedProcess(cmd, code, stdout=base + suffix, stderr=""),
+            ])
+            state, _ = watch_owner_request(
+                cmd, request, initially_submitted=True, run=runner, sleep=lambda _: None,
+            )
+            assert state == expected
+            assert runner.call_count == 2
+            assert all(call.args[0] == cmd for call in runner.call_args_list)
+
+
+    def test_start_status_rejects_wrong_action_or_sha(self):
+        from tools.windows_vps_manager import gui_owner_status
+
+        request, target = "a" * 32, "b" * 40
+        reply = ("REQUEST_ID=" + request + "\nSTATUS=FINISHED_OK\n"
+                 "DESCRIPTION=BybitScanner start " + target + " origin=win-laptop\n"
+                 "INSTALLED_SHA=" + target + "\nPOSTCHECK=VERIFIED_PAPER_READY\n")
+        assert gui_owner_status(reply, 0, request, verify_start_sha=target) == "success"
+        assert gui_owner_status(reply, 0, request, verify_start_sha="c" * 40) == "unproven"
+        assert gui_owner_status(reply.replace("BybitScanner start ", "BybitScanner stop "),
+                                0, request, verify_start_sha="installed") == "unproven"
+        assert gui_owner_status(reply.replace("INSTALLED_SHA=" + target,
+                                "INSTALLED_SHA=" + "c" * 40),
+                                0, request, verify_start_sha="installed") == "unproven"
+
+
 if __name__ == "__main__":
     unittest.main()
