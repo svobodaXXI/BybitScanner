@@ -76,6 +76,7 @@ def render_mirror_chart(snapshot: Mapping, output_path: str | Path) -> None:
         subtype = mirror_subtype(snapshot.get("source"), snapshot.get("pattern"),
                                  snapshot.get("event_kind", "breakout"),
                                  retest_confirmed=snapshot.get("retest_confirmed") is True)
+        source_missing = False
         for level in levels:
             boundary = level["boundary"]
             anchor_t = int(boundary["anchor_time_ms"])
@@ -94,12 +95,25 @@ def render_mirror_chart(snapshot: Mapping, output_path: str | Path) -> None:
                     color=color, linewidth=1.9 if selected else 1.4,
                     linestyle="-" if selected else "--",
                     label=(subtype if selected else "Граница источника"))
-            # Mark the actual extremum only when its candle is visible.
-            # Otherwise the line continues from an off-chart historic anchor.
+            # A historic origin must be evidenced by its exact frozen candle.
+            # Never imply that the leftmost displayed candle is that origin.
+            source_t = min((int(anchor[0]) for anchor in level.get("anchors", ())),
+                           default=anchor_t)
+            if selected and source_t not in times:
+                source_missing = True
             if anchor_t in times:
                 anchor_idx = times.index(anchor_t)
                 ax.scatter([anchor_idx], [anchor_p],
-                           color=color, s=20, zorder=5)
+                           color=color, s=44 if selected else 20, zorder=5)
+                if selected and source_t == anchor_t:
+                    stamp = datetime.fromtimestamp(anchor_t / 1000, timezone.utc).strftime("%d.%m.%Y %H:%M UTC")
+                    ax.annotate(f"Исходная опора: {stamp}", (anchor_idx, anchor_p),
+                                xytext=(9, 13), textcoords="offset points",
+                                color="#fbbf24", fontsize=8)
+        if source_missing:
+            ax.text(0.02, 0.04, "Исходный экстремум вне сохранённого окна · недостаточно доказательств",
+                    transform=ax.transAxes, color="#fbbf24", fontsize=9,
+                    bbox={"facecolor": "#111827", "edgecolor": "#fbbf24", "alpha": 0.9})
         event_t = snapshot.get("event_open_time_ms")
         if event_t is not None:
             event_idx = next((i for i, t in enumerate(times) if t >= int(event_t)), None)
