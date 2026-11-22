@@ -480,3 +480,69 @@ def test_release_pin_continues_only_with_exact_owner_transaction(tmp_path, conte
         assert not journal.path.exists()
     else:
         assert journal.path.read_bytes() == before_journal
+
+
+def test_signed_owner_outcome_reuses_durable_reservation_and_correlation(context, tmp_path):
+    from tools.github_diagnostic_journal import DiagnosticJournal, verify_historical_response
+    from tools.github_diagnostic_issuer import make_request
+    payload, _, _, _, issuer, responder, _, reads = context
+    identity = {"owner_request_id": "c" * 32, "owner_action": "update", "target_sha": "d" * 40}
+    public = {"audience": AUDIENCE,
+              "issuer_public": issuer.public_key().export_key(format="raw").hex(),
+              "responder_public": responder.public_key().export_key(format="raw").hex()}
+    request = {**{k: payload[k] for k in ("request_id", "issued_at", "expires_at")}, **identity}
+    wire = make_request(public, request, issuer.seed.hex(), NOW)
+    assert json.loads(wire)["payload"]["operation"] == "owner_status"
+    directory = tmp_path / "state"
+    directory.mkdir(mode=0o700)
+    journal = DiagnosticJournal(directory)
+    journal.initialize()
+    expected = dict(identity, state="FINISHED_OK", result="success", exit_code=0,
+                    postcheck="VERIFIED_EDITOR_ONLY")
+    calls = []
+    def reader(rid, action, sha):
+        calls.append((rid, action, sha))
+        return expected
+    args = dict(issuer_public=issuer.public_key(), responder_key=responder,
+                audience=AUDIENCE, clock=lambda: NOW,
+                fetch=lambda _: pytest.fail("unexpected observer API read"), owner_status=reader)
+    reply = journal.process(wire, **args)
+    assert calls == [tuple(identity.values())]
+    kwargs = dict(expected_request=wire, issuer_public=issuer.public_key(),
+                  responder_public=responder.public_key(), audience=AUDIENCE, now=NOW)
+    assert protocol.verify_response(reply, **kwargs) == expected
+    assert verify_historical_response(reply, **{**kwargs, "now": NOW + 400})["snapshot"] == expected
+    with pytest.raises(ValueError):
+        journal.process(wire, **args)
+    assert len(calls) == 1
+    forged = json.loads(reply)["payload"]
+    for change in ({"owner_request_id": "e"*32}, {"target_sha": "f"*40},
+                   {"owner_action": "stop"}, {"postcheck": "UNKNOWN"}, {"exit_code": 2},
+                   {"origin": "private-desktop"}, {"state": "RUNNING"}):
+        response = protocol._sign("response", {**forged, "snapshot": {**expected, **change}}, responder)
+        with pytest.raises(ValueError):
+            protocol.verify_response(response, **kwargs)
+    delivered = []
+    assert journal.deliver_pending(issuer_public=issuer.public_key(),
+        responder_public=responder.public_key(), audience=AUDIENCE, clock=lambda: NOW,
+        post=lambda q, r: delivered.append((q, r)) or True) == 1
+    assert delivered == [(wire, reply)]
+    assert not reads
+
+
+@pytest.mark.parametrize("change", [
+    {"operation": "start"}, {"operation": "owner_status"},
+    {"owner_request_id": "../etc/passwd"}, {"owner_action": "shell"},
+    {"target_sha": "a"*12}, {"command": "systemctl start"}, {"owner_action": ["update"]},
+])
+def test_owner_status_rejects_invalid_request_before_reservation(context, change):
+    payload, _, kw, _, issuer, _, claims, reads = context
+    valid = dict(payload, operation="owner_status", owner_request_id="c"*32,
+                 owner_action="update", target_sha="d"*40)
+    if change == {"operation": "owner_status"}:
+        valid.pop("target_sha")
+    wire = protocol._sign("request", {**valid, **change}, issuer)
+    with pytest.raises(ValueError):
+        protocol.process_request(wire, **kw,
+                                 owner_status=lambda *_: pytest.fail("invalid request read"))
+    assert not claims and not reads
