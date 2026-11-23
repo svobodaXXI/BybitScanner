@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable
 
+from terminal.market_data.research_l2_rest_anchor import _vendor_id
+
 
 @dataclass(frozen=True, slots=True)
 class PrivateBoxReceiptEvidence:
@@ -133,10 +135,11 @@ def inspect_private_box_receipts(
         data = frame.get("data")
         if not isinstance(data, dict) or data.get("s") != symbol:
             return PrivateBoxReceiptEvidence("UNKNOWN", **host)
-        u, seq, cts, ts = (data.get("u"), data.get("seq"),
-                           frame.get("cts", data.get("cts")), frame.get("ts"))
-        if (any(type(x) is not int or x <= 0 for x in (u, seq, cts, ts))
-                or not approved <= cts <= ts <= received
+        vendor_identity = _vendor_id(frame)  # Shared REST/WS source validator.
+        if vendor_identity is None:
+            return PrivateBoxReceiptEvidence("UNKNOWN", **host)
+        u, seq, cts, ts = vendor_identity
+        if (not approved <= cts <= ts <= received
                 or received - ts > max_quote_age_ms):
             return PrivateBoxReceiptEvidence("UNKNOWN", **host)
         if prior is not None:
