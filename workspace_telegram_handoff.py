@@ -53,9 +53,15 @@ def deliver_workspace_link(chat_id: str, *, mode: str, symbol: str,
             raise WorkspaceHandoffUnavailable("protected_terminal_ingress_unverified")
     except requests.RequestException as exc:
         raise WorkspaceHandoffUnavailable("protected_terminal_ingress_unverified") from exc
-    title = "редактор" if mode == "EDITOR" else "терминал"
-    markup = {"inline_keyboard": [[{"text": f"✏️ Открыть {title}" if mode == "EDITOR"
-                                      else "🖥 Открыть терминал", "web_app": {"url": link}}]]}
+    # Preserve the requested destination in both the verified URL and the
+    # follow-up button. A Robot callback must not be presented as manual trading.
+    destinations = {
+        "EDITOR": ("редактор", "✏️ Открыть редактор"),
+        "TERMINAL": ("терминал", "🖥 Открыть терминал"),
+        "AUTOPILOT": ("автопилот", "🤖 Открыть Автопилот"),
+    }
+    title, button_title = destinations[mode]
+    markup = {"inline_keyboard": [[{"text": button_title, "web_app": {"url": link}}]]}
     # The Gateway is the existing sole VPS transport. Do not attempt direct
     # Bot API or silently fall back on a failed delivery.
     if not telegram_gateway_client.configured():
