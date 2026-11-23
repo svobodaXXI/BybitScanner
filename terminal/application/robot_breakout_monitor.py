@@ -3433,6 +3433,14 @@ class RobotBreakoutMonitor:
             # A competing owner changed the row; the next normal tick
             # re-reads authority. No quarantining stale revisions.
             return False
+        except Exception:
+            # Failed/unknown quarantine persistence is not evidence of
+            # isolation; the canonical account admission fence must win.
+            self._escalate_reconciliation(
+                "ROBOT_FROZEN_INIT_QUARANTINE_PERSIST_UNPROVEN "
+                f"symbol={record.symbol.value} candidate_id={record.candidate_id}"
+            )
+            return False
         return True
 
     def _invalidate_unsupported_pattern(
