@@ -142,6 +142,20 @@ class FlatRobotLedgerFenceTests(unittest.TestCase):
         ), 0)
         execution.assert_not_called()
 
+    def test_manual_quarantine_full_paper_owner_regression(self):
+        # The Robot PAPER workflow selects this module, while its focused
+        # terminal_paper_runtime -k selection omits the new integration case.
+        from tests.test_terminal_paper_runtime import (
+            test_manual_paper_order_creation_does_not_bypass_robot_symbol_quarantine,
+        )
+        test_manual_paper_order_creation_does_not_bypass_robot_symbol_quarantine()
+
+    def test_independent_b_full_paper_owner_regression(self):
+        from tests.test_terminal_paper_runtime import (
+            test_inert_quarantined_a_does_not_stop_independent_manual_b,
+        )
+        test_inert_quarantined_a_does_not_stop_independent_manual_b()
+
     def test_mutation_failure_does_not_trigger_false_flat_fence(self):
         request = SimpleNamespace(symbol=SYMBOL)
         owner = SimpleNamespace(
