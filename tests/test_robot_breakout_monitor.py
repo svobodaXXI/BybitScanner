@@ -690,6 +690,430 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
             ["cancelled", "cancelled", "cancelled"],
         )
 
+    def _prove_real_closed_box_stop_for_stale_take(self, *, reason="STOP"):
+        """Canonical SQLiteStore: Box entry, resolved STOP, CLOSED trade/candidate.
+
+        Preserve a stale OPEN snapshot from immediately before STOP won.
+        No production SQLite rows are modified; this fixture is isolated.
+        """
+        raw = box_snapshot()
+        raw["identity"]["symbol"] = SYMBOL
+        source, _ = self.store.save_box_plan_only(
+            snapshot=raw, created_at_ms=3001,
+        )
+        candidate, _ = self.store.handoff_box_plan_to_robot(
+            source.candidate_id, symbol=source.symbol,
+            expected_snapshot_sha256=source.snapshot_sha256,
+            approved_at_ms=3002,
+        )
+        self.clock.value = 4000
+        self.monitor._get_market_book = lambda symbol: _ready_book("95")
+        self.assertEqual(self.monitor.tick(), (candidate.candidate_id,))
+        self.assertEqual(self.monitor.tick(), (candidate.candidate_id,))
+        working = self.store.get_robot_candidate(candidate.candidate_id)
+        entry_ids = tuple(working.robot_state["execution"]["limit_order_ids"])
+        self.executor.fill_resting_limit(
+            entry_ids[0], SYMBOL, OrderSide.BUY, Decimal("2"), Decimal("94"),
+        )
+        self.assertEqual(
+            self.monitor.process_authoritative_fill(SYMBOL),
+            (candidate.candidate_id,),
+        )
+        stale_open = self.store.get_robot_candidate(candidate.candidate_id)
+        self.assertEqual(stale_open.status, "OPEN")
+        trade_id = f"robot-trade-{candidate.candidate_id}"
+        trade = self.store.get_robot_trade(trade_id)
+        self.assertIsNotNone(trade)
+
+        # The canonical STOP obligation is an independently durably latched
+        # order with a stable exact execution identity.
+        self.clock.value = 4900
+        obligation, _ = self.store.latch_paper_protection_obligation(
+            trade_id=trade_id, protection_version=1, winning_leg="STOP",
+            trigger_price=trade.stop_price, observed_exit_price=Decimal("90"),
+            observed_quantity=Decimal("2"), market_event_id=f"{SYMBOL}:50:51",
+            source_generation=1, source_sequence=50, source_update_id=51,
+            source_event_at_ms=4950, source_matching_engine_cts_ms=4949,
+            observed_bid_price=Decimal("90"), observed_ask_price=Decimal("90.1"),
+            source_received_at_ms=4960, latched_at_ms=4961,
+        )
+        self.store.reserve_box_order_identity(
+            source.candidate_id, order_id=obligation.order_id, role="EXIT", slot=0,
+        )
+        # STOP has already settled before this stale TAKE callback: complete
+        # every remaining active order owned by the exact Box source, including
+        # a resting aggregate EXIT/TAKE (not only its four ENTRY limits).
+        # A foreign active limit remains a negative case, never bypassed.
+        owned_ids = {
+            item.order_id.value for item in
+            self.store.load_box_order_ownership(source.candidate_id)
+        }
+        self.assertTrue(set(entry_ids) <= owned_ids)
+        for active in self.store.load_active_paper_limits(
+            ACCOUNT_ID, Symbol(SYMBOL),
+        ):
+            oid = active.order_id.value
+            self.assertIn(oid, owned_ids)
+            self.store.cancel_paper_limit(
+                client_action_id=f"test-stop-cancel-{oid}",
+                request_fingerprint=f"test-fp-{oid}", order_id=active.order_id,
+                trading_account_id=ACCOUNT_ID, updated_at_ms=4980,
+            )
+        self.assertFalse(self.store.load_active_paper_limits(
+            ACCOUNT_ID, Symbol(SYMBOL),
+        ))
+        position_key = PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
+        old = self.store.get_position_projection(position_key)
+        self.assertEqual(old.quantity.value, Decimal("2"))
+        from terminal.domain.models import ExecutionDedupKey
+        stop_at = 5000
+        self.store.apply_execution_once(
+            Execution(
+                dedup_key=ExecutionDedupKey(
+                    ACCOUNT_ID, Category.LINEAR, obligation.exec_id,
+                ),
+                order_id=obligation.order_id, symbol=Symbol(SYMBOL),
+                side=OrderSide.SELL, price=Price(Decimal("90")),
+                quantity=Quantity(Decimal("2")), fee=Decimal("0"),
+                exchange_timestamp_ms=stop_at,
+            ),
+            PositionProjectionUpdate(
+                position_key=position_key, side=PositionSide.FLAT,
+                quantity=Quantity(Decimal("0")), average_entry=None,
+                realized_pnl=Decimal("-8"), accumulated_fee=Decimal("0"),
+                engaged_notional=Notional(Decimal("0")), sync_state="synced",
+                expected_version=old.version, updated_at_ms=stop_at,
+            ),
+        )
+        dispatched = self.store.transition_paper_protection_obligation(
+            obligation.obligation_id, expected_status="TRIGGERED",
+            next_status="DISPATCHING", expected_version=obligation.version,
+            updated_at_ms=stop_at+1,
+        )
+        self.store.transition_paper_protection_obligation(
+            obligation.obligation_id, expected_status="DISPATCHING",
+            next_status="RESOLVED", expected_version=dispatched.version,
+            updated_at_ms=stop_at+2,
+        )
+        # Match the canonical Box protection finalizer's immutable tuple
+        # exactly. A rounded/stale fixture percentage would mask a bug.
+        close_proof = self.store.prove_box_owned_position(source.candidate_id)
+        self.assertIsNotNone(close_proof.average_exit)
+        self.assertGreater(close_proof.entry_notional, Decimal("0"))
+        close_pct = (
+            (close_proof.realized_pnl - close_proof.accumulated_fee)
+            / close_proof.entry_notional * Decimal("100")
+        )
+        self.store.close_robot_trade(
+            trade_id, exit_time_ms=close_proof.last_execution_at_ms,
+            exit_price=close_proof.average_exit, exit_reason=reason,
+            realized_pnl_usdt=close_proof.realized_pnl,
+            realized_pnl_pct=close_pct,
+            fees_costs_usdt=close_proof.accumulated_fee,
+            updated_at_ms=stop_at+3,
+        )
+        closed = self.store.get_robot_candidate(candidate.candidate_id)
+        self.assertEqual(closed.status, "CLOSED")
+        proof = self.store.prove_box_owned_position(source.candidate_id)
+        self.assertEqual(proof.remaining_quantity, Decimal("0"))
+        self.assertEqual(proof.entry_quantity, proof.exit_quantity)
+        self.assertIn(obligation.exec_id.value, proof.execution_ids)
+        # Use the same real owner store when re-entering from stale memory.
+        self.monitor._store = lambda: self.store
+        return stale_open, source, proof, trade_id, obligation
+
+    def test_closed_stop_before_stale_box_take_is_no_mutation(self):
+        record, source, proof, trade_id, obligation = (
+            self._prove_real_closed_box_stop_for_stale_take()
+        )
+        fresh = self.store.get_robot_candidate(record.candidate_id)
+        settled = self.store.get_robot_trade(trade_id)
+        stop = self.store.get_paper_protection_obligation_for_trade(trade_id)
+        actual = self.store.get_execution(ExecutionDedupKey(
+            ACCOUNT_ID, Category.LINEAR, stop.exec_id,
+        ))
+        position = self.store.get_position_projection(PositionKey(
+            ACCOUNT_ID, Category.LINEAR, record.symbol, 0,
+        ))
+        expected = {
+            "host": record.status == "OPEN" and fresh.status == "CLOSED"
+                and fresh.snapshot_sha256 == record.snapshot_sha256
+                and fresh.updated_at_ms >= record.updated_at_ms,
+            "source": record.signal_snapshot.get("source_box_candidate_id") == source.candidate_id
+                and source.status == "BOX_PLAN_ONLY",
+            "flat_proof": proof.candidate_id == source.candidate_id
+                and proof.entry_quantity == proof.exit_quantity
+                and proof.remaining_quantity == 0,
+            "trade": settled.exit_reason == "STOP"
+                and settled.exit_time_ms == proof.last_execution_at_ms
+                and settled.pattern == "IKIGAI_BOX",
+            "obligation": stop.status == "RESOLVED"
+                and stop.winning_leg == "STOP"
+                and stop.exec_id.value in proof.execution_ids,
+            "execution": actual is not None
+                and actual.order_id == stop.order_id
+                and actual.exchange_timestamp_ms == settled.exit_time_ms,
+            "projection": position.side is PositionSide.FLAT
+                and position.quantity.value == 0
+                and position.sync_state == "synced"
+                and position.version == proof.position_version,
+            "no_open_trade": not any(x.symbol == record.symbol
+                for x in self.store.load_open_robot_trades(ACCOUNT_ID)),
+            "no_active_candidate": not self.store.load_active_robot_candidates_for_symbol(
+                ACCOUNT_ID, record.symbol),
+            "no_active_limit": not self.store.load_active_paper_limits(ACCOUNT_ID, record.symbol),
+            "no_unfinished_command": not any(x.symbol == record.symbol
+                for x in self.store.load_unfinished_commands()),
+            "no_unresolved_obligation": not any(x.symbol == record.symbol
+                for x in self.store.load_unresolved_paper_protection_obligations(ACCOUNT_ID)),
+        }
+        self.assertTrue(all(expected.values()), expected)
+        before = (
+            self.store.get_robot_candidate(record.candidate_id),
+            self.store.get_robot_trade(trade_id),
+            self.store.get_paper_protection_obligation(obligation.obligation_id),
+            self.store.get_position_projection(PositionKey(
+                ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0,
+            )),
+        )
+        self.monitor._escalate_reconciliation = Mock()
+        self.monitor._release_entry_coverage = Mock()
+        with (patch.object(self.store, "cancel_paper_limit") as cancel,
+              patch.object(self.store, "clear_paper_protection_for_flat") as clear):
+            for _ in range(2):
+                self.assertTrue(self.monitor._finalize_box_take_if_flat(
+                    record, source, proof,
+                ))
+            cancel.assert_not_called()
+            clear.assert_not_called()
+        self.monitor._release_entry_coverage.assert_not_called()
+        self.monitor._escalate_reconciliation.assert_not_called()
+        after = (
+            self.store.get_robot_candidate(record.candidate_id),
+            self.store.get_robot_trade(trade_id),
+            self.store.get_paper_protection_obligation(obligation.obligation_id),
+            self.store.get_position_projection(PositionKey(
+                ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0,
+            )),
+        )
+        self.assertEqual(before, after)
+        self.assertEqual(self.store.get_robot_runtime_state(ACCOUNT_ID).recovery_status, "READY")
+
+    def test_stale_box_take_non_stop_close_retains_fence_without_side_effects(self):
+        record, source, proof, trade_id, obligation = (
+            self._prove_real_closed_box_stop_for_stale_take(reason="TAKE")
+        )
+        original = self.store.get_robot_trade(trade_id)
+        self.monitor._escalate_reconciliation = Mock()
+        with (patch.object(self.store, "cancel_paper_limit") as cancel,
+              patch.object(self.store, "clear_paper_protection_for_flat") as clear):
+            self.assertFalse(self.monitor._finalize_box_take_if_flat(
+                record, source, proof,
+            ))
+            cancel.assert_not_called()
+            clear.assert_not_called()
+        self.monitor._escalate_reconciliation.assert_called_once()
+        self.assertEqual(self.store.get_robot_trade(trade_id), original)
+
+    def test_stale_box_take_wrong_stop_economics_retains_fence(self):
+        """STOP winning-leg is not enough without the immutable close tuple."""
+        from dataclasses import replace
+        record, source, proof, trade_id, obligation = (
+            self._prove_real_closed_box_stop_for_stale_take()
+        )
+        store = self.store
+        trade = store.get_robot_trade(trade_id)
+        self.assertEqual(trade.exit_price, proof.average_exit)
+        self.assertEqual(trade.realized_pnl_usdt, proof.realized_pnl)
+        self.assertEqual(trade.fees_costs_usdt, proof.accumulated_fee)
+        self.assertEqual(
+            trade.realized_pnl_pct,
+            (proof.realized_pnl - proof.accumulated_fee)
+            / proof.entry_notional * Decimal("100"),
+        )
+
+        incorrect = (
+            ("exit_price", {"exit_price": trade.exit_price + Decimal("0.01")}),
+            ("gross_pnl", {"realized_pnl_usdt": trade.realized_pnl_usdt + Decimal("0.01")}),
+            ("fees", {"fees_costs_usdt": trade.fees_costs_usdt + Decimal("0.01")}),
+            ("net_percent", {"realized_pnl_pct": trade.realized_pnl_pct + Decimal("0.01")}),
+            ("missing_exit_price", {"exit_price": None}),
+            ("missing_net_percent", {"realized_pnl_pct": None}),
+            ("missing_gross_pnl", {"realized_pnl_usdt": None}),
+            ("missing_fees", {"fees_costs_usdt": None}),
+        )
+        candidate_before = store.get_robot_candidate(record.candidate_id)
+        obligation_before = store.get_paper_protection_obligation(obligation.obligation_id)
+        self.monitor._escalate_reconciliation = Mock()
+        with (patch.object(store, "cancel_paper_limit") as cancel,
+              patch.object(store, "clear_paper_protection_for_flat") as clear):
+            for name, delta in incorrect:
+                with self.subTest(mismatch=name), patch.object(
+                    store, "get_robot_trade",
+                    return_value=replace(trade, **delta),
+                ):
+                    self.monitor._escalate_reconciliation.reset_mock()
+                    self.assertFalse(self.monitor._finalize_box_take_if_flat(
+                        record, source, proof,
+                    ))
+                    self.monitor._escalate_reconciliation.assert_called_once()
+                    cancel.assert_not_called()
+                    clear.assert_not_called()
+        self.assertEqual(store.get_robot_trade(trade_id), trade)
+        self.assertEqual(store.get_robot_candidate(record.candidate_id), candidate_before)
+        self.assertEqual(
+            store.get_paper_protection_obligation(obligation.obligation_id),
+            obligation_before,
+        )
+
+    def test_stale_box_take_invalid_economic_proof_retains_fence(self):
+        """Missing, negative, non-finite or unusable notional fails closed."""
+        from dataclasses import replace
+        record, source, proof, trade_id, _ = (
+            self._prove_real_closed_box_stop_for_stale_take()
+        )
+        before = self.store.get_robot_trade(trade_id)
+        invalid_proofs = (
+            ("missing_average_exit", replace(proof, average_exit=None)),
+            ("zero_average_exit", replace(proof, average_exit=Decimal("0"))),
+            ("missing_entry_notional", replace(proof, entry_notional=None)),
+            ("zero_entry_notional", replace(proof, entry_notional=Decimal("0"))),
+            ("negative_entry_notional", replace(proof, entry_notional=Decimal("-1"))),
+            ("infinite_entry_notional", replace(proof, entry_notional=Decimal("Infinity"))),
+            ("missing_realized_pnl", replace(proof, realized_pnl=None)),
+            ("nan_realized_pnl", replace(proof, realized_pnl=Decimal("NaN"))),
+            ("missing_accumulated_fee", replace(proof, accumulated_fee=None)),
+            ("negative_fee", replace(proof, accumulated_fee=Decimal("-0.01"))),
+        )
+        self.monitor._escalate_reconciliation = Mock()
+        with (patch.object(self.store, "cancel_paper_limit") as cancel,
+              patch.object(self.store, "clear_paper_protection_for_flat") as clear):
+            for name, altered in invalid_proofs:
+                with self.subTest(missing=name):
+                    self.monitor._escalate_reconciliation.reset_mock()
+                    self.assertFalse(self.monitor._finalize_box_take_if_flat(
+                        record, source, altered,
+                    ))
+                    self.monitor._escalate_reconciliation.assert_called_once()
+                    cancel.assert_not_called()
+                    clear.assert_not_called()
+        self.assertEqual(self.store.get_robot_trade(trade_id), before)
+
+    def test_stale_box_take_incomplete_stop_evidence_retains_fence(self):
+        """Only exact resolved STOP + same execution + synced FLAT is inert.
+
+        All negative variations reuse the real SQLiteStore STOP scenario, but
+        inject one missing/contradicting read at a time. No fake journal writes
+        and no order/protection side effects are permitted.
+        """
+        from dataclasses import replace
+        record, source, proof, trade_id, _ = (
+            self._prove_real_closed_box_stop_for_stale_take()
+        )
+        store = self.store
+        stop = store.get_paper_protection_obligation_for_trade(trade_id)
+        self.assertIsNotNone(stop)
+        cases = (
+            ("missing_stop_obligation", "get_paper_protection_obligation_for_trade", None),
+            ("unresolved_stop_obligation", "get_paper_protection_obligation_for_trade",
+             replace(stop, status="DISPATCHING")),
+            ("wrong_stop_leg", "get_paper_protection_obligation_for_trade",
+             replace(stop, winning_leg="TAKE")),
+            ("missing_matching_stop_execution", "get_execution", None),
+            ("unproven_flat_projection", "get_position_projection", None),
+            ("another_active_robot_owner", "load_active_robot_candidates_for_symbol",
+             (record,)),
+            ("unresolved_symbol_obligation", "load_unresolved_paper_protection_obligations",
+             (stop,)),
+            ("unfinished_symbol_command", "load_unfinished_commands",
+             (SimpleNamespace(symbol=record.symbol),)),
+        )
+        before_trade = store.get_robot_trade(trade_id)
+        before_candidate = store.get_robot_candidate(record.candidate_id)
+        self.monitor._escalate_reconciliation = Mock()
+        with (patch.object(store, "cancel_paper_limit") as cancel,
+              patch.object(store, "clear_paper_protection_for_flat") as clear):
+            for label, method, result in cases:
+                with self.subTest(evidence=label), patch.object(
+                    store, method, return_value=result,
+                ):
+                    self.monitor._escalate_reconciliation.reset_mock()
+                    self.assertFalse(self.monitor._finalize_box_take_if_flat(
+                        record, source, proof,
+                    ))
+                    self.monitor._escalate_reconciliation.assert_called_once()
+                    cancel.assert_not_called()
+                    clear.assert_not_called()
+        from dataclasses import replace as copy_record
+        bad_proof = copy_record(proof, remaining_quantity=Decimal("1"))
+        self.monitor._escalate_reconciliation.reset_mock()
+        with (patch.object(store, "cancel_paper_limit") as cancel,
+              patch.object(store, "clear_paper_protection_for_flat") as clear):
+            self.assertFalse(self.monitor._finalize_box_take_if_flat(
+                record, source, bad_proof,
+            ))
+            self.monitor._escalate_reconciliation.assert_called_once()
+            cancel.assert_not_called()
+            clear.assert_not_called()
+        self.assertEqual(store.get_robot_trade(trade_id), before_trade)
+        self.assertEqual(store.get_robot_candidate(record.candidate_id), before_candidate)
+
+    def test_completed_stop_does_not_clear_preexisting_required_fence(self):
+        """No-mutation stale TAKE success is not operator reconciliation."""
+        record, source, proof, _, _ = (
+            self._prove_real_closed_box_stop_for_stale_take()
+        )
+        runtime = self.store.get_robot_runtime_state(ACCOUNT_ID)
+        self.store.update_robot_runtime_state(
+            ACCOUNT_ID, mode="ROBOT_RUNNING",
+            recovery_status="RECONCILIATION_REQUIRED",
+            reason="prior_protection_incident",
+            expected_version=runtime.version,
+            updated_at_ms=8000,
+        )
+        self.monitor._escalate_reconciliation = Mock()
+        self.assertTrue(self.monitor._finalize_box_take_if_flat(
+            record, source, proof,
+        ))
+        after = self.store.get_robot_runtime_state(ACCOUNT_ID)
+        self.assertEqual(after.recovery_status, "RECONCILIATION_REQUIRED")
+        self.assertEqual(after.reason, "prior_protection_incident")
+        self.monitor._escalate_reconciliation.assert_not_called()
+
+    def test_stale_box_take_mismatched_source_or_active_limit_retains_fence(self):
+        record, source, proof, trade_id, obligation = (
+            self._prove_real_closed_box_stop_for_stale_take()
+        )
+        self.monitor._escalate_reconciliation = Mock()
+        from dataclasses import replace
+        wrong_source = replace(source, candidate_id="wrong-box-source")
+        with (patch.object(self.store, "cancel_paper_limit") as cancel,
+              patch.object(self.store, "clear_paper_protection_for_flat") as clear):
+            self.assertFalse(self.monitor._finalize_box_take_if_flat(
+                record, wrong_source, proof,
+            ))
+            cancel.assert_not_called()
+            clear.assert_not_called()
+        self.monitor._escalate_reconciliation.assert_called_once()
+        self.monitor._escalate_reconciliation.reset_mock()
+        # A still-live limit prevents the read-only STOP shortcut.
+        self.store.create_paper_limit(
+            client_action_id="foreign-stale-stop-limit",
+            request_fingerprint="foreign-stale-stop-fp",
+            order_id=OrderId("foreign-stale-stop-limit"),
+            order_link_id="foreign-stale-stop-link",
+            trading_account_id=ACCOUNT_ID, symbol=Symbol(SYMBOL),
+            side=OrderSide.BUY, price=Decimal("89"),
+            quantity=Decimal("1"), created_at_ms=5200,
+        )
+        with (patch.object(self.store, "cancel_paper_limit") as cancel,
+              patch.object(self.store, "clear_paper_protection_for_flat") as clear):
+            self.assertFalse(self.monitor._finalize_box_take_if_flat(
+                record, source, proof,
+            ))
+            cancel.assert_not_called()
+            clear.assert_not_called()
+        self.monitor._escalate_reconciliation.assert_called_once()
     def test_box_entry_ready_runs_four_limit_grid_into_shared_trade(self):
         source_snapshot = {
             "contract_version": 1,
