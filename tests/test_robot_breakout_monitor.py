@@ -951,13 +951,20 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
             source.candidate_id, symbol=source.symbol,
             expected_snapshot_sha256=source.snapshot_sha256, approved_at_ms=3002,
         )
-        self.store.save_robot_candidate_state(
-            candidate.candidate_id, status="APPROVED",
-            robot_state={"execution": {"box_emergency_close_intent": "bad"}}, 
-            expected_revision=candidate.state_revision, updated_at_ms=3003,
-        )
-        with self.assertRaises(PersistenceError):
-            self.store.robot_symbol_quarantine_candidate_ids(ACCOUNT_ID, Symbol(SYMBOL))
+        for index, malformed_intent in enumerate(("bad", None)):
+            with self.subTest(malformed_intent=malformed_intent):
+                fresh = self.store.get_robot_candidate(candidate.candidate_id)
+                self.store.save_robot_candidate_state(
+                    candidate.candidate_id, status="APPROVED",
+                    robot_state={"execution": {
+                        "box_emergency_close_intent": malformed_intent,
+                    }},
+                    expected_revision=fresh.state_revision, updated_at_ms=3003 + index,
+                )
+                with self.assertRaises(PersistenceError):
+                    self.store.robot_symbol_quarantine_candidate_ids(
+                        ACCOUNT_ID, Symbol(SYMBOL),
+                    )
 
     def test_unresolved_stop_obligation_quarantines_only_owned_symbol(self):
         """An UNKNOWN protection close fences its symbol even if Robot is READY."""
