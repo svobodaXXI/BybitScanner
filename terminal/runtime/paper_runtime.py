@@ -1984,8 +1984,12 @@ class PaperRuntime:
         # Manual PAPER entry cannot adopt an unresolved Robot-owned symbol.
         # Existing Robot protection and explicit full_close use their separate
         # recovery paths; this gate only blocks a new manual Market mutation.
+        normalized = (
+            request.symbol if isinstance(request.symbol, Symbol)
+            else Symbol(request.symbol.strip().upper())
+        )
         if self.store.robot_symbol_quarantine_candidate_ids(
-            self._paper_account_id, Symbol(request.symbol.strip().upper()),
+            self._paper_account_id, normalized,
         ):
             return CommandResult(
                 request.client_action_id.value, CommandResultStatus.BLOCKED,
