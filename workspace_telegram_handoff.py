@@ -67,9 +67,12 @@ def deliver_workspace_link(chat_id: str, *, mode: str, symbol: str,
     if not telegram_gateway_client.configured():
         raise WorkspaceHandoffUnavailable("telegram_gateway_unconfigured")
     try:
+        destination_note = ("Открыть вкладку Автопилот через Telegram."
+                            if mode == "AUTOPILOT"
+                            else "Открыть защищённый Terminal через Telegram.")
         result = telegram_gateway_client.send_text(
             owner, f"{symbol} · {timeframe} · {title.capitalize()}\n"
-                   "Открыть защищённый Terminal через Telegram.",
+                   + destination_note,
             reply_markup=markup,
         )
     except telegram_gateway_client.TelegramGatewayError as exc:
