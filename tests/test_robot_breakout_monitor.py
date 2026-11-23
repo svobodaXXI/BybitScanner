@@ -740,15 +740,20 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.store.reserve_box_order_identity(
             source.candidate_id, order_id=obligation.order_id, role="EXIT", slot=0,
         )
-        # STOP has already settled before this stale TAKE callback: cancel
-        # every remaining ACTIVE order owned by the same frozen Box grid.
-        # In particular, an entry LIMIT may be PARTIALLY_FILLED even after
-        # an owned first fill. Never suppress it in the production guard.
+        # STOP has already settled before this stale TAKE callback: complete
+        # every remaining active order owned by the exact Box source, including
+        # a resting aggregate EXIT/TAKE (not only its four ENTRY limits).
+        # A foreign active limit remains a negative case, never bypassed.
+        owned_ids = {
+            item.order_id.value for item in
+            self.store.load_box_order_ownership(source.candidate_id)
+        }
+        self.assertTrue(set(entry_ids) <= owned_ids)
         for active in self.store.load_active_paper_limits(
             ACCOUNT_ID, Symbol(SYMBOL),
         ):
             oid = active.order_id.value
-            self.assertIn(oid, entry_ids)
+            self.assertIn(oid, owned_ids)
             self.store.cancel_paper_limit(
                 client_action_id=f"test-stop-cancel-{oid}",
                 request_fingerprint=f"test-fp-{oid}", order_id=active.order_id,
