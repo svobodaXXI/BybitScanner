@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { App } from "./App";
-import { setMarketSymbol } from "../marketData/useMarketData";
+import { setMarketSymbol, setMarketTimeframe } from "../marketData/useMarketData";
 
 const marketFixture = vi.hoisted(() => ({
   candles: [] as Array<{ time: string; open: number; high: number; low: number; close: number }>,
@@ -218,6 +218,35 @@ it("changes the local symbol only after the backend authoritative switch succeed
   fireEvent.click(screen.getByRole("button", { name: "Select ETHUSDT" }));
   await waitFor(() => expect(setMarketSymbol).toHaveBeenCalledWith("ETHUSDT", 8));
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("reused Telegram Mini App reopens Autopilot with the new signal ticker and timeframe", async () => {
+  window.history.replaceState({}, "", "/?mode=TERMINAL&symbol=BTCUSDT&timeframe=5m");
+  vi.mocked(setMarketSymbol).mockClear();
+  vi.mocked(setMarketTimeframe).mockClear();
+  const posts: string[] = [];
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url === "/api/workspace/symbol") {
+      const body = JSON.parse(String(init?.body)) as { symbol: string };
+      posts.push(body.symbol);
+      return { ok: true, json: async () => ({
+        ok: true, symbol: body.symbol, generation: 41,
+      }) };
+    }
+    return { ok: false, json: async () => ({}) };
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<App />);
+  expect(screen.getByTestId("active-workspace-mode")).toHaveTextContent("TERMINAL");
+
+  // Telegram may reuse a WebView: the URL changes without remounting React.
+  window.history.replaceState({}, "", "/?mode=AUTOPILOT&symbol=COTIUSDT&timeframe=1m");
+  fireEvent(window, new Event("pageshow"));
+  await waitFor(() => expect(screen.getByTestId("active-workspace-mode")).toHaveTextContent("AUTOPILOT"));
+  await waitFor(() => expect(setMarketSymbol).toHaveBeenCalledWith("COTIUSDT", 41));
+  expect(setMarketTimeframe).toHaveBeenCalledWith("1m");
+  expect(posts).toEqual(["COTIUSDT"]);
+  expect(fetchMock.mock.calls.some(([url]) => url === "/api/market" || url === "/api/close-all")).toBe(false);
 });
 
 it("opens a Telegram signal in read-only Autopilot with immutable lines and live candles", async () => {
