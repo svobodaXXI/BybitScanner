@@ -88,6 +88,12 @@ class PrivateBoxReceiptTests(unittest.TestCase):
         store["box-plan-123"].signal_snapshot = {}
         self.assertEqual(self.audit(store, evidence).status, "NO_PROVEN_HOST")
 
+    def test_snapshot_only_has_no_observed_delta_continuity(self):
+        store, good = setup()
+        bad = {**good, "book": {**good["book"],
+                 "frames": (good["book"]["frames"][0],)}}
+        self.assertEqual(self.audit(store, bad).status, "NO_RECEIPT")
+
     def test_mismatched_l2_and_backdated_trade_receipts_fail_closed(self):
         store, good = setup()
         frame0, frame1 = good["book"]["frames"]
