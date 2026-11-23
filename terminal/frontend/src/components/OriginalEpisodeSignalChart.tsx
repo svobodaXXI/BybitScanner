@@ -7,7 +7,7 @@ import {
 import { editorMoscowCrosshairTime, editorMoscowTickMark } from "../chart/editorMoscowTime";
 import { fibonacciPrices } from "../chart/drawingModel";
 import { TELEGRAM_BUY_COLOR, TELEGRAM_SELL_COLOR, tradeTrianglePoints } from "../chart/robotTradeMarkers";
-import { editorSignalWorkspaceHref } from "../geometryFeedback/signalDeepLink";
+import { parseSignalWorkspaceLink } from "../geometryFeedback/signalDeepLink";
 import type { ChartTimeframe } from "../marketData/timeframes";
 
 /** Read-only historical evidence in the TERMINAL Statistics view.
@@ -414,9 +414,14 @@ function InteractiveTradeChart({ original, bars, frame, executions, side, showGe
   const sourceFrame = original && ({
     "1": "1m", "5": "5m", "15": "15m", "60": "1h", "D": "1d",
   } as Record<string, ChartTimeframe>)[original.snapshot.timeframe];
-  const editorHref = original && sourceFrame
-    ? editorSignalWorkspaceHref(original.snapshot.symbol, sourceFrame, original.snapshot.signal_id)
+  const proposedEditorHref = original && sourceFrame
+    ? "?" + new URLSearchParams({
+      mode: "EDITOR", symbol: original.snapshot.symbol,
+      timeframe: sourceFrame, signal_id: original.snapshot.signal_id,
+    }).toString()
     : null;
+  const editorHref = proposedEditorHref && parseSignalWorkspaceLink(proposedEditorHref)
+    ? proposedEditorHref : null;
   const chartBody = (
     <div className="diary-original-signal-plot">
       <div className="diary-trade-chart-host">
