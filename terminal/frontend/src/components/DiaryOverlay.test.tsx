@@ -1885,7 +1885,9 @@ describe("shared statistics trade action standard", () => {
     expect(await screen.findByRole("img", {
       name: "Фактические цены исполнений сделки по времени",
     })).toBeInTheDocument();
-    expect(screen.getByText("График цен исполнений · не свечной график")).toBeInTheDocument();
+    expect(screen.getByText("Цены исполнений")).toBeInTheDocument();
+    expect(screen.queryByText(/Показаны только подтверждённые исполнения, без подстановки/))
+      .not.toBeInTheDocument();
     expect(screen.getByText(/Это не воспроизведение/)).toBeInTheDocument();
   });
 
@@ -2031,7 +2033,9 @@ describe("Verified Wedge lineage in Statistics", () => {
     expect(screen.getByRole("combobox", { name: "Выбор паттерна" })).toHaveValue("Falling Wedge");
     fireEvent.click(screen.getByRole("button", { name: /BTCUSDT/ }));
     expect(screen.getByText("candidate-42")).toBeInTheDocument();
-    expect(screen.getByText(/Не D2, без исходной геометрии/)).toBeInTheDocument();
+    expect(screen.getByText("Нисходящий клин")).toBeInTheDocument();
+    expect(screen.getByText("M5")).toBeInTheDocument();
+    expect(screen.queryByText(/Источник: точная цепочка Robot candidate/)).not.toBeInTheDocument();
     expect(screen.queryByText("Версия стратегии")).not.toBeInTheDocument();
   });
 
