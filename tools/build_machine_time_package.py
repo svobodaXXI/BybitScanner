@@ -70,6 +70,18 @@ def package(output: Path, sha: str) -> int:
         for name in missing:
             rel = root_modules[name]
             entries[rel.as_posix()] = (ROOT / rel).read_bytes()
+    # Scanner's original quality/filter rules are loaded by absolute source path
+    # (not by import: project 'signal' shadows Python's stdlib signal).
+    # Bundle only these two pure files, never signal/__init__.py.
+    required_scanner_rules = ("signal/quality.py", "signal/filter.py")
+    tracked_names = {rel.as_posix() for rel in tracked}
+    for rule_path in required_scanner_rules:
+        if rule_path not in tracked_names:
+            raise ValueError("missing_tracked_scanner_signal_rule_" + rule_path)
+        rule = ROOT / rule_path
+        if not rule.is_file() or rule.is_symlink():
+            raise ValueError("unsafe_scanner_signal_rule_" + rule_path)
+        entries[rule_path] = rule.read_bytes()
     for rel in tracked:
         if rel.parts[:2] == ("research", "local_replay_viewer") and rel.name in (
             "START_LOCAL.cmd", "README.txt", "trusted-statistics-origin.txt",
