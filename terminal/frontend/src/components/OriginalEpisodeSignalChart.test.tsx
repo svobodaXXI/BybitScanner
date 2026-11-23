@@ -319,8 +319,8 @@ describe("original signal on a closed deal", () => {
     await waitFor(() => expect(screen.getByRole("application", {
       name: "Рыночный контекст " + label,
     })).toBeInTheDocument());
-    expect(screen.getByRole("application", { name: "Исходный график сигнала" }))
-      .toBeInTheDocument();
+    expect(screen.queryByRole("application", { name: "Исходный график сигнала" }))
+      .not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Исходная фигура сделки" }))
       .not.toBeInTheDocument();
     expect(screen.queryByText(/Исходные линии не попадают минимум/)).not.toBeInTheDocument();
