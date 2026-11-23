@@ -69,7 +69,7 @@ export function toggleWedges(current: RunSelection, enabled: boolean): RunSelect
   return normalized(ids);
 }
 export function onlyWedges(): RunSelection {
-  return normalized(new Set(WEDGE_IDS));
+  return normalized(new Set<StrategyId>(WEDGE_IDS));
 }
 export function isAllSelected(selection: RunSelection): boolean {
   return ALL_SELECTABLE.every(id => selection.selected.includes(id));
