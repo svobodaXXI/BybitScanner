@@ -64,11 +64,12 @@ def render_mirror_chart(snapshot: Mapping, output_path: str | Path) -> None:
     # a second, legible recent-candle panel (no downsampling or replacement).
     long_history = len(rows) > 240
     if long_history:
-        fig, (ax, detail_ax) = plt.subplots(2, 1, figsize=(11, 11.2), dpi=130,
-                                            gridspec_kw={"height_ratios": [1, 1.15]})
+        fig, (ax, origin_ax, detail_ax) = plt.subplots(
+            3, 1, figsize=(11, 15.2), dpi=130,
+            gridspec_kw={"height_ratios": [0.75, 1, 1.1]})
     else:
         fig, ax = plt.subplots(figsize=(11, 7.2), dpi=130)
-        detail_ax = None
+        origin_ax = detail_ax = None
     try:
         fig.patch.set_facecolor("#111827")
         ax.set_facecolor("#111827")
@@ -189,6 +190,61 @@ def render_mirror_chart(snapshot: Mapping, output_path: str | Path) -> None:
                               f" · до ретеста {potential:.2f}%")
         ax.set_title(title, color="white")
         ax.legend(loc="best", fontsize=8, facecolor="#1f2937", labelcolor="white")
+        if origin_ax is not None:
+            origin_ax.set_facecolor("#111827")
+            # The overview can contain up to 2,000 subpixel-width candles;
+            # expose actual source wicks at a readable scale, too.
+            source_indices = [
+                times.index(int(anchor[0])) for level in levels
+                for anchor in level.get("anchors", ())
+                if int(anchor[0]) in times
+            ]
+            source_start = max(0, min(source_indices) - 8) if source_indices else 0
+            source_rows = rows[source_start:source_start + 120]
+            source_times = times[source_start:source_start + 120]
+            for i, candle in enumerate(source_rows):
+                o, h, low, c = (float(candle[k]) for k in ("open", "high", "low", "close"))
+                color = "#34d399" if c >= o else "#fb7185"
+                origin_ax.vlines(i, low, h, color=color, linewidth=0.9)
+                origin_ax.add_patch(Rectangle(
+                    (i - 0.27, min(o, c)), 0.54,
+                    max(abs(c - o), (h - low) * 0.002),
+                    facecolor=color, edgecolor=color, linewidth=0.5))
+            for level in levels:
+                boundary = level["boundary"]
+                anchor_t = int(boundary["anchor_time_ms"])
+                anchor_p = float(boundary["anchor_price"])
+                slope = float(boundary["slope_per_ms"])
+                selected = level.get("selected") is True
+                color = "#fbbf24" if selected else "#60a5fa"
+                visible = [(i, anchor_p + slope * (t - anchor_t))
+                           for i, t in enumerate(source_times) if t >= anchor_t]
+                if visible:
+                    origin_ax.plot([x for x, _ in visible], [y for _, y in visible],
+                                   color=color, linewidth=1.9 if selected else 1.4,
+                                   linestyle="-" if selected else "--")
+                source_anchor = min(level.get("anchors") or (), key=lambda a: int(a[0]),
+                                    default=None)
+                if source_anchor is not None and int(source_anchor[0]) in source_times:
+                    idx = source_times.index(int(source_anchor[0]))
+                    price = float(source_anchor[1])
+                    origin_ax.scatter([idx], [price], color=color, s=44, zorder=6)
+                    stamp = datetime.fromtimestamp(
+                        int(source_anchor[0]) / 1000, timezone.utc).strftime("%d.%m %H:%M UTC")
+                    origin_ax.annotate(f"{level.get('side', 'Опора')}: {stamp}",
+                                       (idx, price), xytext=(8, 12),
+                                       textcoords="offset points", color=color, fontsize=8)
+            origin_ax.set_xlim(-0.8, max(1, len(source_rows) - 1) + 0.8)
+            source_ticks = sorted(set([0, len(source_rows) // 2, len(source_rows) - 1]))
+            origin_ax.set_xticks(source_ticks, [
+                datetime.fromtimestamp(source_times[i] / 1000, timezone.utc).strftime("%d.%m %H:%M")
+                for i in source_ticks], rotation=20, ha="right")
+            origin_ax.tick_params(colors="#e5e7eb", labelsize=8)
+            for spine in origin_ax.spines.values():
+                spine.set_color("#4b5563")
+            origin_ax.grid(alpha=0.12)
+            origin_ax.set_title("Крупный план · исходные опоры и первые сохранённые свечи",
+                                color="white", fontsize=10)
         if detail_ax is not None:
             detail_ax.set_facecolor("#111827")
             # A fixed-size recent pane ensures each candle stays readable even
