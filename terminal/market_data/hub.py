@@ -212,6 +212,97 @@ class _FlowOnlyContext:
         self.impulse_observation.enable_certification_buffer()
 
 
+@dataclass(slots=True)
+class _ProtectedResearchCapture:
+    """Opt-in raw ingress witness for an ALREADY protected book.
+
+    This is not a book buffer or a second subscription. No synthetic baseline:
+    until an actual post-opt-in vendor snapshot arrives, deltas are discarded.
+    Overflow and reconnect invalidate the whole witness, not just its oldest row.
+    """
+    context: SymbolContext
+    capture_book: bool = field(default=True, init=False)
+    book_frames: deque[tuple[int, dict]] = field(
+        default_factory=lambda: deque(maxlen=1024),
+    )
+    # Never presented as a reconstructed book: delta-only ingress is a
+    # bounded candidate tape for a future independently verified REST anchor.
+    # A host must match exact vendor u/seq/cts before using any such delta.
+    rest_anchor_candidates: deque[tuple[int, dict]] = field(
+        default_factory=lambda: deque(maxlen=1024),
+    )
+    _active: bool = True
+    _epoch: int = 0
+    _lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def rest_anchor_tape_snapshot(self) -> dict[str, object]:
+        """Atomic, read-only structural copy of one bounded raw ingress epoch.
+
+        A future REST request must record the epoch both before and after
+        fetching; a mismatch means UNKNOWN, never a stitched generation.
+        Raw frame payloads are caller-read-only and are not book states.
+        """
+        with self._lock:
+            return {
+                "symbol": self.context.symbol,
+                "depth": self.context.public_orderbook.depth,
+                "epoch": self._epoch,
+                "active": self._active,
+                "frames": tuple(self.rest_anchor_candidates),
+                "source_complete": False,
+                "trading_authorized": False,
+            }
+
+    @property
+    def impulse_observation(self) -> PublicTradeObservation:
+        return self.context.impulse_observation
+
+    def on_book(self, received_at_ms: int, frame: dict, applied: str) -> None:
+        with self._lock:
+            if not self._active:
+                return
+            kind = frame.get("type")
+            if applied != "APPLIED" or kind not in ("snapshot", "delta"):
+                self._epoch += 1
+                self.book_frames.clear()
+                self.rest_anchor_candidates.clear()
+                return
+            if kind == "snapshot":
+                self._epoch += 1
+                self.book_frames.clear()
+                self.rest_anchor_candidates.clear()
+                self.book_frames.append((received_at_ms, frame))
+                return
+            if self.book_frames:
+                if len(self.book_frames) == self.book_frames.maxlen:
+                    self._epoch += 1
+                    self.book_frames.clear()
+                    self.rest_anchor_candidates.clear()
+                    return  # No prefix truncation masquerading as continuity.
+                self.book_frames.append((received_at_ms, frame))
+                return
+            # An orphan delta is NOT a book state. Retain it only for a
+            # separate source-provenance matcher; do not export as L2 proof.
+            if len(self.rest_anchor_candidates) == self.rest_anchor_candidates.maxlen:
+                self._epoch += 1
+                self.rest_anchor_candidates.clear()
+                return
+            self.rest_anchor_candidates.append((received_at_ms, frame))
+
+    def reset(self) -> None:
+        with self._lock:
+            self._epoch += 1
+            self.book_frames.clear()
+            self.rest_anchor_candidates.clear()
+
+    def close(self) -> None:
+        with self._lock:
+            self._epoch += 1
+            self._active = False
+            self.book_frames.clear()
+            self.rest_anchor_candidates.clear()
+
+
 class MarketDataHub:
     """Own one reconnecting public WebSocket and dispatch into symbol contexts."""
 
@@ -233,6 +324,9 @@ class MarketDataHub:
         # At most ONE opt-in, trade-only watch on the EXISTING WebSocket.
         # It never enters list_contexts(), Workspace or protection coverage.
         self._flow_only: dict[str, _FlowOnlyContext] = {}
+        # At most one optional raw-frame witness for an EXISTING full context.
+        # No new subscription, vendor buffer, listeners or protection owner.
+        self._protected_research: _ProtectedResearchCapture | None = None
         self._lock = threading.RLock()
         self._send_lock = threading.Lock()
         self._stop = threading.Event()
@@ -336,6 +430,36 @@ class MarketDataHub:
                     self._send_flow_only(ws, passive)
         return passive
 
+    def begin_protected_research_capture(
+        self, symbol: str,
+    ) -> _ProtectedResearchCapture | None:
+        """Attach only to an already subscribed protected SymbolContext.
+
+        Caller must be an explicitly opted-in research observer; this method
+        never creates a context, socket, topic or book snapshot.
+        """
+        normalized = self._instruments.get(symbol).symbol
+        with self._lock:
+            full = self._contexts.get(normalized)
+            if full is None or self._stop.is_set():
+                return None
+            existing = self._protected_research
+            if existing is not None:
+                return existing if existing.context is full else None
+            witness = _ProtectedResearchCapture(full)
+            self._protected_research = witness
+            return witness
+
+    def end_protected_research_capture(self, symbol: str) -> bool:
+        """Release research bytes only; protected subscriptions keep running."""
+        with self._lock:
+            witness = self._protected_research
+            if witness is None or witness.context.symbol != symbol:
+                return False
+            self._protected_research = None
+            witness.close()
+            return True
+
     def release_flow_only(self, symbol: str) -> bool:
         """Release ONLY a passive topic; never unsubscribe protected books."""
         with self._lock:
@@ -432,6 +556,10 @@ class MarketDataHub:
             if self._contexts.get(context.symbol) is not context:
                 return
             del self._contexts[context.symbol]
+            if (self._protected_research is not None
+                    and self._protected_research.context is context):
+                self._protected_research.close()
+                self._protected_research = None
             ws = self._ws
         if ws is not None:
             try:
@@ -450,6 +578,10 @@ class MarketDataHub:
             passive = tuple(self._flow_only.values())
             self._contexts.clear()
             self._flow_only.clear()
+            witness = self._protected_research
+            self._protected_research = None
+            if witness is not None:
+                witness.close()
         for context in passive:
             context.impulse_observation.mark_gap()
         if ws is not None:
@@ -536,6 +668,10 @@ class MarketDataHub:
                     with self._lock:
                         contexts = tuple(self._contexts.values())
                         passive = tuple(self._flow_only.values())
+                    with self._lock:
+                        witness = self._protected_research
+                    if witness is not None:
+                        witness.reset()  # Must await a fresh vendor snapshot.
                     for flow in passive:
                         flow.trades_subscription_state = "DISCONNECTED"
                         flow.trade_bootstrap_complete = False
@@ -595,6 +731,7 @@ class MarketDataHub:
         with self._lock:
             context = self._contexts.get(symbol)
             flow = self._flow_only.get(symbol) if context is None else None
+            witness = self._protected_research if context is not None else None
         if context is None:
             if flow is not None and flow.capture_book and topic == flow.book_topic:
                 frame_type = message.get("type")
@@ -616,7 +753,15 @@ class MarketDataHub:
                     flow.trade_bootstrap_complete = True
             return
         if topic == f"orderbook.{context.public_orderbook.depth}.{symbol}":
+            # Stamp the ORIGINAL frame at ingress, never invent a vendor
+            # snapshot from the protected book's reconstructed state.
+            received_at_ms = int(time.time() * 1000) if witness is not None else 0
             applied = context.public_orderbook.apply_message(message)
+            if witness is not None and witness.context is context:
+                try:
+                    witness.on_book(received_at_ms, message, applied)
+                except (AttributeError, TypeError, ValueError):
+                    witness.reset()  # Observation must not block protection.
             component = "book"
         elif topic.startswith("publicTrade."):
             # Capture receipt at the real ingress boundary, before the existing

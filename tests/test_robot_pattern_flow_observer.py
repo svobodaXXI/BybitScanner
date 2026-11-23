@@ -164,6 +164,77 @@ class ObserverTests(unittest.TestCase):
         finally:
             observer.close()
 
+    def test_capture_only_uses_existing_protected_ingress_and_rotates_host(self):
+        """The full protected context never receives a second book owner."""
+        calls = []
+        protected = SimpleNamespace(symbol="BTCUSDT")  # no research book attrs
+        views = []
+
+        def begin(symbol):
+            calls.append(("begin-protected", symbol))
+            view = SimpleNamespace(
+                capture_book=True, book_frames=[],
+                impulse_observation=SimpleNamespace(snapshot=lambda: {
+                    "prints": (), "invalid_frames": 0,
+                }),
+            )
+            views.append(view)
+            return view
+
+        hub = SimpleNamespace(
+            subscribe_flow_only=lambda symbol, *, capture_book=False: (
+                calls.append(("reuse-full", symbol, capture_book)) or protected
+            ),
+            begin_protected_research_capture=begin,
+            end_protected_research_capture=lambda symbol: calls.append(
+                ("end-protected", symbol)
+            ),
+            release_flow_only=lambda symbol: calls.append(
+                ("release-passive", symbol)
+            ),
+        )
+        original = _candidate(phase="WAITING_BREAKOUT")
+        original.updated_at_ms = 100_000
+        original.snapshot_sha256 = "a" * 64
+        candidates = [original]
+        rest = _REST(None, None, None)
+        observer = PatternFlowObserver(
+            hub, rest, "unused", clock_ms=lambda: 180_100,
+            get_candidates=lambda: tuple(candidates),
+            wedge_capture_path=Path("unused-protected-capture.json"),
+            capture_only=True,
+        )
+        try:
+            self.assertEqual(observer.once(), 0)
+            self.assertEqual(calls, [
+                ("reuse-full", "BTCUSDT", True),
+                ("begin-protected", "BTCUSDT"),
+            ])
+            self.assertEqual(len(views), 1)
+            replacement = _candidate(phase="WAITING_BREAKOUT")
+            replacement.candidate_id = "replacement-host"
+            replacement.updated_at_ms = 110_000
+            replacement.snapshot_sha256 = "b" * 64
+            candidates[:] = [replacement]
+            self.assertEqual(observer.once(), 0)
+            self.assertEqual(calls[-4:], [
+                ("end-protected", "BTCUSDT"),
+                ("release-passive", "BTCUSDT"),
+                ("reuse-full", "BTCUSDT", True),
+                ("begin-protected", "BTCUSDT"),
+            ])
+            self.assertEqual(len(views), 2)
+            self.assertEqual(rest.requests, [])
+            self.assertEqual(observer._receipts, {})
+            self.assertEqual(observer._attempted, set())
+            self.assertFalse(hasattr(protected, "book_frames"))
+        finally:
+            observer.close()
+        self.assertEqual(calls[-2:], [
+            ("end-protected", "BTCUSDT"),
+            ("release-passive", "BTCUSDT"),
+        ])
+
     def test_wedge_capture_requires_postapproval_snapshot_and_exact_host(self):
         """A prior candidate's L2 snapshot may not become today's proof."""
         receipt = make_dataclass(
