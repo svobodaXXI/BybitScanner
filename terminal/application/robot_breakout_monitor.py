@@ -979,7 +979,16 @@ class RobotBreakoutMonitor:
                         and isinstance(cursor, Mapping)
                         and cursor.get("timeframe") == "1"
                     ):
-                        return self._quarantine_unstarted_frozen_fault(record, error)
+                        # Independently revalidate *source*, not merely the
+                        # initializer exception: the same exception class
+                        # can also reflect a transient adapter/state fault.
+                        # Use the canonical pure frozen-geometry validator;
+                        # never quarantine a valid snapshot from an error
+                        # message, type, or failed non-frozen dependency.
+                        try:
+                            robot_state_machine._snapshot_geometry(snapshot)
+                        except robot_state_machine.RobotStateMachineError:
+                            return self._quarantine_unstarted_frozen_fault(record, error)
                     raise
                 self._invalidate_unsupported_pattern(record, error)
                 return True
