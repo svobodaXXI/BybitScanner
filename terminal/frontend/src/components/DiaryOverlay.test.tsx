@@ -1,7 +1,15 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { DiaryOverlay, displayTradePnl } from "./DiaryOverlay";
+import { DiaryOverlay, displayTradePnl, detailTimeframeLabel } from "./DiaryOverlay";
+
+it.each([
+  ["1", "1M"], ["5", "5M"], ["15", "15M"],
+  ["60", "1H"], ["240", "4H"], ["D", "1D"],
+  ["M5", "5M"], ["H1", "1H"], ["D1", "1D"],
+])("uses readable timeframe %s as %s in trade detail", (source, expected) => {
+  expect(detailTimeframeLabel(source)).toBe(expected);
+});
 
 const detail = {
   identity: {
