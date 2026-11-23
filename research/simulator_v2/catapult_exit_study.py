@@ -65,6 +65,8 @@ class MarketReceipt:
     prints_covered: bool
     mark_price: Decimal
     best_price_since_fill: Decimal
+    best_price_event_ms: int
+    best_price_received_ms: int
     directional_print_delta_usdt: Decimal
     structure_invalidated: bool = False
 
@@ -127,15 +129,18 @@ def evaluate_exit(
     def insufficient(why: str) -> ExitProposal:
         return ExitProposal("INSUFFICIENT", why)
 
-    if not trade.protection_confirmed:
+    if type(trade.protection_confirmed) is not bool or not trade.protection_confirmed:
         return insufficient("no confirmed original STOP")
     if not receipt.trade_id or receipt.trade_id != trade.trade_id:
         return insufficient("trade identity mismatch")
-    if (not receipt.book_snapshot_delta_continuous or not receipt.prints_covered):
+    if (type(receipt.book_snapshot_delta_continuous) is not bool
+            or type(receipt.prints_covered) is not bool
+            or not receipt.book_snapshot_delta_continuous or not receipt.prints_covered):
         return insufficient("book or print receipt continuity unproven")
     times = (
         receipt.decision_at_ms, receipt.book_event_ms, receipt.book_received_ms,
         receipt.print_event_ms, receipt.print_received_ms,
+        receipt.best_price_event_ms, receipt.best_price_received_ms,
     )
     if any(type(t) is not int or t < 0 for t in times):
         return insufficient("invalid receipt time")
@@ -144,6 +149,9 @@ def evaluate_exit(
             or receipt.print_event_ms < trade.filled_at_ms
             or receipt.book_received_ms < receipt.book_event_ms
             or receipt.print_received_ms < receipt.print_event_ms
+            or receipt.best_price_event_ms < trade.filled_at_ms
+            or receipt.best_price_received_ms < receipt.best_price_event_ms
+            or receipt.best_price_received_ms > receipt.decision_at_ms
             or receipt.book_received_ms > receipt.decision_at_ms
             or receipt.print_received_ms > receipt.decision_at_ms
             or receipt.decision_at_ms - receipt.book_received_ms > settings.max_data_age_ms
