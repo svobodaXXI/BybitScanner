@@ -52,7 +52,7 @@ import { createFrameBatcher } from "../chart/frameBatcher";
 import type { Candle } from "../contracts/marketData";
 import {
   TELEGRAM_BUY_COLOR, TELEGRAM_SELL_COLOR,
-  visibleRobotTradeMarkers, type RobotTradeMarker,
+  visibleRobotTradeMarkers, tradeTrianglePoints, type RobotTradeMarker,
 } from "../chart/robotTradeMarkers";
 import { EDITOR_REVIEW_PATTERNS, buildEditorGeometryReview, isEditorReviewPattern, isValidCachedEditorDraft, type GeometryReviewDraft } from "../geometryFeedback/geometryReviewDraft";
 import { initialSourceGeometryRange } from "../geometryFeedback/signalChartBridge";
@@ -705,9 +705,7 @@ export function ChartPanel({
     if (x === null || y === null || !Number.isFinite(x) || !Number.isFinite(y))
       return [];
     const color = marker.side === "Buy" ? TELEGRAM_BUY_COLOR : TELEGRAM_SELL_COLOR;
-    const points = marker.side === "Buy"
-      ? `${x},${y - 8} ${x - 7},${y + 6} ${x + 7},${y + 6}`
-      : `${x},${y + 8} ${x - 7},${y - 6} ${x + 7},${y - 6}`;
+    const points = tradeTrianglePoints(x, y, marker.side);
     return [<polygon
       key={`${marker.logical}:${marker.price}:${marker.side}:${index}`}
       points={points} fill={marker.filled ? color : "none"}

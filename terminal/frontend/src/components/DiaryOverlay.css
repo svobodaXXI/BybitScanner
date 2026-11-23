@@ -794,18 +794,6 @@ button.diary-outcome-segment {
   border-color: #859bb1;
 }
 
-.diary-execution-price-chart {
-  display: block;
-  width: 100%;
-  max-width: 34rem;
-  height: auto;
-  margin: 0.35rem 0;
-  color: #e0b45b;
-  background: #10151b;
-  border: 1px solid #27313b;
-  border-radius: 0.3rem;
-}
-
 
 /* Original immutable Robot source, separate from Editor review/feedback drawings. */
 .diary-original-signal-plot {
@@ -836,6 +824,71 @@ button.diary-outcome-segment {
   border-radius: 0.3rem;
   touch-action: none;
 }
+
+.diary-trade-chart-host {
+  position: relative;
+  min-width: 0;
+}
+
+.diary-original-signal-plot svg.diary-chart-triangle-overlay {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  border: 0;
+  background: transparent;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.diary-chart-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: max(0.6rem, env(safe-area-inset-top)) 0.6rem
+    max(0.6rem, env(safe-area-inset-bottom));
+  background: #10151b;
+  color: #e2eaf0;
+}
+
+.diary-chart-fullscreen > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.diary-chart-fullscreen > header > button {
+  min-width: 2.7rem;
+  min-height: 2.7rem;
+  border: 1px solid #394653;
+  border-radius: 0.35rem;
+  background: #19222c;
+  color: #e2eaf0;
+  font-size: 1.6rem;
+  cursor: pointer;
+}
+
+.diary-chart-fullscreen .diary-original-signal-plot {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.diary-chart-fullscreen .diary-trade-chart-host {
+  flex: 1;
+  min-height: 0;
+}
+
+.diary-chart-fullscreen .diary-interactive-trade-chart {
+  height: 100%;
+}
 .diary-trade-timeframes {
   display: flex;
   flex-wrap: nowrap;
@@ -845,7 +898,8 @@ button.diary-outcome-segment {
   -webkit-overflow-scrolling: touch;
 }
 .diary-trade-timeframes button,
-.diary-trade-chart-controls button {
+.diary-trade-chart-controls button,
+.diary-trade-chart-controls a {
   min-height: 2.6rem;
   border-radius: 0.35rem;
   border: 1px solid #394653;
@@ -870,6 +924,18 @@ button.diary-outcome-segment {
   justify-content: space-between;
   font-size: 0.8rem;
   color: #aab9c7;
+}
+.diary-trade-chart-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.diary-trade-chart-actions a {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
 }
 
 /* Preserve the native source pattern beside alternate-timeframe market context. */

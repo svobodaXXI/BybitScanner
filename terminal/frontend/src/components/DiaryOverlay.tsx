@@ -546,33 +546,6 @@ function verifiedIndexedPattern(deal: ClosedEpisodeLocator, report: FinrezRespon
 
 type TradeExecutionPoint = { at: number; price: number };
 
-function TradeExecutionPriceChart({ points }: { points: readonly TradeExecutionPoint[] }) {
-  if (points.length < 1) return (
-    <p className="diary-finrez-basis">Свечной график пока недоступен: нужен проверенный архив исторических свечей.</p>
-  );
-  const ordered = [...points].sort((a, b) => a.at - b.at);
-  const first = ordered[0].at, last = ordered[ordered.length - 1].at;
-  const prices = ordered.map((point) => point.price);
-  const min = Math.min(...prices), max = Math.max(...prices);
-  const x = (at: number) => 18 + (at - first) / Math.max(1, last - first) * 284;
-  const y = (price: number) => 105 - (price - min) / Math.max(0.00000001, max - min) * 88;
-  return (
-    <section className="diary-detail-section">
-      <h3>График цен исполнений · не свечной график</h3>
-      <svg className="diary-execution-price-chart" viewBox="0 0 320 122" role="img"
-        aria-label="Фактические цены исполнений сделки по времени">
-        <path d={ordered.map((point, i) => `${i ? "L" : "M"} ${x(point.at)} ${y(point.price)}`).join(" ")}
-          fill="none" stroke="currentColor" strokeWidth="1.6" />
-        {ordered.map((point, i) => <circle key={i} cx={x(point.at)} cy={y(point.price)} r="3.3"
-          fill="currentColor">
-          <title>{point.price} · {formatDate(point.at)}</title>
-        </circle>)}
-      </svg>
-      <small>Показаны только подтверждённые исполнения, без подстановки рыночных свечей.</small>
-    </section>
-  );
-}
-
 function Value({ value }: { value: string | null | undefined }) {
   return <span>{value ?? "—"}</span>;
 }
@@ -1051,6 +1024,20 @@ const dealLabels: Record<ClosedEpisodeLocator["cohort"], string> = {
 };
 
 /** Compact label only; original verified pattern remains available in detail/title. */
+function detailPatternLabel(pattern: string): string {
+  if (pattern === "Rising Wedge") return "Восходящий клин";
+  if (pattern === "Falling Wedge") return "Нисходящий клин";
+  return pattern;
+}
+
+export function detailTimeframeLabel(timeframe: string): string {
+  return ({ "1": "1M", M1: "1M", "1M": "1M", "5": "5M", M5: "5M", "5M": "5M",
+    "15": "15M", M15: "15M", "15M": "15M",
+    "60": "1H", H1: "1H", "1H": "1H",
+    "240": "4H", H4: "4H", "4H": "4H",
+    D: "1D", D1: "1D", "1D": "1D" } as Record<string, string>)[timeframe.toUpperCase()] ?? timeframe;
+}
+
 function compactDealPattern(pattern: string | null): string {
   if (pattern === "Falling Wedge") return "Клин ↘";
   if (pattern === "Rising Wedge") return "Клин ↗";
@@ -1333,8 +1320,8 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, pnlFilter, sideF
           <h3>Сетап и паттерн</h3>
           {selectedPattern ? (
             <dl>
-              <div><dt>Паттерн</dt><dd>{selectedPattern.pattern}</dd></div>
-              <div><dt>Таймфрейм</dt><dd>{selectedPattern.timeframe}</dd></div>
+              <div><dt>Паттерн</dt><dd>{detailPatternLabel(selectedPattern.pattern)}</dd></div>
+              <div><dt>Таймфрейм</dt><dd>{detailTimeframeLabel(selectedPattern.timeframe)}</dd></div>
               {selectedPattern.source === "D2" ? (
                 <>
                   <div><dt>ID сетапа</dt><dd>{selectedPattern.setupId}</dd></div>
@@ -1358,7 +1345,6 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, pnlFilter, sideF
           pattern={verifiedRobotSignal(selected, report)?.pattern ?? null}
           side={selected.side} openedAtMs={selected.opened_at_ms}
           closedAtMs={selected.closed_at_ms} executions={executionPoints} />
-        <TradeExecutionPriceChart points={executionPoints} />
         <SimulatorLaunchAction episodeId={selected.trade_episode_id}
           allowLocalLaunch={report.account_id === "paper"}
           owner={report.owner} sourceRevision={report.source_revision} />

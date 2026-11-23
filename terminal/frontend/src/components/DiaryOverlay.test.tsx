@@ -1,7 +1,15 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { DiaryOverlay, displayTradePnl } from "./DiaryOverlay";
+import { DiaryOverlay, displayTradePnl, detailTimeframeLabel } from "./DiaryOverlay";
+
+it.each([
+  ["1", "1M"], ["5", "5M"], ["15", "15M"],
+  ["60", "1H"], ["240", "4H"], ["D", "1D"],
+  ["M5", "5M"], ["H1", "1H"], ["D1", "1D"],
+])("uses readable timeframe %s as %s in trade detail", (source, expected) => {
+  expect(detailTimeframeLabel(source)).toBe(expected);
+});
 
 const detail = {
   identity: {
@@ -1791,7 +1799,7 @@ describe("shared statistics trade action standard", () => {
     expect(await screen.findByText("не установлен")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Подробности сделки" }));
     const section = await screen.findByRole("region", { name: "Связь сделки с паттерном" });
-    await waitFor(() => expect(section).toHaveTextContent("Falling Wedge"));
+    await waitFor(() => expect(section).toHaveTextContent("Нисходящий клин"));
     expect(section).toHaveTextContent("candidate-1");
     expect(section).toHaveTextContent("robot-v2");
     expect(section).toHaveTextContent("не полный журнал решений Робота");
@@ -1882,10 +1890,12 @@ describe("shared statistics trade action standard", () => {
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
     const magnifier = await screen.findByRole("button", { name: "Подробности сделки" });
     fireEvent.click(magnifier);
-    expect(await screen.findByRole("img", {
+    expect(screen.queryByRole("img", {
       name: "Фактические цены исполнений сделки по времени",
-    })).toBeInTheDocument();
-    expect(screen.getByText("График цен исполнений · не свечной график")).toBeInTheDocument();
+    })).not.toBeInTheDocument();
+    expect(screen.queryByText("Цены исполнений")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Показаны только подтверждённые исполнения, без подстановки/))
+      .not.toBeInTheDocument();
     expect(screen.getByText(/Это не воспроизведение/)).toBeInTheDocument();
   });
 
@@ -2031,7 +2041,9 @@ describe("Verified Wedge lineage in Statistics", () => {
     expect(screen.getByRole("combobox", { name: "Выбор паттерна" })).toHaveValue("Falling Wedge");
     fireEvent.click(screen.getByRole("button", { name: /BTCUSDT/ }));
     expect(screen.getByText("candidate-42")).toBeInTheDocument();
-    expect(screen.getByText(/Не D2, без исходной геометрии/)).toBeInTheDocument();
+    expect(screen.getByText("Нисходящий клин")).toBeInTheDocument();
+    expect(screen.getByText("5M")).toBeInTheDocument();
+    expect(screen.getByText(/Источник: точная цепочка Robot candidate/)).toBeInTheDocument();
     expect(screen.queryByText("Версия стратегии")).not.toBeInTheDocument();
   });
 
