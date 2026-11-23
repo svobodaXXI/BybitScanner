@@ -196,14 +196,16 @@ describe("original signal on a closed deal", () => {
     })).toBeInTheDocument();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(fetchMock).toHaveBeenCalledWith(firstUrl, expect.any(Object));
-    await waitFor(() => expect(screen.getByText(/Фактические исполнения на загруженных свечах: 2\/2/))
+    await waitFor(() => expect(screen.getByText(/Исполнения: 2\/2/))
       .toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: "Показать следующие свечи" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
     expect(fetchMock).toHaveBeenCalledWith(secondUrl, expect.any(Object));
-    await waitFor(() => expect(screen.getByText("Следующие закрытые свечи добавлены."))
-      .toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText("Следующие закрытые свечи добавлены."))
+      .not.toBeInTheDocument());
     expect(screen.queryByText(/123456/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Удерживайте палец для перекрестия/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Только неизменяемый архив сигнала/)).not.toBeInTheDocument();
   });
 
   it("switches to real M1 historical candles without resampling M5", async () => {
@@ -229,7 +231,7 @@ describe("original signal on a closed deal", () => {
     ), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     render(<OriginalEpisodeSignalChart {...props} />);
-    await screen.findByText("Рыночные свечи до завершения сделки подтверждены.");
+    await waitFor(() => expect(screen.getByRole("button", { name: "M5" })).not.toBeDisabled());
     fireEvent.click(screen.getByRole("button", { name: "M1" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(intervalUrl, expect.any(Object)));
     await waitFor(() => expect(screen.getByRole("button", { name: "M1" }))
@@ -271,7 +273,7 @@ describe("original signal on a closed deal", () => {
         : request.includes("/continuation?") ? extension : archived), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     render(<OriginalEpisodeSignalChart {...props} />);
-    await screen.findByText("Рыночные свечи до завершения сделки подтверждены.");
+    await waitFor(() => expect(screen.getByRole("button", { name: "M5" })).not.toBeDisabled());
     fireEvent.click(screen.getByRole("button", { name: label }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(url, expect.any(Object)));
     await waitFor(() => expect(screen.getByRole("application", {
@@ -305,11 +307,11 @@ describe("original signal on a closed deal", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<OriginalEpisodeSignalChart {...props} closedAtMs={lateClose}
       executions={[props.executions[0], { at: lateClose, price: 100.5 }]} />);
-    await screen.findByText("Рыночные свечи до завершения сделки подтверждены.");
+    await waitFor(() => expect(screen.getByRole("button", { name: "M5" })).not.toBeDisabled());
     fireEvent.click(screen.getByRole("button", { name: "M1" }));
     const market = await screen.findByRole("region", { name: "Рыночный контекст M1" });
     await waitFor(() => expect(within(market).getByText(
-      /Фактические исполнения на загруженных свечах: 2\/2/,
+      /Исполнения: 2\/2/,
     )).toBeInTheDocument());
     expect(fetchMock.mock.calls.filter(([url]) =>
       String(url).includes("/signal-geometry/candles?"))).toHaveLength(4);
@@ -338,11 +340,11 @@ describe("original signal on a closed deal", () => {
     render(<OriginalEpisodeSignalChart {...props}
       closedAtMs={t + 80 * minute + 2000}
       executions={[props.executions[0], { at: t + 80 * minute + 2000, price: 100.5 }]} />);
-    await screen.findByText("Рыночные свечи до завершения сделки подтверждены.");
+    await waitFor(() => expect(screen.getByRole("button", { name: "M5" })).not.toBeDisabled());
     fireEvent.click(screen.getByRole("button", { name: "M1" }));
     const market = await screen.findByRole("region", { name: "Рыночный контекст M1" });
     await waitFor(() => expect(within(market).getByText(
-      /Фактические исполнения на загруженных свечах: 1\/2/,
+      /Исполнения: 1\/2/,
     )).toBeInTheDocument());
     expect(screen.getByText(/только часть проверенных свечей/)).toBeInTheDocument();
     expect(fetchMock.mock.calls.filter(([url]) =>
