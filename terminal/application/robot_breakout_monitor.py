@@ -1314,8 +1314,17 @@ class RobotBreakoutMonitor:
             plan = restore_box_market_plan(raw_intent)
             source = self._box_source(record, execution)
             proof = self._store().prove_box_owned_position(source.candidate_id)
+            identity = source.signal_snapshot.get("identity")
+            if not isinstance(identity, Mapping) or identity.get("direction") not in {
+                "LONG", "SHORT",
+            }:
+                return False
+            expected_close_side = (
+                OrderSide.SELL if identity["direction"] == "LONG" else OrderSide.BUY
+            )
             if (
                 plan.slot != 0 or plan.request.symbol != record.symbol.value
+                or plan.request.side is not expected_close_side
                 or plan.quantity != proof.remaining_quantity
                 or proof.remaining_quantity <= 0
                 or self._store().get_command(plan.identity.command_id) is not None
