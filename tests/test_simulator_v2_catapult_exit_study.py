@@ -31,6 +31,7 @@ def receipt(direction="LONG", **overrides):
         book_snapshot_delta_continuous=True, prints_covered=True,
         mark_price=D("99.80") if direction == "LONG" else D("100.20"),
         best_price_since_fill=D("100"),
+        best_price_event_ms=1500, best_price_received_ms=1600,
         directional_print_delta_usdt=D("0"),
         structure_invalidated=False,
     )
@@ -154,6 +155,12 @@ class CatapultHypothesisMechanics(unittest.TestCase):
             replace(source, book_event_ms=999),
             replace(source, decision_at_ms=900),
             replace(source, best_price_since_fill=D("99.9")),
+            replace(source, best_price_event_ms=11001,
+                    best_price_received_ms=11002),
+            replace(source, best_price_received_ms=11001),
+            replace(source, best_price_received_ms=1499),
+            replace(source, book_snapshot_delta_continuous="yes"),
+            replace(source, prints_covered="yes"),
             replace(source, mark_price=D("NaN")),
             replace(source, directional_print_delta_usdt=D("Infinity")),
         ):
