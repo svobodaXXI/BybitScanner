@@ -1329,7 +1329,19 @@ class RobotBreakoutMonitor:
                 # A persisted command may already have dispatched. Keep the
                 # fence; only the existing no-command recovery may submit.
                 return False
-            return self._sync_box_trade(record, execution, create_trade=False)
+            # EXIT-0 was committed before any ordinary STOP recovery. Finish
+            # the exact saved emergency action, not an OPEN Box lifecycle
+            # with a permanently pending close intent.
+            expected_digest = hashlib.sha256(
+                f"box-emergency-close\0{source.candidate_id}".encode("utf-8")
+            ).hexdigest()[:32]
+            if plan.request.client_action_id.value != f"box-market-{expected_digest}":
+                return False
+            self._fail_closed_box_unprotected_fill(
+                record, source, proof,
+                RobotBreakoutMonitorError("resuming committed Box EXIT-0"),
+            )
+            return False
         source = self._box_source(record, execution)
         catchup = execution.get("box_catchup")
         if (
