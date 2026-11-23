@@ -558,7 +558,7 @@ try {
   await marketError.waitFor();
   assert.equal(await page.locator(".replay-chart-shell").count(), 0,
     "failed public market download cannot resurrect old market candles");
-  await bounds.getByRole("checkbox", { name: "Ikigai Box" }).check();
+  await bounds.getByRole("checkbox", { name: "Коробка Икигай" }).check();
   await bounds.getByRole("button", { name: "Применить" }).click();
   await page.getByText("РЕАЛЬНЫЕ СВЕЧИ BYBIT", { exact: false }).waitFor();
   assert.equal(publicMarketAttempts, 2);
