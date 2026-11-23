@@ -13,10 +13,14 @@ vi.mock("lightweight-charts", () => ({
     const scale = {
       getVisibleLogicalRange: vi.fn(() => null),
       setVisibleLogicalRange: vi.fn(), setVisibleRange: vi.fn(), fitContent: vi.fn(),
+      timeToCoordinate: vi.fn(() => 100),
+      subscribeVisibleLogicalRangeChange: vi.fn(),
+      unsubscribeVisibleLogicalRangeChange: vi.fn(),
     };
     return {
-      addSeries: vi.fn(() => ({ setData: vi.fn() })),
+      addSeries: vi.fn(() => ({ setData: vi.fn(), priceToCoordinate: vi.fn(() => 50) })),
       removeSeries: vi.fn(), remove: vi.fn(), timeScale: () => scale,
+      subscribeCrosshairMove: vi.fn(), unsubscribeCrosshairMove: vi.fn(),
     };
   }),
 }));
@@ -208,6 +212,41 @@ describe("original signal on a closed deal", () => {
     expect(screen.queryByText(/Только неизменяемый архив сигнала/)).not.toBeInTheDocument();
   });
 
+  it("opens one fullscreen source chart with exact Editor link and trade triangles", async () => {
+    const fetchMock = vi.fn(async (url: string) =>
+      new Response(JSON.stringify(url.includes("/continuation?") ? extension : archived),
+        { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<OriginalEpisodeSignalChart {...props} />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "M5" }))
+      .not.toBeDisabled());
+    const editor = screen.getByRole("link", { name: "Открыть в Редакторе" });
+    expect(editor).toHaveAttribute("href",
+      "?mode=EDITOR&symbol=BTCUSDT&timeframe=5m&signal_id=candidate-42");
+    expect(editor).toHaveAttribute("target", "_blank");
+    await waitFor(() => expect(document.querySelectorAll(
+      ".diary-chart-triangle-overlay polygon")).toHaveLength(2));
+    expect(Array.from(document.querySelectorAll(".diary-chart-triangle-overlay polygon"))
+      .map(node => node.getAttribute("points"))).toEqual([
+        "100,42 93,56 107,56", "100,58 93,44 107,44",
+      ]);
+    fireEvent.click(screen.getByRole("button", { name: "Весь график" }));
+    const fullscreen = screen.getByRole("dialog", { name: "Полноэкранный график сделки" });
+    expect(within(fullscreen).getByRole("application", {
+      name: "Интерактивный свечной график сделки",
+    })).toBeInTheDocument();
+    expect(document.querySelectorAll(".diary-interactive-trade-chart")).toHaveLength(1);
+    expect(within(fullscreen).getByRole("link", { name: "Открыть в Редакторе" }))
+      .toHaveAttribute("href", editor.getAttribute("href"));
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Полноэкранный график сделки" }))
+      .not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Весь график" }));
+    fireEvent.click(screen.getByRole("button", { name: "Закрыть полноэкранный график" }));
+    expect(screen.queryByRole("dialog", { name: "Полноэкранный график сделки" }))
+      .not.toBeInTheDocument();
+  });
+
   it("switches to real M1 historical candles without resampling M5", async () => {
     const minute = 60_000;
     const afterMs = Math.floor(props.openedAtMs / minute) * minute - 8 * minute;
@@ -238,10 +277,11 @@ describe("original signal on a closed deal", () => {
       .toHaveAttribute("aria-pressed", "true"));
     expect(screen.getByRole("region", { name: "Рыночный контекст M1" }))
       .toHaveTextContent("Рыночный контекст · M1");
-    expect(screen.getByRole("region", { name: "Исходная фигура сделки" }))
-      .toHaveTextContent("Исходная фигура · M5");
+    expect(screen.queryByRole("region", { name: "Исходная фигура сделки" }))
+      .not.toBeInTheDocument();
     expect(screen.getByRole("application", { name: "Рыночный контекст M1" })).toBeInTheDocument();
-    expect(screen.getByRole("application", { name: "Исходный график сигнала" })).toBeInTheDocument();
+    expect(screen.queryByRole("application", { name: "Исходный график сигнала" }))
+      .not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "M5" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "M5" }))
       .toHaveAttribute("aria-pressed", "true"));
@@ -281,8 +321,8 @@ describe("original signal on a closed deal", () => {
     })).toBeInTheDocument());
     expect(screen.getByRole("application", { name: "Исходный график сигнала" }))
       .toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Исходная фигура сделки" }))
-      .toHaveTextContent("Исходная фигура · M5");
+    expect(screen.queryByRole("region", { name: "Исходная фигура сделки" }))
+      .not.toBeInTheDocument();
     expect(screen.queryByText(/Исходные линии не попадают минимум/)).not.toBeInTheDocument();
   });
 
