@@ -740,12 +740,23 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.store.reserve_box_order_identity(
             source.candidate_id, order_id=obligation.order_id, role="EXIT", slot=0,
         )
-        for oid in entry_ids[1:]:
+        # STOP has already settled before this stale TAKE callback: cancel
+        # every remaining ACTIVE order owned by the same frozen Box grid.
+        # In particular, an entry LIMIT may be PARTIALLY_FILLED even after
+        # an owned first fill. Never suppress it in the production guard.
+        for active in self.store.load_active_paper_limits(
+            ACCOUNT_ID, Symbol(SYMBOL),
+        ):
+            oid = active.order_id.value
+            self.assertIn(oid, entry_ids)
             self.store.cancel_paper_limit(
                 client_action_id=f"test-stop-cancel-{oid}",
-                request_fingerprint=f"test-fp-{oid}", order_id=OrderId(oid),
+                request_fingerprint=f"test-fp-{oid}", order_id=active.order_id,
                 trading_account_id=ACCOUNT_ID, updated_at_ms=4980,
             )
+        self.assertFalse(self.store.load_active_paper_limits(
+            ACCOUNT_ID, Symbol(SYMBOL),
+        ))
         position_key = PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
         old = self.store.get_position_projection(position_key)
         self.assertEqual(old.quantity.value, Decimal("2"))
