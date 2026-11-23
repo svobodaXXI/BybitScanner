@@ -76,9 +76,21 @@ def find_asset(kind: str, *, opener=urlopen) -> ReleaseAsset:
         raise UpdateBlocked("stable_head_unproven")
     # Robot/docs merges move stable frequently. The latest *desktop* release
     # remains eligible if its exact commit is still an ancestor of stable.
-    published = _json(API + "/releases?per_page=30", opener=opener)
-    if not isinstance(published, list) or len(published) > 30:
-        raise UpdateBlocked("desktop_release_list_untrusted")
+    # The aggregate releases response grows beyond the 256 KB metadata cap.
+    # Read bounded pages instead; do not silently select an older release if
+    # pagination cannot be completed. Each page retains the per-response cap.
+    published = []
+    page_size = 5
+    max_pages = 30
+    for page in range(1, max_pages + 1):
+        batch = _json(API + f"/releases?per_page={page_size}&page={page}", opener=opener)
+        if not isinstance(batch, list) or len(batch) > page_size:
+            raise UpdateBlocked("desktop_release_list_untrusted")
+        published.extend(batch)
+        if len(batch) < page_size:
+            break
+    else:
+        raise UpdateBlocked("desktop_release_list_unbounded")
     candidates = [r for r in published if isinstance(r, dict) and
                   isinstance(r.get("tag_name"), str) and
                   re.fullmatch(r"desktop-[0-9a-f]{40}", r["tag_name"])]
