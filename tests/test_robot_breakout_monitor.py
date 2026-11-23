@@ -905,6 +905,87 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.monitor._escalate_reconciliation.assert_called_once()
         self.assertEqual(self.store.get_robot_trade(trade_id), original)
 
+    def test_stale_box_take_incomplete_stop_evidence_retains_fence(self):
+        """Only exact resolved STOP + same execution + synced FLAT is inert.
+
+        All negative variations reuse the real SQLiteStore STOP scenario, but
+        inject one missing/contradicting read at a time. No fake journal writes
+        and no order/protection side effects are permitted.
+        """
+        from dataclasses import replace
+        record, source, proof, trade_id, _ = (
+            self._prove_real_closed_box_stop_for_stale_take()
+        )
+        store = self.store
+        stop = store.get_paper_protection_obligation_for_trade(trade_id)
+        self.assertIsNotNone(stop)
+        cases = (
+            ("missing_stop_obligation", "get_paper_protection_obligation_for_trade", None),
+            ("unresolved_stop_obligation", "get_paper_protection_obligation_for_trade",
+             replace(stop, status="DISPATCHING")),
+            ("wrong_stop_leg", "get_paper_protection_obligation_for_trade",
+             replace(stop, winning_leg="TAKE")),
+            ("missing_matching_stop_execution", "get_execution", None),
+            ("unproven_flat_projection", "get_position_projection", None),
+            ("another_active_robot_owner", "load_active_robot_candidates_for_symbol",
+             (record,)),
+            ("unresolved_symbol_obligation", "load_unresolved_paper_protection_obligations",
+             (stop,)),
+            ("unfinished_symbol_command", "load_unfinished_commands",
+             (SimpleNamespace(symbol=record.symbol),)),
+        )
+        before_trade = store.get_robot_trade(trade_id)
+        before_candidate = store.get_robot_candidate(record.candidate_id)
+        self.monitor._escalate_reconciliation = Mock()
+        with (patch.object(store, "cancel_paper_limit") as cancel,
+              patch.object(store, "clear_paper_protection_for_flat") as clear):
+            for label, method, result in cases:
+                with self.subTest(evidence=label), patch.object(
+                    store, method, return_value=result,
+                ):
+                    self.monitor._escalate_reconciliation.reset_mock()
+                    self.assertFalse(self.monitor._finalize_box_take_if_flat(
+                        record, source, proof,
+                    ))
+                    self.monitor._escalate_reconciliation.assert_called_once()
+                    cancel.assert_not_called()
+                    clear.assert_not_called()
+        from dataclasses import replace as copy_record
+        bad_proof = copy_record(proof, remaining_quantity=Decimal("1"))
+        self.monitor._escalate_reconciliation.reset_mock()
+        with (patch.object(store, "cancel_paper_limit") as cancel,
+              patch.object(store, "clear_paper_protection_for_flat") as clear):
+            self.assertFalse(self.monitor._finalize_box_take_if_flat(
+                record, source, bad_proof,
+            ))
+            self.monitor._escalate_reconciliation.assert_called_once()
+            cancel.assert_not_called()
+            clear.assert_not_called()
+        self.assertEqual(store.get_robot_trade(trade_id), before_trade)
+        self.assertEqual(store.get_robot_candidate(record.candidate_id), before_candidate)
+
+    def test_completed_stop_does_not_clear_preexisting_required_fence(self):
+        """No-mutation stale TAKE success is not operator reconciliation."""
+        record, source, proof, _, _ = (
+            self._prove_real_closed_box_stop_for_stale_take()
+        )
+        runtime = self.store.get_robot_runtime_state(ACCOUNT_ID)
+        self.store.update_robot_runtime_state(
+            ACCOUNT_ID, mode="ROBOT_RUNNING",
+            recovery_status="RECONCILIATION_REQUIRED",
+            reason="prior_protection_incident",
+            expected_version=runtime.version,
+            updated_at_ms=8000,
+        )
+        self.monitor._escalate_reconciliation = Mock()
+        self.assertTrue(self.monitor._finalize_box_take_if_flat(
+            record, source, proof,
+        ))
+        after = self.store.get_robot_runtime_state(ACCOUNT_ID)
+        self.assertEqual(after.recovery_status, "RECONCILIATION_REQUIRED")
+        self.assertEqual(after.reason, "prior_protection_incident")
+        self.monitor._escalate_reconciliation.assert_not_called()
+
     def test_stale_box_take_mismatched_source_or_active_limit_retains_fence(self):
         record, source, proof, trade_id, obligation = (
             self._prove_real_closed_box_stop_for_stale_take()
