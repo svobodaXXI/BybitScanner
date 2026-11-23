@@ -2,23 +2,24 @@
  * This selects intended research components. It does NOT admit trading.
  */
 export type StrategyId =
-  | "NAKED_RETURN" | "NAKED_RETEST" | "MIRROR_LEVELS"
+  | "NAKED_RETURN" | "NAKED_RETEST" | "MIRROR_LEVELS" | "PATTERN_BOUNDARY"
   | "WEDGE_RISING" | "WEDGE_FALLING" | "IKIGAI_BOX"
   | "H1_TREND" | "L_SHAPE" | "TRIANGLE";
 
 export type StrategyOption = { id: StrategyId; label: string };
+// Keep the old NAKED_* identifiers for historical data compatibility, but do
+// not silently re-label them as a different mechanism in the owner selector.
 export const MIRROR_OPTIONS: readonly StrategyOption[] = [
-  { id: "NAKED_RETURN", label: "Голая свеча — возврат" },
-  { id: "NAKED_RETEST", label: "Голая свеча — ретест" },
   { id: "MIRROR_LEVELS", label: "Зеркальные уровни" },
+  { id: "PATTERN_BOUNDARY", label: "Граница паттерна" },
   { id: "WEDGE_RISING", label: "Восходящий клин" },
   { id: "WEDGE_FALLING", label: "Нисходящий клин" },
+  { id: "IKIGAI_BOX", label: "Коробка Икигай" },
+  { id: "L_SHAPE", label: "Г-образная" },
+  { id: "TRIANGLE", label: "Треугольник" },
 ];
 export const OTHER_OPTIONS: readonly StrategyOption[] = [
-  { id: "IKIGAI_BOX", label: "Ikigai Box" },
   { id: "H1_TREND", label: "Трендовые H1/M5" },
-  { id: "L_SHAPE", label: "L-shape" },
-  { id: "TRIANGLE", label: "Triangle" },
 ];
 export const PLANNED_OPTIONS = [
   "Двойная вершина", "Двойное дно",
@@ -43,9 +44,6 @@ export function toggleMirror(current: RunSelection, enabled: boolean): RunSelect
     if (enabled) ids.add(option.id);
     else ids.delete(option.id);
   }
-  // Mirror includes Ikigai, but standalone Ikigai is not a Mirror dependency.
-  // Disabling Mirror never erases the independent Ikigai selection.
-  if (enabled) ids.add("IKIGAI_BOX");
   return { mirror: enabled, selected: ALL_SELECTABLE.filter(id => ids.has(id)) };
 }
 export function toggleStrategy(current: RunSelection, id: StrategyId, enabled: boolean): RunSelection {
@@ -54,8 +52,7 @@ export function toggleStrategy(current: RunSelection, id: StrategyId, enabled: b
   if (enabled) ids.add(id);
   else ids.delete(id);
   return {
-    // An independent strategy never enables Mirror as a side effect.
-    mirror: current.mirror || (enabled && MIRROR_OPTIONS.some(x => x.id === id)),
+    mirror: MIRROR_OPTIONS.every(option => ids.has(option.id)),
     selected: ALL_SELECTABLE.filter(option => ids.has(option)),
   };
 }
@@ -63,7 +60,7 @@ export function onlyWedges(): RunSelection {
   return { mirror: false, selected: ["WEDGE_RISING", "WEDGE_FALLING"] };
 }
 export function isAllSelected(selection: RunSelection): boolean {
-  return selection.mirror && ALL_SELECTABLE.every(id => selection.selected.includes(id));
+  return ALL_SELECTABLE.every(id => selection.selected.includes(id));
 }
 
 // datetime-local strings are treated as UTC wall clock, NEVER browser local timezone.

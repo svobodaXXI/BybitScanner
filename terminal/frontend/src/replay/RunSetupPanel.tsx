@@ -46,7 +46,6 @@ export function RunSetupPanel({
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [preset, setPreset] = useState<PeriodPreset | null>("DAY");
-  const [openMirror, setOpenMirror] = useState(true);
   const [balance, setBalance] = useState("1000");
   const [status, setStatus] = useState<LocalWedgeStatus | null>(null);
   const [statusError, setStatusError] = useState("");
@@ -69,7 +68,6 @@ export function RunSetupPanel({
     }
   }, [start, end]);
   const active = ALL_SELECTABLE.filter(id => selection.selected.includes(id));
-  const mirrorSelected = MIRROR_OPTIONS.filter(x => selection.selected.includes(x.id)).length;
   const wedgesOnly = runnableWedgeSelection(selection);
 
   // The chart is another VIEW of the same checked selection. Never
@@ -241,9 +239,6 @@ export function RunSetupPanel({
 
   return (
     <section className="replay-run-setup" aria-label="Настройка стратегий и периода">
-      <div className="replay-run-heading">
-        <strong>Универсальный симулятор · настройка прогона</strong>
-      </div>
       <div className="replay-run-layout">
         <fieldset className="replay-run-strategies">
           <legend>Стратегии</legend>
@@ -254,42 +249,33 @@ export function RunSetupPanel({
                 onChange={e => setSelection(e.target.checked ? selectAll() : clearAll())} />
               <strong>Все стратегии</strong>
             </label>
-            <button type="button" onClick={() => setSelection(onlyWedges())}>Только клинья</button>
             <button type="button" onClick={() => setSelection(clearAll())}>Снять все</button>
           </div>
-          <div className="replay-run-mirror">
-            <div className="replay-run-mirror-top">
+          <div className="replay-run-strategy-list">
+            <label className="replay-run-check">
+              <input type="checkbox" aria-label="Миррор-комплекс"
+                checked={selection.mirror}
+                onChange={e => setSelection(current => toggleMirror(current, e.target.checked))} />
+              <strong>Миррор-комплекс</strong>
+            </label>
+            {MIRROR_OPTIONS.map((option, index) => <div key={option.id}>
+              {index === 2 && <span className="replay-run-family-label">Клинья</span>}
               <label className="replay-run-check">
-                <input type="checkbox" aria-label="Mirror — комплекс"
-                  checked={selection.mirror}
-                  onChange={e => setSelection(current => toggleMirror(current, e.target.checked))} />
-                <strong>Mirror — комплекс</strong>
-              </label>
-              <button type="button" aria-expanded={openMirror}
-                onClick={() => setOpenMirror(value => !value)}>
-                {openMirror ? "Свернуть" : "Раскрыть"} · {mirrorSelected}/{MIRROR_OPTIONS.length}
-              </button>
-            </div>
-            {openMirror && <div className="replay-run-components">
-              {MIRROR_OPTIONS.map(option => <label className="replay-run-check" key={option.id}>
                 <input type="checkbox" aria-label={option.label}
                   checked={selection.selected.includes(option.id)}
                   onChange={e => toggleComponent(option.id, e.target.checked)} />
                 <span>{option.label}</span>
-              </label>)}
-            </div>}
-          </div>
-          <div className="replay-run-independent">
-            <span>Независимые стратегии</span>
+              </label>
+            </div>)}
             {OTHER_OPTIONS.map(option => <label className="replay-run-check" key={option.id}>
               <input type="checkbox" aria-label={option.label}
                 checked={selection.selected.includes(option.id)}
                 onChange={e => toggleComponent(option.id, e.target.checked)} />
-              {option.label}
+              <span>{option.label}</span>
             </label>)}
           </div>
           <details className="replay-run-planned">
-            <summary>В разработке — не доступны для прогона</summary>
+            <summary>В разработке — недоступны для прогона</summary>
             {PLANNED_OPTIONS.map(name => <label key={name}>
               <input type="checkbox" disabled aria-label={name} /> {name}
             </label>)}

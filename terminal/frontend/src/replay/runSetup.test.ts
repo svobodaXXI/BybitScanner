@@ -15,27 +15,34 @@ describe("local one-symbol strategy setup (no trading)", () => {
     expect(MIRROR_OPTIONS.every(option => all.selected.includes(option.id))).toBe(true);
     expect(isAllSelected(clearAll())).toBe(false);
   });
-  it("enables Mirror defaults while preserving independent selections", () => {
+  it("enables the full Mirror bundle while preserving other selections", () => {
     const trend = toggleStrategy(clearAll(), "H1_TREND", true);
     const mirror = toggleMirror(trend, true);
     expect(mirror.mirror).toBe(true);
     expect(mirror.selected).toContain("H1_TREND");
-    expect(mirror.selected).toContain("WEDGE_RISING");
-    expect(mirror.selected).toContain("WEDGE_FALLING");
-    expect(mirror.selected).toContain("IKIGAI_BOX");
+    for (const option of MIRROR_OPTIONS) expect(mirror.selected).toContain(option.id);
     const withoutBox = toggleStrategy(mirror, "IKIGAI_BOX", false);
-    expect(withoutBox.mirror).toBe(true);
+    expect(withoutBox.mirror).toBe(false);
     expect(withoutBox.selected).not.toContain("IKIGAI_BOX");
     expect(toggleMirror(withoutBox, false).selected).toEqual(["H1_TREND"]);
   });
-  it("selects Ikigai without enabling Mirror, but Mirror enables Ikigai", () => {
+  it("keeps each independent checkbox from turning Mirror on", () => {
     const isolated = toggleStrategy(clearAll(), "IKIGAI_BOX", true);
     expect(isolated.mirror).toBe(false);
     expect(isolated.selected).toEqual(["IKIGAI_BOX"]);
     expect(toggleMirror(clearAll(), true).selected).toContain("IKIGAI_BOX");
-    expect(MIRROR_OPTIONS.some(option => option.id === "IKIGAI_BOX")).toBe(false);
-    expect(OTHER_OPTIONS.some(option => option.id === "IKIGAI_BOX")).toBe(true);
-    expect(toggleMirror(isolated, false).selected).toEqual(["IKIGAI_BOX"]);
+    expect(MIRROR_OPTIONS.some(option => option.id === "IKIGAI_BOX")).toBe(true);
+    expect(OTHER_OPTIONS.some(option => option.id === "IKIGAI_BOX")).toBe(false);
+    expect(toggleMirror(isolated, false).selected).toEqual([]);
+  });
+  it("keeps horizontal mirror levels distinct from pattern boundaries", () => {
+    const levels = toggleStrategy(clearAll(), "MIRROR_LEVELS", true);
+    expect(levels.selected).toEqual(["MIRROR_LEVELS"]);
+    const boundaries = toggleStrategy(levels, "PATTERN_BOUNDARY", true);
+    expect(boundaries.selected).toContain("MIRROR_LEVELS");
+    expect(boundaries.selected).toContain("PATTERN_BOUNDARY");
+    expect(ALL_SELECTABLE).not.toContain("NAKED_RETURN");
+    expect(ALL_SELECTABLE).not.toContain("NAKED_RETEST");
   });
   it("lets owner isolate wedges without activating Mirror or other patterns", () => {
     expect(onlyWedges()).toEqual({
