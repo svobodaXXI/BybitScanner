@@ -554,6 +554,54 @@ def test_private_protected_capture_invalidates_gap_and_overflow():
         hub.close()
 
 
+def test_research_rest_tape_snapshot_is_atomic_and_epoch_fenced():
+    """A delayed REST response cannot match a pre-reset transport tape."""
+    hub = MarketDataHub(_Registry(), _context, connection_factory=lambda *_a, **_k: None)
+    try:
+        protected = hub.subscribe("BTCUSDT")
+        witness = hub.begin_protected_research_capture("BTCUSDT")
+        assert witness is not None
+        a = witness.rest_anchor_tape_snapshot()
+        assert a == {
+            "symbol": "BTCUSDT", "depth": 1000, "epoch": 0,
+            "active": True, "frames": (), "source_complete": False,
+            "trading_authorized": False,
+        }
+        one = {"topic": "orderbook.1000.BTCUSDT", "type": "delta",
+               "data": {"s": "BTCUSDT", "u": 7, "seq": 8}}
+        witness.on_book(102, one, "APPLIED")
+        before = witness.rest_anchor_tape_snapshot()
+        assert before["epoch"] == a["epoch"]
+        assert before["frames"] == ((102, one),)
+        witness.reset()  # WS reconnection/host boundary
+        after = witness.rest_anchor_tape_snapshot()
+        assert after["epoch"] > before["epoch"]
+        assert after["frames"] == ()
+        assert before["frames"] == ((102, one),)  # structural copy stable
+        witness.on_book(103, one, "APPLIED")
+        assert witness.rest_anchor_tape_snapshot()["epoch"] == after["epoch"]
+        witness.on_book(104, {"type": "delta"}, "IGNORED")
+        ignored = witness.rest_anchor_tape_snapshot()
+        assert ignored["frames"] == ()
+        assert ignored["epoch"] > after["epoch"]
+        witness.on_book(105, one, "APPLIED")
+        source_epoch = witness.rest_anchor_tape_snapshot()["epoch"]
+        for i in range(1024):
+            witness.on_book(106+i, one, "APPLIED")
+        overflow = witness.rest_anchor_tape_snapshot()
+        assert overflow["frames"] == ()
+        assert overflow["epoch"] > source_epoch
+        witness.on_book(1130, one, "APPLIED")
+        assert witness.rest_anchor_tape_snapshot()["epoch"] == overflow["epoch"]
+        assert hub.end_protected_research_capture("BTCUSDT")
+        closed = witness.rest_anchor_tape_snapshot()
+        assert closed["active"] is False and closed["frames"] == ()
+        assert closed["epoch"] > overflow["epoch"]
+        assert protected.public_orderbook.closed is False
+    finally:
+        hub.close()
+
+
 TESTS = (
     test_hub_uses_one_connection_for_multiple_reusable_symbol_contexts,
     test_hub_rejects_unsupported_symbol_without_creating_context,
@@ -570,6 +618,7 @@ TESTS = (
     test_capture_only_probe_preserves_full_protection_context_without_fake_l2,
     test_private_protected_ingress_witness_requires_real_snapshot_and_no_new_topic,
     test_private_protected_capture_invalidates_gap_and_overflow,
+    test_research_rest_tape_snapshot_is_atomic_and_epoch_fenced,
 )
 
 
