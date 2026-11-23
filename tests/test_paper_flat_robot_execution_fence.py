@@ -7,7 +7,6 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 from terminal.domain.models import Category, PositionSide, Symbol, TradingAccountId
-from terminal.persistence.sqlite_store import ExecutionApplyResult
 from terminal.runtime.paper_runtime import PaperRuntime
 
 
@@ -108,39 +107,27 @@ class FlatRobotLedgerFenceTests(unittest.TestCase):
         owner._fence_flat_robot_ledger_after_paper_execution.assert_not_called()
         store.robot_symbol_quarantine_candidate_ids.assert_called_once_with(ACCOUNT, SYMBOL)
 
-    def test_limit_matching_keeps_only_owned_box_exit_when_a_is_quarantined(self):
-        """The already-working manual A LIMIT cannot fill; proven EXIT keeps working."""
+    def test_limit_matching_fences_all_orders_when_a_close_is_unknown(self):
+        """Even an owned Box EXIT LIMIT is not reduce-only if STOP is UNKNOWN."""
         manual = SimpleNamespace(order_id=SimpleNamespace(value="manual-a"))
         robot_entry = SimpleNamespace(order_id=SimpleNamespace(value="robot-entry-a"))
         box_exit = SimpleNamespace(order_id=SimpleNamespace(value="box-exit-a"))
         store = SimpleNamespace(
             load_active_paper_limits=Mock(return_value=(manual, robot_entry, box_exit)),
             robot_symbol_quarantine_candidate_ids=Mock(return_value=("box-a",)),
-            load_active_box_exit_limit_ids=Mock(return_value=frozenset({"box-exit-a"})),
         )
-        execution = Mock(return_value=SimpleNamespace(
-            apply_result=ExecutionApplyResult.APPLIED,
-        ))
+        execution = Mock()
         owner = SimpleNamespace(
             _account_id=ACCOUNT, _paper_account_id=ACCOUNT, store=store,
-            _robot_entry_limit_ids_fenced_by_admission=Mock(return_value=frozenset()),
+            _robot_entry_limit_ids_fenced_by_admission=Mock(),
             _limit_executor=SimpleNamespace(execute=execution),
         )
-        applied = PaperRuntime._match_limits_only(
-            owner, SYMBOL, SimpleNamespace(received_at_ms=1000), "quarantined-a-event",
-        )
-        self.assertEqual(applied, 1)
-        self.assertEqual(execution.call_count, 1)
-        self.assertIs(execution.call_args.kwargs["order"], box_exit)
-        store.load_active_box_exit_limit_ids.assert_called_once_with(ACCOUNT, SYMBOL)
-
-        # Missing exact ownership may never become a generic permission.
-        store.load_active_box_exit_limit_ids.return_value = frozenset()
-        execution.reset_mock()
         self.assertEqual(PaperRuntime._match_limits_only(
-            owner, SYMBOL, SimpleNamespace(received_at_ms=1000), "unproven-a-event",
+            owner, SYMBOL, SimpleNamespace(received_at_ms=1000), "a-unknown-close",
         ), 0)
         execution.assert_not_called()
+        owner._robot_entry_limit_ids_fenced_by_admission.assert_not_called()
+        store.robot_symbol_quarantine_candidate_ids.assert_called_once_with(ACCOUNT, SYMBOL)
 
     def test_manual_quarantine_full_paper_owner_regression(self):
         # The Robot PAPER workflow selects this module, while its focused
