@@ -767,7 +767,7 @@ try {
   assert.equal(await bounds.locator("[data-selected-strategies]").getAttribute("data-selected-strategies"), "WEDGE_FALLING");
   assert.equal(await bounds.getByRole("checkbox", { name: "Клинья" }).isChecked(), true);
   assert.equal(await bounds.getByRole("checkbox", { name: "Миррор-комплекс" }).isChecked(), false);
-  assert.match(await bounds.getByRole("status", { name: "" }).allTextContents().then(v => v.join(" ")), /Нисходящий клин/);
+  assert.match(await bounds.locator(".replay-run-source-pattern").innerText(), /Нисходящий клин/);
   const expectedStart = Math.max(300000, Math.floor((episodeFacts.opened_at_ms - 3600000) / 300000) * 300000);
   const expectedEnd = Math.ceil((episodeFacts.closed_at_ms + 3600000) / 300000) * 300000 - 60000;
   const fromValue = new Date(expectedStart).toISOString().slice(0, 16);
