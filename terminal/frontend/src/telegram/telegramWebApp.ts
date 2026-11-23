@@ -11,8 +11,8 @@ export interface TelegramWebApp {
   ready(): void;
   setBackgroundColor?(color: string): void;
   setHeaderColor?(color: string): void;
-  onEvent?(event: "contentSafeAreaChanged", listener: () => void): void;
-  offEvent?(event: "contentSafeAreaChanged", listener: () => void): void;
+  onEvent?(event: "contentSafeAreaChanged" | "activated", listener: () => void): void;
+  offEvent?(event: "contentSafeAreaChanged" | "activated", listener: () => void): void;
 }
 
 declare global {
