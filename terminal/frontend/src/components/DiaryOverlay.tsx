@@ -1030,7 +1030,7 @@ function detailPatternLabel(pattern: string): string {
   return pattern;
 }
 
-function detailTimeframeLabel(timeframe: string): string {
+export function detailTimeframeLabel(timeframe: string): string {
   return ({ "1": "1M", M1: "1M", "1M": "1M", "5": "5M", M5: "5M", "5M": "5M",
     "15": "15M", M15: "15M", "15M": "15M",
     "60": "1H", H1: "1H", "1H": "1H",
