@@ -82,7 +82,8 @@ from terminal.application.robot_late_admission_market import (
     restore_late_admission_market_plan,
 )
 from terminal.domain.models import (
-    Category, CommandId, OrderId, OrderSide, PositionKey, PositionSide, Quantity,
+    Category, CommandId, ExecutionDedupKey, OrderId, OrderSide,
+    PositionKey, PositionSide, Quantity,
     Symbol, TradingAccountId,
 )
 from terminal.market_data.models import NormalizedOrderBook
