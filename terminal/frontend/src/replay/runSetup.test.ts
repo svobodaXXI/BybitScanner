@@ -3,44 +3,56 @@ import {
   ALL_SELECTABLE, MIRROR_OPTIONS, OTHER_OPTIONS, clearAll, isAllSelected,
   onlyWedges, parseUtcMinute, presetEndInclusive, extendInclusiveWindow, adjustInclusiveWindow,
   parseRunCoordinates, formatRunCoordinates, formatRunDuration, selectAll,
-  toggleMirror, toggleStrategy, validateInclusiveWindow,
+  toggleMirror, toggleStrategy, toggleWedges, verifiedPatternSelection, verifiedPatternLabel, validateInclusiveWindow,
   makeWedgeRunRequest, parseWedgeResult, parseWedgeStatus, runnableWedgeSelection,
 } from "./runSetup";
 
 describe("local one-symbol strategy setup (no trading)", () => {
-  it("selects everything only once, including the entire Mirror bundle", () => {
+  it("presents the requested Russian Mirror members in the exact owner order", () => {
+    expect(MIRROR_OPTIONS.map(option => option.label)).toEqual([
+      "Зеркальные уровни", "Граница паттерна", "Восходящий клин",
+      "Нисходящий клин", "Коробка Икигай", "Г-образная", "Треугольник",
+    ]);
+    expect(OTHER_OPTIONS.map(option => option.label)).toEqual(["Трендовые H1/M5"]);
+    expect(MIRROR_OPTIONS.some(option => /Голая свеча/.test(option.label))).toBe(false);
     const all = selectAll();
     expect(isAllSelected(all)).toBe(true);
     expect(new Set(all.selected).size).toBe(ALL_SELECTABLE.length);
     expect(MIRROR_OPTIONS.every(option => all.selected.includes(option.id))).toBe(true);
     expect(isAllSelected(clearAll())).toBe(false);
   });
-  it("enables Mirror defaults while preserving independent selections", () => {
+  it("uses one composite Mirror switch without turning on other selected patterns by implication", () => {
     const trend = toggleStrategy(clearAll(), "H1_TREND", true);
     const mirror = toggleMirror(trend, true);
     expect(mirror.mirror).toBe(true);
     expect(mirror.selected).toContain("H1_TREND");
-    expect(mirror.selected).toContain("WEDGE_RISING");
-    expect(mirror.selected).toContain("WEDGE_FALLING");
-    expect(mirror.selected).toContain("IKIGAI_BOX");
+    for (const option of MIRROR_OPTIONS) expect(mirror.selected).toContain(option.id);
     const withoutBox = toggleStrategy(mirror, "IKIGAI_BOX", false);
-    expect(withoutBox.mirror).toBe(true);
+    expect(withoutBox.mirror).toBe(false);
     expect(withoutBox.selected).not.toContain("IKIGAI_BOX");
     expect(toggleMirror(withoutBox, false).selected).toEqual(["H1_TREND"]);
-  });
-  it("selects Ikigai without enabling Mirror, but Mirror enables Ikigai", () => {
-    const isolated = toggleStrategy(clearAll(), "IKIGAI_BOX", true);
-    expect(isolated.mirror).toBe(false);
-    expect(isolated.selected).toEqual(["IKIGAI_BOX"]);
+    expect(toggleStrategy(clearAll(), "MIRROR_LEVELS", true).mirror).toBe(false);
+    expect(toggleStrategy(clearAll(), "IKIGAI_BOX", true).mirror).toBe(false);
     expect(toggleMirror(clearAll(), true).selected).toContain("IKIGAI_BOX");
-    expect(MIRROR_OPTIONS.some(option => option.id === "IKIGAI_BOX")).toBe(false);
-    expect(OTHER_OPTIONS.some(option => option.id === "IKIGAI_BOX")).toBe(true);
-    expect(toggleMirror(isolated, false).selected).toEqual(["IKIGAI_BOX"]);
   });
-  it("lets owner isolate wedges without activating Mirror or other patterns", () => {
-    expect(onlyWedges()).toEqual({
-      mirror: false, selected: ["WEDGE_RISING", "WEDGE_FALLING"],
+  it("groups wedges visually but preserves a single exact rising/falling source choice", () => {
+    expect(onlyWedges()).toEqual({ mirror: false, selected: ["WEDGE_RISING", "WEDGE_FALLING"] });
+    expect(toggleWedges(clearAll(), true).selected).toEqual(["WEDGE_RISING", "WEDGE_FALLING"]);
+    expect(toggleWedges(onlyWedges(), false)).toEqual(clearAll());
+    expect(verifiedPatternSelection("Rising Wedge")).toEqual({
+      mirror: false, selected: ["WEDGE_RISING"],
     });
+    expect(verifiedPatternSelection("Falling Wedge")).toEqual({
+      mirror: false, selected: ["WEDGE_FALLING"],
+    });
+    expect(verifiedPatternLabel("Rising Wedge")).toBe("Восходящий клин");
+    expect(verifiedPatternSelection("Ikigai Box")?.selected).toEqual(["IKIGAI_BOX"]);
+    expect(verifiedPatternSelection("Triangle")?.selected).toEqual(["TRIANGLE"]);
+    expect(verifiedPatternSelection("Граница паттерна")?.selected).toEqual(["PATTERN_BOUNDARY"]);
+    expect(verifiedPatternSelection("Зеркальные уровни")?.selected).toEqual(["MIRROR_LEVELS"]);
+    expect(verifiedPatternSelection("Wedge")).toBeNull();
+    expect(verifiedPatternSelection(null)).toBeNull();
+    expect(verifiedPatternSelection("Other Candle")).toBeNull();
   });
   it("applies inclusive last minute for day, week, 30 and 90 days", () => {
     const start = "2026-10-01T12:34";

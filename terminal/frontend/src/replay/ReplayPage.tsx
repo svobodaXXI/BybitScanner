@@ -601,6 +601,25 @@ export function ReplayPage() {
   // PAPER evidence is never inserted into document.events or VirtualAccount.
   const [paperFacts, setPaperFacts] = useState<PaperEpisodeFacts | null>(null);
   const [localEpisodeMessage, setLocalEpisodeMessage] = useState("");
+  // Use the same bounded, CLOSED M5 context window as exact-ID lookup.
+  // Source pattern is trusted only for an independently validated exact D2 link.
+  const episodeDefaults = useMemo(() => {
+    if (!paperFacts) return null;
+    const m5 = 300_000;
+    const startMs = Math.max(m5, Math.floor((paperFacts.opened_at_ms - 3_600_000) / m5) * m5);
+    const endRequested = Math.ceil((paperFacts.closed_at_ms + 3_600_000) / m5) * m5;
+    const endClosed = Math.floor(Date.now() / m5) * m5;
+    const endExclusive = Math.min(endRequested, endClosed);
+    if (endExclusive <= startMs) return null;
+    return {
+      trade_episode_id: paperFacts.trade_episode_id,
+      symbol: paperFacts.symbol,
+      start: new Date(startMs).toISOString().slice(0, 16),
+      end: new Date(endExclusive - 60_000).toISOString().slice(0, 16),
+      pattern: paperFacts.setup_context?.status === "EXACT_D2_LINK"
+        ? paperFacts.setup_context.setup.pattern : null,
+    };
+  }, [paperFacts]);
   const paperOverlay = useMemo(
     () => matchPaperFactsToMarket(paperFacts, document), [paperFacts, document],
   );
@@ -1300,7 +1319,7 @@ export function ReplayPage() {
         </details>
       )}
 
-      <RunSetupPanel symbol={symbol} onHistoryPreparation={onHistoryPreparation}
+      <RunSetupPanel symbol={symbol} episode={episodeDefaults} onHistoryPreparation={onHistoryPreparation}
         onPasteSymbol={onPasteSymbol} onSimulationStart={onSimulationStart}
         onSimulationReady={onSimulationReady} onSimulationAppend={onSimulationAppend}
         onSimulationComplete={onSimulationComplete}

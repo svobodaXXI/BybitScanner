@@ -100,19 +100,27 @@ try {
   assert.equal(await page.getByRole("button", { name: "Пуск" }).isDisabled(), true,
     "▶ becomes available after Apply");
 
-  // Universal setup config changes only local React state, never live/PAPER IO.
+  // One uniform Russian list; composite Mirror must affect actual selected IDs.
   const setup = page.getByRole("region", { name: "Настройка стратегий и периода" });
+  assert.equal(await setup.getByRole("button", { name: "Только клинья" }).count(), 0);
+  assert.equal(await setup.getByText("Универсальный симулятор", { exact: false }).count(), 0);
+  assert.equal(await setup.getByText("Независимые стратегии", { exact: true }).count(), 0);
+  const names = await setup.locator(".replay-run-strategy-list .replay-run-check").allInnerTexts();
+  assert.deepEqual(names, [
+    "Все стратегии", "Миррор-комплекс", "Зеркальные уровни",
+    "Граница паттерна", "Клинья", "Коробка Икигай", "Г-образная",
+    "Треугольник", "Трендовые H1/M5",
+  ]);
   const all = setup.getByRole("checkbox", { name: "Все стратегии" });
   await all.check();
-  assert.equal(await setup.getByRole("checkbox", { name: "Mirror — комплекс" }).isChecked(), true);
-  assert.equal(await setup.getByRole("checkbox", { name: "Восходящий клин" }).isChecked(), true);
-  assert.equal(await setup.getByRole("checkbox", { name: "Ikigai Box" }).isChecked(), true);
-  await setup.getByRole("checkbox", { name: "Ikigai Box" }).uncheck();
-  assert.equal(await setup.getByRole("checkbox", { name: "Mirror — комплекс" }).isChecked(), true);
-  await setup.getByRole("button", { name: "Только клинья" }).click();
-  assert.equal(await setup.getByRole("checkbox", { name: "Mirror — комплекс" }).isChecked(), false);
-  assert.equal(await setup.getByRole("checkbox", { name: "Восходящий клин" }).isChecked(), true);
-  assert.equal(await setup.getByRole("checkbox", { name: "Нисходящий клин" }).isChecked(), true);
+  assert.equal(await setup.getByRole("checkbox", { name: "Миррор-комплекс" }).isChecked(), true);
+  assert.equal(await setup.getByRole("checkbox", { name: "Клинья" }).isChecked(), true);
+  assert.equal(await setup.getByRole("checkbox", { name: "Коробка Икигай" }).isChecked(), true);
+  await setup.getByRole("checkbox", { name: "Коробка Икигай" }).uncheck();
+  assert.equal(await setup.getByRole("checkbox", { name: "Миррор-комплекс" }).isChecked(), false);
+  await setup.getByRole("button", { name: "Снять все" }).click();
+  await setup.getByRole("checkbox", { name: "Клинья" }).check();
+  assert.equal(await setup.getByRole("checkbox", { name: "Миррор-комплекс" }).isChecked(), false);
   assert.equal(await setup.getByRole("checkbox", { name: "Зеркальные уровни" }).isChecked(), false);
   const startUtc = setup.getByLabel("Начало прогона UTC");
   const endUtc = setup.getByLabel("Конец прогона UTC");
@@ -248,7 +256,8 @@ try {
   });
   await page.reload({ waitUntil: "networkidle" });
   const readySetup = page.getByRole("region", { name: "Настройка стратегий и периода" });
-  await readySetup.getByRole("button", { name: "Только клинья" }).click();
+  await readySetup.getByRole("button", { name: "Снять все" }).click();
+  await readySetup.getByRole("checkbox", { name: "Клинья" }).check();
   await readySetup.getByLabel("Начало прогона UTC").fill("2026-10-01T12:34");
   await readySetup.getByLabel("Конец прогона UTC").fill("2026-10-02T12:33");
   await readySetup.getByLabel("Виртуальный депозит").fill("1000");
@@ -303,7 +312,8 @@ try {
   assert.equal(requests.filter(url => url.includes("/api/") || url.includes("/v5/")).length, 0);
   // Unsupported virtual strategy Apply correctly clears previous replay.
   // Restore the explicit synthetic fixture for the independent player tests.
-  await readySetup.getByRole("button", { name: "Только клинья" }).click();
+  await readySetup.getByRole("button", { name: "Снять все" }).click();
+  await readySetup.getByRole("checkbox", { name: "Клинья" }).check();
   await page.getByRole("button", { name: "Пример", exact: true }).click();
 
   // The entire replay control surface belongs beside the M5/H1 switch,
@@ -536,7 +546,8 @@ try {
   const bounds = page.getByRole("region", { name: "Настройка стратегий и периода" });
   // Prior rejection test selected all unsupported strategies: restore a runnable
   // selection before applying a new market-only public-history interval.
-  await bounds.getByRole("button", { name: "Только клинья" }).click();
+  await bounds.getByRole("button", { name: "Снять все" }).click();
+  await bounds.getByRole("checkbox", { name: "Клинья" }).check();
   await bounds.getByRole("textbox", { name: "Координаты прогона" })
     .fill("BTCUSDT | 2026-10-01T00:00 | 2026-10-01T23:59");
   await bounds.getByRole("button", { name: "Применить" }).click();
@@ -547,7 +558,7 @@ try {
   await marketError.waitFor();
   assert.equal(await page.locator(".replay-chart-shell").count(), 0,
     "failed public market download cannot resurrect old market candles");
-  await bounds.getByRole("checkbox", { name: "Ikigai Box" }).check();
+  await bounds.getByRole("checkbox", { name: "Коробка Икигай" }).check();
   await bounds.getByRole("button", { name: "Применить" }).click();
   await page.getByText("РЕАЛЬНЫЕ СВЕЧИ BYBIT", { exact: false }).waitFor();
   assert.equal(publicMarketAttempts, 2);
@@ -682,8 +693,7 @@ try {
   assert.equal(await overlay.getAttribute("data-painted-priors"), "0");
   assert.equal(await overlay.getAttribute("data-visible-early-geometry"), "0");
   assert.equal(await overlay.getAttribute("data-visible-fills"), "0");
-  assert.equal(await bounds.getByRole("checkbox", { name: "Восходящий клин" }).isChecked(), true);
-  assert.equal(await bounds.getByRole("checkbox", { name: "Нисходящий клин" }).isChecked(), true);
+  assert.equal(await bounds.getByRole("checkbox", { name: "Клинья" }).isChecked(), true);
 
   // Exported PAPER facts are marked as HOLLOW rings at their original prices,
   // separate from virtual triangles. No extra /api or private exchange call.
@@ -752,6 +762,22 @@ try {
   });
   const factNote = page.getByRole("status", { name: "PAPER факты сделки" });
   await factNote.waitFor();
+  // Imported exact D2 Falling Wedge narrows selection to one direction,
+  // while every visible Historical Period coordinate inherits the episode.
+  await page.waitForFunction(() =>
+    document.querySelector("[data-selected-strategies]")?.getAttribute("data-selected-strategies") === "WEDGE_FALLING");
+  assert.equal(await bounds.locator("[data-selected-strategies]").getAttribute("data-selected-strategies"), "WEDGE_FALLING");
+  assert.equal(await bounds.getByRole("checkbox", { name: "Клинья" }).isChecked(), true);
+  assert.equal(await bounds.getByRole("checkbox", { name: "Миррор-комплекс" }).isChecked(), false);
+  assert.match(await bounds.locator(".replay-run-source-pattern").innerText(), /Нисходящий клин/);
+  const expectedStart = Math.max(300000, Math.floor((episodeFacts.opened_at_ms - 3600000) / 300000) * 300000);
+  const expectedEnd = Math.ceil((episodeFacts.closed_at_ms + 3600000) / 300000) * 300000 - 60000;
+  const fromValue = new Date(expectedStart).toISOString().slice(0, 16);
+  const toValue = new Date(expectedEnd).toISOString().slice(0, 16);
+  assert.equal(await bounds.getByLabel("Начало прогона UTC").inputValue(), fromValue);
+  assert.equal(await bounds.getByLabel("Конец прогона UTC").inputValue(), toValue);
+  assert.equal(await bounds.getByLabel("Координаты прогона").inputValue(),
+    `BTCUSDT | ${fromValue} | ${toValue} UTC`);
   assert.match(await factNote.innerText(), /BTCUSDT · LONG · 2 исполнения · PnL: -1,00 USDT/);
   assert.match(await factNote.innerText(), /Свечи M5 сопоставлены/);
   assert.doesNotMatch(await factNote.innerText(), /Gross PnL/);
@@ -824,7 +850,8 @@ try {
   // Threshold colors are driven by completed M5 / the owner's exact UTC
   // period, independently of how many candles the player has displayed.
   // These read-only mocked responses intentionally contain only 40 bars.
-  await bounds.getByRole("button", { name: "Только клинья" }).click();
+  await bounds.getByRole("button", { name: "Снять все" }).click();
+  await bounds.getByRole("checkbox", { name: "Клинья" }).check();
   for (const [end, percentage, count, tone] of [
     ["04:59", 66, 60, "orange"],
     ["04:09", 80, 50, "yellow"],
