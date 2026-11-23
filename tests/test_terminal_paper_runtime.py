@@ -2342,6 +2342,16 @@ def test_manual_paper_order_creation_does_not_bypass_robot_symbol_quarantine():
             )
             assert len(runtime.store.load_executions_for_symbol(account, a)) == prior_a_fills
             assert len(runtime.store.load_active_paper_limits(account, a)) == 1
+            executable_book = NormalizedOrderBook(
+                symbol=a,
+                bids=(PriceLevel(Price(Decimal("63949.5")), Quantity(Decimal("10"))),),
+                asks=(PriceLevel(Price(Decimal("63950")), Quantity(Decimal("10"))),),
+                health=BookHealth.READY, received_at_ms=int(__import__("time").time() * 1000),
+                available_depth=1,
+            )
+            assert runtime._match_limits_only(a, executable_book, "a-quarantined-book") == 0
+            assert len(runtime.store.load_executions_for_symbol(account, a)) == prior_a_fills
+            assert runtime.store.get_paper_limit(old_limit.order_id, account).status == "open"
 
             # Independent B still goes through the ordinary PAPER guard.
             b = Symbol("ETHUSDT")
@@ -2351,6 +2361,15 @@ def test_manual_paper_order_creation_does_not_bypass_robot_symbol_quarantine():
                 "Percent", Decimal("0.5"),
             ))
             assert independent.status is CommandResultStatus.COMPLETED
+            b_limit = runtime.create_limit(LimitCommandRequest(
+                ClientActionId("manual-unrelated-b-limit"), b.value, OrderSide.BUY,
+                VolumeRequest(VolumeUnit.USDT, Decimal("321")),
+                Decimal("64000"), Decimal("64000"), TimeInForce.GTC,
+            ))
+            assert b_limit.status is CommandResultStatus.COMPLETED
+            assert runtime._match_limits_only(
+                b, replace(executable_book, symbol=b), "b-independent-book",
+            ) == 1
 
             # Cancellation and canonical explicit full_close remain available for A.
             cancelled = runtime.cancel_limit(PaperLimitCancelRequest(
