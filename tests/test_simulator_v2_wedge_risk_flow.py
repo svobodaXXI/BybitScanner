@@ -225,8 +225,12 @@ class WedgeRiskSourceAndStageTests(unittest.TestCase):
                 session.step(bar(252, closing="100", low="99.7", high="100.2"))
                 self.assertIsNotNone(session.exchange.active_protection)
                 self.assertEqual(len(session.account.fills), 1)
+                # Already-marketable next M1 opens at 100 on both Wedge sides;
+                # the real observed OPEN, not the preflight LIMIT, owns the fill.
+                self.assertEqual(session.account.fills[0].price, D("100"))
                 self.assertEqual(
-                    session.account.fills[0].price, preview.request.limit_price,
+                    session.account.fills[0].fee,
+                    D("100") * preview.request.quantity * D("0.0006"),
                 )
                 self.assertEqual(
                     session.account.fills[0].quantity, preview.request.quantity,
