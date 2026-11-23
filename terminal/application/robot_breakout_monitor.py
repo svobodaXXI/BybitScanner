@@ -965,6 +965,30 @@ class RobotBreakoutMonitor:
             except robot_state_machine.RobotStateMachineError as error:
                 pattern = (record.signal_snapshot or {}).get("pattern")
                 if robot_state_machine.is_supported_pattern(pattern):
+                    # Only canonical 1m Scanner-frozen input is an immutable
+                    # Robot v0.1 initialization fault. Older/foreign APPROVED
+                    # 5m Wedge records with a pending entry can legitimately
+                    # lack geometry/cursor here (MIRROR account obligations);
+                    # never reinterpret those as quarantine evidence.
+                    snapshot = record.signal_snapshot or {}
+                    geometry = snapshot.get("robot_geometry") or snapshot.get("geometry")
+                    cursor = snapshot.get("scanner_geometry_cursor")
+                    if (
+                        self._account_id.value == "paper"
+                        and isinstance(geometry, Mapping)
+                        and isinstance(cursor, Mapping)
+                        and cursor.get("timeframe") == "1"
+                    ):
+                        # Independently revalidate *source*, not merely the
+                        # initializer exception: the same exception class
+                        # can also reflect a transient adapter/state fault.
+                        # Use the canonical pure frozen-geometry validator;
+                        # never quarantine a valid snapshot from an error
+                        # message, type, or failed non-frozen dependency.
+                        try:
+                            robot_state_machine._snapshot_geometry(snapshot)
+                        except robot_state_machine.RobotStateMachineError:
+                            return self._quarantine_unstarted_frozen_fault(record, error)
                     raise
                 self._invalidate_unsupported_pattern(record, error)
                 return True
@@ -3339,6 +3363,85 @@ class RobotBreakoutMonitor:
             )
         except ConcurrentUpdate:
             pass
+
+    def _quarantine_unstarted_frozen_fault(
+        self, record: RobotCandidateRecord, error: robot_state_machine.RobotStateMachineError,
+    ) -> bool:
+        """Contain one malformed immutable PAPER signal before any execution.
+
+        This is a narrow candidate-scope exception to repeated error retries,
+        not a blanket replacement of account protection. Do not infer an inert
+        candidate from APPROVED/FLAT alone: reuse canonical recovery proof and
+        additionally reject historical fills or an unsynced projection.
+        Any unproven ownership stays account-fenced; no STOP/TAKE is touched.
+        """
+        store = self._store()
+        try:
+            fresh = store.get_robot_candidate(record.candidate_id)
+            if (
+                fresh is None or fresh.status != "APPROVED"
+                or fresh.robot_state is not None
+                or fresh.candidate_id != record.candidate_id
+                or fresh.trading_account_id != self._account_id
+                or fresh.symbol != record.symbol
+                or fresh.snapshot_sha256 != record.snapshot_sha256
+                or fresh.state_revision != record.state_revision
+            ):
+                # Changed since the failing read: do not invalidate a newer
+                # state or assume the original immutable fault still applies.
+                return False
+            position = store.get_position_projection(PositionKey(
+                self._account_id, Category.LINEAR, fresh.symbol, 0,
+            ))
+            inert = (
+                self._paper_candidate_is_inert(fresh)
+                and not store.load_executions_for_symbol(
+                    self._account_id, fresh.symbol,
+                )
+                and (position is None or (
+                    position.side is PositionSide.FLAT
+                    and position.quantity.value == 0
+                    and position.sync_state == "synced"
+                ))
+            )
+        except Exception:
+            # Failed reads cannot establish a local-scope safety proof.
+            inert = False
+        if not inert:
+            self._escalate_reconciliation(
+                "ROBOT_FROZEN_INIT_OWNERSHIP_UNPROVEN "
+                f"symbol={record.symbol.value} candidate_id={record.candidate_id}"
+            )
+            return False
+        now_ms = self._now_ms()
+        state = {
+            "state_version": robot_state_machine.STATE_VERSION,
+            "phase": "INVALIDATED_FROZEN_INIT",
+            "pattern": fresh.signal_snapshot.get("pattern"),
+            "paper_quarantine": {
+                "reason": "FROZEN_INIT_INVALID",
+                "error_type": type(error).__name__,
+                "at_ms": now_ms,
+            },
+        }
+        try:
+            store.save_robot_candidate_state(
+                fresh.candidate_id, status="INVALIDATED", robot_state=state,
+                expected_revision=fresh.state_revision, updated_at_ms=now_ms,
+            )
+        except ConcurrentUpdate:
+            # A competing owner changed the row; the next normal tick
+            # re-reads authority. No quarantining stale revisions.
+            return False
+        except Exception:
+            # Failed/unknown quarantine persistence is not evidence of
+            # isolation; the canonical account admission fence must win.
+            self._escalate_reconciliation(
+                "ROBOT_FROZEN_INIT_QUARANTINE_PERSIST_UNPROVEN "
+                f"symbol={record.symbol.value} candidate_id={record.candidate_id}"
+            )
+            return False
+        return True
 
     def _invalidate_unsupported_pattern(
         self, record: RobotCandidateRecord, error: Exception,
