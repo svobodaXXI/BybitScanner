@@ -546,32 +546,6 @@ function verifiedIndexedPattern(deal: ClosedEpisodeLocator, report: FinrezRespon
 
 type TradeExecutionPoint = { at: number; price: number };
 
-function TradeExecutionPriceChart({ points }: { points: readonly TradeExecutionPoint[] }) {
-  if (points.length < 1) return (
-    <p className="diary-finrez-basis">Свечной график пока недоступен: нужен проверенный архив исторических свечей.</p>
-  );
-  const ordered = [...points].sort((a, b) => a.at - b.at);
-  const first = ordered[0].at, last = ordered[ordered.length - 1].at;
-  const prices = ordered.map((point) => point.price);
-  const min = Math.min(...prices), max = Math.max(...prices);
-  const x = (at: number) => 18 + (at - first) / Math.max(1, last - first) * 284;
-  const y = (price: number) => 105 - (price - min) / Math.max(0.00000001, max - min) * 88;
-  return (
-    <section className="diary-detail-section">
-      <h3>Цены исполнений</h3>
-      <svg className="diary-execution-price-chart" viewBox="0 0 320 122" role="img"
-        aria-label="Фактические цены исполнений сделки по времени">
-        <path d={ordered.map((point, i) => `${i ? "L" : "M"} ${x(point.at)} ${y(point.price)}`).join(" ")}
-          fill="none" stroke="currentColor" strokeWidth="1.6" />
-        {ordered.map((point, i) => <circle key={i} cx={x(point.at)} cy={y(point.price)} r="3.3"
-          fill="currentColor">
-          <title>{point.price} · {formatDate(point.at)}</title>
-        </circle>)}
-      </svg>
-    </section>
-  );
-}
-
 function Value({ value }: { value: string | null | undefined }) {
   return <span>{value ?? "—"}</span>;
 }
@@ -1057,8 +1031,11 @@ function detailPatternLabel(pattern: string): string {
 }
 
 function detailTimeframeLabel(timeframe: string): string {
-  return ({ "1": "M1", "5": "M5", "15": "M15",
-    "60": "H1", "240": "H4", "D": "D1" } as Record<string, string>)[timeframe] ?? timeframe;
+  return ({ "1": "1M", M1: "1M", "1M": "1M", "5": "5M", M5: "5M", "5M": "5M",
+    "15": "15M", M15: "15M", "15M": "15M",
+    "60": "1H", H1: "1H", "1H": "1H",
+    "240": "4H", H4: "4H", "4H": "4H",
+    D: "1D", D1: "1D", "1D": "1D" } as Record<string, string>)[timeframe.toUpperCase()] ?? timeframe;
 }
 
 function compactDealPattern(pattern: string | null): string {
@@ -1355,6 +1332,9 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, pnlFilter, sideF
               )}
             </dl>
           ) : <p className="diary-finrez-basis">Связь с паттерном по точному ID не подтверждена.</p>}
+          <small>{selectedPattern?.source === "WEDGE" || selectedPattern?.source === "ROBOT_ENTRY"
+            ? "Источник: точная цепочка Robot candidate → entry order → execution → episode. Не D2, без исходной геометрии и журнала решений."
+            : "Источник при наличии D2-связи: отдельные наблюдения Trading Diary D2, не полный журнал решений Робота."}</small>
         </section>
         <OriginalEpisodeSignalChart key={selected.trade_episode_id + ':' + report.source_revision}
           marketScope={{ episodeId: selected.trade_episode_id, accountId: report.account_id,
@@ -1365,7 +1345,6 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, pnlFilter, sideF
           pattern={verifiedRobotSignal(selected, report)?.pattern ?? null}
           side={selected.side} openedAtMs={selected.opened_at_ms}
           closedAtMs={selected.closed_at_ms} executions={executionPoints} />
-        <TradeExecutionPriceChart points={executionPoints} />
         <SimulatorLaunchAction episodeId={selected.trade_episode_id}
           allowLocalLaunch={report.account_id === "paper"}
           owner={report.owner} sourceRevision={report.source_revision} />
