@@ -3,6 +3,7 @@ import { test, expect } from "@playwright/test";
 for (const [mode, symbol, timeframe] of [
   ["EDITOR", "BTCUSDT", "15m"],
   ["TERMINAL", "ETHUSDT", "5m"],
+  ["AUTOPILOT", "COTIUSDT", "5m"],
 ] as const) {
   test(`deep-link ${mode}/${symbol} requires mock activation ACK`, async ({ page }) => {
     const posts: string[] = [];
@@ -54,10 +55,12 @@ for (const [mode, symbol, timeframe] of [
     await expect.poll(() => posts).toContain(symbol);
     await expect.poll(() => streamRequests).toContain(symbol);
     await expect(page.getByRole("button", { name: `Select symbol ${symbol}` })).toBeVisible();
-    await expect(page.getByRole("button", { name: "BUY", exact: true })).toBeDisabled().catch(() => {
-      // In EDITOR the trading controls are intentionally absent.
-      if (mode !== "EDITOR") throw new Error("BUY unexpectedly enabled");
-    });
+    if (mode === "TERMINAL") {
+      await expect(page.getByRole("button", { name: "BUY", exact: true })).toBeDisabled();
+    } else {
+      // Robot view is observation-only; a Telegram deep link grants no manual order buttons.
+      await expect(page.getByRole("button", { name: "BUY", exact: true })).toHaveCount(0);
+    }
   });
 }
 
@@ -162,9 +165,8 @@ test("frozen Editor geometry reviews source even when browser draft storage is b
     const strokes = (window as unknown as { __editorRayStrokes: { reference: number; editable: number } }).__editorRayStrokes;
     return strokes.reference > 0 && strokes.editable > 0;
   })).toBe(true);
-  // The toolbar is initially empty of undo history; clicking Undo must
-  // not claim that the unchanged Scanner geometry is an unsaved review.
-  await page.getByRole("button", { name: "Undo drawing" }).click();
+  // An empty undo history is disabled; do not attempt to click a disabled control.
+  await expect(page.getByRole("button", { name: "Undo drawing" })).toBeDisabled();
   await expect(page.locator(".editor-review-success")).toHaveCount(0);
   await expect(page.getByRole("combobox", { name: "Правильный паттерн" })).toHaveValue("Rising Wedge");
   await save.click();
