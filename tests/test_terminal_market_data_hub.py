@@ -573,6 +573,12 @@ def test_research_rest_tape_snapshot_is_atomic_and_epoch_fenced():
         before = witness.rest_anchor_tape_snapshot()
         assert before["epoch"] == a["epoch"]
         assert before["frames"] == ((102, one),)
+        # A consumer must not rewrite the retained raw tape via snapshot
+        # aliases, including dictionaries nested inside vendor data.
+        tampered = witness.rest_anchor_tape_snapshot()
+        tampered["frames"][0][1]["data"]["u"] = 999
+        assert one["data"]["u"] == 7
+        assert witness.rest_anchor_tape_snapshot()["frames"] == ((102, one),)
         witness.reset()  # WS reconnection/host boundary
         after = witness.rest_anchor_tape_snapshot()
         assert after["epoch"] > before["epoch"]
