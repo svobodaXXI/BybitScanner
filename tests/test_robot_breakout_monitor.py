@@ -915,10 +915,10 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
             candidate.candidate_id, status="APPROVED", robot_state=state,
             expected_revision=candidate.state_revision, updated_at_ms=3003,
         )
-        for status, expected_revision, timestamp in (
-            ("APPROVED", prepared.state_revision, 3004),
-            ("INVALIDATED", prepared.state_revision, 3005),
-        ):
+        for status in ("APPROVED", "INVALIDATED"):
+            self.assertEqual(
+                self.store.get_robot_candidate(candidate.candidate_id).status, status,
+            )
             self.assertEqual(
                 self.store.robot_symbol_quarantine_candidate_ids(ACCOUNT_ID, Symbol(SYMBOL)),
                 (candidate.candidate_id,),
@@ -935,10 +935,10 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
             self.assertEqual(
                 self.store.get_robot_runtime_state(ACCOUNT_ID).recovery_status, "READY",
             )
-            if status == "INVALIDATED":
+            if status == "APPROVED":
                 self.store.save_robot_candidate_state(
                     candidate.candidate_id, status="INVALIDATED", robot_state=state,
-                    expected_revision=expected_revision, updated_at_ms=timestamp,
+                    expected_revision=prepared.state_revision, updated_at_ms=3005,
                 )
 
     def test_box_emergency_intent_malformed_does_not_disappear(self):
