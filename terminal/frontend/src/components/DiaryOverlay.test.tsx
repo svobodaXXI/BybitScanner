@@ -1791,10 +1791,10 @@ describe("shared statistics trade action standard", () => {
     expect(await screen.findByText("не установлен")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Подробности сделки" }));
     const section = await screen.findByRole("region", { name: "Связь сделки с паттерном" });
-    await waitFor(() => expect(section).toHaveTextContent("Falling Wedge"));
+    await waitFor(() => expect(section).toHaveTextContent("Нисходящий клин"));
     expect(section).toHaveTextContent("candidate-1");
     expect(section).toHaveTextContent("robot-v2");
-    expect(section).toHaveTextContent("не полный журнал решений Робота");
+    expect(section).not.toHaveTextContent("не полный журнал решений Робота");
     fireEvent.click(screen.getByRole("button", { name: "← К сделкам" }));
     expect(screen.getByText("Клин ↘")).toBeInTheDocument();
     expect(screen.getByText("(—)")).toBeInTheDocument();
@@ -2064,7 +2064,7 @@ describe("Verified Wedge lineage in Statistics", () => {
     expect(await screen.findByRole("combobox", { name: "Выбор паттерна" })).toHaveValue("Double Bottom");
     fireEvent.click(screen.getByRole("button", { name: /BTCUSDT/ }));
     expect(await screen.findByText("candidate-42")).toBeInTheDocument();
-    expect(screen.getByText(/точная цепочка Robot candidate/)).toBeInTheDocument();
+    expect(screen.queryByText(/точная цепочка Robot candidate/)).not.toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([url]) =>
       String(url).startsWith("/api/workspace/signal-geometry"))).toBe(true);
   });
