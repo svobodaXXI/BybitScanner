@@ -232,7 +232,26 @@ class _ProtectedResearchCapture:
         default_factory=lambda: deque(maxlen=1024),
     )
     _active: bool = True
+    _epoch: int = 0
     _lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def rest_anchor_tape_snapshot(self) -> dict[str, object]:
+        """Atomic, read-only structural copy of one bounded raw ingress epoch.
+
+        A future REST request must record the epoch both before and after
+        fetching; a mismatch means UNKNOWN, never a stitched generation.
+        Raw frame payloads are caller-read-only and are not book states.
+        """
+        with self._lock:
+            return {
+                "symbol": self.context.symbol,
+                "depth": self.context.public_orderbook.depth,
+                "epoch": self._epoch,
+                "active": self._active,
+                "frames": tuple(self.rest_anchor_candidates),
+                "source_complete": False,
+                "trading_authorized": False,
+            }
 
     @property
     def impulse_observation(self) -> PublicTradeObservation:
@@ -244,16 +263,19 @@ class _ProtectedResearchCapture:
                 return
             kind = frame.get("type")
             if applied != "APPLIED" or kind not in ("snapshot", "delta"):
+                self._epoch += 1
                 self.book_frames.clear()
                 self.rest_anchor_candidates.clear()
                 return
             if kind == "snapshot":
+                self._epoch += 1
                 self.book_frames.clear()
                 self.rest_anchor_candidates.clear()
                 self.book_frames.append((received_at_ms, frame))
                 return
             if self.book_frames:
                 if len(self.book_frames) == self.book_frames.maxlen:
+                    self._epoch += 1
                     self.book_frames.clear()
                     self.rest_anchor_candidates.clear()
                     return  # No prefix truncation masquerading as continuity.
@@ -262,17 +284,20 @@ class _ProtectedResearchCapture:
             # An orphan delta is NOT a book state. Retain it only for a
             # separate source-provenance matcher; do not export as L2 proof.
             if len(self.rest_anchor_candidates) == self.rest_anchor_candidates.maxlen:
+                self._epoch += 1
                 self.rest_anchor_candidates.clear()
                 return
             self.rest_anchor_candidates.append((received_at_ms, frame))
 
     def reset(self) -> None:
         with self._lock:
+            self._epoch += 1
             self.book_frames.clear()
             self.rest_anchor_candidates.clear()
 
     def close(self) -> None:
         with self._lock:
+            self._epoch += 1
             self._active = False
             self.book_frames.clear()
             self.rest_anchor_candidates.clear()
