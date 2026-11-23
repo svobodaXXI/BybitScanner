@@ -127,7 +127,7 @@ class FlatRobotLedgerFenceTests(unittest.TestCase):
             _limit_executor=SimpleNamespace(execute=execution),
         )
         applied = PaperRuntime._match_limits_only(
-            owner, SYMBOL, object(), "quarantined-a-event",
+            owner, SYMBOL, SimpleNamespace(received_at_ms=1000), "quarantined-a-event",
         )
         self.assertEqual(applied, 1)
         self.assertEqual(execution.call_count, 1)
@@ -138,7 +138,7 @@ class FlatRobotLedgerFenceTests(unittest.TestCase):
         store.load_active_box_exit_limit_ids.return_value = frozenset()
         execution.reset_mock()
         self.assertEqual(PaperRuntime._match_limits_only(
-            owner, SYMBOL, object(), "unproven-a-event",
+            owner, SYMBOL, SimpleNamespace(received_at_ms=1000), "unproven-a-event",
         ), 0)
         execution.assert_not_called()
 
