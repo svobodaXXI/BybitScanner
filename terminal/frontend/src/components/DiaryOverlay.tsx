@@ -1637,6 +1637,19 @@ function verifiedFinrezMoneyTotals(report: FinrezResponse): FinrezMoneyTotals | 
   const net = sumVerifiedPnl(episodes.map((deal) => deal.pnl_usdt));
   const tickerNet = sumVerifiedPnl(report.tickers.map((ticker) => ticker.pnl_usdt));
   if (net === null || tickerNet === null || net !== tickerNet) return null;
+  // A matching grand total alone can conceal swapped or offsetting ticker PnL.
+  // Reconcile each proved episode group to its own immutable API ticker row.
+  const pnlBySymbol = new Map<string, string[]>();
+  for (const deal of episodes) {
+    const values = pnlBySymbol.get(deal.symbol) ?? [];
+    values.push(deal.pnl_usdt);
+    pnlBySymbol.set(deal.symbol, values);
+  }
+  if (pnlBySymbol.size !== report.tickers.length
+    || report.tickers.some((ticker) => {
+      const values = pnlBySymbol.get(ticker.symbol);
+      return values === undefined || sumVerifiedPnl(values) !== sumVerifiedPnl([ticker.pnl_usdt]);
+    })) return null;
   const profit = sumVerifiedPnl(episodes.filter((deal) => verifiedPnlSign(deal.pnl_usdt) > 0)
     .map((deal) => deal.pnl_usdt));
   const loss = sumVerifiedPnl(episodes.filter((deal) => verifiedPnlSign(deal.pnl_usdt) < 0)

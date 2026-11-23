@@ -1510,6 +1510,33 @@ describe("Finrez first-screen UI", () => {
       .toHaveTextContent("Итог+1,00 USDT");
   });
 
+  it("withholds Finrez money when ticker PnL disagrees despite a matching overall net", async () => {
+    // Both sources sum to +1 USDT, but their individual ETH/BTC allocations differ.
+    const episode = (id: string, symbol: string, pnl_usdt: string) => ({
+      trade_episode_id: "te_" + id.repeat(24), symbol, side: "LONG" as const,
+      opened_at_ms: 1_793_001_000_000, closed_at_ms: 1_793_002_000_000,
+      pnl_usdt, execution_count: 2, cohort: "ROBOT" as const,
+      replay_evidence: "EPISODE_INDEX_ONLY" as const,
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ...finrezResponse,
+      tickers: [
+        { symbol: "ETHUSDT", pnl_usdt: "4", trade_count: 1 },
+        { symbol: "BTCUSDT", pnl_usdt: "-3", trade_count: 1 },
+      ],
+      closed_episodes: [
+        episode("a", "ETHUSDT", "3"),
+        episode("b", "BTCUSDT", "-2"),
+      ],
+    }), { status: 200 })));
+    render(<DiaryOverlay accountKey="paper:finrez-per-symbol-mismatch" initialSection="FINREZ"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    expect(await screen.findByText("Финансовая полоса недоступна")).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Финрез: прибыль и убыток в USDT" })).not.toBeInTheDocument();
+    expect(screen.getByText("ETHUSDT")).toBeInTheDocument();
+    expect(screen.getByText("BTCUSDT")).toBeInTheDocument();
+  });
+
   it("withholds an unreconciled Finrez total rather than summing unverified ticker rows", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
       ...finrezResponse,
