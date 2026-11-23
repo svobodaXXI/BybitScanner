@@ -103,7 +103,25 @@ const sameProtectionPrice = (left: string | null, right: string | null) => {
 };
 
 export function App() {
-  const launchLink = useMemo(() => parseSignalWorkspaceLink(window.location.search), []);
+  const [launchSearch, setLaunchSearch] = useState(() => window.location.search);
+  const launchLink = useMemo(() => parseSignalWorkspaceLink(launchSearch), [launchSearch]);
+  useEffect(() => {
+    // Telegram can resume an existing Mini App document with a new signal URL.
+    // Observe URL changes; never infer a destination from an invalid link.
+    const refreshLaunchSearch = () => {
+      setLaunchSearch((current) => current === window.location.search ? current : window.location.search);
+    };
+    window.addEventListener("popstate", refreshLaunchSearch);
+    window.addEventListener("pageshow", refreshLaunchSearch);
+    window.addEventListener("focus", refreshLaunchSearch);
+    document.addEventListener("visibilitychange", refreshLaunchSearch);
+    return () => {
+      window.removeEventListener("popstate", refreshLaunchSearch);
+      window.removeEventListener("pageshow", refreshLaunchSearch);
+      window.removeEventListener("focus", refreshLaunchSearch);
+      document.removeEventListener("visibilitychange", refreshLaunchSearch);
+    };
+  }, []);
   // A signal-specific Telegram "Терминал" link opens Robot observation;
   // a plain Terminal link without a source identity stays manual.
   const [mode, setMode] = useState<WorkspaceMode>(
@@ -527,8 +545,10 @@ export function App() {
     return () => controller.abort();
   }, []);
   const switchWorkspaceSymbol = useCallback(async (nextSymbol: string) => {
-    if (nextSymbol === tradingSymbol) return;
+    // Even a switch back to the currently visible symbol invalidates a pending
+    // older request, whose delayed ACK must not select a stale signal.
     const attempt = ++workspaceSwitchAttempt.current;
+    if (nextSymbol === tradingSymbol) return;
     const result = await requestWorkspaceActivation(nextSymbol, marketApiRoutes.workspaceSymbol);
     if (attempt !== workspaceSwitchAttempt.current) return;
     if (!result.ok) {
@@ -546,13 +566,15 @@ export function App() {
     setPositionAverageEntry(null);
     setMarketSymbol(result.symbol, result.generation);
   }, [tradingSymbol]);
-  const initialLinkConsumed = useRef(false);
+  const lastAppliedLaunchSearch = useRef<string | null>(null);
   useEffect(() => {
-    if (initialLinkConsumed.current || !launchLink) return;
-    initialLinkConsumed.current = true;
+    if (!launchLink || lastAppliedLaunchSearch.current === launchSearch) return;
+    lastAppliedLaunchSearch.current = launchSearch;
+    setMode(launchLink.mode === "TERMINAL" && launchLink.signalId ? "AUTOPILOT" : launchLink.mode);
+    setTimeframe(launchLink.timeframe);
     setMarketTimeframe(launchLink.timeframe);
     void switchWorkspaceSymbol(launchLink.symbol);
-  }, [launchLink, switchWorkspaceSymbol]);
+  }, [launchLink, launchSearch, switchWorkspaceSymbol]);
   useEffect(() => {
     const oneWvUsdt = accountProjection?.one_wv_usdt ?? currentPaperState?.one_wv_usdt ?? null;
     if (!accountProjection || !oneWvUsdt || !isValidSelectedVolume(oneWvUsdt)) return;
