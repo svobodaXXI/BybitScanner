@@ -1300,6 +1300,21 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertTrue(created)
         return candidate
 
+    def _create_invalid_frozen_candidate(
+        self, candidate_id="faulted-a", *, symbol="BADUSDT",
+    ):
+        # Genuine immutable, supported Wedge snapshot. Its frozen apex
+        # fails at Robot initialization before any execution intent exists.
+        snapshot = _snapshot(symbol=symbol)
+        snapshot["geometry"]["apex"]["valid_intersection"] = False
+        candidate, created = self.store.create_robot_candidate(
+            candidate_id=candidate_id, trading_account_id=ACCOUNT_ID,
+            symbol=Symbol(symbol), status="APPROVED",
+            signal_snapshot=snapshot, approved_at_ms=1, updated_at_ms=1,
+        )
+        self.assertTrue(created)
+        return candidate
+
     def _drive_to_retest_detected(self, candidate_id="candidate-1", *, push_followup_candle=True):
         """Init, breakout, retest -- reaches RETEST_DETECTED (no LIMIT submitted yet)."""
         self.monitor.tick()  # initialize
@@ -3517,6 +3532,108 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
 
         current = self.store.get_robot_candidate(record.candidate_id)
         self.assertEqual(current.state_revision, 1)
+
+    def test_invalid_frozen_candidate_isolated_before_independent_protected_box_stop(self):
+        """Real SQLiteStore: invalid A is inert, B can fill and finish via STOP."""
+        faulted = self._create_invalid_frozen_candidate()
+        before = self.store.get_robot_candidate(faulted.candidate_id)
+        self.assertEqual(self.monitor.tick(), (faulted.candidate_id,))
+        after = self.store.get_robot_candidate(faulted.candidate_id)
+        self.assertEqual(after.status, "INVALIDATED")
+        self.assertEqual(
+            after.robot_state["paper_quarantine"]["reason"], "FROZEN_INIT_INVALID",
+        )
+        self.assertEqual(after.snapshot_sha256, before.snapshot_sha256)
+        self.assertEqual(after.signal_snapshot, before.signal_snapshot)
+        self.assertEqual(
+            self.store.get_robot_runtime_state(ACCOUNT_ID).recovery_status, "READY",
+        )
+        self.assertIsNone(
+            self.store.get_robot_trade(f"robot-trade-{faulted.candidate_id}")
+        )
+        self.assertFalse(self.store.load_executions_for_symbol(
+            ACCOUNT_ID, faulted.symbol,
+        ))
+
+        # The existing full Box lifecycle uses a different symbol, the same
+        # serialized owner and true store writes: entry fill, STOP execution,
+        # linked RESOLVED obligation and immutable closed PnL.
+        stale_b, source_b, proof_b, trade_id_b, obligation_b = (
+            self._prove_real_closed_box_stop_for_stale_take()
+        )
+        healthy_b = self.store.get_robot_trade(trade_id_b)
+        self.assertEqual(healthy_b.exit_reason, "STOP")
+        self.assertEqual(healthy_b.exit_price, proof_b.average_exit)
+        self.assertEqual(healthy_b.realized_pnl_usdt, proof_b.realized_pnl)
+        self.assertEqual(healthy_b.fees_costs_usdt, proof_b.accumulated_fee)
+        self.assertEqual(
+            self.store.get_paper_protection_obligation(
+                obligation_b.obligation_id,
+            ).status, "RESOLVED",
+        )
+        self.assertEqual(self.store.get_robot_candidate(stale_b.candidate_id).status, "CLOSED")
+        self.assertEqual(self.store.get_robot_candidate(faulted.candidate_id), after)
+        self.assertEqual(
+            self.store.get_robot_runtime_state(ACCOUNT_ID).recovery_status, "READY",
+        )
+
+        # A remains excluded even on subsequent ticks; there is no retry
+        # of its malformed frozen geometry or fresh trade.
+        self.monitor.tick()
+        self.assertEqual(self.store.get_robot_candidate(faulted.candidate_id), after)
+
+    def test_invalid_frozen_with_foreign_active_limit_fences_account(self):
+        """Unknown execution on A must never be called an inert candidate."""
+        faulted = self._create_invalid_frozen_candidate()
+        order, _ = self.store.create_paper_limit(
+            client_action_id="fault-a-foreign-limit",
+            request_fingerprint="fault-a-foreign-limit",
+            order_id=OrderId("fault-a-foreign-limit"),
+            order_link_id="fault-a-foreign-limit-link",
+            trading_account_id=ACCOUNT_ID,
+            symbol=faulted.symbol, side=OrderSide.BUY,
+            price=Decimal("94"), quantity=Decimal("1"), created_at_ms=1,
+        )
+        self.assertEqual(self.monitor.tick(), ())
+        self.assertEqual(self.store.get_robot_candidate(faulted.candidate_id).status, "APPROVED")
+        self.assertEqual(
+            self.store.get_robot_runtime_state(ACCOUNT_ID).recovery_status,
+            "RECONCILIATION_REQUIRED",
+        )
+        self.assertEqual(
+            self.store.get_paper_limit(order.order_id.value, ACCOUNT_ID).status,
+            "open",
+        )
+
+    def test_invalid_frozen_unresolved_account_obligation_fences(self):
+        """A seemingly flat symbol is not independent of unknown account risk."""
+        faulted = self._create_invalid_frozen_candidate()
+        monitor_store = self.monitor._store()
+        with patch.object(
+            monitor_store,
+            "load_unresolved_paper_protection_obligations",
+            return_value=(SimpleNamespace(symbol=Symbol("ELSEUSDT")),),
+        ):
+            self.assertEqual(self.monitor.tick(), ())
+        self.assertEqual(self.store.get_robot_candidate(faulted.candidate_id).status, "APPROVED")
+        self.assertEqual(
+            self.store.get_robot_runtime_state(ACCOUNT_ID).recovery_status,
+            "RECONCILIATION_REQUIRED",
+        )
+
+    def test_invalid_frozen_cas_conflict_never_claims_quarantine(self):
+        """A racing candidate update cannot be invalidated from stale proof."""
+        faulted = self._create_invalid_frozen_candidate()
+        monitor_store = self.monitor._store()
+        with patch.object(
+            monitor_store, "save_robot_candidate_state",
+            side_effect=ConcurrentUpdate("other owner changed candidate"),
+        ):
+            self.assertEqual(self.monitor.tick(), ())
+        self.assertEqual(self.store.get_robot_candidate(faulted.candidate_id).status, "APPROVED")
+        self.assertEqual(
+            self.store.get_robot_runtime_state(ACCOUNT_ID).recovery_status, "READY",
+        )
 
     def test_repeated_inert_candidate_fault_is_quarantined_without_stopping_peers(self):
         self._create_candidate("candidate-a", symbol=SYMBOL)
