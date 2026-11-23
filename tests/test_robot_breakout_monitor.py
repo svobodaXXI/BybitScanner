@@ -894,6 +894,83 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.monitor._store = lambda: self.store
         return stale, trade_id, obligation
 
+    def test_unresolved_stop_obligation_quarantines_only_owned_symbol(self):
+        """An UNKNOWN protection close fences its symbol even if Robot is READY."""
+        self._create_candidate()
+        self._drive_to_retest_detected()
+        self.assertEqual(self.monitor.tick(), ("candidate-1",))
+        record = self.store.get_robot_candidate("candidate-1")
+        order_id = record.robot_state["execution"]["limit_order_id"]
+        self.executor.fill_resting_limit(
+            order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"),
+        )
+        self.assertEqual(self.monitor.process_authoritative_fill(SYMBOL), ("candidate-1",))
+        trade = self.store.get_robot_trade("robot-trade-candidate-1")
+        self.assertIsNotNone(trade)
+        key = PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
+        projection = self.store.get_protection_projection(key)
+        self.assertIsNotNone(projection)
+        obligation, created = self.store.latch_paper_protection_obligation(
+            trade_id=trade.trade_id, protection_version=projection.version,
+            winning_leg="STOP", trigger_price=trade.stop_price,
+            observed_exit_price=trade.stop_price, observed_quantity=trade.entry_quantity,
+            market_event_id="unresolved-stop-evt", source_generation=1,
+            source_sequence=1, source_update_id=1,
+            source_event_at_ms=10100, source_matching_engine_cts_ms=10099,
+            observed_bid_price=trade.stop_price,
+            observed_ask_price=trade.stop_price + Decimal("0.1"),
+            source_received_at_ms=10101, latched_at_ms=10102,
+        )
+        self.assertTrue(created)
+        self.assertEqual(obligation.status, "TRIGGERED")
+        self.assertEqual(
+            self.store.robot_symbol_quarantine_candidate_ids(
+                ACCOUNT_ID, Symbol(SYMBOL),
+            ),
+            ("candidate-1",),
+        )
+        self.assertEqual(
+            self.store.robot_account_quarantines(ACCOUNT_ID),
+            {SYMBOL: ("candidate-1",)},
+        )
+        self.assertEqual(
+            self.store.robot_symbol_quarantine_candidate_ids(
+                ACCOUNT_ID, Symbol("OTHERUSDT"),
+            ),
+            (),
+        )
+        other = self._create_candidate("other-b", symbol="OTHERUSDT")
+        same = self._create_candidate("same-a2", symbol=SYMBOL, reference_price=101.0)
+        self.assertIn(
+            "ROBOT_SYMBOL_QUARANTINED",
+            self.monitor._pre_entry_block_reason(same),
+        )
+        # No arbitrary cross-symbol block is added to this symbol predicate.
+        # This does NOT authorize B if the account-wide risk is unproven.
+        self.assertNotIn(
+            "ROBOT_SYMBOL_QUARANTINED",
+            self.monitor._pre_entry_block_reason(other) or "",
+        )
+        self.assertEqual(
+            self.store.get_robot_runtime_state(ACCOUNT_ID).recovery_status, "READY",
+        )
+
+    def test_resolved_stop_does_not_leave_historical_symbol_quarantine(self):
+        """The already-settled STOP remains in history, not in active fences."""
+        stale, trade_id, obligation = self._prove_real_closed_wedge_stop_for_stale_fill()
+        self.assertEqual(stale.status, "OPEN")
+        self.assertEqual(
+            self.store.get_paper_protection_obligation(obligation.obligation_id).status,
+            "RESOLVED",
+        )
+        self.assertEqual(
+            self.store.robot_symbol_quarantine_candidate_ids(
+                ACCOUNT_ID, Symbol(SYMBOL),
+            ),
+            (),
+        )
+        self.assertEqual(self.store.robot_account_quarantines(ACCOUNT_ID), {})
+
     def test_stale_fill_callback_after_settled_stop_keeps_peer_ready(self):
         """True late Wedge OPEN attestation has no matching OPEN trade after STOP."""
         stale, trade_id, obligation = self._prove_real_closed_wedge_stop_for_stale_fill()
