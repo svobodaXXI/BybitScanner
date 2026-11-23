@@ -379,8 +379,7 @@ function InteractiveTradeChart({ original, bars, frame, executions, side, showGe
           Весь график
         </button>
       </div>
-      <small>Фактические исполнения на загруженных свечах: {markerCount}/{executions.length}.
-        Удерживайте палец для перекрестия; двигайте и масштабируйте график двумя пальцами.</small>
+      <small>Исполнения: {markerCount}/{executions.length}</small>
     </div>
   );
 }
@@ -510,8 +509,8 @@ export function OriginalEpisodeSignalChart(props: OriginalSignalChartProps) {
         if (!active) return;
         setBarsByFrame({ [evidence.snapshot.timeframe]: loaded.bars });
         setMessage(loaded.complete
-          ? "Рыночные свечи до завершения сделки подтверждены."
-          : "До завершения сделки загружена только часть проверенных свечей. Можно продолжить кнопкой.");
+          ? ""
+          : "До завершения сделки загружена только часть проверенных свечей.");
         setLoading(false);
       } catch {
         if (active) {
@@ -575,7 +574,7 @@ export function OriginalEpisodeSignalChart(props: OriginalSignalChartProps) {
     const previous = frame;
     setFrame(next);
     if (barsByFrame[next]) {
-      setMessage("Показаны ранее загруженные закрытые свечи.");
+      setMessage("");
       return;
     }
     if (next === original.snapshot.timeframe) return;
@@ -593,8 +592,8 @@ export function OriginalEpisodeSignalChart(props: OriginalSignalChartProps) {
       if (!loaded.bars.length) throw new Error("verified_candles_unavailable");
       setBarsByFrame(prior => ({ ...prior, [next]: loaded.bars }));
       setMessage(loaded.complete
-        ? "Рыночные свечи до завершения сделки подтверждены."
-        : "До завершения сделки загружена только часть проверенных свечей. Можно продолжить кнопкой.");
+        ? ""
+        : "До завершения сделки загружена только часть проверенных свечей.");
     } catch {
       setFrame(previous);
       setMessage("Для этого таймфрейма проверенные свечи пока недоступны.");
@@ -623,7 +622,7 @@ export function OriginalEpisodeSignalChart(props: OriginalSignalChartProps) {
         if (!current.length || current[current.length - 1].open_time_ms !== last) return prior;
         return { ...prior, [frame]: [...current, ...rows] };
       });
-      setMessage("Следующие закрытые свечи добавлены.");
+      setMessage("");
     } catch {
       setMessage("Не удалось получить следующую подтверждённую порцию свечей.");
     } finally {
@@ -649,11 +648,6 @@ export function OriginalEpisodeSignalChart(props: OriginalSignalChartProps) {
             onClick={() => void selectFrame(option.id)}>{option.label}</button>)}
         </div>
       )}
-      {original && alternateFrame && <p className="diary-finrez-basis">
-        Выбранный {timeframeLabel(frame)} показывает реальные свечи для контекста.
-        Исходная фигура сохраняется отдельно на {timeframeLabel(original.snapshot.timeframe)}:
-        перенос её линий на другой масштаб изменил бы смысл исходных координат.
-      </p>}
       {original && candles.length > 0 && (
         <div className="diary-trade-panel" role="region"
           aria-label={alternateFrame ? "Рыночный контекст " + timeframeLabel(frame) : "График исходного сигнала"}>
@@ -673,15 +667,13 @@ export function OriginalEpisodeSignalChart(props: OriginalSignalChartProps) {
             chartLabel="Исходный график сигнала" />
         </div>
       )}
-      {original && (
+      {original && (canExtend || loading) && (
         <button className="diary-detail-back" type="button" disabled={!canExtend}
           onClick={() => void addMore()}>
           {loading ? "Загрузка…" : "Показать следующие свечи"}
         </button>
       )}
-      <p className="diary-finrez-basis" aria-live="polite">{message}</p>
-      {!(archiveUnavailable && props.marketScope) && <small>Только неизменяемый архив сигнала и настоящие закрытые свечи.
-        Изменения Редактора и неподтверждённые исполнения не подставляются.</small>}
+      {message && <p className="diary-finrez-basis" aria-live="polite">{message}</p>}
     </section>
   );
 }
