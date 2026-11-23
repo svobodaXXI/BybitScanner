@@ -1075,7 +1075,7 @@ export function ReplayPage() {
           "Повторите загрузку после её закрытия; факты PAPER сохранены локально.");
         return;
       }
-      if (requestedEndExclusive - startMs > 7 * 86_400_000 || endExclusive <= startMs) {
+      if (endExclusive - startMs > 7 * 86_400_000 || endExclusive <= startMs) {
         setError("Исполнения загружены, но публичный интервал превышает 7 суток. " +
           "Выберите проверенную историю вручную; исходная цепочка Robot не реконструирована.");
         return;
