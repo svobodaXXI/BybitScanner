@@ -822,6 +822,66 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.monitor._store = lambda: self.store
         return stale_open, source, proof, trade_id, obligation
 
+    def test_stale_fill_callback_after_settled_stop_keeps_peer_ready(self):
+        """Proven post-fill STOP of A must not globally fence independent B."""
+        stale, source, proof, trade_id, obligation = (
+            self._prove_real_closed_box_stop_for_stale_take()
+        )
+        peer = self._create_candidate("peer-b", symbol="OTHERUSDT")
+        old_trade = self.store.get_robot_trade(trade_id)
+        old_obligation = self.store.get_paper_protection_obligation(
+            obligation.obligation_id,
+        )
+        with patch.object(
+            self.store, "load_robot_candidates_for_symbol",
+            return_value=(stale,),
+        ), patch.object(
+            self.monitor, "_sync_box_trade",
+            side_effect=RuntimeError("old OPEN callback after STOP"),
+        ):
+            self.assertEqual(self.monitor.process_authoritative_fill(SYMBOL), ())
+        self.assertEqual(
+            self.store.get_robot_runtime_state(ACCOUNT_ID).recovery_status, "READY",
+        )
+        self.assertEqual(self.store.get_robot_trade(trade_id), old_trade)
+        self.assertEqual(self.store.get_paper_protection_obligation(
+            obligation.obligation_id,
+        ), old_obligation)
+        # The normal existing monitor must still advance B after A's STOP.
+        self.assertEqual(self.monitor.tick(), (peer.candidate_id,))
+        self.assertEqual(
+            self.store.get_robot_candidate(peer.candidate_id).status, "APPROVED",
+        )
+
+    def test_stale_fill_callback_with_foreign_limit_still_fences_account(self):
+        """Resolved historical STOP cannot hide a new symbol-side order."""
+        stale, _, _, _, _ = self._prove_real_closed_box_stop_for_stale_take()
+        order, _ = self.store.create_paper_limit(
+            client_action_id="foreign-after-stop",
+            request_fingerprint="foreign-after-stop",
+            order_id=OrderId("foreign-after-stop"),
+            order_link_id="foreign-after-stop-link",
+            trading_account_id=ACCOUNT_ID,
+            symbol=stale.symbol, side=OrderSide.BUY,
+            price=Decimal("80"), quantity=Decimal("1"),
+            created_at_ms=7000,
+        )
+        with patch.object(
+            self.store, "load_robot_candidates_for_symbol",
+            return_value=(stale,),
+        ), patch.object(
+            self.monitor, "_sync_box_trade",
+            side_effect=RuntimeError("stale callback with new order"),
+        ):
+            self.assertEqual(self.monitor.process_authoritative_fill(SYMBOL), ())
+        self.assertEqual(
+            self.store.get_robot_runtime_state(ACCOUNT_ID).recovery_status,
+            "RECONCILIATION_REQUIRED",
+        )
+        self.assertEqual(
+            self.store.get_paper_limit(order.order_id.value, ACCOUNT_ID).status, "open",
+        )
+
     def test_closed_stop_before_stale_box_take_is_no_mutation(self):
         record, source, proof, trade_id, obligation = (
             self._prove_real_closed_box_stop_for_stale_take()
