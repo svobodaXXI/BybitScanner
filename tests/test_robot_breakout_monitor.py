@@ -795,11 +795,21 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
             next_status="RESOLVED", expected_version=dispatched.version,
             updated_at_ms=stop_at+2,
         )
+        # Match the canonical Box protection finalizer's immutable tuple
+        # exactly. A rounded/stale fixture percentage would mask a bug.
+        close_proof = self.store.prove_box_owned_position(source.candidate_id)
+        self.assertIsNotNone(close_proof.average_exit)
+        self.assertGreater(close_proof.entry_notional, Decimal("0"))
+        close_pct = (
+            (close_proof.realized_pnl - close_proof.accumulated_fee)
+            / close_proof.entry_notional * Decimal("100")
+        )
         self.store.close_robot_trade(
-            trade_id, exit_time_ms=stop_at, exit_price=Decimal("90"),
-            exit_reason=reason, realized_pnl_usdt=Decimal("-8"),
-            realized_pnl_pct=Decimal("-4.25531914893617"),
-            fees_costs_usdt=Decimal("0"),
+            trade_id, exit_time_ms=close_proof.last_execution_at_ms,
+            exit_price=close_proof.average_exit, exit_reason=reason,
+            realized_pnl_usdt=close_proof.realized_pnl,
+            realized_pnl_pct=close_pct,
+            fees_costs_usdt=close_proof.accumulated_fee,
             updated_at_ms=stop_at+3,
         )
         closed = self.store.get_robot_candidate(candidate.candidate_id)
@@ -904,6 +914,90 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
             clear.assert_not_called()
         self.monitor._escalate_reconciliation.assert_called_once()
         self.assertEqual(self.store.get_robot_trade(trade_id), original)
+
+    def test_stale_box_take_wrong_stop_economics_retains_fence(self):
+        """STOP winning-leg is not enough without the immutable close tuple."""
+        from dataclasses import replace
+        record, source, proof, trade_id, obligation = (
+            self._prove_real_closed_box_stop_for_stale_take()
+        )
+        store = self.store
+        trade = store.get_robot_trade(trade_id)
+        self.assertEqual(trade.exit_price, proof.average_exit)
+        self.assertEqual(trade.realized_pnl_usdt, proof.realized_pnl)
+        self.assertEqual(trade.fees_costs_usdt, proof.accumulated_fee)
+        self.assertEqual(
+            trade.realized_pnl_pct,
+            (proof.realized_pnl - proof.accumulated_fee)
+            / proof.entry_notional * Decimal("100"),
+        )
+
+        incorrect = (
+            ("exit_price", {"exit_price": trade.exit_price + Decimal("0.01")}),
+            ("gross_pnl", {"realized_pnl_usdt": trade.realized_pnl_usdt + Decimal("0.01")}),
+            ("fees", {"fees_costs_usdt": trade.fees_costs_usdt + Decimal("0.01")}),
+            ("net_percent", {"realized_pnl_pct": trade.realized_pnl_pct + Decimal("0.01")}),
+            ("missing_exit_price", {"exit_price": None}),
+            ("missing_net_percent", {"realized_pnl_pct": None}),
+            ("missing_gross_pnl", {"realized_pnl_usdt": None}),
+            ("missing_fees", {"fees_costs_usdt": None}),
+        )
+        candidate_before = store.get_robot_candidate(record.candidate_id)
+        obligation_before = store.get_paper_protection_obligation(obligation.obligation_id)
+        self.monitor._escalate_reconciliation = Mock()
+        with (patch.object(store, "cancel_paper_limit") as cancel,
+              patch.object(store, "clear_paper_protection_for_flat") as clear):
+            for name, delta in incorrect:
+                with self.subTest(mismatch=name), patch.object(
+                    store, "get_robot_trade",
+                    return_value=replace(trade, **delta),
+                ):
+                    self.monitor._escalate_reconciliation.reset_mock()
+                    self.assertFalse(self.monitor._finalize_box_take_if_flat(
+                        record, source, proof,
+                    ))
+                    self.monitor._escalate_reconciliation.assert_called_once()
+                    cancel.assert_not_called()
+                    clear.assert_not_called()
+        self.assertEqual(store.get_robot_trade(trade_id), trade)
+        self.assertEqual(store.get_robot_candidate(record.candidate_id), candidate_before)
+        self.assertEqual(
+            store.get_paper_protection_obligation(obligation.obligation_id),
+            obligation_before,
+        )
+
+    def test_stale_box_take_invalid_economic_proof_retains_fence(self):
+        """Missing, negative, non-finite or unusable notional fails closed."""
+        from dataclasses import replace
+        record, source, proof, trade_id, _ = (
+            self._prove_real_closed_box_stop_for_stale_take()
+        )
+        before = self.store.get_robot_trade(trade_id)
+        invalid_proofs = (
+            ("missing_average_exit", replace(proof, average_exit=None)),
+            ("zero_average_exit", replace(proof, average_exit=Decimal("0"))),
+            ("missing_entry_notional", replace(proof, entry_notional=None)),
+            ("zero_entry_notional", replace(proof, entry_notional=Decimal("0"))),
+            ("negative_entry_notional", replace(proof, entry_notional=Decimal("-1"))),
+            ("infinite_entry_notional", replace(proof, entry_notional=Decimal("Infinity"))),
+            ("missing_realized_pnl", replace(proof, realized_pnl=None)),
+            ("nan_realized_pnl", replace(proof, realized_pnl=Decimal("NaN"))),
+            ("missing_accumulated_fee", replace(proof, accumulated_fee=None)),
+            ("negative_fee", replace(proof, accumulated_fee=Decimal("-0.01"))),
+        )
+        self.monitor._escalate_reconciliation = Mock()
+        with (patch.object(self.store, "cancel_paper_limit") as cancel,
+              patch.object(self.store, "clear_paper_protection_for_flat") as clear):
+            for name, altered in invalid_proofs:
+                with self.subTest(missing=name):
+                    self.monitor._escalate_reconciliation.reset_mock()
+                    self.assertFalse(self.monitor._finalize_box_take_if_flat(
+                        record, source, altered,
+                    ))
+                    self.monitor._escalate_reconciliation.assert_called_once()
+                    cancel.assert_not_called()
+                    clear.assert_not_called()
+        self.assertEqual(self.store.get_robot_trade(trade_id), before)
 
     def test_stale_box_take_incomplete_stop_evidence_retains_fence(self):
         """Only exact resolved STOP + same execution + synced FLAT is inert.
