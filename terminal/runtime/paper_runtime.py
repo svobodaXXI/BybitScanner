@@ -2186,8 +2186,21 @@ class PaperRuntime:
         applied = 0
         fenced_entry_ids: frozenset[str] | None = None
         active_orders = self.store.load_active_paper_limits(self._account_id, symbol)
+        # An old manual LIMIT can outlive the creation of a Robot symbol
+        # quarantine. Restrict it at actual fill time, not just at creation/
+        # amend time. Keep only proven immutable Box closing LIMITs executable;
+        # canonical STOP/TAKE and emergency Market close use separate paths.
+        quarantined = bool(active_orders) and bool(
+            self.store.robot_symbol_quarantine_candidate_ids(self._paper_account_id, symbol)
+        )
+        closing_ids = (
+            self.store.load_active_box_exit_limit_ids(self._paper_account_id, symbol)
+            if quarantined else frozenset()
+        )
         for order in active_orders:
             if allowed_order_ids is not None and order.order_id.value not in allowed_order_ids:
+                continue
+            if quarantined and order.order_id.value not in closing_ids:
                 continue
             if fenced_entry_ids is None:
                 fenced_entry_ids = self._robot_entry_limit_ids_fenced_by_admission(
