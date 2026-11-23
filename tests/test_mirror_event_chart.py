@@ -269,6 +269,197 @@ def test_mirror_telegram_chart_frames_original_frozen_anchor_and_right_margin(tm
     assert observed["height"] >= 7.0
 
 
+def test_mirror_png_discloses_absent_source_and_labels_exact_present_anchor(tmp_path, monkeypatch):
+    pytest.importorskip("matplotlib")
+    from matplotlib.figure import Figure
+    from mirror_event_chart import render_mirror_chart
+
+    observed = []
+    original_save = Figure.savefig
+
+    def inspect_save(fig, *args, **kwargs):
+        axis = fig.axes[0]
+        observed.append([label.get_text() for label in axis.texts])
+        return original_save(fig, *args, **kwargs)
+
+    monkeypatch.setattr(Figure, "savefig", inspect_save)
+    snapshot = _old_mirror_source_chart()
+    render_mirror_chart(snapshot, tmp_path / "complete.png")
+    assert any("Исходная опора:" in label and "UTC" in label
+               for label in observed[-1])
+    assert not any("недостаточно доказательств" in label for label in observed[-1])
+
+    # Source time is absent from the immutable retained history; no live
+    # candle lookup, synthetic replacement or misleading left-edge anchor.
+    snapshot = {**snapshot, "geometry_candles": snapshot["geometry_candles"][-125:]}
+    render_mirror_chart(snapshot, tmp_path / "truncated.png")
+    assert any("Исходный экстремум вне сохранённого окна" in label
+               for label in observed[-1])
+    assert not any("Исходная опора:" in label for label in observed[-1])
+
+
+def test_long_frozen_history_has_readable_recent_pane(tmp_path, monkeypatch):
+    pytest.importorskip("matplotlib")
+    from matplotlib.figure import Figure
+    from mirror_event_chart import render_mirror_chart
+
+    snapshot = _old_mirror_source_chart()
+    history = [
+        {"open_time_ms": i * 300_000, "open": 1.0, "high": 1.2,
+         "low": 0.9, "close": 1.1}
+        for i in range(600)
+    ]
+    snapshot["geometry_candles"] = history
+    snapshot["candles"] = history[-120:]
+    snapshot["event_open_time_ms"] = history[-1]["open_time_ms"]
+    captured = {}
+    original_save = Figure.savefig
+
+    def inspect_save(fig, *args, **kwargs):
+        captured["axes"] = len(fig.axes)
+        captured["overview_bars"] = len(fig.axes[0].patches)
+        captured["origin_bars"] = len(fig.axes[1].patches)
+        captured["origin_detail"] = [t.get_text() for t in fig.axes[1].texts]
+        captured["origin_title"] = fig.axes[1].get_title()
+        captured["recent_bars"] = len(fig.axes[2].patches)
+        captured["recent_title"] = fig.axes[2].get_title()
+        captured["origin_labels"] = [t.get_text() for t in fig.axes[0].texts]
+        return original_save(fig, *args, **kwargs)
+
+    monkeypatch.setattr(Figure, "savefig", inspect_save)
+    target = tmp_path / "long-source.png"
+    render_mirror_chart(snapshot, target)
+    assert target.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+    assert captured["axes"] == 3
+    assert captured["overview_bars"] == 600
+    assert captured["origin_bars"] == 120
+    assert captured["recent_bars"] == 120
+    assert "исходные опоры" in captured["origin_title"]
+    assert "120" in captured["recent_title"]
+    assert any("Исходная опора:" in label for label in captured["origin_labels"])
+    assert any("UTC" in label for label in captured["origin_detail"])
+
+
+@pytest.mark.parametrize("pattern,selected_side,selected_slope", [
+    ("Falling Wedge", "upper", -1e-10),
+    ("Rising Wedge", "lower", 0.0),
+])
+def test_frozen_mirror_named_pattern_requires_both_exact_sides(
+    pattern, selected_side, selected_slope, tmp_path, monkeypatch
+):
+    pytest.importorskip("matplotlib")
+    from matplotlib.figure import Figure
+    from mirror_event_chart import render_mirror_chart
+
+    snapshot = _old_mirror_source_chart()
+    snapshot["source"] = "pattern_boundary"
+    snapshot["pattern"] = pattern
+    other_side = "lower" if selected_side == "upper" else "upper"
+    first_t = snapshot["geometry_candles"][0]["open_time_ms"]
+
+    def frozen_level(side, selected, slope):
+        price = 1.15 if side == "upper" else 0.95
+        return {
+            "level_id": side, "side": side, "selected": selected,
+            "source": "pattern_boundary", "pattern": pattern,
+            "anchors": [[first_t, price]],
+            "boundary": {
+                "anchor_time_ms": first_t,
+                "anchor_price": price,
+                "slope_per_ms": slope,
+            },
+        }
+
+    selected = frozen_level(selected_side, True, selected_slope)
+    other = frozen_level(other_side, False, 0.0)
+    observed = []
+    original_save = Figure.savefig
+
+    def inspect_save(fig, *args, **kwargs):
+        axis = fig.axes[0]
+        observed.append({
+            "warnings": [t.get_text() for t in axis.texts],
+            "boundary_lines": [(line.get_label(), list(line.get_ydata()))
+                               for line in axis.lines if line.get_label() != "Пробой"],
+            "event_mark": any(line.get_label() == "Пробой" for line in axis.lines),
+        })
+        return original_save(fig, *args, **kwargs)
+
+    monkeypatch.setattr(Figure, "savefig", inspect_save)
+    snapshot["levels"] = [selected]
+    render_mirror_chart(snapshot, tmp_path / "single.png")
+    assert any("Контур паттерна неполон" in label for label in observed[-1]["warnings"])
+    assert observed[-1]["event_mark"]
+    # Do not backfill a synthetic counterpart from candles or a different source.
+    assert len(observed[-1]["boundary_lines"]) == 1
+
+    snapshot["levels"] = [selected, other]
+    render_mirror_chart(snapshot, tmp_path / "paired.png")
+    assert not any("Контур паттерна неполон" in label for label in observed[-1]["warnings"])
+    assert len(observed[-1]["boundary_lines"]) == 2
+    first_line = observed[-1]["boundary_lines"][0][1]
+    assert first_line[0] == pytest.approx(selected["boundary"]["anchor_price"])
+    assert first_line[-1] == pytest.approx(
+        selected["boundary"]["anchor_price"] + selected_slope *
+        (snapshot["geometry_candles"][-1]["open_time_ms"] - first_t)
+    )
+    assert snapshot["levels"] == [selected, other]
+
+
+def test_older_paired_boundary_origin_controls_frozen_lookback(tmp_path, monkeypatch):
+    pytest.importorskip("matplotlib")
+    from matplotlib.figure import Figure
+    from mirror_event_chart import _visible_event_candles, render_mirror_chart
+
+    history = [
+        {"open_time_ms": i * 300_000, "open": 1.0, "high": 1.2,
+         "low": 0.9, "close": 1.1}
+        for i in range(300)
+    ]
+    def level(side, index, price, selected):
+        t = history[index]["open_time_ms"]
+        return {"level_id": side, "source": "pattern_boundary",
+                "pattern": "Falling Wedge", "side": side,
+                "selected": selected, "anchors": [[t, price]],
+                "boundary": {"anchor_time_ms": t, "anchor_price": price,
+                             "slope_per_ms": 0.0}}
+
+    snapshot = {
+        "symbol": "TESTUSDT", "timeframe": "5",
+        "source": "pattern_boundary", "pattern": "Falling Wedge",
+        "candles": history[-120:], "geometry_candles": history,
+        "event_open_time_ms": history[-1]["open_time_ms"],
+        "levels": [level("upper", 220, 1.15, True),
+                   level("lower", 0, 0.95, False)],
+    }
+    # The selected ray starts within the last 120 bars, but its paired
+    # frozen origin is older and must remain visible in the overview.
+    assert _visible_event_candles(snapshot) is history
+    captures = []
+    original_save = Figure.savefig
+    def inspect_save(fig, *args, **kwargs):
+        ax = fig.axes[0]
+        captures.append((len(ax.patches), [t.get_text() for t in ax.texts],
+                         [t.get_text() for t in fig.axes[1].texts]
+                         if len(fig.axes) > 1 else []))
+        return original_save(fig, *args, **kwargs)
+    monkeypatch.setattr(Figure, "savefig", inspect_save)
+
+    render_mirror_chart(snapshot, tmp_path / "paired-full.png")
+    assert captures[-1][0] == 300
+    assert any("lower:" in label and "UTC" in label for label in captures[-1][2])
+    assert not any("Контур паттерна неполон" in s for s in captures[-1][1])
+
+    # The exact old pivot was not retained. Both lines may still be
+    # projected, but the PNG must not certify their full source contour.
+    truncated = {**snapshot, "geometry_candles": history[-150:]}
+    assert _visible_event_candles(truncated) is truncated["geometry_candles"]
+    render_mirror_chart(truncated, tmp_path / "paired-truncated.png")
+    assert captures[-1][0] == 150
+    assert any("Контур паттерна неполон" in s for s in captures[-1][1])
+    assert any("недостаточно доказательств" in s for s in captures[-1][1])
+
+
 def test_mirror_old_source_never_accepts_conflicting_or_invented_bars():
     from mirror_event_chart import _visible_event_candles
 
@@ -278,7 +469,7 @@ def test_mirror_old_source_never_accepts_conflicting_or_invented_bars():
     altered[-1]["close"] = 1.15
     with pytest.raises(ValueError, match="context disagrees"):
         _visible_event_candles({**snapshot, "geometry_candles": altered})
-    # The old source is beyond the retained 2000-bar bound. Without those
-    # exact bars the renderer must retain the recent frame, not invent data.
+    # If the original source is unavailable, retain all verified immutable
+    # candles, never invent the missing pivot or silently drop saved context.
     truncated = snapshot["geometry_candles"][-125:]
-    assert _visible_event_candles({**snapshot, "geometry_candles": truncated}) is snapshot["candles"]
+    assert _visible_event_candles({**snapshot, "geometry_candles": truncated}) is truncated
