@@ -236,32 +236,35 @@ class _ProtectedResearchCapture:
     _epoch: int = 0
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
-    def rest_anchor_tape_snapshot(self) -> dict[str, object]:
-        """Read one bounded ingress epoch without holding up WS dispatch.
-
-        Only the structural snapshot is taken under the ingress lock.
-        Detached payloads are copied outside the lock, then the source epoch
-        is rechecked. A concurrent reset/close invalidates the result rather
-        than returning evidence from an obsolete generation.
-        """
+    def _detached_tape_snapshot(self, *, protected: bool) -> dict[str, object]:
+        """Detach one epoch without copying under the protection ingress lock."""
         with self._lock:
             symbol = self.context.symbol
             depth = self.context.public_orderbook.depth
             epoch = self._epoch
             active = self._active
-            raw_frames = tuple(self.rest_anchor_candidates)
-        frames = deepcopy(raw_frames)  # Never hold the protection ingress lock.
+            raw = tuple(self.book_frames if protected else self.rest_anchor_candidates)
+        frames = deepcopy(raw)  # Copying large frames must not block on_book.
         with self._lock:
             stable = epoch == self._epoch and active == self._active
         return {
-            "symbol": symbol,
-            "depth": depth,
-            "epoch": epoch,
-            "active": active and stable,
-            "frames": frames if stable else (),
-            "source_complete": False,
-            "trading_authorized": False,
+            "symbol": symbol, "depth": depth, "epoch": epoch,
+            "active": active and stable, "frames": frames if stable else (),
+            "source_complete": False, "trading_authorized": False,
         }
+
+    def rest_anchor_tape_snapshot(self) -> dict[str, object]:
+        """Orphan deltas are never promoted to a reconstructed book."""
+        return self._detached_tape_snapshot(protected=False)
+
+    def protected_book_tape_snapshot(self) -> dict[str, object]:
+        """Original snapshot-first raw book tape, only when explicitly opted in."""
+        return self._detached_tape_snapshot(protected=True)
+
+    def protected_book_tape_token(self) -> tuple[int, bool, int]:
+        """O(1) epoch/length fence; ordinary appends advance length."""
+        with self._lock:
+            return self._epoch, self._active, len(self.book_frames)
 
     @property
     def impulse_observation(self) -> PublicTradeObservation:
@@ -469,6 +472,35 @@ class MarketDataHub:
             self._protected_research = None
             witness.close()
             return True
+
+    def private_protected_research_snapshot(
+        self, symbol: str,
+    ) -> dict[str, object] | None:
+        """Private in-process read ONLY of an already-active protected witness.
+
+        No subscriptions, capture activation or public route. A generation
+        change or release while reading rejects the mixed source. Caller still
+        needs an exact APPROVED host and independent completeness attestation.
+        """
+        with self._lock:
+            witness = self._protected_research
+            context = self._contexts.get(symbol)
+            if (witness is None or context is None
+                    or witness.context is not context or self._stop.is_set()):
+                return None
+            generation = context.generation
+        first = witness.protected_book_tape_snapshot()
+        trades = witness.impulse_observation.snapshot()
+        epoch, active, count = witness.protected_book_tape_token()
+        with self._lock:
+            stable = (self._protected_research is witness
+                      and self._contexts.get(symbol) is context
+                      and context.generation == generation
+                      and not self._stop.is_set())
+        if (not stable or not first["active"] or not active
+                or first["epoch"] != epoch or len(first["frames"]) != count):
+            return None
+        return {"book": first, "trades": trades}
 
     def release_flow_only(self, symbol: str) -> bool:
         """Release ONLY a passive topic; never unsubscribe protected books."""
