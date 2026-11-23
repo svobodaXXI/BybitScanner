@@ -120,7 +120,7 @@ def inspect_private_box_receipts(
             or not isinstance(frames, tuple) or not isinstance(prints, tuple)
             or len(frames) > 1024 or len(prints) > 1000):
         return PrivateBoxReceiptEvidence("UNKNOWN", **host)
-    if not frames or not prints:
+    if len(frames) < 2 or not prints:
         return PrivateBoxReceiptEvidence("NO_RECEIPT", **host)
     prior = None
     for index, entry in enumerate(frames):
