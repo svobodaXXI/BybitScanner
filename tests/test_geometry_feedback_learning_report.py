@@ -161,3 +161,64 @@ def test_pivot_provenance_does_not_pretend_to_confirm_edge_or_non_wick():
     assert right["status"] == "NOT_ON_CANDLE_WICK"
     assert right["in_scanner_pivots"] is False
     assert report["first_unmatched_stage"] == "PIVOT_IDENTIFICATION"
+
+def test_retrospective_pivot_reports_cannot_leak_future_3x3_confirmation(monkeypatch):
+    """Owner edits can be right at review time without being knowable at signal time."""
+    from geometry_feedback_learning_report import _pivot_provenance
+
+    highs = [2, 3, 4, 9, 2, 2, 2, 10, 2, 1, 2, 3, 2, 2, 2]
+    bars = [
+        {"open_time_ms": i * 300_000, "high": float(price),
+         "low": 0.5, "open": 1.0, "close": 1.0}
+        for i, price in enumerate(highs)
+    ]
+    example = {
+        "signal_id": "source-original:" + "7" * 24,
+        "review_id": "review-future-7",
+        "symbol": "TESTUSDT",
+        "timeframe": "5",
+        "pattern": "Falling Wedge",
+        "label": "GEOMETRY_CORRECTED",
+        "split": "UNASSIGNED_REQUIRES_GROUPED_HOLDOUT",
+        "review_context": "RETROSPECTIVE_CLOSED_BARS",
+        "review_as_of_ms": bars[-1]["open_time_ms"],
+        "bars_sha256": "test-bars-sha",
+        "source_revision_sha256": "test-revision",
+        "frozen_bars": bars[:9],
+        "review_bars": bars,
+        "original_boundaries": [{
+            "boundary_id": "upper", "kind": "ray",
+            "anchors": [
+                {"bar_open_time_ms": bars[3]["open_time_ms"], "price": 9.0},
+                {"bar_open_time_ms": bars[4]["open_time_ms"], "price": 2.0},
+            ],
+        }],
+        "corrected_boundaries": [{
+            "boundary_id": "upper", "kind": "ray",
+            "anchors": [
+                {"bar_open_time_ms": bars[7]["open_time_ms"], "price": 10.0},
+                {"bar_open_time_ms": bars[11]["open_time_ms"], "price": 3.0},
+            ],
+        }],
+    }
+    (review,) = _pivot_provenance(example)
+    (source,) = _pivot_provenance(example, source_time_only=True)
+    assert all(a["status"] == "IN_SCANNER_PIVOT_SET"
+               for a in review["anchors"])
+    assert source["anchors"][0]["status"] == "NOT_YET_CONFIRMABLE_3X3_AT_SNAPSHOT"
+    assert source["anchors"][1]["status"] == "AFTER_SOURCE_CUTOFF"
+    assert source["anchors"][1]["candle_index"] is None
+    assert source["first_unmatched_stage"] == "NOT_KNOWABLE_AT_SOURCE_TIME"
+    assert source["generated_as_candidate"] is None
+
+    monkeypatch.setattr(
+        "geometry_feedback_learning_report.reviewed_example",
+        lambda signal_id, **kwargs: example,
+    )
+    report = build_geometry_learning_report([example["signal_id"]])
+    (case,) = report["cases"]
+    assert case["review_context"] == "RETROSPECTIVE_CLOSED_BARS"
+    assert case["pivot_provenance"] == [review]
+    assert case["source_time_pivot_provenance"] == [source]
+    assert report["detector_training"] == "NOT_RUN"
+    assert report["detector_acceptance"] == "NOT_EVALUATED"
