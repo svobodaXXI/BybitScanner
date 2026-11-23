@@ -87,6 +87,43 @@ class WorkspaceTelegramHandoffTests(unittest.TestCase):
         self.assertIn('target.searchParams.set("timeframe",timeframe)', LOGIN_HTML)
         self.assertNotIn("CF-Access", repr(send.call_args))
 
+    def test_robot_callback_delivers_autopilot_tab_not_manual_terminal(self):
+        from urllib.parse import parse_qs, urlsplit
+        with patch.dict("os.environ", {
+            "BYBITSCANNER_TERMINAL_HTTPS_URL": "https://83.217.213.181",
+            "TELEGRAM_CHAT_ID": "42",
+        }, clear=True), patch.object(handoff.requests, "get", side_effect=[
+            SimpleNamespace(status_code=200), SimpleNamespace(status_code=401),
+        ]), patch.object(handoff.telegram_gateway_client, "configured", return_value=True), \
+                patch.object(handoff.telegram_gateway_client, "send_text", return_value={"ok": True}) as send:
+            handoff.deliver_workspace_link("42", mode="AUTOPILOT", symbol="BTCUSDT", timeframe="5m")
+        button = send.call_args.kwargs["reply_markup"]["inline_keyboard"][0][0]
+        self.assertEqual(button["text"], "🤖 Открыть Автопилот")
+        self.assertNotIn("url", button)
+        link = urlsplit(button["web_app"]["url"])
+        self.assertEqual(link.path, "/login")
+        self.assertEqual(parse_qs(link.query), {
+            "mode": ["AUTOPILOT"], "symbol": ["BTCUSDT"], "timeframe": ["5m"],
+        })
+        self.assertIn("Автопилот", send.call_args.args[1])
+        self.assertIn('target.searchParams.set("mode",mode)', LOGIN_HTML)
+
+    def test_direct_signal_robot_button_is_not_the_manual_terminal(self):
+        from notification import build_tradingview_keyboard
+        from urllib.parse import parse_qs, urlsplit
+        with patch.dict("os.environ", {
+            "BYBITSCANNER_TERMINAL_HTTPS_URL": "https://83.217.213.181/login",
+        }, clear=True):
+            rows = build_tradingview_keyboard("BTCUSDT", "5", include_review_actions=True)["inline_keyboard"]
+        robot = next(button for row in rows for button in row if button["text"] == "🤖 Робот")
+        terminal = next(button for row in rows for button in row if button["text"] == "🖥 Терминал")
+        robot_query = parse_qs(urlsplit(robot["web_app"]["url"]).query)
+        manual_query = parse_qs(urlsplit(terminal["web_app"]["url"]).query)
+        self.assertEqual(robot_query["mode"], ["AUTOPILOT"])
+        self.assertEqual(manual_query["mode"], ["TERMINAL"])
+        self.assertEqual(robot_query["symbol"], ["BTCUSDT"])
+        self.assertEqual(robot_query["timeframe"], ["5m"])
+
     def test_editor_login_keeps_exact_signal_id_after_owner_auth(self):
         # The Telegram login page must forward the immutable Scanner identity
         # to App; otherwise App silently loads only current symbol candles.
