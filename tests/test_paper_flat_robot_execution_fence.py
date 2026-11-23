@@ -70,6 +70,10 @@ class FlatRobotLedgerFenceTests(unittest.TestCase):
                 calls = []
                 request = SimpleNamespace(symbol=SYMBOL)
                 owner = SimpleNamespace(
+                    _paper_account_id=ACCOUNT,
+                    store=SimpleNamespace(
+                        robot_symbol_quarantine_candidate_ids=Mock(return_value=()),
+                    ),
                     require_paper_mutations=lambda: calls.append("paper_only"),
                     _robot_execution_book=lambda symbol, evidence: "book",
                     api=SimpleNamespace(**{method: Mock(return_value="done")}),
@@ -80,9 +84,72 @@ class FlatRobotLedgerFenceTests(unittest.TestCase):
                 self.assertEqual(calls, ["paper_only", ("fence", SYMBOL)])
                 getattr(owner.api, method).assert_called_once()
 
+    def test_quarantined_manual_market_does_not_dispatch_or_claim_flat(self):
+        request = SimpleNamespace(
+            symbol=SYMBOL,
+            client_action_id=SimpleNamespace(value="manual-quarantined-test"),
+        )
+        store = SimpleNamespace(
+            robot_symbol_quarantine_candidate_ids=Mock(return_value=("blocked-a",)),
+        )
+        owner = SimpleNamespace(
+            _paper_account_id=ACCOUNT, store=store,
+            require_paper_mutations=lambda: None,
+            api=SimpleNamespace(market=Mock()),
+            _robot_execution_book=Mock(),
+            _fence_flat_robot_ledger_after_paper_execution=Mock(),
+        )
+        result = PaperRuntime.market(owner, request)
+        self.assertEqual(result.status.value, "blocked")
+        self.assertEqual(result.reason_code, "robot_symbol_quarantined")
+        owner.api.market.assert_not_called()
+        owner._robot_execution_book.assert_not_called()
+        owner._fence_flat_robot_ledger_after_paper_execution.assert_not_called()
+        store.robot_symbol_quarantine_candidate_ids.assert_called_once_with(ACCOUNT, SYMBOL)
+
+    def test_limit_matching_fences_all_orders_when_a_close_is_unknown(self):
+        """Even an owned Box EXIT LIMIT is not reduce-only if STOP is UNKNOWN."""
+        manual = SimpleNamespace(order_id=SimpleNamespace(value="manual-a"))
+        robot_entry = SimpleNamespace(order_id=SimpleNamespace(value="robot-entry-a"))
+        box_exit = SimpleNamespace(order_id=SimpleNamespace(value="box-exit-a"))
+        store = SimpleNamespace(
+            load_active_paper_limits=Mock(return_value=(manual, robot_entry, box_exit)),
+            robot_symbol_quarantine_candidate_ids=Mock(return_value=("box-a",)),
+        )
+        execution = Mock()
+        owner = SimpleNamespace(
+            _account_id=ACCOUNT, _paper_account_id=ACCOUNT, store=store,
+            _robot_entry_limit_ids_fenced_by_admission=Mock(),
+            _limit_executor=SimpleNamespace(execute=execution),
+        )
+        self.assertEqual(PaperRuntime._match_limits_only(
+            owner, SYMBOL, SimpleNamespace(received_at_ms=1000), "a-unknown-close",
+        ), 0)
+        execution.assert_not_called()
+        owner._robot_entry_limit_ids_fenced_by_admission.assert_not_called()
+        store.robot_symbol_quarantine_candidate_ids.assert_called_once_with(ACCOUNT, SYMBOL)
+
+    def test_manual_quarantine_full_paper_owner_regression(self):
+        # The Robot PAPER workflow selects this module, while its focused
+        # terminal_paper_runtime -k selection omits the new integration case.
+        from tests.test_terminal_paper_runtime import (
+            test_manual_paper_order_creation_does_not_bypass_robot_symbol_quarantine,
+        )
+        test_manual_paper_order_creation_does_not_bypass_robot_symbol_quarantine()
+
+    def test_independent_b_full_paper_owner_regression(self):
+        from tests.test_terminal_paper_runtime import (
+            test_inert_quarantined_a_does_not_stop_independent_manual_b,
+        )
+        test_inert_quarantined_a_does_not_stop_independent_manual_b()
+
     def test_mutation_failure_does_not_trigger_false_flat_fence(self):
         request = SimpleNamespace(symbol=SYMBOL)
         owner = SimpleNamespace(
+            _paper_account_id=ACCOUNT,
+            store=SimpleNamespace(
+                robot_symbol_quarantine_candidate_ids=Mock(return_value=()),
+            ),
             require_paper_mutations=lambda: None,
             _robot_execution_book=lambda symbol, evidence: "book",
             api=SimpleNamespace(market=Mock(side_effect=ValueError("rejected"))),

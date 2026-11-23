@@ -1981,6 +1981,21 @@ class PaperRuntime:
         than pretending that the Robot trade was finalized by this execution.
         """
         self.require_paper_mutations()
+        # Manual PAPER entry cannot adopt an unresolved Robot-owned symbol.
+        # Existing Robot protection and explicit full_close use their separate
+        # recovery paths; this gate only blocks a new manual Market mutation.
+        normalized = (
+            request.symbol if isinstance(request.symbol, Symbol)
+            else Symbol(request.symbol.strip().upper())
+        )
+        if self.store.robot_symbol_quarantine_candidate_ids(
+            self._paper_account_id, normalized,
+        ):
+            return CommandResult(
+                request.client_action_id.value, CommandResultStatus.BLOCKED,
+                "robot_symbol_quarantined",
+                "unresolved Robot emergency/protection ownership on this symbol",
+            )
         result = self.api.market(
             request, market_book=self._robot_execution_book(request.symbol, evidence),
         )
@@ -2175,8 +2190,18 @@ class PaperRuntime:
         applied = 0
         fenced_entry_ids: frozenset[str] | None = None
         active_orders = self.store.load_active_paper_limits(self._account_id, symbol)
+        # An old manual or Box LIMIT can outlive a Robot close quarantine.
+        # No LIMIT is intrinsically reduce-only: even an owned Box EXIT could
+        # reverse the net position if an earlier STOP/EXIT-0 has succeeded with
+        # its receipt still UNKNOWN. Only canonical protection and explicit
+        # full_close paths can advance this symbol while it is quarantined.
+        quarantined = bool(active_orders) and bool(
+            self.store.robot_symbol_quarantine_candidate_ids(self._paper_account_id, symbol)
+        )
         for order in active_orders:
             if allowed_order_ids is not None and order.order_id.value not in allowed_order_ids:
+                continue
+            if quarantined:
                 continue
             if fenced_entry_ids is None:
                 fenced_entry_ids = self._robot_entry_limit_ids_fenced_by_admission(
@@ -6548,6 +6573,13 @@ class PaperRuntime:
             )
         admitted = decision.request
         assert admitted is not None and admitted.normalized_limit_price is not None
+        if not robot_entry and self.store.robot_symbol_quarantine_candidate_ids(
+            self._paper_account_id, Symbol(symbol),
+        ):
+            return PaperLimitMutationResult(
+                request.client_action_id.value, CommandResultStatus.BLOCKED,
+                "robot_symbol_quarantined", None,
+            )
         fingerprint = _fingerprint(
             symbol, request.side.value, str(request.volume.amount), request.volume.unit.value,
             str(admitted.normalized_limit_price), request.time_in_force.value,
@@ -6603,12 +6635,13 @@ class PaperRuntime:
     def _robot_amend_limit(
         self, request: PaperLimitAmendRequest,
     ) -> PaperLimitMutationResult:
-        return self._amend_limit(request, self._robot_context)
+        return self._amend_limit(request, self._robot_context, robot_amend=True)
 
     def _amend_limit(
         self,
         request: PaperLimitAmendRequest,
         context_provider: PaperCommandContextProvider,
+        *, robot_amend: bool = False,
     ) -> PaperLimitMutationResult:
         symbol = request.symbol.strip().upper()
         existing = self.store.get_paper_limit(request.order_id, self._account_id)
@@ -6616,6 +6649,13 @@ class PaperRuntime:
             raise ValueError("PAPER limit is missing or inactive")
         if existing.symbol.value != symbol:
             raise ValueError("order symbol does not match")
+        if not robot_amend and self.store.robot_symbol_quarantine_candidate_ids(
+            self._paper_account_id, Symbol(symbol),
+        ):
+            return PaperLimitMutationResult(
+                request.client_action_id.value, CommandResultStatus.BLOCKED,
+                "robot_symbol_quarantined", existing.order_id.value,
+            )
         context = context_provider.context_for(symbol)
         normalized_price = normalize_limit_price(
             request.limit_price, context.pretrade.instrument.tick_size, existing.side,
