@@ -17,7 +17,7 @@ from zipfile import ZipFile, ZIP_DEFLATED
 
 ROOT = Path(__file__).resolve().parents[1]
 VIEWER = ROOT / "research/local_replay_viewer"
-ROOT_DIRS = ("research", "geometry", "wedge", "signals", "mirror_levels", "terminal")
+ROOT_DIRS = ("research", "geometry", "wedge", "signals", "mirror_levels", "terminal", "analyzer")
 ROOT_FILES = ("robot_protection.py", "mirror_scanner.py", "mirror_retest_robot.py")
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 
