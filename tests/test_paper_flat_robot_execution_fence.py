@@ -70,6 +70,10 @@ class FlatRobotLedgerFenceTests(unittest.TestCase):
                 calls = []
                 request = SimpleNamespace(symbol=SYMBOL)
                 owner = SimpleNamespace(
+                    _paper_account_id=ACCOUNT,
+                    store=SimpleNamespace(
+                        robot_symbol_quarantine_candidate_ids=Mock(return_value=()),
+                    ),
                     require_paper_mutations=lambda: calls.append("paper_only"),
                     _robot_execution_book=lambda symbol, evidence: "book",
                     api=SimpleNamespace(**{method: Mock(return_value="done")}),
@@ -80,9 +84,36 @@ class FlatRobotLedgerFenceTests(unittest.TestCase):
                 self.assertEqual(calls, ["paper_only", ("fence", SYMBOL)])
                 getattr(owner.api, method).assert_called_once()
 
+    def test_quarantined_manual_market_does_not_dispatch_or_claim_flat(self):
+        request = SimpleNamespace(
+            symbol=SYMBOL,
+            client_action_id=SimpleNamespace(value="manual-quarantined-test"),
+        )
+        store = SimpleNamespace(
+            robot_symbol_quarantine_candidate_ids=Mock(return_value=("blocked-a",)),
+        )
+        owner = SimpleNamespace(
+            _paper_account_id=ACCOUNT, store=store,
+            require_paper_mutations=lambda: None,
+            api=SimpleNamespace(market=Mock()),
+            _robot_execution_book=Mock(),
+            _fence_flat_robot_ledger_after_paper_execution=Mock(),
+        )
+        result = PaperRuntime.market(owner, request)
+        self.assertEqual(result.status.value, "blocked")
+        self.assertEqual(result.reason_code, "robot_symbol_quarantined")
+        owner.api.market.assert_not_called()
+        owner._robot_execution_book.assert_not_called()
+        owner._fence_flat_robot_ledger_after_paper_execution.assert_not_called()
+        store.robot_symbol_quarantine_candidate_ids.assert_called_once_with(ACCOUNT, SYMBOL)
+
     def test_mutation_failure_does_not_trigger_false_flat_fence(self):
         request = SimpleNamespace(symbol=SYMBOL)
         owner = SimpleNamespace(
+            _paper_account_id=ACCOUNT,
+            store=SimpleNamespace(
+                robot_symbol_quarantine_candidate_ids=Mock(return_value=()),
+            ),
             require_paper_mutations=lambda: None,
             _robot_execution_book=lambda symbol, evidence: "book",
             api=SimpleNamespace(market=Mock(side_effect=ValueError("rejected"))),
