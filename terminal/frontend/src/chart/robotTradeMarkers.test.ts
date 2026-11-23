@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  TELEGRAM_BUY_COLOR, TELEGRAM_SELL_COLOR, visibleRobotTradeMarkers,
+  TELEGRAM_BUY_COLOR, TELEGRAM_SELL_COLOR, visibleRobotTradeMarkers, tradeTrianglePoints,
 } from "./robotTradeMarkers";
 
 const candles = [0, 300000, 600000].map((delta) => ({
@@ -9,6 +9,11 @@ const candles = [0, 300000, 600000].map((delta) => ({
 }));
 
 describe("Telegram Robot execution marker parity", () => {
+  it("reuses the same price-centered triangle geometry for both chart views", () => {
+    expect(tradeTrianglePoints(100, 50, "Buy")).toBe("100,42 93,56 107,56");
+    expect(tradeTrianglePoints(100, 50, "Sell")).toBe("100,58 93,44 107,44");
+  });
+
   it("uses exact execution prices and candle times, with Buy up / Sell down and unfilled LIMIT", () => {
     const t = 1800000000000;
     const found = visibleRobotTradeMarkers([
