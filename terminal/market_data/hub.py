@@ -8,6 +8,7 @@ import re
 import threading
 import time
 from collections import deque
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Callable, Protocol
@@ -240,7 +241,8 @@ class _ProtectedResearchCapture:
 
         A future REST request must record the epoch both before and after
         fetching; a mismatch means UNKNOWN, never a stitched generation.
-        Raw frame payloads are caller-read-only and are not book states.
+        Raw frame payloads are not book states. Return detached nested
+        payloads: a later research consumer must never mutate this witness.
         """
         with self._lock:
             return {
@@ -248,7 +250,7 @@ class _ProtectedResearchCapture:
                 "depth": self.context.public_orderbook.depth,
                 "epoch": self._epoch,
                 "active": self._active,
-                "frames": tuple(self.rest_anchor_candidates),
+                "frames": deepcopy(tuple(self.rest_anchor_candidates)),
                 "source_complete": False,
                 "trading_authorized": False,
             }
