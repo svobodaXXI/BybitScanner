@@ -105,7 +105,8 @@ class WorkspaceTelegramHandoffTests(unittest.TestCase):
         self.assertEqual(parse_qs(link.query), {
             "mode": ["AUTOPILOT"], "symbol": ["BTCUSDT"], "timeframe": ["5m"],
         })
-        self.assertIn("Автопилот", send.call_args.args[1])
+        self.assertIn("Открыть вкладку Автопилот через Telegram.", send.call_args.args[1])
+        self.assertNotIn("Открыть защищённый Terminal", send.call_args.args[1])
         self.assertIn('target.searchParams.set("mode",mode)', LOGIN_HTML)
 
     def test_direct_signal_robot_button_is_not_the_manual_terminal(self):
