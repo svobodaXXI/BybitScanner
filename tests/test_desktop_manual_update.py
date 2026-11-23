@@ -34,7 +34,7 @@ def opener(request, timeout=0):
         updates.API + "/compare/" + SHA + "..." + SHA + updates.COMPARE_SUMMARY_PAGE: {
             "status": "identical", "behind_by": 0, "ahead_by": 0,
         },
-        updates.API + "/releases?per_page=30": [{
+        updates.API + "/releases?per_page=5&page=1": [{
             "tag_name": tag, "draft": False, "prerelease": False,
             "published_at": "2026-11-22T06:02:43Z", "assets": [{
                 "name": updates.ASSETS["manager"], "state": "uploaded", "size": len(ASSET),
@@ -343,7 +343,7 @@ def test_desktop_release_publication_uses_scoped_app_workflows_permission():
 
 def test_publication_order_not_api_list_order():
     def reordered(request, timeout=0):
-        if request.full_url == updates.API + "/releases?per_page=30":
+        if request.full_url == updates.API + "/releases?per_page=5&page=1":
             latest = json.loads(opener(request, timeout=timeout).read())[0]
             older = {**latest, "tag_name": "desktop-" + "b" * 40,
                      "published_at": "2026-11-22T04:41:16Z"}
@@ -359,7 +359,7 @@ def test_publication_order_not_api_list_order():
                                   "2026-11-22T06:02:43Z"])
 def test_ambiguous_or_invalid_publication_never_selects_older_release(stamp):
     def unordered(request, timeout=0):
-        if request.full_url == updates.API + "/releases?per_page=30":
+        if request.full_url == updates.API + "/releases?per_page=5&page=1":
             latest = json.loads(opener(request, timeout=timeout).read())[0]
             other = {**latest, "tag_name": "desktop-" + "b" * 40,
                      "published_at": stamp}
@@ -368,3 +368,45 @@ def test_ambiguous_or_invalid_publication_never_selects_older_release(stamp):
 
     with pytest.raises(updates.UpdateBlocked, match="desktop_release_publication_"):
         updates.find_asset("manager", opener=unordered)
+
+
+def test_large_release_catalog_paginates_without_losing_newest_publication():
+    """Aggregate >256 KB must not force reinstall, rollback or older selection."""
+    latest = json.loads(opener(
+        SimpleNamespace(full_url=updates.API + "/releases?per_page=5&page=1"),
+    ).read())[0]
+    older = [{**latest, "tag_name": "desktop-" + format(i + 1, "040x"),
+              "published_at": "2026-11-21T06:02:43Z",
+              "body": "x" * 30000} for i in range(10)]
+    # 11 metadata entries exceed the old single-response 256 KB limit.
+    assert len(json.dumps(older + [latest]).encode()) > 256000
+    requested = []
+
+    def paged(request, timeout=0):
+        url = request.full_url
+        if "/releases?per_page=5&page=" in url:
+            requested.append(url)
+            page = int(url.rsplit("=", 1)[-1])
+            rows = {1: older[:5], 2: older[5:10], 3: [latest]}.get(page, [])
+            return Reply(json.dumps(rows).encode())
+        return opener(request, timeout=timeout)
+
+    assert updates.find_asset("manager", opener=paged).sha == SHA
+    assert requested == [updates.API + f"/releases?per_page=5&page={i}" for i in (1, 2, 3)]
+
+
+def test_unavailable_later_release_page_blocks_instead_of_downgrading():
+    """No release is trusted when the remaining catalog cannot be inspected."""
+    latest = json.loads(opener(
+        SimpleNamespace(full_url=updates.API + "/releases?per_page=5&page=1"),
+    ).read())[0]
+
+    def truncated(request, timeout=0):
+        if request.full_url == updates.API + "/releases?per_page=5&page=1":
+            return Reply(json.dumps([latest] * 5).encode())
+        if request.full_url == updates.API + "/releases?per_page=5&page=2":
+            raise OSError("offline")
+        return opener(request, timeout=timeout)
+
+    with pytest.raises(updates.UpdateBlocked, match="release_metadata_unavailable"):
+        updates.find_asset("manager", opener=truncated)
