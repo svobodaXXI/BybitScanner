@@ -894,6 +894,71 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.monitor._store = lambda: self.store
         return stale, trade_id, obligation
 
+    def test_box_emergency_intent_quarantines_exact_symbol_across_status(self):
+        """An unproven Box EXIT-0 is durable even if candidate becomes terminal."""
+        raw = box_snapshot()
+        raw["identity"]["symbol"] = SYMBOL
+        source, _ = self.store.save_box_plan_only(snapshot=raw, created_at_ms=3001)
+        candidate, _ = self.store.handoff_box_plan_to_robot(
+            source.candidate_id, symbol=source.symbol,
+            expected_snapshot_sha256=source.snapshot_sha256, approved_at_ms=3002,
+        )
+        intent = {
+            "slot": 0, "symbol": SYMBOL, "order_id": "box-emergency-unknown",
+            "quantity": "2", "side": "Sell",
+        }
+        state = {
+            "phase": "BOX_ENTRY_READY", "direction": "LONG",
+            "execution": {"box_emergency_close_intent": intent},
+        }
+        prepared = self.store.save_robot_candidate_state(
+            candidate.candidate_id, status="APPROVED", robot_state=state,
+            expected_revision=candidate.state_revision, updated_at_ms=3003,
+        )
+        for status, expected_revision, timestamp in (
+            ("APPROVED", prepared.state_revision, 3004),
+            ("INVALIDATED", prepared.state_revision, 3005),
+        ):
+            self.assertEqual(
+                self.store.robot_symbol_quarantine_candidate_ids(ACCOUNT_ID, Symbol(SYMBOL)),
+                (candidate.candidate_id,),
+            )
+            self.assertEqual(
+                self.store.robot_account_quarantines(ACCOUNT_ID),
+                {SYMBOL: (candidate.candidate_id,)},
+            )
+            self.assertEqual(
+                self.store.robot_symbol_quarantine_candidate_ids(
+                    ACCOUNT_ID, Symbol("OTHERUSDT"),
+                ), (),
+            )
+            self.assertEqual(
+                self.store.get_robot_runtime_state(ACCOUNT_ID).recovery_status, "READY",
+            )
+            if status == "INVALIDATED":
+                self.store.save_robot_candidate_state(
+                    candidate.candidate_id, status="INVALIDATED", robot_state=state,
+                    expected_revision=expected_revision, updated_at_ms=timestamp,
+                )
+
+    def test_box_emergency_intent_malformed_does_not_disappear(self):
+        """Bad Box dispatch evidence cannot be treated as safe non-execution."""
+        from terminal.persistence.sqlite_store import PersistenceError
+        raw = box_snapshot()
+        raw["identity"]["symbol"] = SYMBOL
+        source, _ = self.store.save_box_plan_only(snapshot=raw, created_at_ms=3001)
+        candidate, _ = self.store.handoff_box_plan_to_robot(
+            source.candidate_id, symbol=source.symbol,
+            expected_snapshot_sha256=source.snapshot_sha256, approved_at_ms=3002,
+        )
+        self.store.save_robot_candidate_state(
+            candidate.candidate_id, status="APPROVED",
+            robot_state={"execution": {"box_emergency_close_intent": "bad"}}, 
+            expected_revision=candidate.state_revision, updated_at_ms=3003,
+        )
+        with self.assertRaises(PersistenceError):
+            self.store.robot_symbol_quarantine_candidate_ids(ACCOUNT_ID, Symbol(SYMBOL))
+
     def test_unresolved_stop_obligation_quarantines_only_owned_symbol(self):
         """An UNKNOWN protection close fences its symbol even if Robot is READY."""
         self._create_candidate()
