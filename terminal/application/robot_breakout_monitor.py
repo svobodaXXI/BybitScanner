@@ -1678,11 +1678,115 @@ class RobotBreakoutMonitor:
             # The STOP is already armed; a concurrent writer only delays the record.
             return
 
+    def _completed_box_stop_preempts_stale_take(
+        self, record: RobotCandidateRecord, source: RobotCandidateRecord, proof,
+        fresh: RobotCandidateRecord,
+    ) -> bool:
+        """Read-only, exact STOP witness. Never clear an existing recovery fence.
+
+        An old OPEN snapshot may still reach the Box TAKE finalizer after
+        the canonical STOP transaction closed both trade and candidate.
+        Only the fully settled SAME candidate/source/execution/FLAT lot may
+        be ignored. Absence or ambiguity is never treated as completion.
+        """
+        store = self._store()
+        if (
+            record.status != "OPEN" or fresh.status != "CLOSED"
+            or record.trading_account_id != self._account_id
+            or fresh.trading_account_id != self._account_id
+            or source.trading_account_id != self._account_id
+            or fresh.candidate_id != record.candidate_id
+            or fresh.symbol != record.symbol or source.symbol != record.symbol
+            or fresh.snapshot_sha256 != record.snapshot_sha256
+            or record.signal_snapshot.get("pattern") != "IKIGAI_BOX"
+            or fresh.signal_snapshot.get("pattern") != "IKIGAI_BOX"
+            or source.status != "BOX_PLAN_ONLY"
+            or source.signal_snapshot.get("pattern") != "IKIGAI_BOX"
+            or record.signal_snapshot.get("source_box_candidate_id") != source.candidate_id
+            or fresh.signal_snapshot.get("source_box_candidate_id") != source.candidate_id
+            or fresh.updated_at_ms < record.updated_at_ms
+            or proof.candidate_id != source.candidate_id
+            or not (proof.entry_quantity > 0 and proof.exit_quantity > 0
+                    and proof.remaining_quantity == 0
+                    and proof.entry_quantity == proof.exit_quantity)
+        ):
+            return False
+        trade = store.get_robot_trade(f"robot-trade-{record.candidate_id}")
+        if (
+            trade is None or trade.candidate_id != record.candidate_id
+            or trade.trading_account_id != self._account_id
+            or trade.symbol != record.symbol or trade.pattern != "IKIGAI_BOX"
+            or trade.exit_reason != "STOP" or trade.exit_time_ms is None
+            or proof.last_execution_at_ms != trade.exit_time_ms
+            or trade.realized_pnl_usdt is None
+            or trade.fees_costs_usdt is None
+        ):
+            return False
+        obligation = store.get_paper_protection_obligation_for_trade(trade.trade_id)
+        if (
+            obligation is None or obligation.trade_id != trade.trade_id
+            or obligation.trading_account_id != self._account_id
+            or obligation.symbol != record.symbol
+            or obligation.status != "RESOLVED" or obligation.winning_leg != "STOP"
+            or obligation.exec_id.value not in proof.execution_ids
+        ):
+            return False
+        actual_stop = store.get_execution(ExecutionDedupKey(
+            self._account_id, Category.LINEAR, obligation.exec_id,
+        ))
+        if (
+            actual_stop is None or actual_stop.symbol != record.symbol
+            or actual_stop.order_id != obligation.order_id
+            or actual_stop.exchange_timestamp_ms != trade.exit_time_ms
+        ):
+            return False
+        position = store.get_position_projection(PositionKey(
+            self._account_id, Category.LINEAR, record.symbol, 0,
+        ))
+        if (
+            position is None or position.side is not PositionSide.FLAT
+            or position.quantity.value != 0 or position.sync_state != "synced"
+            or position.version != proof.position_version
+            or any(item.symbol == record.symbol
+                   for item in store.load_open_robot_trades(self._account_id))
+            or store.load_active_robot_candidates_for_symbol(
+                self._account_id, record.symbol,
+            )
+            or store.load_active_paper_limits(self._account_id, record.symbol)
+            or any(item.symbol == record.symbol
+                   for item in store.load_unfinished_commands())
+            or any(item.symbol == record.symbol
+                   for item in store.load_unresolved_paper_protection_obligations(
+                       self._account_id,
+                   ))
+        ):
+            return False
+        return True
+
     def _finalize_box_take_if_flat(
         self, record: RobotCandidateRecord, source: RobotCandidateRecord, proof,
     ) -> bool:
         if proof.exit_quantity <= 0:
             return False
+
+        if record.status == "OPEN":
+            # STOP may have durably CLOSED the canonical candidate after this
+            # stale OPEN record was read. Check BEFORE any Box order cancels,
+            # protection clears, or generic TAKE bookkeeping. Only an exact
+            # settled STOP is a no-mutation success; all other terminal drift
+            # remains fenced, never replays TAKE or overwrites STOP economics.
+            fresh = self._store().get_robot_candidate(record.candidate_id)
+            if fresh is None or fresh.status != "OPEN":
+                if (fresh is not None and fresh.status == "CLOSED"
+                        and self._completed_box_stop_preempts_stale_take(
+                            record, source, proof, fresh,
+                        )):
+                    return True
+                self._escalate_reconciliation(
+                    "ROBOT_BOX_STALE_TAKE_TERMINAL_UNPROVEN "
+                    f"symbol={record.symbol.value} candidate_id={record.candidate_id}"
+                )
+                return False
 
         now_ms = self._now_ms()
         for owner in self._store().load_box_order_ownership(source.candidate_id):
