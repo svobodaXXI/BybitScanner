@@ -2,10 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type ReplayDocument, type ReplayEvent } from "./replayModel";
 import { streamWedge } from "./streamWedge";
 import {
-  ALL_SELECTABLE, MIRROR_OPTIONS, OTHER_OPTIONS, PLANNED_OPTIONS,
+  ALL_SELECTABLE, MIRROR_OPTIONS, OTHER_OPTIONS, WEDGE_IDS,
   clearAll, isAllSelected, onlyWedges, presetEndInclusive, adjustInclusiveWindow,
-  parseRunCoordinates, formatRunDuration,
-  selectAll, toggleMirror, toggleStrategy, validateInclusiveWindow,
+  parseRunCoordinates, formatRunDuration, formatRunCoordinates,
+  selectAll, toggleMirror, toggleStrategy, toggleWedges,
+  verifiedPatternSelection, verifiedPatternLabel, validateInclusiveWindow,
   makeWedgeRunRequest, parseWedgeStatus, runnableWedgeSelection,
   type PeriodPreset, type PeriodIncrement, type RunSelection, type StrategyId,
   type LocalWedgeResult, type LocalWedgeStatus,
@@ -24,7 +25,7 @@ export function RunSetupPanel({
   symbol, onPasteSymbol, onSimulationStart, onSimulationReady,
   onSimulationAppend, onSimulationComplete, onSimulationFailed, onSimulationBusy, showReport, cancelNativeId,
   onPublicHistoryRequest, publicHistoryLoading, onStrategySelectionChange, onHistoryPreparation,
-  onEpisodeLookup,
+  onEpisodeLookup, episode,
 }: {
   symbol: string;
   onPasteSymbol: (symbol: string) => void;
@@ -41,12 +42,12 @@ export function RunSetupPanel({
   publicHistoryLoading: boolean;
   onStrategySelectionChange: (selection: RunSelection) => void;
   onEpisodeLookup: (episodeId: string) => Promise<void>;
+  episode?: { trade_episode_id: string; symbol: string; start: string; end: string; pattern: string | null } | null;
 }) {
   const [selection, setSelection] = useState<RunSelection>(onlyWedges);
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [preset, setPreset] = useState<PeriodPreset | null>("DAY");
-  const [openMirror, setOpenMirror] = useState(true);
   const [balance, setBalance] = useState("1000");
   const [status, setStatus] = useState<LocalWedgeStatus | null>(null);
   const [statusError, setStatusError] = useState("");
@@ -69,7 +70,6 @@ export function RunSetupPanel({
     }
   }, [start, end]);
   const active = ALL_SELECTABLE.filter(id => selection.selected.includes(id));
-  const mirrorSelected = MIRROR_OPTIONS.filter(x => selection.selected.includes(x.id)).length;
   const wedgesOnly = runnableWedgeSelection(selection);
 
   // The chart is another VIEW of the same checked selection. Never
@@ -77,6 +77,21 @@ export function RunSetupPanel({
   // This is not strategy admission or a trading command.
   useEffect(() => { onStrategySelectionChange(selection); },
     [selection, onStrategySelectionChange]);
+
+  // Exact owner-imported PAPER episode: set all visible coordinates and at most
+  // one specifically proven D2 strategy. Never auto-enable a whole family.
+  useEffect(() => {
+    if (!episode) return;
+    const selected = verifiedPatternSelection(episode.pattern);
+    setSelection(selected ?? clearAll());
+    onPasteSymbol(episode.symbol);
+    setStart(episode.start);
+    setEnd(episode.end);
+    setPreset(null);
+    setCoordinateText(formatRunCoordinates(episode.symbol, episode.start, episode.end));
+    setPeriodError("");
+    setCoordinateError("");
+  }, [episode, onPasteSymbol]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -241,59 +256,53 @@ export function RunSetupPanel({
 
   return (
     <section className="replay-run-setup" aria-label="Настройка стратегий и периода">
-      <div className="replay-run-heading">
-        <strong>Универсальный симулятор · настройка прогона</strong>
-      </div>
       <div className="replay-run-layout">
         <fieldset className="replay-run-strategies">
           <legend>Стратегии</legend>
-          <div className="replay-run-actions">
+          <div className="replay-run-strategy-list">
             <label className="replay-run-check">
               <input type="checkbox" aria-label="Все стратегии"
                 checked={isAllSelected(selection)}
                 onChange={e => setSelection(e.target.checked ? selectAll() : clearAll())} />
-              <strong>Все стратегии</strong>
+              <span>Все стратегии</span>
             </label>
-            <button type="button" onClick={() => setSelection(onlyWedges())}>Только клинья</button>
-            <button type="button" onClick={() => setSelection(clearAll())}>Снять все</button>
-          </div>
-          <div className="replay-run-mirror">
-            <div className="replay-run-mirror-top">
-              <label className="replay-run-check">
-                <input type="checkbox" aria-label="Mirror — комплекс"
-                  checked={selection.mirror}
-                  onChange={e => setSelection(current => toggleMirror(current, e.target.checked))} />
-                <strong>Mirror — комплекс</strong>
-              </label>
-              <button type="button" aria-expanded={openMirror}
-                onClick={() => setOpenMirror(value => !value)}>
-                {openMirror ? "Свернуть" : "Раскрыть"} · {mirrorSelected}/{MIRROR_OPTIONS.length}
-              </button>
-            </div>
-            {openMirror && <div className="replay-run-components">
-              {MIRROR_OPTIONS.map(option => <label className="replay-run-check" key={option.id}>
+            <label className="replay-run-check">
+              <input type="checkbox" aria-label="Миррор-комплекс"
+                checked={selection.mirror}
+                onChange={e => setSelection(current => toggleMirror(current, e.target.checked))} />
+              <span>Миррор-комплекс</span>
+            </label>
+            {MIRROR_OPTIONS.map(option => option.id === "WEDGE_FALLING" ? null :
+              option.id === "WEDGE_RISING" ? (
+                <label className="replay-run-check" key="wedges">
+                  <input type="checkbox" aria-label="Клинья"
+                    checked={WEDGE_IDS.some(id => selection.selected.includes(id))}
+                    onChange={e => setSelection(current => toggleWedges(current, e.target.checked))} />
+                  <span>Клинья</span>
+                </label>
+              ) : (
+                <label className="replay-run-check" key={option.id}>
+                  <input type="checkbox" aria-label={option.label}
+                    checked={selection.selected.includes(option.id)}
+                    onChange={e => toggleComponent(option.id, e.target.checked)} />
+                  <span>{option.label}</span>
+                </label>
+              ))}
+            {OTHER_OPTIONS.map(option => (
+              <label className="replay-run-check" key={option.id}>
                 <input type="checkbox" aria-label={option.label}
                   checked={selection.selected.includes(option.id)}
                   onChange={e => toggleComponent(option.id, e.target.checked)} />
                 <span>{option.label}</span>
-              </label>)}
-            </div>}
+              </label>
+            ))}
           </div>
-          <div className="replay-run-independent">
-            <span>Независимые стратегии</span>
-            {OTHER_OPTIONS.map(option => <label className="replay-run-check" key={option.id}>
-              <input type="checkbox" aria-label={option.label}
-                checked={selection.selected.includes(option.id)}
-                onChange={e => toggleComponent(option.id, e.target.checked)} />
-              {option.label}
-            </label>)}
+          {episode && <p className="replay-run-source-pattern" role="status">
+            Исходный паттерн: {verifiedPatternLabel(episode.pattern) ?? "не установлен"}
+          </p>}
+          <div className="replay-run-actions">
+            <button type="button" onClick={() => setSelection(clearAll())}>Снять все</button>
           </div>
-          <details className="replay-run-planned">
-            <summary>В разработке — не доступны для прогона</summary>
-            {PLANNED_OPTIONS.map(name => <label key={name}>
-              <input type="checkbox" disabled aria-label={name} /> {name}
-            </label>)}
-          </details>
         </fieldset>
         <fieldset className="replay-run-dates">
           <legend>Исторический период · UTC</legend>
