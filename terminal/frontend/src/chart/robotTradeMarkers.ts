@@ -17,6 +17,13 @@ export type VisibleRobotMarker = {
 
 export { TELEGRAM_BUY_COLOR, TELEGRAM_SELL_COLOR };
 
+/** Shared exact-price triangle geometry for Telegram/Terminal trade fills. */
+export function tradeTrianglePoints(x: number, y: number, side: "Buy" | "Sell"): string {
+  return side === "Buy"
+    ? `${x},${y - 8} ${x - 7},${y + 6} ${x + 7},${y + 6}`
+    : `${x},${y + 8} ${x - 7},${y - 6} ${x + 7},${y - 6}`;
+}
+
 /** Same candle-time association as Telegram's _candle_position; no nearest
  * fake fill marker or substituted OHLC price when evidence is outside chart.
  */
