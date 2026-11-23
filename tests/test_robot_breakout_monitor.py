@@ -1741,14 +1741,36 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertEqual(result.runtime_state.recovery_status, "READY")
         self.assertEqual(result.decisions, ())
 
-    def test_supported_pattern_state_error_is_not_invalidated(self):
+    def test_supported_pattern_invalid_immutable_geometry_is_quarantined_when_inert(self):
+        # The owner P1 scope now isolates deterministic invalid *frozen*
+        # M1 candidates once canonical ledger proof establishes zero effect.
         self._create_candidate(apex_index="broken")
+        self.assertEqual(self.monitor.tick(), ("candidate-1",))
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.status, "INVALIDATED")
+        self.assertEqual(
+            record.robot_state["paper_quarantine"]["reason"], "FROZEN_INIT_INVALID",
+        )
+        self.assertEqual(
+            self.store.get_robot_runtime_state(ACCOUNT_ID).recovery_status, "READY",
+        )
+        self.assertEqual(self.store.load_executions_for_symbol(ACCOUNT_ID, record.symbol), ())
 
-        self.assertEqual(self.monitor.tick(), ())
-
+    def test_supported_pattern_transient_initialization_error_does_not_quarantine(self):
+        # Same exception class is not itself proof that immutable source is
+        # corrupted. An independently valid frozen signal stays APPROVED.
+        self._create_candidate()
+        with patch.object(
+            robot_state_machine, "initialize_state",
+            side_effect=robot_state_machine.RobotStateMachineError("transient state error"),
+        ):
+            self.assertEqual(self.monitor.tick(), ())
         record = self.store.get_robot_candidate("candidate-1")
         self.assertEqual(record.status, "APPROVED")
         self.assertIsNone(record.robot_state)
+        self.assertEqual(
+            self.store.get_robot_runtime_state(ACCOUNT_ID).recovery_status, "READY",
+        )
 
     def _seed_finished_history(self, count):
         """``count`` CLOSED/EXPIRED/INVALIDATED candidates on other symbols."""
