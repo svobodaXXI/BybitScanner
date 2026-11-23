@@ -240,6 +240,15 @@ class WorkspaceTelegramHandoffTests(unittest.TestCase):
         pc.assert_not_called()
         answer.assert_called_once_with("callback-1", "Ссылка на редактор/терминал отправлена в чат")
 
+    def test_linux_robot_callback_retains_autopilot_destination_and_confirmation(self):
+        callback = {"id": "callback-robot", "message": {"chat": {"id": 42}}}
+        parsed = {"mode": "AUTOPILOT", "symbol": "BTCUSDT", "timeframe": "5m"}
+        with patch.object(handoff, "deliver_workspace_link", return_value={"ok": True}) as deliver, \
+                patch.object(telegram_review, "_answer_callback") as answer:
+            telegram_review._run_workspace_callback(callback, parsed)
+        deliver.assert_called_once_with("42", mode="AUTOPILOT", symbol="BTCUSDT", timeframe="5m")
+        answer.assert_called_once_with("callback-robot", "Ссылка на Автопилот отправлена в чат")
+
     def test_linux_callback_denies_unverified_connection(self):
         callback = {"id": "callback-1", "message": {"chat": {"id": 42}}}
         parsed = {"mode": "EDITOR", "symbol": "BTCUSDT", "timeframe": "5m"}
