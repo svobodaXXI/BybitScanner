@@ -428,9 +428,10 @@ def test_desktop_zip_imports_scoring_without_production_config(tmp_path, monkeyp
     )
     tracked = [
         "analyzer/__init__.py", "analyzer/scoring.py", "analyzer.py",
+        "signal/quality.py", "signal/filter.py",
         "research/local_replay_viewer/trusted-statistics-origin.txt",
     ]
-    for relative in tracked[:3]:
+    for relative in tracked[:5]:
         dest = root / relative
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes((builder.ROOT / relative).read_bytes())
@@ -455,6 +456,9 @@ def test_desktop_zip_imports_scoring_without_production_config(tmp_path, monkeyp
         assert "MachineTime/analyzer/scoring.py" in names
         assert "MachineTime/analyzer.py" not in names
         assert "MachineTime/config.py" not in names
+        assert "MachineTime/signal/quality.py" in names
+        assert "MachineTime/signal/filter.py" in names
+        assert "MachineTime/signal/__init__.py" not in names
         zf.extractall(tmp_path / "unpacked")
 
     extracted = tmp_path / "unpacked" / "MachineTime"
@@ -462,7 +466,18 @@ def test_desktop_zip_imports_scoring_without_production_config(tmp_path, monkeyp
         "import sys; sys.path.insert(0, " + repr(str(extracted)) + "); "
         "from analyzer.scoring import calculate_final_score; "
         "assert calculate_final_score({'score': 60}, "
-        "{'confirmation_score': 15}) == 75"
+        "{'confirmation_score': 15}) == 75; "
+        "from importlib.util import spec_from_file_location, module_from_spec; "
+        "from pathlib import Path; "
+        "root=Path(" + repr(str(extracted)) + "); "
+        "p=root/'signal'/'quality.py'; assert p.is_file(); "
+        "s=spec_from_file_location('_offline_quality', p); "
+        "m=module_from_spec(s); s.loader.exec_module(m); "
+        "assert callable(m.evaluate_quality); "
+        "p=root/'signal'/'filter.py'; assert p.is_file(); "
+        "s=spec_from_file_location('_offline_filter', p); "
+        "m=module_from_spec(s); s.loader.exec_module(m); "
+        "assert callable(m.evaluate_signal)"
     )
     subprocess.run(
         [sys.executable, "-I", "-B", "-c", script],
