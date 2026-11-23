@@ -965,10 +965,20 @@ class RobotBreakoutMonitor:
             except robot_state_machine.RobotStateMachineError as error:
                 pattern = (record.signal_snapshot or {}).get("pattern")
                 if robot_state_machine.is_supported_pattern(pattern):
-                    # Frozen initialization is deterministic; repeating it
-                    # cannot repair a corrupted immutable signal. Only PAPER
-                    # and a proven never-executed candidate may be isolated.
-                    if self._account_id.value == "paper":
+                    # Only canonical 1m Scanner-frozen input is an immutable
+                    # Robot v0.1 initialization fault. Older/foreign APPROVED
+                    # 5m Wedge records with a pending entry can legitimately
+                    # lack geometry/cursor here (MIRROR account obligations);
+                    # never reinterpret those as quarantine evidence.
+                    snapshot = record.signal_snapshot or {}
+                    geometry = snapshot.get("robot_geometry") or snapshot.get("geometry")
+                    cursor = snapshot.get("scanner_geometry_cursor")
+                    if (
+                        self._account_id.value == "paper"
+                        and isinstance(geometry, Mapping)
+                        and isinstance(cursor, Mapping)
+                        and cursor.get("timeframe") == "1"
+                    ):
                         return self._quarantine_unstarted_frozen_fault(record, error)
                     raise
                 self._invalidate_unsupported_pattern(record, error)
