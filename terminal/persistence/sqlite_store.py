@@ -3645,6 +3645,31 @@ class SQLiteStore:
         )
         return tuple(_paper_limit_from_row(row) for row in rows)
 
+    def load_active_box_exit_limit_ids(
+        self, trading_account_id: TradingAccountId, symbol: Symbol,
+    ) -> frozenset[str]:
+        """Exact known Box closing LIMITs, for symbol quarantine matching only.
+
+        New manual and Robot ENTRY LIMIT fills are fenced while an emergency
+        or canonical protection obligation is unresolved. An existing durable
+        Box EXIT slot 1..4 still belongs to its immutable source plan; EXIT-0
+        is a MARKET-only emergency identity and is never exempted here.
+        """
+        self._assert_owner()
+        rows = self._connection.execute(
+            """SELECT b.order_id FROM box_order_ownership b
+               JOIN robot_candidates c ON c.candidate_id=b.candidate_id
+               JOIN paper_limit_orders p ON p.order_id=b.order_id
+               WHERE b.trading_account_id=? AND c.trading_account_id=?
+                 AND c.symbol=? AND c.status='BOX_PLAN_ONLY'
+                 AND b.role='EXIT' AND b.slot BETWEEN 1 AND 4
+                 AND p.trading_account_id=? AND p.symbol=?
+                 AND p.status IN ('open', 'partially_filled')""",
+            (trading_account_id.value, trading_account_id.value, symbol.value,
+             trading_account_id.value, symbol.value),
+        )
+        return frozenset(str(row["order_id"]) for row in rows)
+
     def load_active_paper_limits(
         self, trading_account_id: TradingAccountId, symbol: Symbol,
     ) -> tuple[PaperLimitOrderRecord, ...]:
