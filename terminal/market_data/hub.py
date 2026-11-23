@@ -261,6 +261,11 @@ class _ProtectedResearchCapture:
         """Original snapshot-first raw book tape, only when explicitly opted in."""
         return self._detached_tape_snapshot(protected=True)
 
+    def protected_book_tape_token(self) -> tuple[int, bool, int]:
+        """O(1) epoch/length fence; ordinary appends advance length."""
+        with self._lock:
+            return self._epoch, self._active, len(self.book_frames)
+
     @property
     def impulse_observation(self) -> PublicTradeObservation:
         return self.context.impulse_observation
@@ -486,15 +491,14 @@ class MarketDataHub:
             generation = context.generation
         first = witness.protected_book_tape_snapshot()
         trades = witness.impulse_observation.snapshot()
-        second = witness.protected_book_tape_snapshot()
+        epoch, active, count = witness.protected_book_tape_token()
         with self._lock:
             stable = (self._protected_research is witness
                       and self._contexts.get(symbol) is context
                       and context.generation == generation
                       and not self._stop.is_set())
-        if (not stable or not first["active"] or not second["active"]
-                or first["epoch"] != second["epoch"]
-                or first["frames"] != second["frames"]):
+        if (not stable or not first["active"] or not active
+                or first["epoch"] != epoch or len(first["frames"]) != count):
             return None
         return {"book": first, "trades": trades}
 
