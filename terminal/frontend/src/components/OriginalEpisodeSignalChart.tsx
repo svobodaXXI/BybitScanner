@@ -1,10 +1,14 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   CandlestickSeries, ColorType, CrosshairMode, LineSeries, createChart,
   type IChartApi, type ISeriesApi, type Time, type UTCTimestamp,
 } from "lightweight-charts";
 import { editorMoscowCrosshairTime, editorMoscowTickMark } from "../chart/editorMoscowTime";
 import { fibonacciPrices } from "../chart/drawingModel";
+import { TELEGRAM_BUY_COLOR, TELEGRAM_SELL_COLOR, tradeTrianglePoints } from "../chart/robotTradeMarkers";
+import { editorSignalWorkspaceHref } from "../geometryFeedback/signalDeepLink";
+import type { ChartTimeframe } from "../marketData/timeframes";
 
 /** Read-only historical evidence in the TERMINAL Statistics view.
  * This component must NEVER import geometry feedback/review drawings.
@@ -256,6 +260,35 @@ function InteractiveTradeChart({ original, bars, frame, executions, side, showGe
   const focusedExecutions = useRef(false);
   const [markerCount, setMarkerCount] = useState(0);
   const [visibleLines, setVisibleLines] = useState(0);
+  const [fullscreen, setFullscreen] = useState(false);
+  const closeButton = useRef<HTMLButtonElement>(null);
+  const fillMarkers = useRef<Array<{
+    time: UTCTimestamp; price: number; side: "Buy" | "Sell"; color: string;
+  }>>([]);
+  const [triangles, setTriangles] = useState<Array<{
+    x: number; y: number; side: "Buy" | "Sell"; color: string;
+  }>>([]);
+
+  const refreshTriangles = () => {
+    const chart = api.current, candles = series.current;
+    if (!chart || !candles) return;
+    setTriangles(fillMarkers.current.flatMap(fill => {
+      const x = chart.timeScale().timeToCoordinate(fill.time);
+      const y = candles.priceToCoordinate(fill.price);
+      return x === null || y === null || !Number.isFinite(x) || !Number.isFinite(y)
+        ? [] : [{ x, y, side: fill.side, color: fill.color }];
+    }));
+  };
+
+  useEffect(() => {
+    if (!fullscreen) return;
+    closeButton.current?.focus();
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setFullscreen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [fullscreen]);
 
   useEffect(() => {
     if (!host.current) return;
@@ -288,7 +321,16 @@ function InteractiveTradeChart({ original, bars, frame, executions, side, showGe
       wickUpColor: "#5ac7aa", wickDownColor: "#f0747d",
       borderVisible: false,
     });
+    const onViewportChange = () => refreshTriangles();
+    chart.timeScale().subscribeVisibleLogicalRangeChange(onViewportChange);
+    chart.subscribeCrosshairMove(onViewportChange);
+    const resize = typeof ResizeObserver === "undefined" ? null
+      : new ResizeObserver(onViewportChange);
+    if (host.current) resize?.observe(host.current);
     return () => {
+      resize?.disconnect();
+      chart.unsubscribeCrosshairMove(onViewportChange);
+      chart.timeScale().unsubscribeVisibleLogicalRangeChange(onViewportChange);
       overlays.current = [];
       series.current = null;
       api.current = null;
@@ -296,7 +338,7 @@ function InteractiveTradeChart({ original, bars, frame, executions, side, showGe
       focusedExecutions.current = false;
       chart.remove();
     };
-  }, []);
+  }, [fullscreen]);
 
   useEffect(() => {
     const chart = api.current, candles = series.current;
@@ -310,12 +352,11 @@ function InteractiveTradeChart({ original, bars, frame, executions, side, showGe
     })));
     for (const overlay of overlays.current) chart.removeSeries(overlay);
     overlays.current = [];
-    const addOverlay = (points: Array<{ time: UTCTimestamp; value: number }>, color: string, marker = false) => {
+    const addOverlay = (points: Array<{ time: UTCTimestamp; value: number }>, color: string) => {
       if (!points.length) return;
       const line = chart.addSeries(LineSeries, {
-        color, lineWidth: marker ? 1 : 2, lineVisible: !marker,
-        pointMarkersVisible: marker, pointMarkersRadius: marker ? 5 : 0,
-        crosshairMarkerVisible: marker, lastValueVisible: false,
+        color, lineWidth: 2, lineVisible: true,
+        pointMarkersVisible: false, lastValueVisible: false,
         priceLineVisible: false,
         // Source projections and execution markers cannot set the candle scale.
         autoscaleInfoProvider: () => null,
@@ -332,21 +373,24 @@ function InteractiveTradeChart({ original, bars, frame, executions, side, showGe
     for (const line of lines) addOverlay(line.points, "#e1b653");
     const candleTimes = new Set(bars.map(bar => bar.open_time_ms));
     const period = frameMs(frame)!;
-    let found = 0;
+    const markers: typeof fillMarkers.current = [];
     executions.forEach((fill, index) => {
       const candle = Math.floor(fill.at / period) * period;
       if (!candleTimes.has(candle) || !Number.isFinite(fill.price) || fill.price <= 0) return;
       const opening = index === 0;
-      const color = opening ? (side === "SHORT" ? "#f0747d" : "#5ac7aa")
-        : index === executions.length - 1 ? (side === "SHORT" ? "#5ac7aa" : "#f0747d")
-          : "#f5d68f";
-      addOverlay([{ time: utc(candle), value: fill.price }], color, true);
-      found++;
+      const direction: "Buy" | "Sell" = (side === "LONG") === opening ? "Buy" : "Sell";
+      const color = index > 0 && index < executions.length - 1 ? "#f5d68f"
+        : direction === "Buy" ? TELEGRAM_BUY_COLOR : TELEGRAM_SELL_COLOR;
+      markers.push({ time: utc(candle), price: fill.price, side: direction, color });
     });
+    fillMarkers.current = markers;
+    const found = markers.length;
     setMarkerCount(found);
     // Focus a proven trade only after its actual execution candles are loaded.
     // Never invent bars, and preserve subsequent owner panning/zoom.
-    if (executions.length > 0 && found === executions.length && !focusedExecutions.current) {
+    if (fullscreen) {
+      chart.timeScale().fitContent();
+    } else if (executions.length > 0 && found === executions.length && !focusedExecutions.current) {
       const firstFill = Math.floor(Math.min(...executions.map(fill => fill.at)) / period) * period;
       const lastFill = Math.floor(Math.max(...executions.map(fill => fill.at)) / period) * period;
       const from = Math.max(bars[0].open_time_ms, firstFill - 8 * period);
@@ -364,24 +408,54 @@ function InteractiveTradeChart({ original, bars, frame, executions, side, showGe
       else chart.timeScale().fitContent();
     }
     previousFrame.current = frame;
-  }, [original, bars, frame, executions, side, showGeometry]);
+    refreshTriangles();
+  }, [original, bars, frame, executions, side, showGeometry, fullscreen]);
 
-  return (
+  const sourceFrame = original && ({
+    "1": "1m", "5": "5m", "15": "15m", "60": "1h", "D": "1d",
+  } as Record<string, ChartTimeframe>)[original.snapshot.timeframe];
+  const editorHref = original && sourceFrame
+    ? editorSignalWorkspaceHref(original.snapshot.symbol, sourceFrame, original.snapshot.signal_id)
+    : null;
+  const chartBody = (
     <div className="diary-original-signal-plot">
-      <div ref={host} className="diary-interactive-trade-chart" role="application"
-        aria-label={chartLabel ?? "Интерактивный свечной график сделки"} />
+      <div className="diary-trade-chart-host">
+        <div ref={host} className="diary-interactive-trade-chart" role="application"
+          aria-label={chartLabel ?? "Интерактивный свечной график сделки"} />
+        <svg className="diary-chart-triangle-overlay" aria-label="Треугольные маркеры исполнений"
+          role="img" aria-hidden="true">
+          {triangles.map((mark, index) => <polygon key={index}
+            points={tradeTrianglePoints(mark.x, mark.y, mark.side)}
+            fill={mark.color} stroke="#10151b" strokeWidth="0.8" />)}
+        </svg>
+      </div>
       {showGeometry && visibleLines === 0 && <small role="status">
         Исходная геометрия недоступна на загруженных свечах; линии не дорисовываются.
       </small>}
       <div className="diary-trade-chart-controls">
-        <span>{showGeometry ? "Жёлтые линии: исходная геометрия · МСК" : "Закрытые свечи выбранного ТФ · МСК"}</span>
-        <button type="button" onClick={() => api.current?.timeScale().fitContent()}>
-          Весь график
-        </button>
+        <div className="diary-trade-chart-actions">
+          {!fullscreen && <button type="button" onClick={() => setFullscreen(true)}>
+            Весь график
+          </button>}
+          {editorHref && <a href={editorHref} target="_blank" rel="noopener noreferrer">
+            Открыть в Редакторе
+          </a>}
+        </div>
+        <small>Исполнения: {markerCount}/{executions.length}</small>
       </div>
-      <small>Исполнения: {markerCount}/{executions.length}</small>
     </div>
   );
+  return fullscreen ? createPortal(
+    <div className="diary-chart-fullscreen" role="dialog" aria-modal="true"
+      aria-label="Полноэкранный график сделки">
+      <header>
+        <strong>{chartLabel ?? "График сделки"}</strong>
+        <button ref={closeButton} type="button" aria-label="Закрыть полноэкранный график"
+          onClick={() => setFullscreen(false)}>×</button>
+      </header>
+      {chartBody}
+    </div>, document.body,
+  ) : chartBody;
 }
 
 type MarketEvidence = { frame: string; bars: Bar[]; complete: boolean };
