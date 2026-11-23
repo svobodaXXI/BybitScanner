@@ -1299,13 +1299,37 @@ class RobotBreakoutMonitor:
     def _advance_box_entry_ready(
         self, record: RobotCandidateRecord, *, match_resting_orders: bool = True,
     ) -> bool:
-        # Leave unresolved-symbol recovery to the canonical protection owner,
-        # never start a new Box/MIRROR entry from an ambiguous position.
-        if self._store().robot_symbol_quarantine_candidate_ids(
-            self._account_id, record.symbol,
-        ):
-            return False
         execution = dict(record.robot_state.get("execution") or {})
+        quarantined = self._store().robot_symbol_quarantine_candidate_ids(
+            self._account_id, record.symbol,
+        )
+        if quarantined:
+            # A symbol fence blocks new entry work, not recovery of its own
+            # exact Box EXIT-0. Never re-enter the grid/catch-up path here.
+            if quarantined != (record.candidate_id,):
+                return False
+            raw_intent = execution.get("box_emergency_close_intent")
+            if not isinstance(raw_intent, Mapping):
+                return False
+            plan = restore_box_market_plan(raw_intent)
+            source = self._box_source(record, execution)
+            proof = self._store().prove_box_owned_position(source.candidate_id)
+            if (
+                plan.slot != 0 or plan.request.symbol != record.symbol.value
+                or plan.quantity != proof.remaining_quantity
+                or proof.remaining_quantity <= 0
+                or self._store().get_command(plan.identity.command_id) is not None
+                or any(
+                    item.symbol == record.symbol
+                    for item in self._store().load_unresolved_paper_protection_obligations(
+                        self._account_id,
+                    )
+                )
+            ):
+                # A persisted command may already have dispatched. Keep the
+                # fence; only the existing no-command recovery may submit.
+                return False
+            return self._sync_box_trade(record, execution, create_trade=False)
         source = self._box_source(record, execution)
         catchup = execution.get("box_catchup")
         if (
