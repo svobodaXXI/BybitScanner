@@ -3129,6 +3129,19 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                     trade_episode_id=episode_id, source_revision=revision,
                     now_ms=int(time.time() * 1000),
                 )
+                # The paired device receives the same exact-ID, read-only D2
+                # and immutable archived signal geometry as the owner export.
+                # No fallback ticker/time correlation or geometry refitting.
+                d2_context = project_episode_d2_context_read_only(
+                    getattr(self.server, "diary_setup_store_path", None),
+                    trade_episode_id=episode_id, account_id="paper",
+                    symbol=projection["symbol"], side=projection["side"],
+                    opening_controller=projection["execution_allocations"][0]["controller"],
+                )
+                projection["setup_context"] = attach_verified_original_geometry(
+                    d2_context, symbol=projection["symbol"],
+                    opened_at_ms=projection["opened_at_ms"],
+                )
             except EpisodeFactsSourceChanged:
                 self._json_response(409, {"ok": False, "error": "episode_facts_source_changed"})
                 return
