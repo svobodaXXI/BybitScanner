@@ -20,11 +20,3 @@ export function parseSignalWorkspaceLink(search: string): SignalWorkspaceLink | 
   if (signalId !== null && (!/^[A-Za-z0-9_.:-]{1,128}$/.test(signalId))) return null;
   return { mode, symbol, timeframe: timeframe as ChartTimeframe, signalId };
 }
-
-/** Canonical same-origin Editor deep link; refuse invalid or unsupported identity. */
-export function editorSignalWorkspaceHref(symbol: string, timeframe: ChartTimeframe, signalId: string): string | null {
-  const search = "?" + new URLSearchParams({
-    mode: "EDITOR", symbol, timeframe, signal_id: signalId,
-  }).toString();
-  return parseSignalWorkspaceLink(search) ? search : null;
-}
