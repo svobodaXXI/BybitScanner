@@ -822,6 +822,138 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.monitor._store = lambda: self.store
         return stale_open, source, proof, trade_id, obligation
 
+    def _prove_real_closed_wedge_stop_for_stale_fill(self):
+        """Existing Wedge monitor entry, authoritative STOP, immutable closed lot."""
+        self._create_candidate()
+        self._drive_to_retest_detected()
+        self.assertEqual(self.monitor.tick(), ("candidate-1",))
+        created = self.store.get_robot_candidate("candidate-1")
+        order_id = created.robot_state["execution"]["limit_order_id"]
+        self.executor.fill_resting_limit(
+            order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"),
+        )
+        self.assertEqual(self.monitor.process_authoritative_fill(SYMBOL), ("candidate-1",))
+        stale = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(stale.status, "OPEN")
+        trade_id = "robot-trade-candidate-1"
+        trade = self.store.get_robot_trade(trade_id)
+        self.assertIsNotNone(trade)
+        position_key = PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
+        position = self.store.get_position_projection(position_key)
+        self.assertEqual(position.quantity.value, trade.entry_quantity)
+        stop_at = max(self.clock() + 100, trade.entry_time_ms + 100)
+        exit_price = trade.stop_price
+        obligation, _ = self.store.latch_paper_protection_obligation(
+            trade_id=trade_id,
+            protection_version=self.store.get_protection_projection(position_key).version,
+            winning_leg="STOP",
+            trigger_price=trade.stop_price, observed_exit_price=exit_price,
+            observed_quantity=trade.entry_quantity, market_event_id="wedge-stop-10",
+            source_generation=1, source_sequence=10, source_update_id=11,
+            source_event_at_ms=stop_at-10, source_matching_engine_cts_ms=stop_at-11,
+            observed_bid_price=exit_price, observed_ask_price=exit_price + Decimal("0.1"),
+            source_received_at_ms=stop_at-5, latched_at_ms=stop_at-4,
+        )
+        self.store.apply_execution_once(
+            Execution(
+                dedup_key=ExecutionDedupKey(ACCOUNT_ID, Category.LINEAR, obligation.exec_id),
+                order_id=obligation.order_id, symbol=Symbol(SYMBOL),
+                side=OrderSide.SELL, price=Price(exit_price),
+                quantity=Quantity(trade.entry_quantity), fee=Decimal("0"),
+                exchange_timestamp_ms=stop_at,
+            ),
+            PositionProjectionUpdate(
+                position_key=position_key, side=PositionSide.FLAT,
+                quantity=Quantity(Decimal("0")), average_entry=None,
+                realized_pnl=(exit_price - trade.average_entry) * trade.entry_quantity,
+                accumulated_fee=position.accumulated_fee,
+                engaged_notional=Notional(Decimal("0")), sync_state="synced",
+                expected_version=position.version, updated_at_ms=stop_at,
+            ),
+        )
+        dispatching = self.store.transition_paper_protection_obligation(
+            obligation.obligation_id, expected_status="TRIGGERED",
+            next_status="DISPATCHING", expected_version=obligation.version,
+            updated_at_ms=stop_at+1,
+        )
+        self.store.transition_paper_protection_obligation(
+            obligation.obligation_id, expected_status="DISPATCHING",
+            next_status="RESOLVED", expected_version=dispatching.version,
+            updated_at_ms=stop_at+2,
+        )
+        gross = (exit_price - trade.average_entry) * trade.entry_quantity
+        self.store.close_robot_trade(
+            trade_id, exit_time_ms=stop_at, exit_price=exit_price, exit_reason="STOP",
+            realized_pnl_usdt=gross,
+            realized_pnl_pct=gross / (trade.average_entry * trade.entry_quantity) * 100,
+            fees_costs_usdt=position.accumulated_fee,
+            updated_at_ms=stop_at+3,
+        )
+        self.assertEqual(self.store.get_robot_candidate(stale.candidate_id).status, "CLOSED")
+        # The monitor shares this isolated owner ledger during callback injection.
+        self.monitor._store = lambda: self.store
+        return stale, trade_id, obligation
+
+    def test_stale_fill_callback_after_settled_stop_keeps_peer_ready(self):
+        """True late Wedge OPEN attestation has no matching OPEN trade after STOP."""
+        stale, trade_id, obligation = self._prove_real_closed_wedge_stop_for_stale_fill()
+        peer = self._create_candidate("peer-b", symbol="OTHERUSDT")
+        old_trade = self.store.get_robot_trade(trade_id)
+        old_obligation = self.store.get_paper_protection_obligation(obligation.obligation_id)
+        with patch.object(
+            self.store, "load_robot_candidates_for_symbol", return_value=(stale,),
+        ):
+            self.assertEqual(self.monitor.process_authoritative_fill(SYMBOL), ())
+        self.assertEqual(
+            self.store.get_robot_runtime_state(ACCOUNT_ID).recovery_status, "READY",
+        )
+        self.assertEqual(self.store.get_robot_trade(trade_id), old_trade)
+        self.assertEqual(
+            self.store.get_paper_protection_obligation(obligation.obligation_id),
+            old_obligation,
+        )
+        self.assertEqual(self.monitor.tick(), (peer.candidate_id,))
+        self.assertEqual(self.store.get_robot_candidate(peer.candidate_id).status, "APPROVED")
+
+    def test_stale_fill_callback_with_foreign_limit_still_fences_account(self):
+        """Resolved STOP cannot hide a later competing LIMIT."""
+        stale, _, _ = self._prove_real_closed_wedge_stop_for_stale_fill()
+        order, _ = self.store.create_paper_limit(
+            client_action_id="foreign-after-stop",
+            request_fingerprint="foreign-after-stop",
+            order_id=OrderId("foreign-after-stop"),
+            order_link_id="foreign-after-stop-link",
+            trading_account_id=ACCOUNT_ID, symbol=stale.symbol,
+            side=OrderSide.BUY, price=Decimal("80"), quantity=Decimal("1"),
+            created_at_ms=7000,
+        )
+        with patch.object(
+            self.store, "load_robot_candidates_for_symbol", return_value=(stale,),
+        ):
+            self.assertEqual(self.monitor.process_authoritative_fill(SYMBOL), ())
+        self.assertEqual(
+            self.store.get_robot_runtime_state(ACCOUNT_ID).recovery_status,
+            "RECONCILIATION_REQUIRED",
+        )
+        self.assertEqual(
+            self.store.get_paper_limit(order.order_id.value, ACCOUNT_ID).status, "open",
+        )
+
+    def test_stale_fill_callback_does_not_mask_unrelated_runtime_error(self):
+        """A generic exception still fences, even with a perfectly settled STOP."""
+        stale, _, _ = self._prove_real_closed_wedge_stop_for_stale_fill()
+        with patch.object(
+            self.store, "load_robot_candidates_for_symbol", return_value=(stale,),
+        ), patch.object(
+            self.monitor, "_refresh_open_trade_entry_attestation",
+            side_effect=RuntimeError("shared ledger failure"),
+        ):
+            self.assertEqual(self.monitor.process_authoritative_fill(SYMBOL), ())
+        self.assertEqual(
+            self.store.get_robot_runtime_state(ACCOUNT_ID).recovery_status,
+            "RECONCILIATION_REQUIRED",
+        )
+
     def test_closed_stop_before_stale_box_take_is_no_mutation(self):
         record, source, proof, trade_id, obligation = (
             self._prove_real_closed_box_stop_for_stale_take()

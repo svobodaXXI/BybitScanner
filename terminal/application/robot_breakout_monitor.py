@@ -541,6 +541,16 @@ class RobotBreakoutMonitor:
                     elif self._refresh_open_trade_entry_attestation(record, execution):
                         advanced.append(record.candidate_id)
                 except Exception as error:
+                    # A post-STOP callback may hold a stale OPEN record. Only
+                    # exact, already-settled STOP evidence permits no-op;
+                    # unresolved or foreign lineage still fences the account.
+                    if (
+                        record.signal_snapshot.get("pattern") != "IKIGAI_BOX"
+                        and type(error) is RobotBreakoutMonitorError
+                        and str(error) == "OPEN Robot candidate lacks its matching OPEN trade"
+                        and self._settled_stop_preempts_stale_fill_callback(record)
+                    ):
+                        continue
                     print(
                         "[ROBOT CANDIDATE ERROR] "
                         f"candidate_id={record.candidate_id} error={error}"
@@ -599,6 +609,94 @@ class RobotBreakoutMonitor:
                 )
                 self._record_execution_error(record, error)
         return tuple(advanced)
+
+    def _settled_stop_preempts_stale_fill_callback(
+        self, record: RobotCandidateRecord,
+    ) -> bool:
+        """Only a proven CLOSED/RESOLVED STOP makes an old OPEN callback inert.
+
+        This does not quarantine uncertain exposure or authorize account risk.
+        It prevents a late fill-attestation callback from raising a *new*
+        global REQUIRED after the original trade has already settled safely.
+        Every read is from the existing PAPER owner ledger; missing, foreign,
+        ambiguous or concurrent symbol work retains normal escalation.
+        """
+        if self._account_id.value != "paper" or record.status != "OPEN":
+            return False
+        store = self._store()
+        try:
+            fresh = store.get_robot_candidate(record.candidate_id)
+            if (
+                fresh is None or fresh.status != "CLOSED"
+                or fresh.trading_account_id != self._account_id
+                or fresh.symbol != record.symbol
+                or fresh.snapshot_sha256 != record.snapshot_sha256
+                or fresh.updated_at_ms < record.updated_at_ms
+                or fresh.state_revision < record.state_revision
+            ):
+                return False
+            trade = store.get_robot_trade(f"robot-trade-{record.candidate_id}")
+            if (
+                trade is None or trade.trading_account_id != self._account_id
+                or trade.symbol != record.symbol or trade.candidate_id != record.candidate_id
+                or trade.pattern != str(record.signal_snapshot.get("pattern", ""))
+                or trade.exit_reason != "STOP" or trade.exit_time_ms is None
+                or trade.exit_price is None or trade.entry_quantity is None
+                or trade.entry_quantity <= 0 or trade.entry_position_version is None
+                or trade.exit_time_ms < trade.entry_time_ms
+                or trade.realized_pnl_usdt is None or trade.fees_costs_usdt is None
+            ):
+                return False
+            obligation = store.get_paper_protection_obligation_for_trade(trade.trade_id)
+            if (
+                obligation is None or obligation.status != "RESOLVED"
+                or obligation.winning_leg != "STOP"
+                or obligation.trade_id != trade.trade_id
+                or obligation.trading_account_id != self._account_id
+                or obligation.symbol != record.symbol
+            ):
+                return False
+            execution = store.get_execution(ExecutionDedupKey(
+                self._account_id, Category.LINEAR, obligation.exec_id,
+            ))
+            if (
+                execution is None or execution.symbol != record.symbol
+                or execution.order_id != obligation.order_id
+                or execution.exchange_timestamp_ms != trade.exit_time_ms
+                or execution.price.value != trade.exit_price
+                or execution.quantity.value != obligation.observed_quantity
+                or (trade.direction == "LONG" and execution.side is not OrderSide.SELL)
+                or (trade.direction == "SHORT" and execution.side is not OrderSide.BUY)
+                or trade.direction not in {"LONG", "SHORT"}
+            ):
+                return False
+            position = store.get_position_projection(PositionKey(
+                self._account_id, Category.LINEAR, record.symbol, 0,
+            ))
+            if (
+                position is None or position.side is not PositionSide.FLAT
+                or position.quantity.value != 0 or position.sync_state != "synced"
+                or position.updated_at_ms < trade.exit_time_ms
+                or position.version <= trade.entry_position_version
+                or any(item.symbol == record.symbol for item in
+                       store.load_open_robot_trades(self._account_id))
+                or store.load_active_robot_candidates_for_symbol(
+                    self._account_id, record.symbol)
+                or store.load_active_paper_limits(self._account_id, record.symbol)
+                or any(item.trading_account_id == self._account_id
+                       and item.symbol == record.symbol
+                       for item in store.load_unfinished_commands())
+                or any(item.symbol == record.symbol for item in
+                       store.load_unresolved_paper_protection_obligations(self._account_id))
+            ):
+                return False
+            # Do not trust a previously-read terminal snapshot if another
+            # owner just advanced the same candidate or opened a new cycle.
+            reread = store.get_robot_candidate(record.candidate_id)
+            return reread == fresh
+        except Exception:
+            # Read/identity/ledger failures never prove local isolation.
+            return False
 
     def _refresh_open_trade_entry_attestation(
         self,
