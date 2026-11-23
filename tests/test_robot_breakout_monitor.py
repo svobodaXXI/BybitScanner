@@ -3657,6 +3657,24 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
             self.store.get_robot_runtime_state(ACCOUNT_ID).recovery_status, "READY",
         )
 
+    def test_invalid_frozen_quarantine_write_failure_fences_account(self):
+        """Quarantine write failure cannot be treated as local isolation."""
+        faulted = self._create_invalid_frozen_candidate()
+        peer = self._create_candidate("healthy-b", symbol="GOODUSDT")
+        monitor_store = self.monitor._store()
+        with patch.object(
+            monitor_store, "save_robot_candidate_state",
+            side_effect=OSError("injected quarantine write failure"),
+        ):
+            self.assertNotIn(faulted.candidate_id, self.monitor.tick())
+        self.assertEqual(self.store.get_robot_candidate(faulted.candidate_id).status, "APPROVED")
+        runtime = self.store.get_robot_runtime_state(ACCOUNT_ID)
+        self.assertEqual(runtime.recovery_status, "RECONCILIATION_REQUIRED")
+        self.assertIn("ROBOT_FROZEN_INIT_QUARANTINE_PERSIST_UNPROVEN", runtime.reason)
+        self.assertFalse(self.monitor._read_admission_gate()[0])
+        self.assertIsNone(self.store.get_robot_trade(f"robot-trade-{peer.candidate_id}"))
+        self.assertEqual(self.executor.limit_calls, [])
+
     def test_repeated_inert_candidate_fault_is_quarantined_without_stopping_peers(self):
         self._create_candidate("candidate-a", symbol=SYMBOL)
         self._create_candidate("candidate-b", symbol="OTHERUSDT")
