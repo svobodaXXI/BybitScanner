@@ -14,6 +14,7 @@ import {
   type PaperEpisodeFacts, type PaperOverlay,
 } from "./paperEpisodeFacts";
 import { rayEndPoint } from "../chart/drawingGeometry";
+import { verifiedEpisodeHistoryWindow } from "./paperEpisodeWindow";
 import { DrawingOverlay } from "../chart/DrawingOverlay";
 import type { DrawingObject, DrawingTool } from "../chart/drawingModel";
 import { chartLogicalAtTime, drawingLogicalToTime, timeAtChartLogical, timeToDrawingLogical } from "./replayDrawingCoordinates";
@@ -605,11 +606,7 @@ export function ReplayPage() {
   // Source pattern is trusted only for an independently validated exact D2 link.
   const episodeDefaults = useMemo(() => {
     if (!paperFacts) return null;
-    const m5 = 300_000;
-    const startMs = Math.max(m5, Math.floor((paperFacts.opened_at_ms - 3_600_000) / m5) * m5);
-    const endRequested = Math.ceil((paperFacts.closed_at_ms + 3_600_000) / m5) * m5;
-    const endClosed = Math.floor(Date.now() / m5) * m5;
-    const endExclusive = Math.min(endRequested, endClosed);
+    const { startMs, endExclusive } = verifiedEpisodeHistoryWindow(paperFacts, Date.now());
     if (endExclusive <= startMs) return null;
     return {
       trade_episode_id: paperFacts.trade_episode_id,
@@ -1069,15 +1066,10 @@ export function ReplayPage() {
       setLocalEpisodeMessage("Сделка найдена локально.");
       // PUBLIC market history is fetched locally, never embedded in the PAPER
       // payload or loaded from a VPS candle archive. No Scanner/Robot runs.
-      const m5 = 300_000;
-      const startMs = Math.max(m5, Math.floor((parsed.opened_at_ms - 3_600_000) / m5) * m5);
-      // A just-closed PAPER episode may be newer than the +1h context window.
-      // Never request future/incomplete public M5 candles; the local HTTP
-      // server independently enforces its closed-candle boundary.
-      const requestedEndExclusive = Math.ceil((parsed.closed_at_ms + 3_600_000) / m5) * m5;
-      const lastClosedEndExclusive = Math.floor(Date.now() / m5) * m5;
-      const endExclusive = Math.min(requestedEndExclusive, lastClosedEndExclusive);
-      const episodeEndExclusive = Math.ceil(parsed.closed_at_ms / m5) * m5;
+      // Same source-bound and M5-closed period as the visible episode controls.
+      // The archive may predate the Robot entry by more than one hour.
+      const window = verifiedEpisodeHistoryWindow(parsed, Date.now());
+      const { startMs, endExclusive, episodeEndExclusive } = window;
       if (endExclusive < episodeEndExclusive) {
         setError("Последняя свеча M5 со временем закрытия сделки ещё не закрылась. " +
           "Повторите загрузку после её закрытия; факты PAPER сохранены локально.");
@@ -1087,6 +1079,10 @@ export function ReplayPage() {
         setError("Исполнения загружены, но публичный интервал превышает 7 суток. " +
           "Выберите проверенную историю вручную; исходная цепочка Robot не реконструирована.");
         return;
+      }
+      if (window.originalAnchorsOutsideWindow) {
+        setLocalEpisodeMessage("Сделка найдена, но исходные опоры старше предела публичной истории в 7 суток. " +
+          "Исполнения сохраняются; исходные линии вне доступного периода не восстанавливаются.");
       }
       const utc = (ms: number) => new Date(ms).toISOString().slice(0, 16);
       await loadLocalHistory(parsed.symbol, utc(startMs), utc(endExclusive - 60_000), []);
