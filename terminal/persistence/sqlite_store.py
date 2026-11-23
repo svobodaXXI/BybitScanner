@@ -5916,7 +5916,7 @@ class SQLiteStore:
             if (pending is True or intent is not None) and not confirmed_closed:
                 blocked.append(str(row["candidate_id"]))
             box_intent = execution.get("box_emergency_close_intent")
-            if box_intent is not None:
+            if "box_emergency_close_intent" in execution:
                 if (
                     type(box_intent) is not dict
                     or type(box_intent.get("slot")) is not int
