@@ -4,8 +4,9 @@ Market fills use the following M1 OPEN after submission. Limit orders remain
 pending until the next closed M1 proves *strict trade-through* (or the next
 OPEN is already marketable). A trade-through is an explicit deterministic
 OHLC fill assumption, NOT proof of venue queue priority or real execution.
-LIMIT fills occur at their stated limit price, never a fictitious improvement.
-A marketable opening uses taker fees; intrabar limit fill uses maker fees.
+An already-marketable next-M1 OPEN fills at that observed OPEN; a strict
+intrabar trade-through fills at LIMIT. This is an OHLC assumption, not venue
+queue evidence. Marketable OPEN uses taker fees; intrabar LIMIT uses maker fees.
 
 The legacy single-order seam remains for Wedge.  The native Robot seam may
 hold several already-owned GTC LIMITs for one symbol (Box P1..P4 and their
@@ -299,7 +300,7 @@ class VirtualExchange:
         through = minute.low < request.limit_price if buy else minute.high > request.limit_price
         if not (marketable or through):
             return None
-        return request.limit_price, Decimal(1 if marketable else 0)
+        return minute.open if marketable else request.limit_price, Decimal(1 if marketable else 0)
 
     def _match_native_robot(
         self, minute: Candle,
@@ -591,7 +592,7 @@ class VirtualExchange:
                     else minute.high > request.limit_price
                 )
                 if marketable_open or trade_through:
-                    price, kind = request.limit_price, "LIMIT"
+                    price, kind = (minute.open if marketable_open else request.limit_price), "LIMIT"
                     fee_rate = (
                         self.taker_fee_rate if marketable_open
                         else self.maker_fee_rate
