@@ -544,7 +544,12 @@ class RobotBreakoutMonitor:
                     # A post-STOP callback may hold a stale OPEN record. Only
                     # exact, already-settled STOP evidence permits no-op;
                     # unresolved or foreign lineage still fences the account.
-                    if self._settled_stop_preempts_stale_fill_callback(record):
+                    if (
+                        record.signal_snapshot.get("pattern") != "IKIGAI_BOX"
+                        and type(error) is RobotBreakoutMonitorError
+                        and str(error) == "OPEN Robot candidate lacks its matching OPEN trade"
+                        and self._settled_stop_preempts_stale_fill_callback(record)
+                    ):
                         continue
                     print(
                         "[ROBOT CANDIDATE ERROR] "
@@ -627,7 +632,7 @@ class RobotBreakoutMonitor:
                 or fresh.symbol != record.symbol
                 or fresh.snapshot_sha256 != record.snapshot_sha256
                 or fresh.updated_at_ms < record.updated_at_ms
-                or fresh.state_revision <= record.state_revision
+                or fresh.state_revision < record.state_revision
             ):
                 return False
             trade = store.get_robot_trade(f"robot-trade-{record.candidate_id}")
