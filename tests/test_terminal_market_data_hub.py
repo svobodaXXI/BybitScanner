@@ -1,8 +1,10 @@
+import copy
 import json
 import threading
 import time
 import unittest
 from decimal import Decimal
+from unittest.mock import patch
 
 import websocket
 
@@ -573,6 +575,12 @@ def test_research_rest_tape_snapshot_is_atomic_and_epoch_fenced():
         before = witness.rest_anchor_tape_snapshot()
         assert before["epoch"] == a["epoch"]
         assert before["frames"] == ((102, one),)
+        # A consumer must not rewrite the retained raw tape via snapshot
+        # aliases, including dictionaries nested inside vendor data.
+        tampered = witness.rest_anchor_tape_snapshot()
+        tampered["frames"][0][1]["data"]["u"] = 999
+        assert one["data"]["u"] == 7
+        assert witness.rest_anchor_tape_snapshot()["frames"] == ((102, one),)
         witness.reset()  # WS reconnection/host boundary
         after = witness.rest_anchor_tape_snapshot()
         assert after["epoch"] > before["epoch"]
@@ -602,6 +610,58 @@ def test_research_rest_tape_snapshot_is_atomic_and_epoch_fenced():
         hub.close()
 
 
+def test_rest_tape_snapshot_reset_can_progress_during_large_detach():
+    """A slow passive copy cannot hold the protected L2 ingress lock."""
+    hub = MarketDataHub(_Registry(), _context, connection_factory=lambda *_a, **_k: None)
+    try:
+        protected = hub.subscribe("BTCUSDT")
+        witness = hub.begin_protected_research_capture("BTCUSDT")
+        assert witness is not None
+        original = {"topic": "orderbook.1000.BTCUSDT", "type": "delta",
+                    "data": {"s": "BTCUSDT", "u": 7, "seq": 8}}
+        witness.on_book(100, original, "APPLIED")
+        copying, resume_copy, reset_done = (
+            threading.Event(), threading.Event(), threading.Event()
+        )
+        outcome, errors = {}, []
+
+        def slow_copy(frames):
+            copying.set()
+            if not resume_copy.wait(timeout=5):
+                raise AssertionError("slow copy was not released")
+            return copy.deepcopy(frames)
+
+        def read():
+            try:
+                outcome.update(witness.rest_anchor_tape_snapshot())
+            except Exception as exc:
+                errors.append(exc)
+
+        with patch("terminal.market_data.hub.deepcopy", side_effect=slow_copy):
+            reader = threading.Thread(target=read, daemon=True)
+            writer = threading.Thread(
+                target=lambda: (witness.reset(), reset_done.set()), daemon=True,
+            )
+            try:
+                reader.start()
+                assert copying.wait(timeout=2)
+                writer.start()
+                assert reset_done.wait(timeout=2), (
+                    "protected ingress reset blocked behind research deepcopy"
+                )
+            finally:
+                resume_copy.set()
+                reader.join(timeout=2)
+                if writer.ident is not None:
+                    writer.join(timeout=2)
+        assert not errors
+        assert outcome["active"] is False and outcome["frames"] == ()
+        assert witness.rest_anchor_tape_snapshot()["frames"] == ()
+        assert protected.public_orderbook.closed is False
+    finally:
+        hub.close()
+
+
 TESTS = (
     test_hub_uses_one_connection_for_multiple_reusable_symbol_contexts,
     test_hub_rejects_unsupported_symbol_without_creating_context,
@@ -619,6 +679,7 @@ TESTS = (
     test_private_protected_ingress_witness_requires_real_snapshot_and_no_new_topic,
     test_private_protected_capture_invalidates_gap_and_overflow,
     test_research_rest_tape_snapshot_is_atomic_and_epoch_fenced,
+    test_rest_tape_snapshot_reset_can_progress_during_large_detach,
 )
 
 
