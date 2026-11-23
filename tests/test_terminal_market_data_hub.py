@@ -662,6 +662,46 @@ def test_rest_tape_snapshot_reset_can_progress_during_large_detach():
         hub.close()
 
 
+def test_private_box_snapshot_is_in_process_and_does_not_start_capture():
+    """Only an already opted-in protected witness may supply private source bytes."""
+    hub = MarketDataHub(_Registry(), _context, connection_factory=lambda *_a, **_k: None)
+    try:
+        full = hub.subscribe("BTCUSDT")
+        assert hub.private_protected_research_snapshot("BTCUSDT") is None
+        witness = hub.begin_protected_research_capture("BTCUSDT")
+        assert witness is not None
+        assert hub.private_protected_research_snapshot("ONGUSDT") is None
+        original = {"type": "snapshot", "topic": "orderbook.1000.BTCUSDT",
+                    "cts": 1000, "ts": 1000,
+                    "data": {"s": "BTCUSDT", "u": 1, "seq": 1}}
+        witness.on_book(1001, original, "APPLIED")
+        witness.on_book(1002, {"type": "delta", "topic": original["topic"],
+                               "cts": 1001, "ts": 1001,
+                               "data": {"s": "BTCUSDT", "u": 2, "seq": 2}},
+                        "APPLIED")
+        assert full.impulse_observation.observe({
+            "topic": "publicTrade.BTCUSDT",
+            "data": [{"s": "BTCUSDT", "i": "exact-print", "T": 1000,
+                      "seq": 4, "S": "Buy", "p": "100", "v": "1"}],
+        }, received_at_ms=1002)
+        report = hub.private_protected_research_snapshot("BTCUSDT")
+        assert report is not None
+        assert len(report["book"]["frames"]) == 2
+        assert len(report["trades"]["prints"]) == 1
+        assert report["book"]["source_complete"] is False
+        assert report["book"]["trading_authorized"] is False
+        report["book"]["frames"][0][1]["data"]["u"] = 999
+        assert original["data"]["u"] == 1
+        assert hub.private_protected_research_snapshot("BTCUSDT")["book"]["frames"][0][1]["data"]["u"] == 1
+        witness.reset()
+        assert hub.private_protected_research_snapshot("BTCUSDT")["book"]["frames"] == ()
+        assert hub.end_protected_research_capture("BTCUSDT")
+        assert hub.private_protected_research_snapshot("BTCUSDT") is None
+        assert not full.public_orderbook.closed
+    finally:
+        hub.close()
+
+
 TESTS = (
     test_hub_uses_one_connection_for_multiple_reusable_symbol_contexts,
     test_hub_rejects_unsupported_symbol_without_creating_context,
@@ -680,6 +720,7 @@ TESTS = (
     test_private_protected_capture_invalidates_gap_and_overflow,
     test_research_rest_tape_snapshot_is_atomic_and_epoch_fenced,
     test_rest_tape_snapshot_reset_can_progress_during_large_detach,
+    test_private_box_snapshot_is_in_process_and_does_not_start_capture,
 )
 
 
@@ -688,8 +729,10 @@ def load_tests(loader, tests, pattern):
     # Include the pure REST/WS research source matcher without touching
     # protected runtime test runners or broad workflow configuration.
     from tests.test_research_l2_rest_anchor import RestWsL2AnchorTests
+    from tests.test_private_box_host_evidence import PrivateBoxReceiptTests
     combined = unittest.TestSuite(unittest.FunctionTestCase(test) for test in TESTS)
     combined.addTests(loader.loadTestsFromTestCase(RestWsL2AnchorTests))
+    combined.addTests(loader.loadTestsFromTestCase(PrivateBoxReceiptTests))
     return combined
 
 
