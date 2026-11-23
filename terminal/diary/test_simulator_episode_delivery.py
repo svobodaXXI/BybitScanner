@@ -6,6 +6,8 @@ from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
+import pytest
+
 from terminal.diary.simulator_launch_relay import SimulatorLaunchRelay, RelayInvalid
 from terminal.runtime import paper_http_server
 
@@ -27,7 +29,8 @@ def _call(base: str, path: str, *, body=None, token="", origin=""):
         return error.code, json.load(error)
 
 
-def test_episode_bridge_exact_device_and_revision(tmp_path: Path, monkeypatch):
+@pytest.mark.parametrize("linked", [True, False])
+def test_episode_bridge_exact_device_and_revision(tmp_path: Path, monkeypatch, linked):
     episode = "te_" + "a" * 24
     origin = "https://statistics.example.test"
     token = "a" * 64
@@ -54,16 +57,46 @@ def test_episode_bridge_exact_device_and_revision(tmp_path: Path, monkeypatch):
             "namespace": "PAPER_READ_ONLY",
             "source": "PAPER_EXECUTIONS_ATTRIBUTED",
             "source_revision": 9, "account_id": "paper", "owner": "ROBOT",
-            "trade_episode_id": episode,
+            "trade_episode_id": episode, "symbol": "BTCUSDT", "side": "SHORT",
+            "opened_at_ms": 1234567890,
             "replay_evidence": "EXECUTION_FACTS_ONLY_NO_DECISIONS_OR_CANDLES",
-            "execution_allocations": [{"execution_id": "exec-real", "occurred_at_ms": 1234567890}],
+            "execution_allocations": [{
+                "execution_id": "exec-real", "occurred_at_ms": 1234567890,
+                "controller": "ROBOT",
+            }],
+        }
+
+    def read_d2(path, **scope):
+        calls.append(("d2", scope))
+        assert path == tmp_path / "missing-d2.sqlite3"
+        assert scope == {
+            "trade_episode_id": episode, "account_id": "paper",
+            "symbol": "BTCUSDT", "side": "SHORT", "opening_controller": "ROBOT",
+        }
+        return {"status": "EXACT_D2_LINK" if linked else "NO_EXACT_EPISODE_LINK",
+                "geometry_status": "NOT_EXPORTED"}
+
+    def attach_geometry(context, **scope):
+        calls.append(("geometry", scope))
+        assert scope == {"symbol": "BTCUSDT", "opened_at_ms": 1234567890}
+        if not linked:
+            return context
+        return {
+            **context, "geometry_status": "ORIGINAL_ARCHIVE_HASH_VERIFIED",
+            "original_geometry": {
+                "signal_id": "archived-exact-candidate", "sha256": "a" * 64,
+                "snapshot": {"boundaries": [{"boundary_id": "original-lower"}]},
+            },
         }
 
     monkeypatch.setattr(paper_http_server, "load_paper_source_snapshot", load)
     monkeypatch.setattr(paper_http_server, "project_paper_closed_episode_facts", project)
+    monkeypatch.setattr(paper_http_server, "project_episode_d2_context_read_only", read_d2)
+    monkeypatch.setattr(paper_http_server, "attach_verified_original_geometry", attach_geometry)
     server = ThreadingHTTPServer(("127.0.0.1", 0), paper_http_server.PaperHttpHandler)
     server.simulator_launch_relay = relay
     server.diary_source_db_path = source
+    server.diary_setup_store_path = tmp_path / "missing-d2.sqlite3"
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     base = f"http://127.0.0.1:{server.server_address[1]}"
@@ -94,13 +127,23 @@ def test_episode_bridge_exact_device_and_revision(tmp_path: Path, monkeypatch):
         code, payload = _call(base, bridge + facts, token=token)
         assert code == 200
         assert payload["execution_allocations"][0]["execution_id"] == "exec-real"
-        assert len(calls) == 2
+        assert payload["setup_context"]["status"] == (
+            "EXACT_D2_LINK" if linked else "NO_EXACT_EPISODE_LINK")
+        assert payload["setup_context"]["geometry_status"] == (
+            "ORIGINAL_ARCHIVE_HASH_VERIFIED" if linked else "NOT_EXPORTED")
+        if linked:
+            assert payload["setup_context"]["original_geometry"]["signal_id"] == (
+                "archived-exact-candidate")
+        else:
+            assert "original_geometry" not in payload["setup_context"]
+        assert [kind for kind, *_ in calls] == ["read", "project", "d2", "geometry"]
         assert _call(base, bridge + "ack", token=token, body={
             "device_id": "owner-laptop", "request_id": rid, "launched": True,
         })[1]["state"] == "LAUNCHED"
         assert _call(base, bridge + facts, token=token)[0] == 404
-        assert len(calls) == 2
+        assert len(calls) == 4
         assert not source.exists()
+        assert not server.diary_setup_store_path.exists()
 
         # Legacy ID-only locator is allowed to open but never retrieve facts.
         code, old = _call(base, bridge + "request", origin=origin,
@@ -112,7 +155,7 @@ def test_episode_bridge_exact_device_and_revision(tmp_path: Path, monkeypatch):
         assert "owner" not in job and "source_revision" not in job
         assert _call(base, bridge + f"facts?device_id=owner-laptop&request_id={old['request_id']}",
                      token=token)[0] == 404
-        assert len(calls) == 2
+        assert len(calls) == 4
     finally:
         server.shutdown()
         server.server_close()
