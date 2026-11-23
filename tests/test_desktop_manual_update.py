@@ -424,7 +424,7 @@ def test_desktop_zip_imports_scoring_without_production_config(tmp_path, monkeyp
     (viewer / "dist").mkdir(parents=True)
     (viewer / "dist" / "replay.html").write_text("<!doctype html>", encoding="utf-8")
     (viewer / "trusted-statistics-origin.txt").write_text(
-        "https://example.invalid\\n", encoding="utf-8"
+        "https://example.invalid\n", encoding="utf-8"
     )
     tracked = [
         "analyzer/__init__.py", "analyzer/scoring.py", "analyzer.py",
@@ -439,13 +439,13 @@ def test_desktop_zip_imports_scoring_without_production_config(tmp_path, monkeyp
         "launch_bridge_agent.py", "desktop_update.py",
         "simulator_self_update.py", "paper_episode_local_store.py",
     ):
-        (viewer / name).write_text("# entrypoint fixture\\n", encoding="utf-8")
+        (viewer / name).write_text("# entrypoint fixture\n", encoding="utf-8")
 
     monkeypatch.setattr(builder, "ROOT", root)
     monkeypatch.setattr(builder, "VIEWER", viewer)
     monkeypatch.setattr(
         builder.subprocess, "check_output",
-        lambda cmd: b"\\0".join(path.encode() for path in tracked) + b"\\0",
+        lambda cmd: b"\0".join(path.encode() for path in tracked) + b"\0",
     )
     archive = tmp_path / "machine-time.zip"
     builder.package(archive, "a" * 40)
