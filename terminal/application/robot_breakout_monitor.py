@@ -1299,13 +1299,58 @@ class RobotBreakoutMonitor:
     def _advance_box_entry_ready(
         self, record: RobotCandidateRecord, *, match_resting_orders: bool = True,
     ) -> bool:
-        # Leave unresolved-symbol recovery to the canonical protection owner,
-        # never start a new Box/MIRROR entry from an ambiguous position.
-        if self._store().robot_symbol_quarantine_candidate_ids(
-            self._account_id, record.symbol,
-        ):
-            return False
         execution = dict(record.robot_state.get("execution") or {})
+        quarantined = self._store().robot_symbol_quarantine_candidate_ids(
+            self._account_id, record.symbol,
+        )
+        if quarantined:
+            # A symbol fence blocks new entry work, not recovery of its own
+            # exact Box EXIT-0. Never re-enter the grid/catch-up path here.
+            if quarantined != (record.candidate_id,):
+                return False
+            raw_intent = execution.get("box_emergency_close_intent")
+            if not isinstance(raw_intent, Mapping):
+                return False
+            plan = restore_box_market_plan(raw_intent)
+            source = self._box_source(record, execution)
+            proof = self._store().prove_box_owned_position(source.candidate_id)
+            identity = source.signal_snapshot.get("identity")
+            if not isinstance(identity, Mapping) or identity.get("direction") not in {
+                "LONG", "SHORT",
+            }:
+                return False
+            expected_close_side = (
+                OrderSide.SELL if identity["direction"] == "LONG" else OrderSide.BUY
+            )
+            if (
+                plan.slot != 0 or plan.request.symbol != record.symbol.value
+                or plan.request.side is not expected_close_side
+                or plan.quantity != proof.remaining_quantity
+                or proof.remaining_quantity <= 0
+                or self._store().get_command(plan.identity.command_id) is not None
+                or any(
+                    item.symbol == record.symbol
+                    for item in self._store().load_unresolved_paper_protection_obligations(
+                        self._account_id,
+                    )
+                )
+            ):
+                # A persisted command may already have dispatched. Keep the
+                # fence; only the existing no-command recovery may submit.
+                return False
+            # EXIT-0 was committed before any ordinary STOP recovery. Finish
+            # the exact saved emergency action, not an OPEN Box lifecycle
+            # with a permanently pending close intent.
+            expected_digest = hashlib.sha256(
+                f"box-emergency-close\0{source.candidate_id}".encode("utf-8")
+            ).hexdigest()[:32]
+            if plan.request.client_action_id.value != f"box-market-{expected_digest}":
+                return False
+            self._fail_closed_box_unprotected_fill(
+                record, source, proof,
+                RobotBreakoutMonitorError("resuming committed Box EXIT-0"),
+            )
+            return False
         source = self._box_source(record, execution)
         catchup = execution.get("box_catchup")
         if (

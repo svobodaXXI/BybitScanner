@@ -430,6 +430,73 @@ class HimsStopRefusalOwnerThreadCloseTests(HimsOwnerThreadFillTests):
         self.assertEqual(store.get_position_projection(key).side, PositionSide.FLAT)
         self.assertEqual(sells[0].order_id.value, intent["order_id"])
 
+    def test_committed_emergency_exit_is_not_replaced_by_later_successful_stop(self):
+        """After no-dispatch failure, finish EXIT-0 once; never strand an OPEN Box."""
+        store = self.runtime.store
+        symbol = Symbol("HIMSUSDT")
+        stale = replace(_p1_book(), received_at_ms=int(time.time() * 1000) - 10_000)
+        with patch.object(rp, "build_box_stop_only_plan", _refuse_stop):
+            self.runtime.process_robot_market_event(
+                "HIMSUSDT", stale, event_id="HIMSUSDT:1",
+                received_at_ms=stale.received_at_ms,
+            )
+        record = store.get_robot_candidate(self.candidate.candidate_id)
+        intent = record.robot_state["execution"]["box_emergency_close_intent"]
+        self.assertEqual(store.get_robot_runtime_state(ACCOUNT).recovery_status,
+                         "RECONCILIATION_REQUIRED")
+        self.assertEqual(self._sells(), [])
+        self.assertEqual(store.robot_symbol_quarantine_candidate_ids(
+            ACCOUNT, symbol), (record.candidate_id,))
+
+        # STOP would succeed now; a committed EXIT-0 must take precedence.
+        with patch.object(rp, "build_box_stop_only_plan",
+                          wraps=rp.build_box_stop_only_plan) as build_stop:
+            self._background_pass(_p1_book())
+            commands_after = self._commands()
+            self._background_pass(_p1_book())
+        self.assertEqual(build_stop.call_count, 0)
+        self.assertEqual(len(self._sells()), 1)
+        self.assertEqual(self._sells()[0].order_id.value, intent["order_id"])
+        self.assertEqual(self._commands(), commands_after)
+        self.assertEqual(store.get_position_projection(
+            PositionKey(ACCOUNT, Category.LINEAR, symbol, 0)).side,
+            PositionSide.FLAT)
+        self.assertEqual(store.get_robot_candidate(record.candidate_id).status,
+                         "INVALIDATED")
+        self.assertIsNone(store.get_open_robot_trade_for_symbol(ACCOUNT, symbol))
+        self.assertEqual(store.robot_symbol_quarantine_candidate_ids(
+            ACCOUNT, symbol), ())
+
+    def test_committed_emergency_exit_rejects_wrong_side_after_restart(self):
+        """Even a valid command digest cannot authorize the wrong EXIT direction."""
+        store = self.runtime.store
+        symbol = Symbol("HIMSUSDT")
+        stale = replace(_p1_book(), received_at_ms=int(time.time() * 1000) - 10_000)
+        with patch.object(rp, "build_box_stop_only_plan", _refuse_stop):
+            self.runtime.process_robot_market_event(
+                "HIMSUSDT", stale, event_id="HIMSUSDT:1",
+                received_at_ms=stale.received_at_ms,
+            )
+        record = store.get_robot_candidate(self.candidate.candidate_id)
+        state = dict(record.robot_state)
+        execution = dict(state["execution"])
+        wrong_side = dict(execution["box_emergency_close_intent"])
+        wrong_side["side"] = "Buy"  # Box LONG must only close with Sell.
+        execution["box_emergency_close_intent"] = wrong_side
+        state["execution"] = execution
+        store.save_robot_candidate_state(
+            record.candidate_id, status="APPROVED", robot_state=state,
+            expected_revision=record.state_revision,
+            updated_at_ms=max(int(time.time() * 1000), record.updated_at_ms + 1),
+        )
+        self._background_pass(_p1_book())
+        self.assertEqual(self._sells(), [])
+        self.assertEqual(store.get_position_projection(
+            PositionKey(ACCOUNT, Category.LINEAR, symbol, 0)).side,
+            PositionSide.LONG)
+        self.assertEqual(store.robot_symbol_quarantine_candidate_ids(
+            ACCOUNT, symbol), (record.candidate_id,))
+
 
 if __name__ == "__main__":
     unittest.main()

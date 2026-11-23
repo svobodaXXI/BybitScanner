@@ -5874,8 +5874,9 @@ class SQLiteStore:
     ) -> tuple[str, ...]:
         """Prove the durable scope of an unresolved post-fill emergency close.
 
-        A legacy pending marker, a newer persisted dispatch intent, or an
-        unresolved canonical STOP/TAKE protection obligation fences the symbol.
+        A legacy pending marker, an emergency dispatch intent (including Box
+        EXIT-0), or an unresolved canonical STOP/TAKE protection obligation
+        fences the symbol.
         Terminal history is included: changing candidate status alone cannot
         erase an ambiguous close. A successful persisted close or an obligation
         reaching RESOLVED releases its own derived marker. Missing or foreign
@@ -5889,6 +5890,7 @@ class SQLiteStore:
                  AND (
                     json_type(robot_state_json, '$.execution.emergency_close_pending') IS NOT NULL
                     OR json_type(robot_state_json, '$.execution.emergency_close_intent') IS NOT NULL
+                    OR json_type(robot_state_json, '$.execution.box_emergency_close_intent') IS NOT NULL
                  )
                ORDER BY candidate_id""",
             (trading_account_id.value, symbol.value),
@@ -5913,6 +5915,21 @@ class SQLiteStore:
             )
             if (pending is True or intent is not None) and not confirmed_closed:
                 blocked.append(str(row["candidate_id"]))
+            box_intent = execution.get("box_emergency_close_intent")
+            if "box_emergency_close_intent" in execution:
+                if (
+                    type(box_intent) is not dict
+                    or type(box_intent.get("slot")) is not int
+                    or box_intent["slot"] != 0
+                    or box_intent.get("symbol") != symbol.value
+                    or not isinstance(box_intent.get("order_id"), str)
+                    or not box_intent["order_id"]
+                ):
+                    raise PersistenceError("Robot Box emergency close intent is malformed")
+                if not self._box_emergency_intent_terminal_proven(
+                    trading_account_id, symbol, str(row["candidate_id"]), box_intent,
+                ):
+                    blocked.append(str(row["candidate_id"]))
         # An authoritative STOP/TAKE close has its own persisted obligation.
         # Until RESOLVED it must also fence this exact symbol, including when
         # the Robot candidate status was already changed by another callback.
@@ -5939,6 +5956,94 @@ class SQLiteStore:
             blocked.append(str(row["candidate_id"]))
         return tuple(sorted(set(blocked)))
 
+    def _box_emergency_intent_terminal_proven(
+        self, account: TradingAccountId, symbol: Symbol,
+        candidate_id: str, intent: dict[str, object],
+    ) -> bool:
+        """Release only the exact Box EXIT-0 after its own settled FLAT proof.
+
+        This derives a symbol marker from existing immutable ownership; it
+        never dispatches or repairs an order, nor opens account admission.
+        Terminal candidate status alone is insufficient to erase UNKNOWN.
+        """
+        candidate = self.get_robot_candidate(candidate_id)
+        if (
+            candidate is None or candidate.trading_account_id != account
+            or candidate.symbol != symbol
+            or candidate.status not in {"CLOSED", "INVALIDATED"}
+            or candidate.signal_snapshot.get("pattern") != "IKIGAI_BOX"
+        ):
+            return False
+        source_id = candidate.signal_snapshot.get("source_box_candidate_id")
+        if not isinstance(source_id, str) or not source_id:
+            return False
+        source = self.get_robot_candidate(source_id)
+        if (
+            source is None or source.trading_account_id != account
+            or source.symbol != symbol or source.status != "BOX_PLAN_ONLY"
+            or source.signal_snapshot.get("pattern") != "IKIGAI_BOX"
+        ):
+            return False
+        order_id = str(intent["order_id"])
+        owned_exit = [
+            item for item in self.load_box_order_ownership(source_id)
+            if item.role == "EXIT" and item.slot == 0 and item.order_id.value == order_id
+        ]
+        if len(owned_exit) != 1:
+            return False
+        proof = self.prove_box_owned_position(source_id)
+        if not (
+            proof.entry_quantity > 0 and proof.exit_quantity == proof.entry_quantity
+            and proof.remaining_quantity == 0 and proof.last_execution_at_ms is not None
+        ):
+            return False
+        fills = self.load_executions_for_order(account, OrderId(order_id))
+        try:
+            quantity = Decimal(str(intent["quantity"]))
+        except (KeyError, ValueError, InvalidOperation, TypeError):
+            return False
+        if not (
+            quantity.is_finite() and quantity > 0
+            and len(fills) == 1 and fills[0].symbol == symbol
+            and fills[0].dedup_key.trading_account_id == account
+            and fills[0].quantity.value == quantity
+            and fills[0].exchange_timestamp_ms == proof.last_execution_at_ms
+            and fills[0].side.value == intent.get("side")
+        ):
+            return False
+        position = self.get_position_projection(PositionKey(
+            account, Category.LINEAR, symbol, 0,
+        ))
+        if not (
+            position is not None and position.side is PositionSide.FLAT
+            and position.quantity.value == 0 and position.sync_state == "synced"
+            and position.version == proof.position_version
+            and position.updated_at_ms >= proof.last_execution_at_ms
+        ):
+            return False
+        trade = self.get_robot_trade("robot-trade-" + candidate_id)
+        if candidate.status == "CLOSED":
+            if not (
+                trade is not None and trade.candidate_id == candidate_id
+                and trade.trading_account_id == account and trade.symbol == symbol
+                and trade.exit_reason == "EMERGENCY_PROTECTION_FAILURE"
+                and trade.exit_time_ms == fills[0].exchange_timestamp_ms
+            ):
+                return False
+        elif trade is not None:
+            # APPROVED->INVALIDATED follows a proven FLAT with no OPEN trade.
+            return False
+        return not (
+            self.load_active_robot_candidates_for_symbol(account, symbol)
+            or self.load_active_paper_limits(account, symbol)
+            or self.load_active_robot_entry_orders(account, symbol)
+            or any(item.trading_account_id == account and item.symbol == symbol
+                   for item in self.load_unfinished_commands())
+            or any(item.symbol == symbol for item in
+                   self.load_unresolved_paper_protection_obligations(account))
+            or any(item.symbol == symbol for item in self.load_open_robot_trades(account))
+        )
+
     def robot_account_quarantines(
         self, trading_account_id: TradingAccountId,
     ) -> dict[str, tuple[str, ...]]:
@@ -5954,6 +6059,7 @@ class SQLiteStore:
                  AND (
                     json_type(robot_state_json, '$.execution.emergency_close_pending') IS NOT NULL
                     OR json_type(robot_state_json, '$.execution.emergency_close_intent') IS NOT NULL
+                    OR json_type(robot_state_json, '$.execution.box_emergency_close_intent') IS NOT NULL
                  )
                UNION
                SELECT symbol FROM paper_protection_obligations
