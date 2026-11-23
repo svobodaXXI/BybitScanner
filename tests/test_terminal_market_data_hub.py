@@ -504,7 +504,9 @@ def test_private_protected_ingress_witness_requires_real_snapshot_and_no_new_top
             }
         hub._dispatch(frame("delta", 9))
         assert tuple(witness.book_frames) == ()
+        assert [f["data"]["u"] for _, f in witness.rest_anchor_candidates] == [9]
         hub._dispatch(frame("snapshot", 10))
+        assert tuple(witness.rest_anchor_candidates) == ()
         hub._dispatch(frame("delta", 11))
         assert [item[1]["data"]["u"] for item in witness.book_frames] == [10, 11]
         assert all(isinstance(received_ms, int) and received_ms > 0
@@ -514,6 +516,7 @@ def test_private_protected_ingress_witness_requires_real_snapshot_and_no_new_top
         assert seen == ["robot-still-owned"]
         assert hub.end_protected_research_capture("BTCUSDT") is True
         assert tuple(witness.book_frames) == ()
+        assert tuple(witness.rest_anchor_candidates) == ()
         assert hub.end_protected_research_capture("BTCUSDT") is False
         hub._dispatch(frame("snapshot", 12))
         assert tuple(witness.book_frames) == ()
@@ -536,6 +539,9 @@ def test_private_protected_capture_invalidates_gap_and_overflow():
         witness.reset()  # disconnect must not retain previous generation
         witness.on_book(101, delta, "APPLIED")
         assert not witness.book_frames
+        assert len(witness.rest_anchor_candidates) == 1
+        witness.reset()
+        assert not witness.rest_anchor_candidates
         witness.on_book(102, snapshot, "APPLIED")
         for n in range(1024):
             witness.on_book(103 + n, delta, "APPLIED")
@@ -568,7 +574,13 @@ TESTS = (
 
 
 def load_tests(loader, tests, pattern):
-    return unittest.TestSuite(unittest.FunctionTestCase(test) for test in TESTS)
+    # The existing PAPER CI invokes this named suite explicitly.
+    # Include the pure REST/WS research source matcher without touching
+    # protected runtime test runners or broad workflow configuration.
+    from tests.test_research_l2_rest_anchor import RestWsL2AnchorTests
+    combined = unittest.TestSuite(unittest.FunctionTestCase(test) for test in TESTS)
+    combined.addTests(loader.loadTestsFromTestCase(RestWsL2AnchorTests))
+    return combined
 
 
 if __name__ == "__main__":
