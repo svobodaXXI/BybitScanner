@@ -764,6 +764,8 @@ try {
   await factNote.waitFor();
   // Imported exact D2 Falling Wedge narrows selection to one direction,
   // while every visible Historical Period coordinate inherits the episode.
+  await page.waitForFunction(() =>
+    document.querySelector("[data-selected-strategies]")?.getAttribute("data-selected-strategies") === "WEDGE_FALLING");
   assert.equal(await bounds.locator("[data-selected-strategies]").getAttribute("data-selected-strategies"), "WEDGE_FALLING");
   assert.equal(await bounds.getByRole("checkbox", { name: "Клинья" }).isChecked(), true);
   assert.equal(await bounds.getByRole("checkbox", { name: "Миррор-комплекс" }).isChecked(), false);
