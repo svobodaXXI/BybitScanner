@@ -63,3 +63,9 @@
 .replay-run-public-history { display: flex; justify-content: flex-end; margin-top: 2px; }
 .replay-run-setup .replay-run-public-history button { background: #275b78;
   border-color: #4f99c8; font-weight: 600; }
+
+/* Owner's flat strategy list: no Mirror/independent group boxes. */
+.replay-run-strategy-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px 12px; }
+.replay-run-strategy-list > .replay-run-check:first-child { grid-column: 1 / -1; }
+.replay-run-family-label { display: block; color: #9fb4cc; font-size: 12px; padding-top: 5px; }
+@media (max-width: 530px) { .replay-run-strategy-list { grid-template-columns: 1fr; } }
