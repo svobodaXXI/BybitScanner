@@ -7,7 +7,7 @@ from research.simulator_v2.session import VirtualReplaySession
 from research.simulator_v2.timeline import MINUTE_MS, StepBlocked
 from research.simulator_v2.virtual_account import VirtualAccount
 from research.simulator_v2.virtual_exchange import (
-    LimitRequest, MarketRequest, VirtualExchange,
+    LimitRequest, MarketRequest, RobotLimitRequest, VirtualExchange,
 )
 
 
@@ -65,7 +65,7 @@ class SimGtcLimitTests(unittest.TestCase):
         snap = ex.account.snapshot(as_of_ms=3 * MINUTE_MS, mark_price=D("100"))
         self.assertEqual(snap.position_quantity, D("-1"))
 
-    def test_marketable_open_does_not_invent_price_improvement(self):
+    def test_marketable_open_fills_at_observed_open_with_taker_fee(self):
         for side, open_price, limit in (("BUY", "94", "95"), ("SELL", "106", "105")):
             with self.subTest(side=side):
                 ex = exchange()
@@ -75,8 +75,34 @@ class SimGtcLimitTests(unittest.TestCase):
                 fill = ex.on_closed_minute(bar(
                     1, opening=open_price, high="110", low="90", closing="100",
                 ))
-                self.assertEqual(fill.price, D(limit))
-                self.assertEqual(fill.fee, D(limit) * D("0.0006"))
+                self.assertEqual(fill.price, D(open_price))
+                self.assertEqual(fill.fee, D(open_price) * D("0.0006"))
+
+    def test_xrp_marketable_long_does_not_fill_above_next_m1_high(self):
+        ex = exchange()
+        ex.on_closed_minute(bar(0, opening="1.3557", high="1.3570",
+                                low="1.3557", closing="1.3562"))
+        ex.submit_limit(LimitRequest("xrp", "BUY", D("1"), D("1.3572")),
+                        submitted_at_ms=MINUTE_MS)
+        candle = bar(1, opening="1.3557", high="1.3570",
+                     low="1.3557", closing="1.3562")
+        fill = ex.on_closed_minute(candle)
+        self.assertEqual(fill.price, candle.open)
+        self.assertLessEqual(fill.price, candle.high)
+        self.assertEqual(fill.fee, candle.open * D("0.0006"))
+
+    def test_native_robot_marketability_reuses_same_open_price_rule(self):
+        for side, opening, limit in (("BUY", "94", "95"), ("SELL", "106", "105")):
+            with self.subTest(side=side):
+                ex = exchange()
+                ex.on_closed_minute(bar(0))
+                ex.synchronize_robot_limits((
+                    RobotLimitRequest(LimitRequest("native", side, D("1"), D(limit)), False),
+                ), synchronized_at_ms=MINUTE_MS)
+                ex.on_closed_minute(bar(1, opening=opening, high="110", low="90"))
+                fill = ex.last_minute_fills[0]
+                self.assertEqual(fill.price, D(opening))
+                self.assertEqual(fill.fee, D(opening) * D("0.0006"))
 
     def test_amend_and_cancel_preserve_one_order_identity(self):
         ex = exchange()
