@@ -249,7 +249,9 @@ def _run_workspace_callback(callback_query, parsed):
             print("[WORKSPACE HANDOFF BLOCKED]", type(exc).__name__)
             _answer_callback(callback_id, "Редактор: защищённое HTTPS-соединение недоступно")
             return
-        _answer_callback(callback_id, "Ссылка на редактор/терминал отправлена в чат")
+        _answer_callback(callback_id, "Ссылка на Автопилот отправлена в чат"
+                         if parsed["mode"] == "AUTOPILOT"
+                         else "Ссылка на редактор/терминал отправлена в чат")
         return
     from workspace_owner_launcher import request_owner_workspace_open
     try:
