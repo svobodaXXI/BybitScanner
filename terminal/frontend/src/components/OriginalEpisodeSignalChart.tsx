@@ -732,15 +732,6 @@ export function OriginalEpisodeSignalChart(props: OriginalSignalChartProps) {
             chartLabel={alternateFrame ? "Рыночный контекст " + timeframeLabel(frame) : undefined} />
         </div>
       )}
-      {original && alternateFrame && (
-        <div className="diary-trade-panel" role="region" aria-label="Исходная фигура сделки">
-          <h4>Исходная фигура · {timeframeLabel(original.snapshot.timeframe)}</h4>
-          <InteractiveTradeChart original={original}
-            bars={barsByFrame[original.snapshot.timeframe] ?? original.snapshot.bars}
-            frame={original.snapshot.timeframe} executions={executions} side={side}
-            chartLabel="Исходный график сигнала" />
-        </div>
-      )}
       {original && (canExtend || loading) && (
         <button className="diary-detail-back" type="button" disabled={!canExtend}
           onClick={() => void addMore()}>
