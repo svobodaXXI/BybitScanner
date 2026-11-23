@@ -5874,12 +5874,13 @@ class SQLiteStore:
     ) -> tuple[str, ...]:
         """Prove the durable scope of an unresolved post-fill emergency close.
 
-        A legacy pending marker and a newer persisted dispatch intent both fence
-        the symbol. Terminal history is included: changing candidate status
-        cannot erase an ambiguous close. A completed recovery releases this
-        *derived* quarantine only after its same-call FLAT proof was persisted
-        with terminal INVALIDATED state. Missing or corrupt reads fail closed.
-        This is an entry fence, NOT evidence permitting account-wide admission.
+        A legacy pending marker, a newer persisted dispatch intent, or an
+        unresolved canonical STOP/TAKE protection obligation fences the symbol.
+        Terminal history is included: changing candidate status alone cannot
+        erase an ambiguous close. A successful persisted close or an obligation
+        reaching RESOLVED releases its own derived marker. Missing or foreign
+        trade ownership fails closed. This is an entry fence, NEVER evidence
+        permitting account-wide admission or relaxing portfolio-risk bounds.
         """
         self._assert_owner()
         rows = self._connection.execute(
@@ -5912,27 +5913,53 @@ class SQLiteStore:
             )
             if (pending is True or intent is not None) and not confirmed_closed:
                 blocked.append(str(row["candidate_id"]))
-        return tuple(blocked)
+        # An authoritative STOP/TAKE close has its own persisted obligation.
+        # Until RESOLVED it must also fence this exact symbol, including when
+        # the Robot candidate status was already changed by another callback.
+        # Never infer an absent obligation from a missing/foreign trade row.
+        obligations = self._connection.execute(
+            """SELECT o.obligation_id, t.candidate_id,
+                      t.trading_account_id AS trade_account_id,
+                      t.symbol AS trade_symbol
+               FROM paper_protection_obligations AS o
+               LEFT JOIN robot_trades AS t ON t.trade_id=o.trade_id
+               WHERE o.trading_account_id=? AND o.symbol=? AND o.status!='RESOLVED'
+               ORDER BY o.obligation_id""",
+            (trading_account_id.value, symbol.value),
+        )
+        for row in obligations:
+            if (
+                row["candidate_id"] is None
+                or row["trade_account_id"] != trading_account_id.value
+                or row["trade_symbol"] != symbol.value
+            ):
+                raise PersistenceError(
+                    "Robot protection obligation has ambiguous trade ownership"
+                )
+            blocked.append(str(row["candidate_id"]))
+        return tuple(sorted(set(blocked)))
 
     def robot_account_quarantines(
         self, trading_account_id: TradingAccountId,
     ) -> dict[str, tuple[str, ...]]:
-        """Inspect every potentially unproven emergency without guessing risk.
+        """Report durable emergency and unresolved protection symbol fences.
 
-        The small partial recovery-marker index excludes normal historical
-        candidates. Delegate proof of terminal disposition to the exact
-        symbol predicate shared with canonical entry admission.
+        Keep the listing aligned with the exact admission/fill predicate.
+        This reports local scope, not a certificate of independent account risk.
         """
         self._assert_owner()
         rows = self._connection.execute(
-            """SELECT DISTINCT symbol FROM robot_candidates
+            """SELECT symbol FROM robot_candidates
                WHERE trading_account_id=? AND robot_state_json IS NOT NULL
                  AND (
                     json_type(robot_state_json, '$.execution.emergency_close_pending') IS NOT NULL
                     OR json_type(robot_state_json, '$.execution.emergency_close_intent') IS NOT NULL
                  )
+               UNION
+               SELECT symbol FROM paper_protection_obligations
+               WHERE trading_account_id=? AND status!='RESOLVED'
                ORDER BY symbol""",
-            (trading_account_id.value,),
+            (trading_account_id.value, trading_account_id.value),
         )
         result: dict[str, tuple[str, ...]] = {}
         for row in rows:
