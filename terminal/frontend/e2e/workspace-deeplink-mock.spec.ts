@@ -50,8 +50,13 @@ for (const [mode, symbol, timeframe] of [
       await route.fulfill({ status: 503, contentType: "application/json", body: '{"ok":false}' });
     });
     await page.goto(`/?mode=${mode}&symbol=${symbol}&timeframe=${timeframe}`);
-    await expect(page.getByText("Active mode", { exact: false })).toBeVisible();
-    await expect(page.getByRole("heading", { name: mode })).toBeVisible();
+    if (mode === "AUTOPILOT") {
+      // The current Robot screen intentionally hides the legacy "Active mode" header.
+      await expect(page.getByLabel("Робот: первый экран")).toBeVisible();
+    } else {
+      await expect(page.getByText("Active mode", { exact: false })).toBeVisible();
+      await expect(page.getByRole("heading", { name: mode })).toBeVisible();
+    }
     await expect.poll(() => posts).toContain(symbol);
     await expect.poll(() => streamRequests).toContain(symbol);
     await expect(page.getByRole("button", { name: `Select symbol ${symbol}` })).toBeVisible();
