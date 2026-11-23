@@ -237,23 +237,31 @@ class _ProtectedResearchCapture:
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def rest_anchor_tape_snapshot(self) -> dict[str, object]:
-        """Atomic, read-only structural copy of one bounded raw ingress epoch.
+        """Read one bounded ingress epoch without holding up WS dispatch.
 
-        A future REST request must record the epoch both before and after
-        fetching; a mismatch means UNKNOWN, never a stitched generation.
-        Raw frame payloads are not book states. Return detached nested
-        payloads: a later research consumer must never mutate this witness.
+        Only the structural snapshot is taken under the ingress lock.
+        Detached payloads are copied outside the lock, then the source epoch
+        is rechecked. A concurrent reset/close invalidates the result rather
+        than returning evidence from an obsolete generation.
         """
         with self._lock:
-            return {
-                "symbol": self.context.symbol,
-                "depth": self.context.public_orderbook.depth,
-                "epoch": self._epoch,
-                "active": self._active,
-                "frames": deepcopy(tuple(self.rest_anchor_candidates)),
-                "source_complete": False,
-                "trading_authorized": False,
-            }
+            symbol = self.context.symbol
+            depth = self.context.public_orderbook.depth
+            epoch = self._epoch
+            active = self._active
+            raw_frames = tuple(self.rest_anchor_candidates)
+        frames = deepcopy(raw_frames)  # Never hold the protection ingress lock.
+        with self._lock:
+            stable = epoch == self._epoch and active == self._active
+        return {
+            "symbol": symbol,
+            "depth": depth,
+            "epoch": epoch,
+            "active": active and stable,
+            "frames": frames if stable else (),
+            "source_complete": False,
+            "trading_authorized": False,
+        }
 
     @property
     def impulse_observation(self) -> PublicTradeObservation:
