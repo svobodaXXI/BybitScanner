@@ -467,6 +467,36 @@ class HimsStopRefusalOwnerThreadCloseTests(HimsOwnerThreadFillTests):
         self.assertEqual(store.robot_symbol_quarantine_candidate_ids(
             ACCOUNT, symbol), ())
 
+    def test_committed_emergency_exit_rejects_wrong_side_after_restart(self):
+        """Even a valid command digest cannot authorize the wrong EXIT direction."""
+        store = self.runtime.store
+        symbol = Symbol("HIMSUSDT")
+        stale = replace(_p1_book(), received_at_ms=int(time.time() * 1000) - 10_000)
+        with patch.object(rp, "build_box_stop_only_plan", _refuse_stop):
+            self.runtime.process_robot_market_event(
+                "HIMSUSDT", stale, event_id="HIMSUSDT:1",
+                received_at_ms=stale.received_at_ms,
+            )
+        record = store.get_robot_candidate(self.candidate.candidate_id)
+        state = dict(record.robot_state)
+        execution = dict(state["execution"])
+        wrong_side = dict(execution["box_emergency_close_intent"])
+        wrong_side["side"] = "Buy"  # Box LONG must only close with Sell.
+        execution["box_emergency_close_intent"] = wrong_side
+        state["execution"] = execution
+        store.save_robot_candidate_state(
+            record.candidate_id, status="APPROVED", robot_state=state,
+            expected_revision=record.state_revision,
+            updated_at_ms=max(int(time.time() * 1000), record.updated_at_ms + 1),
+        )
+        self._background_pass(_p1_book())
+        self.assertEqual(self._sells(), [])
+        self.assertEqual(store.get_position_projection(
+            PositionKey(ACCOUNT, Category.LINEAR, symbol, 0)).side,
+            PositionSide.LONG)
+        self.assertEqual(store.robot_symbol_quarantine_candidate_ids(
+            ACCOUNT, symbol), (record.candidate_id,))
+
 
 if __name__ == "__main__":
     unittest.main()
