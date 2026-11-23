@@ -1052,8 +1052,19 @@ export function ReplayPage() {
       // payload or loaded from a VPS candle archive. No Scanner/Robot runs.
       const m5 = 300_000;
       const startMs = Math.max(m5, Math.floor((parsed.opened_at_ms - 3_600_000) / m5) * m5);
-      const endExclusive = Math.ceil((parsed.closed_at_ms + 3_600_000) / m5) * m5;
-      if (endExclusive - startMs > 7 * 86_400_000 || endExclusive <= startMs) {
+      // A just-closed PAPER episode may be newer than the +1h context window.
+      // Never request future/incomplete public M5 candles; the local HTTP
+      // server independently enforces its closed-candle boundary.
+      const requestedEndExclusive = Math.ceil((parsed.closed_at_ms + 3_600_000) / m5) * m5;
+      const lastClosedEndExclusive = Math.floor(Date.now() / m5) * m5;
+      const endExclusive = Math.min(requestedEndExclusive, lastClosedEndExclusive);
+      const episodeEndExclusive = Math.ceil(parsed.closed_at_ms / m5) * m5;
+      if (endExclusive < episodeEndExclusive) {
+        setError("Последняя свеча M5 со временем закрытия сделки ещё не закрылась. " +
+          "Повторите загрузку после её закрытия; факты PAPER сохранены локально.");
+        return;
+      }
+      if (requestedEndExclusive - startMs > 7 * 86_400_000 || endExclusive <= startMs) {
         setError("Исполнения загружены, но публичный интервал превышает 7 суток. " +
           "Выберите проверенную историю вручную; исходная цепочка Robot не реконструирована.");
         return;
