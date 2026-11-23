@@ -690,6 +690,197 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
             ["cancelled", "cancelled", "cancelled"],
         )
 
+    def _prove_real_closed_box_stop_for_stale_take(self, *, reason="STOP"):
+        """Canonical SQLiteStore: Box entry, resolved STOP, CLOSED trade/candidate.
+
+        Preserve a stale OPEN snapshot from immediately before STOP won.
+        No production SQLite rows are modified; this fixture is isolated.
+        """
+        raw = box_snapshot()
+        raw["identity"]["symbol"] = SYMBOL
+        source, _ = self.store.save_box_plan_only(
+            snapshot=raw, created_at_ms=3001,
+        )
+        candidate, _ = self.store.handoff_box_plan_to_robot(
+            source.candidate_id, symbol=source.symbol,
+            expected_snapshot_sha256=source.snapshot_sha256,
+            approved_at_ms=3002,
+        )
+        self.clock.value = 4000
+        self.monitor._get_market_book = lambda symbol: _ready_book("95")
+        self.assertEqual(self.monitor.tick(), (candidate.candidate_id,))
+        self.assertEqual(self.monitor.tick(), (candidate.candidate_id,))
+        working = self.store.get_robot_candidate(candidate.candidate_id)
+        entry_ids = tuple(working.robot_state["execution"]["limit_order_ids"])
+        self.executor.fill_resting_limit(
+            entry_ids[0], SYMBOL, OrderSide.BUY, Decimal("2"), Decimal("94"),
+        )
+        self.assertEqual(
+            self.monitor.process_authoritative_fill(SYMBOL),
+            (candidate.candidate_id,),
+        )
+        stale_open = self.store.get_robot_candidate(candidate.candidate_id)
+        self.assertEqual(stale_open.status, "OPEN")
+        trade_id = f"robot-trade-{candidate.candidate_id}"
+        trade = self.store.get_robot_trade(trade_id)
+        self.assertIsNotNone(trade)
+
+        # The canonical STOP obligation is an independently durably latched
+        # order with a stable exact execution identity.
+        self.clock.value = 4900
+        obligation, _ = self.store.latch_paper_protection_obligation(
+            trade_id=trade_id, protection_version=1, winning_leg="STOP",
+            trigger_price=trade.stop_price, observed_exit_price=Decimal("90"),
+            observed_quantity=Decimal("2"), market_event_id=f"{SYMBOL}:50:51",
+            source_generation=1, source_sequence=50, source_update_id=51,
+            source_event_at_ms=4950, source_matching_engine_cts_ms=4949,
+            observed_bid_price=Decimal("90"), observed_ask_price=Decimal("90.1"),
+            source_received_at_ms=4960, latched_at_ms=4961,
+        )
+        self.store.reserve_box_order_identity(
+            source.candidate_id, order_id=obligation.order_id, role="EXIT", slot=0,
+        )
+        for oid in entry_ids[1:]:
+            self.store.cancel_paper_limit(
+                client_action_id=f"test-stop-cancel-{oid}",
+                request_fingerprint=f"test-fp-{oid}", order_id=OrderId(oid),
+                trading_account_id=ACCOUNT_ID, updated_at_ms=4980,
+            )
+        position_key = PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
+        old = self.store.get_position_projection(position_key)
+        self.assertEqual(old.quantity.value, Decimal("2"))
+        from terminal.domain.models import ExecutionDedupKey
+        stop_at = 5000
+        self.store.apply_execution_once(
+            Execution(
+                dedup_key=ExecutionDedupKey(
+                    ACCOUNT_ID, Category.LINEAR, obligation.exec_id,
+                ),
+                order_id=obligation.order_id, symbol=Symbol(SYMBOL),
+                side=OrderSide.SELL, price=Price(Decimal("90")),
+                quantity=Quantity(Decimal("2")), fee=Decimal("0"),
+                exchange_timestamp_ms=stop_at,
+            ),
+            PositionProjectionUpdate(
+                position_key=position_key, side=PositionSide.FLAT,
+                quantity=Quantity(Decimal("0")), average_entry=None,
+                realized_pnl=Decimal("-8"), accumulated_fee=Decimal("0"),
+                engaged_notional=Notional(Decimal("0")), sync_state="synced",
+                expected_version=old.version, updated_at_ms=stop_at,
+            ),
+        )
+        dispatched = self.store.transition_paper_protection_obligation(
+            obligation.obligation_id, expected_status="TRIGGERED",
+            next_status="DISPATCHING", expected_version=obligation.version,
+            updated_at_ms=stop_at+1,
+        )
+        self.store.transition_paper_protection_obligation(
+            obligation.obligation_id, expected_status="DISPATCHING",
+            next_status="RESOLVED", expected_version=dispatched.version,
+            updated_at_ms=stop_at+2,
+        )
+        self.store.close_robot_trade(
+            trade_id, exit_time_ms=stop_at, exit_price=Decimal("90"),
+            exit_reason=reason, realized_pnl_usdt=Decimal("-8"),
+            realized_pnl_pct=Decimal("-4.25531914893617"),
+            fees_costs_usdt=Decimal("0"),
+            updated_at_ms=stop_at+3,
+        )
+        closed = self.store.get_robot_candidate(candidate.candidate_id)
+        self.assertEqual(closed.status, "CLOSED")
+        proof = self.store.prove_box_owned_position(source.candidate_id)
+        self.assertEqual(proof.remaining_quantity, Decimal("0"))
+        self.assertEqual(proof.entry_quantity, proof.exit_quantity)
+        self.assertIn(obligation.exec_id.value, proof.execution_ids)
+        # Use the same real owner store when re-entering from stale memory.
+        self.monitor._store = lambda: self.store
+        return stale_open, source, proof, trade_id, obligation
+
+    def test_closed_stop_before_stale_box_take_is_no_mutation(self):
+        record, source, proof, trade_id, obligation = (
+            self._prove_real_closed_box_stop_for_stale_take()
+        )
+        before = (
+            self.store.get_robot_candidate(record.candidate_id),
+            self.store.get_robot_trade(trade_id),
+            self.store.get_paper_protection_obligation(obligation.obligation_id),
+            self.store.get_position_projection(PositionKey(
+                ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0,
+            )),
+        )
+        self.monitor._escalate_reconciliation = Mock()
+        self.monitor._release_entry_coverage = Mock()
+        with (patch.object(self.store, "cancel_paper_limit") as cancel,
+              patch.object(self.store, "clear_paper_protection_for_flat") as clear):
+            for _ in range(2):
+                self.assertTrue(self.monitor._finalize_box_take_if_flat(
+                    record, source, proof,
+                ))
+            cancel.assert_not_called()
+            clear.assert_not_called()
+        self.monitor._release_entry_coverage.assert_not_called()
+        self.monitor._escalate_reconciliation.assert_not_called()
+        after = (
+            self.store.get_robot_candidate(record.candidate_id),
+            self.store.get_robot_trade(trade_id),
+            self.store.get_paper_protection_obligation(obligation.obligation_id),
+            self.store.get_position_projection(PositionKey(
+                ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0,
+            )),
+        )
+        self.assertEqual(before, after)
+        self.assertEqual(self.store.get_robot_runtime_state(ACCOUNT_ID).recovery_status, "READY")
+
+    def test_stale_box_take_non_stop_close_retains_fence_without_side_effects(self):
+        record, source, proof, trade_id, obligation = (
+            self._prove_real_closed_box_stop_for_stale_take(reason="TAKE")
+        )
+        original = self.store.get_robot_trade(trade_id)
+        self.monitor._escalate_reconciliation = Mock()
+        with (patch.object(self.store, "cancel_paper_limit") as cancel,
+              patch.object(self.store, "clear_paper_protection_for_flat") as clear):
+            self.assertFalse(self.monitor._finalize_box_take_if_flat(
+                record, source, proof,
+            ))
+            cancel.assert_not_called()
+            clear.assert_not_called()
+        self.monitor._escalate_reconciliation.assert_called_once()
+        self.assertEqual(self.store.get_robot_trade(trade_id), original)
+
+    def test_stale_box_take_mismatched_source_or_active_limit_retains_fence(self):
+        record, source, proof, trade_id, obligation = (
+            self._prove_real_closed_box_stop_for_stale_take()
+        )
+        self.monitor._escalate_reconciliation = Mock()
+        from dataclasses import replace
+        wrong_source = replace(source, candidate_id="wrong-box-source")
+        with (patch.object(self.store, "cancel_paper_limit") as cancel,
+              patch.object(self.store, "clear_paper_protection_for_flat") as clear):
+            self.assertFalse(self.monitor._finalize_box_take_if_flat(
+                record, wrong_source, proof,
+            ))
+            cancel.assert_not_called()
+            clear.assert_not_called()
+        self.monitor._escalate_reconciliation.assert_called_once()
+        self.monitor._escalate_reconciliation.reset_mock()
+        # A still-live limit prevents the read-only STOP shortcut.
+        self.store.create_paper_limit(
+            client_action_id="foreign-stale-stop-limit",
+            request_fingerprint="foreign-stale-stop-fp",
+            order_id=OrderId("foreign-stale-stop-limit"),
+            order_link_id="foreign-stale-stop-link",
+            trading_account_id=ACCOUNT_ID, symbol=Symbol(SYMBOL),
+            side=OrderSide.BUY, price=Decimal("89"),
+            quantity=Decimal("1"), created_at_ms=5200,
+        )
+        with (patch.object(self.store, "cancel_paper_limit") as cancel,
+              patch.object(self.store, "clear_paper_protection_for_flat") as clear):
+            self.assertFalse(self.monitor._finalize_box_take_if_flat(
+                record, source, proof,
+            ))
+            cancel.assert_not_called()
+            clear.assert_not_called()
+        self.monitor._escalate_reconciliation.assert_called_once()
     def test_box_entry_ready_runs_four_limit_grid_into_shared_trade(self):
         source_snapshot = {
             "contract_version": 1,
