@@ -291,10 +291,17 @@ class _FakeActionExecutor:
 
     def full_close(self, request):
         self.protection_calls.append(("full_close", request))
-        if self.full_close_status == CommandResultStatus.COMPLETED and self.full_close_flattens:
-            self._flatten(request.symbol)
+        command_id = None
+        if self.full_close_status == CommandResultStatus.COMPLETED:
+            from terminal.application.command_identity import robot_emergency_close_identity
+            command_id = robot_emergency_close_identity(
+                request.client_action_id.value, request.symbol,
+            ).command_id.value
+            if self.full_close_flattens:
+                self._flatten(request.symbol)
         return CommandResult(
             request.client_action_id.value, self.full_close_status, "closed", "full close",
+            command_id,
         )
 
     def fill_resting_limit(self, order_id_str, symbol, side, quantity, price):
@@ -3349,6 +3356,65 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertTrue(record.robot_state["execution"]["emergency_close_pending"])
         position_key = PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
         self.assertEqual(self.store.get_position_projection(position_key).side, PositionSide.LONG)
+
+    def test_full_close_already_flat_without_exact_command_receipt_stays_fenced(self):
+        """The API's COMPLETED/already_flat response has no actual Market command."""
+        self._create_candidate(start_width=0.0)
+        self._drive_to_retest_detected()
+        self._place_legacy_unfiltered_limit()
+        order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
+        self.executor.fill_resting_limit(
+            order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"),
+        )
+
+        def misleading_already_flat(request):
+            self.executor._flatten(request.symbol)
+            return CommandResult(
+                request.client_action_id.value, CommandResultStatus.COMPLETED,
+                "already_flat", "position is already flat",
+            )
+
+        with patch.object(self.executor, "full_close", side_effect=misleading_already_flat) as close:
+            self.monitor.tick()
+        self.assertEqual(close.call_count, 1)
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.status, "APPROVED")
+        self.assertTrue(record.robot_state["execution"]["emergency_close_pending"])
+        self.assertEqual(
+            self.store.robot_symbol_quarantine_candidate_ids(ACCOUNT_ID, Symbol(SYMBOL)),
+            ("candidate-1",),
+        )
+        self.assertEqual(
+            self.store.get_robot_runtime_state(ACCOUNT_ID).recovery_status,
+            "RECONCILIATION_REQUIRED",
+        )
+
+    def test_full_close_foreign_command_receipt_stays_fenced_even_if_flat(self):
+        """COMPLETED for another command cannot retire this persisted intent."""
+        self._create_candidate(start_width=0.0)
+        self._drive_to_retest_detected()
+        self._place_legacy_unfiltered_limit()
+        order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
+        self.executor.fill_resting_limit(
+            order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"),
+        )
+
+        def foreign_command(request):
+            self.executor._flatten(request.symbol)
+            return CommandResult(
+                request.client_action_id.value, CommandResultStatus.COMPLETED,
+                "closed", "some other command completed", "cmd_foreign",
+            )
+
+        with patch.object(self.executor, "full_close", side_effect=foreign_command):
+            self.monitor.tick()
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.status, "APPROVED")
+        self.assertTrue(record.robot_state["execution"]["emergency_close_pending"])
+        self.assertEqual(
+            self.store.robot_symbol_quarantine_candidate_ids(ACCOUNT_ID, Symbol(SYMBOL)),
+            ("candidate-1",),
+        )
 
     def test_repeated_tick_during_pending_emergency_close_is_idempotent_and_no_new_entry(self):
         """Unknown close outcome holds the candidate; a repeated tick never

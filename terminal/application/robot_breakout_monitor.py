@@ -4305,8 +4305,14 @@ class RobotBreakoutMonitor:
             return
 
         completed = getattr(result, "status", None) == CommandResultStatus.COMPLETED
+        # COMPLETED/already_flat has no command receipt and cannot attest that
+        # this precommitted emergency close actually executed. A foreign or
+        # missing receipt must leave the durable intent/account fence in place.
+        exact_close_receipt = (
+            getattr(result, "command_id", None) == identity.command_id.value
+        )
         authoritative_flat = False
-        if completed:
+        if completed and exact_close_receipt:
             position_key = PositionKey(
                 self._account_id, Category.LINEAR, record.symbol, 0,
             )
@@ -4315,9 +4321,10 @@ class RobotBreakoutMonitor:
                 projection is not None
                 and projection.side is PositionSide.FLAT
                 and projection.quantity.value == 0
+                and projection.sync_state == "synced"
             )
 
-        if not (completed and authoritative_flat):
+        if not (completed and exact_close_receipt and authoritative_flat):
             self._escalate_reconciliation(
                 "ROBOT_EMERGENCY_CLOSE_OUTCOME_UNPROVEN "
                 f"symbol={record.symbol.value} candidate_id={record.candidate_id}"
