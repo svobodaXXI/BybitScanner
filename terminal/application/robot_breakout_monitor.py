@@ -1712,6 +1712,25 @@ class RobotBreakoutMonitor:
                     and proof.entry_quantity == proof.exit_quantity)
         ):
             return False
+        # The canonical Box protection finalizer closes with this exact
+        # immutable proof tuple. STOP identity and FLAT alone do not certify
+        # the exit price, gross PnL, net percentage, or accumulated fees.
+        if (
+            not isinstance(proof.average_exit, Decimal)
+            or not proof.average_exit.is_finite() or proof.average_exit <= 0
+            or not isinstance(proof.entry_notional, Decimal)
+            or not proof.entry_notional.is_finite() or proof.entry_notional <= 0
+            or not isinstance(proof.realized_pnl, Decimal)
+            or not proof.realized_pnl.is_finite()
+            or not isinstance(proof.accumulated_fee, Decimal)
+            or not proof.accumulated_fee.is_finite() or proof.accumulated_fee < 0
+        ):
+            return False
+        realized_pct = (
+            (proof.realized_pnl - proof.accumulated_fee)
+            / proof.entry_notional
+            * Decimal("100")
+        )
         trade = store.get_robot_trade(f"robot-trade-{record.candidate_id}")
         if (
             trade is None or trade.candidate_id != record.candidate_id
@@ -1719,8 +1738,10 @@ class RobotBreakoutMonitor:
             or trade.symbol != record.symbol or trade.pattern != "IKIGAI_BOX"
             or trade.exit_reason != "STOP" or trade.exit_time_ms is None
             or proof.last_execution_at_ms != trade.exit_time_ms
-            or trade.realized_pnl_usdt is None
-            or trade.fees_costs_usdt is None
+            or trade.exit_price != proof.average_exit
+            or trade.realized_pnl_usdt != proof.realized_pnl
+            or trade.realized_pnl_pct != realized_pct
+            or trade.fees_costs_usdt != proof.accumulated_fee
         ):
             return False
         obligation = store.get_paper_protection_obligation_for_trade(trade.trade_id)
