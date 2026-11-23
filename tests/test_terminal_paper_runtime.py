@@ -2271,6 +2271,28 @@ def test_robot_emergency_close_persists_exact_market_command_and_replay_is_noop(
             runtime.close()
 
 
+def _seed_robot_box_emergency_quarantine(runtime: PaperRuntime, symbol: Symbol):
+    """Persist an exact Box EXIT-0 marker without claiming an execution."""
+    raw = box_snapshot()
+    raw["identity"]["symbol"] = symbol.value
+    source, _ = runtime.store.save_box_plan_only(snapshot=raw, created_at_ms=3001)
+    candidate, _ = runtime.store.handoff_box_plan_to_robot(
+        source.candidate_id, symbol=symbol,
+        expected_snapshot_sha256=source.snapshot_sha256, approved_at_ms=3002,
+    )
+    state = dict(candidate.robot_state)
+    state["execution"] = {"box_emergency_close_intent": {
+        "slot": 0, "symbol": symbol.value,
+        "order_id": "unknown-robot-exit-a",
+        "quantity": "0.004", "side": "Sell",
+    }}
+    runtime.store.save_robot_candidate_state(
+        candidate.candidate_id, status="APPROVED", robot_state=state,
+        expected_revision=candidate.state_revision, updated_at_ms=3003,
+    )
+    return candidate
+
+
 def test_manual_paper_order_creation_does_not_bypass_robot_symbol_quarantine():
     """A's unknown Robot EXIT fences manual entries but not B or safe cancel/close."""
     with tempfile.TemporaryDirectory() as temp:
@@ -2291,26 +2313,7 @@ def test_manual_paper_order_creation_does_not_bypass_robot_symbol_quarantine():
             ))
             assert opened.status is CommandResultStatus.COMPLETED
 
-            raw = box_snapshot()
-            raw["identity"]["symbol"] = a.value
-            source, _ = runtime.store.save_box_plan_only(
-                snapshot=raw, created_at_ms=3001,
-            )
-            candidate, _ = runtime.store.handoff_box_plan_to_robot(
-                source.candidate_id, symbol=a,
-                expected_snapshot_sha256=source.snapshot_sha256,
-                approved_at_ms=3002,
-            )
-            state = dict(candidate.robot_state)
-            state["execution"] = {"box_emergency_close_intent": {
-                "slot": 0, "symbol": a.value,
-                "order_id": "unknown-robot-exit-a",
-                "quantity": "0.004", "side": "Sell",
-            }}
-            runtime.store.save_robot_candidate_state(
-                candidate.candidate_id, status="APPROVED", robot_state=state,
-                expected_revision=candidate.state_revision, updated_at_ms=3003,
-            )
+            candidate = _seed_robot_box_emergency_quarantine(runtime, a)
             assert runtime.store.robot_symbol_quarantine_candidate_ids(
                 account, a,
             ) == (candidate.candidate_id,)
@@ -2353,24 +2356,6 @@ def test_manual_paper_order_creation_does_not_bypass_robot_symbol_quarantine():
             assert len(runtime.store.load_executions_for_symbol(account, a)) == prior_a_fills
             assert runtime.store.get_paper_limit(old_limit.order_id, account).status == "open"
 
-            # Independent B still goes through the ordinary PAPER guard.
-            b = Symbol("ETHUSDT")
-            independent = runtime.market(MarketCommandRequest(
-                ClientActionId("manual-unrelated-b"), b.value, OrderSide.BUY,
-                VolumeRequest(VolumeUnit.USDT, Decimal("321")), Decimal("64250"),
-                "Percent", Decimal("0.5"),
-            ))
-            assert independent.status is CommandResultStatus.COMPLETED
-            b_limit = runtime.create_limit(LimitCommandRequest(
-                ClientActionId("manual-unrelated-b-limit"), b.value, OrderSide.BUY,
-                VolumeRequest(VolumeUnit.USDT, Decimal("321")),
-                Decimal("64000"), Decimal("64000"), TimeInForce.GTC,
-            ))
-            assert b_limit.status is CommandResultStatus.COMPLETED
-            assert runtime._match_limits_only(
-                b, replace(executable_book, symbol=b), "b-independent-book",
-            ) == 1
-
             # Cancellation and canonical explicit full_close remain available for A.
             cancelled = runtime.cancel_limit(PaperLimitCancelRequest(
                 ClientActionId("manual-cancel-old-a"), a.value, old_limit.order_id,
@@ -2384,6 +2369,52 @@ def test_manual_paper_order_creation_does_not_bypass_robot_symbol_quarantine():
             assert runtime.store.robot_symbol_quarantine_candidate_ids(
                 account, a,
             ) == (candidate.candidate_id,)
+        finally:
+            runtime.close()
+
+
+def test_inert_quarantined_a_does_not_stop_independent_manual_b():
+    """B works only in the flat/no-order A cohort; nonflat risk is NOT certified."""
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime(Path(temp) / "paper.sqlite3")
+        account = TradingAccountId("paper")
+        a, b = Symbol("BTCUSDT"), Symbol("ETHUSDT")
+        try:
+            candidate = _seed_robot_box_emergency_quarantine(runtime, a)
+            assert runtime.store.robot_symbol_quarantine_candidate_ids(
+                account, a,
+            ) == (candidate.candidate_id,)
+            assert runtime.store.get_position_projection(
+                PositionKey(account, Category.LINEAR, a, 0),
+            ) is None
+            assert runtime.store.load_active_paper_limits(account, a) == ()
+            assert runtime.store.load_executions_for_symbol(account, a) == ()
+            assert not any(
+                item.trading_account_id == account and item.symbol == a
+                for item in runtime.store.load_unfinished_commands()
+            )
+
+            independent = runtime.market(MarketCommandRequest(
+                ClientActionId("manual-unrelated-flat-a-b"), b.value, OrderSide.BUY,
+                VolumeRequest(VolumeUnit.USDT, Decimal("321")), Decimal("64250"),
+                "Percent", Decimal("0.5"),
+            ))
+            assert independent.status is CommandResultStatus.COMPLETED
+            b_limit = runtime.create_limit(LimitCommandRequest(
+                ClientActionId("manual-unrelated-flat-a-b-limit"), b.value, OrderSide.BUY,
+                VolumeRequest(VolumeUnit.USDT, Decimal("321")),
+                Decimal("64000"), Decimal("64000"), TimeInForce.GTC,
+            ))
+            assert b_limit.status is CommandResultStatus.COMPLETED
+            executable_book = NormalizedOrderBook(
+                symbol=b,
+                bids=(PriceLevel(Price(Decimal("63949.5")), Quantity(Decimal("10"))),),
+                asks=(PriceLevel(Price(Decimal("63950")), Quantity(Decimal("10"))),),
+                health=BookHealth.READY,
+                received_at_ms=int(__import__("time").time() * 1000),
+                available_depth=1,
+            )
+            assert runtime._match_limits_only(b, executable_book, "b-flat-a-book") == 1
         finally:
             runtime.close()
 
