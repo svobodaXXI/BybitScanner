@@ -35,7 +35,7 @@ from terminal.domain.models import (
     TradingAccountId,
 )
 from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
-from terminal.persistence.sqlite_store import PositionProjectionUpdate, SQLiteStore
+from terminal.persistence.sqlite_store import ConcurrentUpdate, PositionProjectionUpdate, SQLiteStore
 from tests.test_box_plan_persistence import snapshot as box_snapshot
 
 
