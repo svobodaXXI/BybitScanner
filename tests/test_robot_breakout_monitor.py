@@ -800,6 +800,48 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         record, source, proof, trade_id, obligation = (
             self._prove_real_closed_box_stop_for_stale_take()
         )
+        fresh = self.store.get_robot_candidate(record.candidate_id)
+        settled = self.store.get_robot_trade(trade_id)
+        stop = self.store.get_paper_protection_obligation_for_trade(trade_id)
+        actual = self.store.get_execution(ExecutionDedupKey(
+            ACCOUNT_ID, Category.LINEAR, stop.exec_id,
+        ))
+        position = self.store.get_position_projection(PositionKey(
+            ACCOUNT_ID, Category.LINEAR, record.symbol, 0,
+        ))
+        expected = {
+            "host": record.status == "OPEN" and fresh.status == "CLOSED"
+                and fresh.snapshot_sha256 == record.snapshot_sha256
+                and fresh.updated_at_ms >= record.updated_at_ms,
+            "source": record.signal_snapshot.get("source_box_candidate_id") == source.candidate_id
+                and source.status == "BOX_PLAN_ONLY",
+            "flat_proof": proof.candidate_id == source.candidate_id
+                and proof.entry_quantity == proof.exit_quantity
+                and proof.remaining_quantity == 0,
+            "trade": settled.exit_reason == "STOP"
+                and settled.exit_time_ms == proof.last_execution_at_ms
+                and settled.pattern == "IKIGAI_BOX",
+            "obligation": stop.status == "RESOLVED"
+                and stop.winning_leg == "STOP"
+                and stop.exec_id.value in proof.execution_ids,
+            "execution": actual is not None
+                and actual.order_id == stop.order_id
+                and actual.exchange_timestamp_ms == settled.exit_time_ms,
+            "projection": position.side is PositionSide.FLAT
+                and position.quantity.value == 0
+                and position.sync_state == "synced"
+                and position.version == proof.position_version,
+            "no_open_trade": not any(x.symbol == record.symbol
+                for x in self.store.load_open_robot_trades(ACCOUNT_ID)),
+            "no_active_candidate": not self.store.load_active_robot_candidates_for_symbol(
+                ACCOUNT_ID, record.symbol),
+            "no_active_limit": not self.store.load_active_paper_limits(ACCOUNT_ID, record.symbol),
+            "no_unfinished_command": not any(x.symbol == record.symbol
+                for x in self.store.load_unfinished_commands()),
+            "no_unresolved_obligation": not any(x.symbol == record.symbol
+                for x in self.store.load_unresolved_paper_protection_obligations(ACCOUNT_ID)),
+        }
+        self.assertTrue(all(expected.values()), expected)
         before = (
             self.store.get_robot_candidate(record.candidate_id),
             self.store.get_robot_trade(trade_id),
