@@ -558,7 +558,7 @@ function TradeExecutionPriceChart({ points }: { points: readonly TradeExecutionP
   const y = (price: number) => 105 - (price - min) / Math.max(0.00000001, max - min) * 88;
   return (
     <section className="diary-detail-section">
-      <h3>График цен исполнений · не свечной график</h3>
+      <h3>Цены исполнений</h3>
       <svg className="diary-execution-price-chart" viewBox="0 0 320 122" role="img"
         aria-label="Фактические цены исполнений сделки по времени">
         <path d={ordered.map((point, i) => `${i ? "L" : "M"} ${x(point.at)} ${y(point.price)}`).join(" ")}
@@ -568,7 +568,6 @@ function TradeExecutionPriceChart({ points }: { points: readonly TradeExecutionP
           <title>{point.price} · {formatDate(point.at)}</title>
         </circle>)}
       </svg>
-      <small>Показаны только подтверждённые исполнения, без подстановки рыночных свечей.</small>
     </section>
   );
 }
@@ -1051,6 +1050,17 @@ const dealLabels: Record<ClosedEpisodeLocator["cohort"], string> = {
 };
 
 /** Compact label only; original verified pattern remains available in detail/title. */
+function detailPatternLabel(pattern: string): string {
+  if (pattern === "Rising Wedge") return "Восходящий клин";
+  if (pattern === "Falling Wedge") return "Нисходящий клин";
+  return pattern;
+}
+
+function detailTimeframeLabel(timeframe: string): string {
+  return ({ "1": "M1", "5": "M5", "15": "M15",
+    "60": "H1", "240": "H4", "D": "D1" } as Record<string, string>)[timeframe] ?? timeframe;
+}
+
 function compactDealPattern(pattern: string | null): string {
   if (pattern === "Falling Wedge") return "Клин ↘";
   if (pattern === "Rising Wedge") return "Клин ↗";
@@ -1333,8 +1343,8 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, pnlFilter, sideF
           <h3>Сетап и паттерн</h3>
           {selectedPattern ? (
             <dl>
-              <div><dt>Паттерн</dt><dd>{selectedPattern.pattern}</dd></div>
-              <div><dt>Таймфрейм</dt><dd>{selectedPattern.timeframe}</dd></div>
+              <div><dt>Паттерн</dt><dd>{detailPatternLabel(selectedPattern.pattern)}</dd></div>
+              <div><dt>Таймфрейм</dt><dd>{detailTimeframeLabel(selectedPattern.timeframe)}</dd></div>
               {selectedPattern.source === "D2" ? (
                 <>
                   <div><dt>ID сетапа</dt><dd>{selectedPattern.setupId}</dd></div>
@@ -1345,9 +1355,6 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, pnlFilter, sideF
               )}
             </dl>
           ) : <p className="diary-finrez-basis">Связь с паттерном по точному ID не подтверждена.</p>}
-          <small>{selectedPattern?.source === "WEDGE" || selectedPattern?.source === "ROBOT_ENTRY"
-            ? "Источник: точная цепочка Robot candidate → entry order → execution → episode. Не D2, без исходной геометрии и журнала решений."
-            : "Источник при наличии D2-связи: отдельные наблюдения Trading Diary D2, не полный журнал решений Робота."}</small>
         </section>
         <OriginalEpisodeSignalChart key={selected.trade_episode_id + ':' + report.source_revision}
           marketScope={{ episodeId: selected.trade_episode_id, accountId: report.account_id,
