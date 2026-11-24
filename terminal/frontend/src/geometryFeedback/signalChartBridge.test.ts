@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { initialSourceGeometryRange, projectSignalGeometry, projectVerifiedSignalOverlay, restoreSavedSignalCorrection } from "./signalChartBridge";
+import { initialSourceGeometryRange, projectSignalGeometry, projectVerifiedSignalOverlay, selectSignalOverlayForAccount, restoreSavedSignalCorrection } from "./signalChartBridge";
 import { serializeReviewDrawings } from "./geometryReviewDraft";
 
 const candles = [
@@ -240,5 +240,35 @@ describe("retrospective Editor candles", () => {
       .toEqual([[0, 2], [0, 2]]);
     expect(() => appendRetrospectiveCandles(candles, [later[1]], "5m", asof)).toThrow();
     expect(() => appendRetrospectiveCandles(candles, later, "1h", asof)).toThrow();
+  });
+});
+
+
+describe("immutable Box Fibonacci on the current Terminal chart", () => {
+  const current = [
+    { time: "2026-10-19T01:00:00.000Z", open: 25, high: 30, low: 20, close: 27 },
+    { time: "2026-10-19T01:05:00.000Z", open: 27, high: 35, low: 23, close: 32 },
+  ];
+  for (const [a, b] of [[8, 14], [14, 8]]) {
+    it(`preserves frozen prices ${a} → ${b} after both UTC pivots leave the chart`, () => {
+      const box = [{ id: "box_fibonacci", type: "fibonacci" as const, anchors: [at(0, a), at(2, b)] }];
+      const frozen = projectSignalGeometry(box, candles);
+      const overlay = projectVerifiedSignalOverlay(box, candles, frozen.editableDrawings, current);
+      expect(overlay[0]).toMatchObject({ id: "box_fibonacci", locked: true, referenceExtendRight: true,
+        anchors: [{ logical: 0, price: a }, { logical: 1, price: b }] });
+      expect(box[0].anchors).toEqual([at(0, a), at(2, b)]);
+      expect(frozen.referenceDrawings[0].referenceExtendRight).toBeUndefined();
+      expect(selectSignalOverlayForAccount(overlay, true, false)).toEqual(overlay);
+      expect(selectSignalOverlayForAccount(overlay, false, true)).toEqual([overlay[0]]);
+      expect(selectSignalOverlayForAccount(overlay, false, false)).toBeNull();
+      expect(selectSignalOverlayForAccount(overlay.slice(1), false, true)).toBeNull();
+      expect(() => projectVerifiedSignalOverlay(box, candles, frozen.editableDrawings,
+        candles.slice(0, 2))).toThrow(/not complete/);
+    });
+  }
+  it("does not share rays or saved corrections across accounts", () => {
+    const frozen = projectSignalGeometry(source, candles);
+    const overlay = projectVerifiedSignalOverlay(source, candles, frozen.editableDrawings, current);
+    expect(selectSignalOverlayForAccount(overlay, false, true)).toBeNull();
   });
 });
