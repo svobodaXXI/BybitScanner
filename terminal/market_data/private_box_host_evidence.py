@@ -242,7 +242,7 @@ class PrivateBoxCapture:
             return PrivateBoxReceiptEvidence("UNKNOWN")
 
     def observe(self, get_candidate, *, robot_ready: bool,
-                observed_at_ms: int, save=None) -> PrivateBoxReceiptEvidence:
+                observed_at_ms: int, save=None, observation_clock=None) -> PrivateBoxReceiptEvidence:
         """Read only our exact witness; never accept a replacement host."""
         if robot_ready is not True:
             self.close()
@@ -259,17 +259,15 @@ class PrivateBoxCapture:
             if current != host:
                 self.close()
                 return PrivateBoxReceiptEvidence("UNKNOWN")
-            detached = None
-
-            def read(symbol):
-                nonlocal detached
-                detached = self._hub.private_protected_research_snapshot(
-                    symbol, expected_witness=witness,
-                )
-                return detached
-
+            detached = self._hub.private_protected_research_snapshot(
+                host.symbol, expected_witness=witness,
+            )
+            # Timestamp the completed detached read, not its start: ingress
+            # may advance while copying. Future receipts remain rejected.
+            if observation_clock is not None:
+                observed_at_ms = observation_clock()
             result = inspect_private_box_receipts(
-                get_candidate, read,
+                get_candidate, lambda symbol: detached if symbol == host.symbol else None,
                 candidate_id=host.candidate_id, observed_at_ms=observed_at_ms,
             )
             # Never persist a different revision that raced host selection.
