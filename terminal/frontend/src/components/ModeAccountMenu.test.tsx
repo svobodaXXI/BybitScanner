@@ -82,6 +82,39 @@ describe("mode-specific account selector", () => {
     ]);
   });
 
+  it("marks only the selected account current in each workspace", async () => {
+    const fetchMock = mockCatalog();
+    const onSelectAccount = vi.fn(async () => undefined);
+    const onToggle = vi.fn();
+    const mainProjection = { ...projection, account_id: main.id, provider: "BYBIT" as const,
+      environment: "MAINNET" as const, read_only: true };
+    const { rerender, container } = render(<AccountMenu open onToggle={onToggle} mode="TERMINAL"
+      selectedAccountId="paper" onSelectAccount={onSelectAccount} workspaceProjection={projection} />);
+    await screen.findByRole("button", { name: "Select MAIN" });
+    const paperCard = screen.getByText("Paper / Virtual").closest("article");
+    const mainCard = screen.getByLabelText("Manual MAIN account");
+    expect(paperCard).toHaveClass("is-verified-current");
+    expect(mainCard).not.toHaveClass("is-current");
+    rerender(<AccountMenu open onToggle={onToggle} mode="TERMINAL"
+      selectedAccountId={main.id} onSelectAccount={onSelectAccount} workspaceProjection={mainProjection} />);
+    expect(mainCard).toHaveClass("is-verified-current");
+    expect(paperCard).not.toHaveClass("is-current");
+    expect(container.querySelectorAll('[aria-current="true"]')).toHaveLength(1);
+    expect(screen.getAllByText("Current")).toHaveLength(1);
+    rerender(<AccountMenu open onToggle={onToggle} mode="TERMINAL"
+      selectedAccountId={main.id} onSelectAccount={onSelectAccount} workspaceProjection={null} />);
+    expect(mainCard).toHaveClass("is-current");
+    expect(mainCard).not.toHaveClass("is-verified-current");
+    expect(paperCard).not.toHaveClass("is-current");
+    rerender(<AccountMenu open onToggle={onToggle} mode="AUTOPILOT"
+      selectedAccountId="paper" onSelectAccount={onSelectAccount} workspaceProjection={projection} />);
+    expect(paperCard).toHaveClass("is-verified-current");
+    expect(screen.queryByLabelText("Manual MAIN account")).not.toBeInTheDocument();
+    expect(container.querySelectorAll('[aria-current="true"]')).toHaveLength(1);
+    expect(onSelectAccount).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.every(([url]) => !String(url).includes("/activate"))).toBe(true);
+  });
+
   it("AUTOPILOT offers only PAPER, no MAIN account or provisioning", async () => {
     mockCatalog();
     render(<AccountMenu open onToggle={vi.fn()} mode="AUTOPILOT"
