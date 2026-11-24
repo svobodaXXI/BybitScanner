@@ -1,37 +1,65 @@
-export const PINCH_SCALE_DEAD_ZONE = 0.03;
-export const PINCH_AXIS_DOMINANCE_RATIO = 1.55;
+const PINCH_DEAD_ZONE_PX = 4;
+const PINCH_ORIENTATION_MIN_PX = 8;
+const MIN_SCALE = 0.12;
+const MAX_SCALE = 8;
 
 export type PinchAxes = "NONE" | "X" | "Y" | "XY";
 
-export interface PinchDelta {
-  axes: PinchAxes;
-  xScale: number;
-  yScale: number;
-  xLogDelta: number;
-  yLogDelta: number;
+interface PinchAxisState {
+  start: number;
+  orientation: number;
+  previous: number;
+  logScale: number;
+}
+export interface DirectionalPinchState {
+  x: PinchAxisState;
+  y: PinchAxisState;
 }
 
-export function calculateDirectionalPinch(
-  startDx: number,
-  startDy: number,
-  currentDx: number,
-  currentDy: number,
-): PinchDelta {
-  const safeRatio = (current: number, start: number) =>
-    Math.max(0.05, current) / Math.max(8, start);
-  const rawX = Math.log(safeRatio(currentDx, startDx));
-  const rawY = Math.log(safeRatio(currentDy, startDy));
-  let x = Math.abs(rawX) < PINCH_SCALE_DEAD_ZONE ? 0 : rawX;
-  let y = Math.abs(rawY) < PINCH_SCALE_DEAD_ZONE ? 0 : rawY;
-  if (Math.abs(x) > Math.abs(y) * PINCH_AXIS_DOMINANCE_RATIO) y = 0;
-  else if (Math.abs(y) > Math.abs(x) * PINCH_AXIS_DOMINANCE_RATIO) x = 0;
+const startAxis = (start: number): PinchAxisState => ({
+  start,
+  orientation: Math.abs(start) >= PINCH_ORIENTATION_MIN_PX ? Math.sign(start) : 0,
+  previous: 0,
+  logScale: 0,
+});
+
+export function beginDirectionalPinch(dx: number, dy: number): DirectionalPinchState {
+  return { x: startAxis(dx), y: startAxis(dy) };
+}
+
+function advanceAxis(axis: PinchAxisState, current: number, pixelsPerLog: number): PinchAxisState {
+  const displacement = current - axis.start;
+  // Keep the original finger ordering even after crossing. An initially
+  // aligned axis acquires its orientation only on the first deliberate move.
+  const orientation = axis.orientation ||
+    (Math.abs(displacement) > PINCH_DEAD_ZONE_PX ? Math.sign(displacement) : 0);
+  const directed = displacement * orientation;
+  const previous = Math.sign(directed) * Math.max(0, Math.abs(directed) - PINCH_DEAD_ZONE_PX) / pixelsPerLog;
+  // Incremental saturation avoids a long dead travel when reversing at a limit.
+  const logScale = Math.max(Math.log(MIN_SCALE), Math.min(Math.log(MAX_SCALE),
+    axis.logScale + previous - axis.previous));
+  return { ...axis, orientation, previous, logScale };
+}
+
+export function advanceDirectionalPinch(state: DirectionalPinchState, dx: number, dy: number) {
+  const x = advanceAxis(state.x, dx, 160);
+  const y = advanceAxis(state.y, dy, 140);
+  const xChanged = x.logScale !== state.x.logScale;
+  const yChanged = y.logScale !== state.y.logScale;
+  const axes: PinchAxes = xChanged ? (yChanged ? "XY" : "X") : yChanged ? "Y" : "NONE";
   return {
-    axes: x === 0 && y === 0 ? "NONE" : y === 0 ? "X" : x === 0 ? "Y" : "XY",
-    xScale: Math.exp(x),
-    yScale: Math.exp(y),
-    xLogDelta: x,
-    yLogDelta: y,
+    state: { x, y },
+    axes,
+    xScale: Math.exp(x.logScale),
+    yScale: Math.exp(y.logScale),
+    xLogDelta: x.logScale,
+    yLogDelta: y.logScale,
   };
+}
+
+// Single-step projection for deterministic callers and tests.
+export function calculateDirectionalPinch(startDx: number, startDy: number, currentDx: number, currentDy: number) {
+  return advanceDirectionalPinch(beginDirectionalPinch(startDx, startDy), currentDx, currentDy);
 }
 
 export function scaleRangeAroundAnchor(
@@ -40,7 +68,7 @@ export function scaleRangeAroundAnchor(
   anchor: number,
   scale: number,
 ) {
-  const safeScale = Math.max(0.12, Math.min(8, scale));
+  const safeScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale));
   return {
     from: anchor - (anchor - from) / safeScale,
     to: anchor + (to - anchor) / safeScale,
