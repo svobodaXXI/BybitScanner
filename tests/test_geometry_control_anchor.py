@@ -96,5 +96,72 @@ class DynamicControlAnchorTest(unittest.TestCase):
         self.assertIsNone(r)
 
 
+class ControlBoundaryConstructionTest(unittest.TestCase):
+    def fixture(self, highs, *, mirror=False, current=70, opposite=None):
+        import pandas as pd
+        from geometry.control_anchor import RebuildRequest
+        anchors = tuple(ConfirmedAnchor(i, str(p), i*1000, i*1000+1)
+                        for i,p in highs)
+        # Piecewise-linear high path between real contact points.
+        # Triggering candle is open and already contains the new low.
+        prices = []
+        for i in range(current+1):
+            before = max((a for a in anchors if a.index <= i), key=lambda a:a.index)
+            after = next((a for a in anchors if a.index > i), None)
+            if after:
+                high = float(before.price)+(float(after.price)-float(before.price))*(i-before.index)/(after.index-before.index)
+            else:
+                high = float(before.price)-.4*(i-before.index)
+            prices.append(high)
+        opposite = opposite or {"slope":-.1, "intercept":102.5}
+        frame = pd.DataFrame({"high": prices, "low": [min(h-.1, 90.) for h in prices]})
+        family = "falling"
+        if mirror:
+            frame = pd.DataFrame({"high": 250.-frame.low, "low": 250.-frame.high})
+            anchors = tuple(ConfirmedAnchor(a.index, str(250.-float(a.price)), a.pivot_at_ms, a.known_at_ms)
+                            for a in anchors)
+            opposite = {"slope":-opposite["slope"], "intercept":250.-opposite["intercept"]}
+            family = "rising"
+        request = RebuildRequest("episode", family, "159" if mirror else "91",
+                                 "160" if mirror else "90", "trade", current*1000, current, anchors[-1])
+        return request, anchors, frame, opposite
+
+    def select(self, request, anchors, frame, opposite):
+        from geometry.control_boundary import select_strict_boundary
+        return select_strict_boundary(request, anchors, frame, episode_start=0,
+                                      current_index=len(frame)-1, opposite_line=opposite)
+
+    def test_clean_contact_mandatory_and_mirrored(self):
+        for mirror in (False, True):
+            with self.subTest(mirror=mirror):
+                q, a, f, o = self.fixture([(0,130),(30,115),(60,100)], mirror=mirror,
+                                           opposite={"slope":-.1,"intercept":100.})
+                result = self.select(q,a,f,o)
+                self.assertEqual(result.status, "CONTROL_CONTACT")
+                self.assertTrue(result.candidates)
+                self.assertTrue(all(c["second_index"] == 60 for c in result.candidates))
+
+    def test_preceding_highs_force_outer_line_and_mirror(self):
+        for mirror in (False, True):
+            with self.subTest(mirror=mirror):
+                q,a,f,o = self.fixture([(0,120),(15,117),(30,114),(60,100)], mirror=mirror)
+                result = self.select(q,a,f,o)
+                self.assertEqual(result.status, "EARLIER_ENVELOPE")
+                self.assertTrue(result.candidates)
+                self.assertTrue(all(c["second_index"] < 60 for c in result.candidates))
+
+    def test_no_fallback_for_clean_unsupported_contact(self):
+        q,a,f,o = self.fixture([(0,130),(60,100)], opposite={"slope":-.1,"intercept":100.})
+        result = self.select(q,a,f,o)
+        self.assertEqual(result.status, "CONTACT_UNSUPPORTED")
+        self.assertEqual(result.candidates, ())
+
+    def test_no_fabricated_line_when_current_extreme_missing(self):
+        q,a,f,o = self.fixture([(0,130),(30,115),(60,100)],
+                               opposite={"slope":-.1,"intercept":100.})
+        f.loc[70,"low"] = 91.
+        self.assertEqual(self.select(q,a,f,o).status, "EVIDENCE_UNAVAILABLE")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -8,6 +8,7 @@ on:
       - "geometry/engine.py"
       - "geometry/wedge_boundaries.py"
       - "geometry/control_anchor.py"
+      - "geometry/control_boundary.py"
       - "tests/test_geometry_control_anchor.py"
       - "tests/test_geometry_formation_fit.py"
       - "geometry/envelope_metrics.py"
