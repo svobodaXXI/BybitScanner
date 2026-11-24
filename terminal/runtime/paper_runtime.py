@@ -1232,6 +1232,7 @@ class PaperRuntime:
 
     def start_robot_monitor(
         self, dispatcher: Callable[[Callable[["PaperRuntime"], object]], object],
+        *, private_box_research_snapshot=None,
     ) -> None:
         """Bind the Robot command dispatcher and start ticking.
 
@@ -1243,6 +1244,17 @@ class PaperRuntime:
         """
         if self._robot_command_dispatcher is not None:
             raise RuntimeError("Robot command dispatcher is already bound")
+        # Piggyback the EXISTING canonical Robot-start owner call; no extra
+        # optional queue request, service, subscription or capture enablement.
+        if private_box_research_snapshot is not None:
+            try:
+                self.bind_robot_private_box_inspector(private_box_research_snapshot)
+            except Exception as error:
+                # Research can fail without preventing protective Robot startup.
+                LOGGER.warning(
+                    "Optional private Box inspector disabled: %s",
+                    type(error).__name__,
+                )
         self._robot_command_dispatcher = dispatcher
         self._robot_breakout_monitor.start()
 
