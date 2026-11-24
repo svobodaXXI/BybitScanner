@@ -702,46 +702,6 @@ def test_private_box_snapshot_is_in_process_and_does_not_start_capture():
         hub.close()
 
 
-TESTS = (
-    test_hub_uses_one_connection_for_multiple_reusable_symbol_contexts,
-    test_hub_rejects_unsupported_symbol_without_creating_context,
-    test_subscription_ack_makes_quiet_trades_bootstrap_explicitly_valid,
-    test_hub_reconnects_and_resubscribes_existing_contexts,
-    test_workspace_switch_reuses_hub_context_and_preserves_previous_context,
-    test_symbol_context_fans_out_updates_to_independent_named_listeners,
-    test_symbol_context_fans_out_disconnect_boundaries,
-    test_symbol_context_listener_failure_does_not_block_sibling_listener,
-    test_hub_discard_is_deferred_while_an_independent_listener_remains,
-    test_scanner_impulse_source_status_reports_existing_contexts_only_without_orders,
-    test_flow_only_probe_uses_same_ws_no_book_and_no_protection_callback,
-    test_protection_upgrades_passive_source_without_duplicate_trade_or_unsubscribe,
-    test_capture_only_probe_preserves_full_protection_context_without_fake_l2,
-    test_private_protected_ingress_witness_requires_real_snapshot_and_no_new_topic,
-    test_private_protected_capture_invalidates_gap_and_overflow,
-    test_research_rest_tape_snapshot_is_atomic_and_epoch_fenced,
-    test_rest_tape_snapshot_reset_can_progress_during_large_detach,
-    test_private_box_snapshot_is_in_process_and_does_not_start_capture,
-)
-
-
-def load_tests(loader, tests, pattern):
-    # The existing PAPER CI invokes this named suite explicitly.
-    # Include the pure REST/WS research source matcher without touching
-    # protected runtime test runners or broad workflow configuration.
-    from tests.test_research_l2_rest_anchor import RestWsL2AnchorTests
-    from tests.test_private_box_host_evidence import PrivateBoxReceiptTests
-    combined = unittest.TestSuite(unittest.FunctionTestCase(test) for test in TESTS)
-    combined.addTests(loader.loadTestsFromTestCase(RestWsL2AnchorTests))
-    combined.addTests(loader.loadTestsFromTestCase(PrivateBoxReceiptTests))
-    return combined
-
-
-if __name__ == "__main__":
-    for test in TESTS:
-        test()
-    print(f"market data hub tests: {len(TESTS)} passed")
-
-
 def test_protected_research_capture_cannot_be_stolen_or_released_by_another_owner():
     ws = _WebSocket()
     hub = MarketDataHub(_Registry(), _context, connection_factory=lambda *_a, **_k: ws)
@@ -769,3 +729,46 @@ def test_protected_research_capture_cannot_be_stolen_or_released_by_another_owne
         assert not full.public_orderbook.closed
     finally:
         hub.close()
+
+
+TESTS = (
+    test_hub_uses_one_connection_for_multiple_reusable_symbol_contexts,
+    test_hub_rejects_unsupported_symbol_without_creating_context,
+    test_subscription_ack_makes_quiet_trades_bootstrap_explicitly_valid,
+    test_hub_reconnects_and_resubscribes_existing_contexts,
+    test_workspace_switch_reuses_hub_context_and_preserves_previous_context,
+    test_symbol_context_fans_out_updates_to_independent_named_listeners,
+    test_symbol_context_fans_out_disconnect_boundaries,
+    test_symbol_context_listener_failure_does_not_block_sibling_listener,
+    test_hub_discard_is_deferred_while_an_independent_listener_remains,
+    test_scanner_impulse_source_status_reports_existing_contexts_only_without_orders,
+    test_flow_only_probe_uses_same_ws_no_book_and_no_protection_callback,
+    test_protection_upgrades_passive_source_without_duplicate_trade_or_unsubscribe,
+    test_capture_only_probe_preserves_full_protection_context_without_fake_l2,
+    test_private_protected_ingress_witness_requires_real_snapshot_and_no_new_topic,
+    test_private_protected_capture_invalidates_gap_and_overflow,
+    test_research_rest_tape_snapshot_is_atomic_and_epoch_fenced,
+    test_rest_tape_snapshot_reset_can_progress_during_large_detach,
+    test_private_box_snapshot_is_in_process_and_does_not_start_capture,
+    test_protected_research_capture_cannot_be_stolen_or_released_by_another_owner,
+)
+
+
+def load_tests(loader, tests, pattern):
+    # The existing PAPER CI invokes this named suite explicitly.
+    # Include the pure REST/WS research source matcher without touching
+    # protected runtime test runners or broad workflow configuration.
+    from tests.test_research_l2_rest_anchor import RestWsL2AnchorTests
+    from tests.test_private_box_host_evidence import PrivateBoxCaptureTests, PrivateBoxReceiptTests
+    combined = unittest.TestSuite(unittest.FunctionTestCase(test) for test in TESTS)
+    combined.addTests(loader.loadTestsFromTestCase(RestWsL2AnchorTests))
+    combined.addTests(loader.loadTestsFromTestCase(PrivateBoxReceiptTests))
+    combined.addTests(loader.loadTestsFromTestCase(PrivateBoxCaptureTests))
+    return combined
+
+
+if __name__ == "__main__":
+    for test in TESTS:
+        test()
+    print(f"market data hub tests: {len(TESTS)} passed")
+
