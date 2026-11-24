@@ -352,13 +352,20 @@ export function parsePaperEpisodeFacts(input: unknown): PaperEpisodeFacts {
       last.allocation_role !== "CLOSE" || first.occurred_at_ms !== opened ||
       last.occurred_at_ms !== closed)
     throw new Error("Эпизод не подтверждён как завершённый");
-  if ((f.cohort === "ROBOT" && allocations.some(a => a.controller !== "ROBOT"))
-      || (f.cohort === "MANUAL" && allocations.some(a => a.controller !== "MANUAL"))
-      || (f.cohort === "ROBOT_MANUAL_CLOSE" &&
-          (first.controller !== "ROBOT" || last.controller !== "MANUAL"))
-      || (f.cohort === "JOINT_MANAGEMENT" &&
-          (first.controller !== "ROBOT" || last.controller !== "ROBOT" ||
-           !allocations.some(a => a.controller === "MANUAL" && a.allocation_role === "INCREASE"))))
+  // Match the canonical Diary classification in ticker_finrez.py. The owner
+  // selects a report scope; it does not imply who opened a joint episode.
+  const owners = new Set(allocations.map(a => a.controller));
+  const mixed = owners.has("ROBOT") && owners.has("MANUAL");
+  const assisted = mixed && first.controller === "ROBOT" && last.controller === "MANUAL"
+    && allocations.every(a => a.controller === "ROBOT" ||
+      a.allocation_role === "REDUCE" || a.allocation_role === "CLOSE");
+  const joint = mixed && !assisted && allocations.length >= 2
+    && allocations.slice(1, -1).every(a =>
+      a.allocation_role === "INCREASE" || a.allocation_role === "REDUCE");
+  if ((f.cohort === "ROBOT" && (owners.size !== 1 || !owners.has("ROBOT")))
+      || (f.cohort === "MANUAL" && (owners.size !== 1 || !owners.has("MANUAL")))
+      || (f.cohort === "ROBOT_MANUAL_CLOSE" && !assisted)
+      || (f.cohort === "JOINT_MANAGEMENT" && !joint))
     throw new Error("Источник управления противоречит исполнениям");
 
   return {
