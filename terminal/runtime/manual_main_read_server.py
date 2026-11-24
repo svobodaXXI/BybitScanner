@@ -22,7 +22,7 @@ from terminal.application.manual_main_accounts import ManualMainAccounts
 from terminal.application.manual_main_trading import (
     ManualMainTrader, ManualMainTradeLedger, ManualMainTradeBlocked, enabled_from_environment,
 )
-from terminal.persistence.credential_store import create_credential_store
+from terminal.persistence.main_credential_store import create_main_credential_store
 from terminal.persistence.live_account_store import LiveAccountProjectionStore
 
 HOST = "127.0.0.1"
@@ -227,7 +227,7 @@ def main() -> None:
     state_dir = checked_main_state_dir(os.environ.get("BYBITSCANNER_MAIN_STATE_DIR", ""))
     # No PAPER database, port, credentials or runtime are ever opened here.
     accounts = ManualMainAccounts(
-        create_credential_store(state_dir / "main.credentials.systemd"),
+        create_main_credential_store(state_dir / "main.credentials.systemd"),
         LiveAccountProjectionStore(state_dir / "main.snapshots.sqlite3", check_same_thread=False),
     )
     enabled, ceiling = enabled_from_environment()
