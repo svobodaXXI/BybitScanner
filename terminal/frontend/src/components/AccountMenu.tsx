@@ -187,6 +187,9 @@ export function AccountMenu({
     : active;
   const selectedVerified = !mode || Boolean(workspaceProjection &&
     workspaceProjection.account_id === selectedAccountId);
+  const currentAccountId = mode ? selectedAccountId : catalog?.active_account_id;
+  const currentClass = (id: string) => id === currentAccountId
+    ? ` is-current${selectedVerified ? " is-verified-current" : ""}` : "";
   useEffect(() => {
     onActiveAccountChange?.(selected ? { id: selected.id, name: selected.display_name } : null);
   }, [selected?.display_name, selected?.id, onActiveAccountChange]);
@@ -405,7 +408,8 @@ export function AccountMenu({
               .filter((account) => !mode || account.provider === "PAPER")
               .map((account) => (
               <article
-                className={`account-card ${account.environment.toLowerCase()} status-${account.status.toLowerCase()}`}
+                className={`account-card ${account.environment.toLowerCase()} status-${account.status.toLowerCase()}${currentClass(account.id)}`}
+                aria-current={account.id === currentAccountId ? "true" : undefined}
                 key={account.id}
                 onClick={() => account.id !== (mode ? selectedAccountId : catalog.active_account_id)
                   && !switching && setConfirmAccount(account)}
@@ -430,8 +434,15 @@ export function AccountMenu({
               </article>
             ))}
             {mode !== "AUTOPILOT" && manualMain.map((account) => (
-              <article className={`account-card mainnet manual-main-account status-${account.status.toLowerCase()}`} key={account.id} aria-label="Manual MAIN account">
-                <strong>{account.display_name}</strong>
+              <article className={`account-card mainnet manual-main-account status-${account.status.toLowerCase()}${mode === "TERMINAL" ? currentClass(account.id) : ""}`} key={account.id} aria-label="Manual MAIN account"
+                aria-current={mode === "TERMINAL" && account.id === currentAccountId ? "true" : undefined}>
+                <div className="account-card-title">
+                  <strong>{account.display_name}</strong>
+                  {mode === "TERMINAL" && account.id === currentAccountId ? <span
+                    aria-label="Current account golden key" className="account-switch-key account-current-key" role="img"
+                  ><span className="account-key-head" /><span className="account-key-shaft" /></span> : null}
+                </div>
+                {mode === "TERMINAL" && account.id === currentAccountId ? <span>Current</span> : null}
                 <small>BYBIT · MAINNET · {account.status} · Separate MAIN service</small>
                 <small>{workspaceProjection?.account_id === account.id && workspaceProjection.read_only === false
                   ? "Manual MAIN trading verified for this session."
