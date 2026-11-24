@@ -96,6 +96,28 @@ class ScannerWedgeClosedCandleCutoffTests(unittest.TestCase):
         self.assertEqual(len(pivots.call_args.args[0]), 60)
 
 
+    def test_gold_pons_strict_upper_rejects_historical_crossing(self):
+        from geometry.envelope_metrics import evaluate_strict_wedge_wicks
+        from tests.geometry_gold import _analyze, _load_frame, load_manifest, run_case
+
+        case = next(c for c in load_manifest()["cases"]
+                    if c["case_id"] == "PONS-formation-fit-positive-anchor")
+        closed = _load_frame(case)
+        start, old_second, end = 143, 178, 186
+        first_high = float(closed.iloc[start]["high"])
+        old_slope = (float(closed.iloc[old_second]["high"]) - first_high) / (old_second - start)
+        old_line = {"anchor_index": start, "second_index": old_second,
+                    "slope": old_slope, "intercept": first_high - old_slope * start}
+        self.assertEqual(evaluate_strict_wedge_wicks(
+            old_line, closed, "upper", end, len(closed) - 1), [158, 167, 168])
+        _, _, geometry = _analyze(closed)
+        self.assertIsNotNone(geometry)
+        self.assertEqual(evaluate_strict_wedge_wicks(
+            geometry.upper_line, closed, "upper", geometry.end_index, len(closed) - 1), [])
+        result = run_case(case)
+        self.assertTrue(result["passed"], result["errors"])
+
+
     def test_gold_real_engine_ignores_forming_candle(self):
         """Run the actual Pivot -> Geometry Engine -> Wedge path on a frozen Gold window."""
         from tests.geometry_gold import _analyze, _load_frame, geometry_identity, load_manifest

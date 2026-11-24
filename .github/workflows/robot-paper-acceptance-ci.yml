@@ -328,6 +328,8 @@ jobs:
           tests.test_robot_legacy_protection_reconciliation
           tests.test_terminal_paper_trading_application
           tests.test_robot_l_shape
+      - name: Verify Box ownership and quarantine transaction boundary
+        run: python -m unittest -v tests.test_box_order_ownership
       - name: Run Scanner to Robot handoff acceptance
         run: >-
           python -m unittest -v
