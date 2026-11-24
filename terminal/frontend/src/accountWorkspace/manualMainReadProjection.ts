@@ -74,31 +74,75 @@ export function parseMainExecutionHistory(accountId: string, symbol: string, raw
   return { start, end, markers: [...markers.values()] };
 }
 
+// A verified fill is immutable history, not current position or order authority.
+// Keep it through brief transport outages only; never retain rejected evidence.
+const STALE_HISTORY_MS = 90_000;
+
 export function useMainExecutionHistory(accountId: string | null, symbol: string) {
   const scope = accountId === null ? null : JSON.stringify([accountId, symbol]);
   const [snapshot, setSnapshot] = useState<{
-    scope: string; markers: readonly RobotTradeMarker[]; status: "ready" | "unavailable";
+    scope: string; markers: readonly RobotTradeMarker[]; status: "ready" | "stale" | "unavailable";
   } | null>(null);
   useEffect(() => {
     setSnapshot(null);
     if (accountId === null || scope === null) return;
     const controller = new AbortController();
     let timer: number | undefined;
+    let expiry: number | undefined;
+    let verified: { markers: readonly RobotTradeMarker[]; at: number } | null = null;
+    const cancelExpiry = () => {
+      if (expiry !== undefined) window.clearTimeout(expiry);
+      expiry = undefined;
+    };
+    const unavailable = () => {
+      if (controller.signal.aborted) return;
+      cancelExpiry();
+      verified = null;
+      setSnapshot({ scope, markers: EMPTY_MARKERS, status: "unavailable" });
+    };
+    const transientFailure = () => {
+      if (controller.signal.aborted) return;
+      const remaining = verified ? STALE_HISTORY_MS - (Date.now() - verified.at) : 0;
+      if (!verified || remaining <= 0) { unavailable(); return; }
+      cancelExpiry();
+      const markers = verified.markers.filter(marker => marker.time_ms >= Date.now() - HISTORY_MS);
+      setSnapshot({ scope, markers, status: "stale" });
+      expiry = window.setTimeout(unavailable, remaining);
+    };
     const read = async () => {
       try {
-        const response = await fetch(marketApiRoutes.manualMainExecutions(accountId, symbol),
-          { signal: controller.signal, cache: "no-store" });
-        const history = response.ok ? parseMainExecutionHistory(accountId, symbol, await response.json()) : null;
-        if (!controller.signal.aborted) setSnapshot({ scope, markers: history?.markers ?? EMPTY_MARKERS,
-          status: history ? "ready" : "unavailable" });
+        let response: Response;
+        try {
+          response = await fetch(marketApiRoutes.manualMainExecutions(accountId, symbol),
+            { signal: controller.signal, cache: "no-store" });
+        } catch {
+          transientFailure();
+          return;
+        }
+        if (!response.ok) {
+          if (response.status >= 500 && response.status <= 599) transientFailure();
+          else unavailable();
+          return;
+        }
+        // Invalid JSON or contradictory scope/identity must fail closed.
+        const history = parseMainExecutionHistory(accountId, symbol, await response.json());
+        if (controller.signal.aborted) return;
+        if (!history) { unavailable(); return; }
+        cancelExpiry();
+        verified = { markers: history.markers, at: Date.now() };
+        setSnapshot({ scope, markers: history.markers, status: "ready" });
       } catch {
-        if (!controller.signal.aborted) setSnapshot({ scope, markers: EMPTY_MARKERS, status: "unavailable" });
+        unavailable();
       } finally {
         if (!controller.signal.aborted) timer = window.setTimeout(read, 30_000);
       }
     };
     void read();
-    return () => { controller.abort(); if (timer !== undefined) window.clearTimeout(timer); };
+    return () => {
+      controller.abort();
+      cancelExpiry();
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
   }, [accountId, symbol, scope]);
   return snapshot?.scope === scope ? snapshot : { markers: EMPTY_MARKERS, status: "loading" as const };
 }

@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { manualMainReadProjection, parseMainExecutionHistory } from "./manualMainReadProjection";
+import { act, cleanup, renderHook } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { manualMainReadProjection, parseMainExecutionHistory, useMainExecutionHistory } from "./manualMainReadProjection";
 import { projectLiveProtectionPosition } from "../orders/liveProtectionProjection";
 
 const main = (account_id = "bybit-a") => ({
@@ -86,5 +87,76 @@ describe("MAIN exact execution history", () => {
     expect(projection?.capabilities?.stop).toBe(false);
     expect(projectLiveProtectionPosition(projection, "BTCUSDT")?.averageEntry).toBe("65000.125");
     expect(projectLiveProtectionPosition(projection, "ETHUSDT")).toBeNull();
+  });
+});
+
+describe("MAIN history transient failures", () => {
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+  const setup = () => {
+    vi.useFakeTimers();
+    let status = 200;
+    let badScope = false;
+    const fetcher = vi.fn(async () => {
+      const end = Date.now();
+      return {
+        ok: status === 200, status,
+        json: async () => ({
+          ok: true, account_id: badScope ? "bybit-b" : "bybit-a", symbol: "BTCUSDT",
+          start_ms: end - 604800000, end_ms: end,
+          executions: [{ exec_id: "fill-1", time_ms: end - 1000, price: "65000", side: "Buy" }],
+        }),
+      };
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const advance = async (ms: number) => {
+      await act(async () => { await vi.advanceTimersByTimeAsync(ms); });
+    };
+    return { advance, fail: (code: number) => { status = code; },
+      rejectScope: () => { badScope = true; } };
+  };
+  it("retains verified fills with a stale status and expires them without a successful refresh", async () => {
+    const { advance, fail } = setup();
+    const { result } = renderHook(() => useMainExecutionHistory("bybit-a", "BTCUSDT"));
+    await advance(0);
+    expect(result.current.status).toBe("ready");
+    expect(result.current.markers).toHaveLength(1);
+    fail(503);
+    await advance(30_000);
+    expect(result.current.status).toBe("stale");
+    expect(result.current.markers).toHaveLength(1);
+    await advance(60_000);
+    expect(result.current.status).toBe("unavailable");
+    expect(result.current.markers).toHaveLength(0);
+    fail(200);
+    await advance(30_000);
+    expect(result.current.status).toBe("ready");
+    expect(result.current.markers).toHaveLength(1);
+  });
+
+  it("clears on authorization rejection, invalid identity, and account/symbol changes", async () => {
+    const { advance, fail, rejectScope } = setup();
+    const { result, rerender } = renderHook(
+      ({ account, symbol }) => useMainExecutionHistory(account, symbol),
+      { initialProps: { account: "bybit-a", symbol: "BTCUSDT" } },
+    );
+    await advance(0);
+    expect(result.current.markers).toHaveLength(1);
+    fail(403);
+    await advance(30_000);
+    expect(result.current.status).toBe("unavailable");
+    expect(result.current.markers).toHaveLength(0);
+    fail(200);
+    await advance(30_000);
+    expect(result.current.status).toBe("ready");
+    rejectScope();
+    await advance(30_000);
+    expect(result.current.status).toBe("unavailable");
+    expect(result.current.markers).toHaveLength(0);
+    rerender({ account: "bybit-b", symbol: "ETHUSDT" });
+    expect(result.current.markers).toHaveLength(0);
   });
 });
