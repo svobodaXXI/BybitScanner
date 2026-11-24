@@ -4,6 +4,7 @@ No exchange, Scanner, Telegram or Robot calls. Original disputed line equations
 and candle runs remain alongside new expectations; no ignored-fixture skips.
 """
 import contextlib
+import copy
 import io
 import json
 from pathlib import Path
@@ -12,7 +13,7 @@ from unittest.mock import patch
 
 import pandas as pd
 import geometry.engine as engine
-from geometry.envelope_metrics import evaluate_formation_body_fit, evaluate_body_zone_breaches, line_value
+from geometry.envelope_metrics import evaluate_formation_body_fit, evaluate_body_zone_breaches, evaluate_strict_wedge_wicks, line_value
 from confirmation import calculate_atr
 from pivots import find_pivots
 from wedge.analyzer import _freshness_predicate
@@ -62,6 +63,31 @@ class HistoricalFormationFitTest(unittest.TestCase):
             with self.subTest(symbol=name):
                 geometry = self.winners[name]
                 want = case["expected"]
+                if name == "PONS":
+                    # Explicit owner strict-boundary revision, not a rewrite
+                    # of the archived historical fixture. The old upper ray
+                    # crosses three highs, including two candle bodies.
+                    frame = self.frames[name]
+                    old = want["geometry"]
+                    self.assertEqual(evaluate_strict_wedge_wicks(
+                        old["lines"][0], frame, "upper", old["end"], len(frame)-1
+                    ), [158, 167, 168])
+                    want = copy.deepcopy(want)
+                    g = want["geometry"]
+                    upper = g["lines"][0]
+                    first, second = 143, 167
+                    a, b = float(frame.iloc[first].high), float(frame.iloc[second].high)
+                    slope = (b-a)/(second-first)
+                    upper.update(anchor_index=first, second_index=second,
+                                 anchor_price=a, second_price=b,
+                                 slope=slope, intercept=a-slope*first)
+                    g["anchors"][1] = second
+                    g["widths"] = [line_value(upper, i)-line_value(g["lines"][1], i)
+                                   for i in (g["start"], g["end"])]
+                    want["fit"][0] = {"indices": [], "runs": [], "max_run": 0}
+                    self.assertEqual(evaluate_strict_wedge_wicks(
+                        upper, frame, "upper", g["end"], len(frame)-1
+                    ), [])
                 self.assertEqual(identity(geometry), expected_identity(want))
                 if geometry is None:
                     continue
