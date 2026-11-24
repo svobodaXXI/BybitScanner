@@ -5175,7 +5175,12 @@ class SQLiteStore:
 
     def prove_box_owned_position(self, candidate_id: str):
         """Read one consistent journal/ownership/position view; no runtime action."""
-        with self._transaction():
+        self._assert_owner()
+        if self._connection.in_transaction:
+            # Admission already owns its snapshot. A nested BEGIN IMMEDIATE
+            # would fail and poison portfolio attestation for unrelated ideas.
+            return self._prove_box_owned_position(candidate_id)
+        with self.read_snapshot():
             return self._prove_box_owned_position(candidate_id)
 
     def _box_latched_stop_shadow_owner(

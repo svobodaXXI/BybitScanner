@@ -61,6 +61,39 @@ class BoxOrderOwnershipTests(unittest.TestCase):
     def proof(self):
         return self.store.prove_box_owned_position(self.plan.candidate_id)
 
+    def test_terminal_box_quarantine_proof_reuses_admission_and_read_snapshot(self):
+        self.fill("emergency-entry", "entry-1", OrderSide.BUY,
+                  "2", "94", "2", "94", 5000)
+        robot, _ = self.store.handoff_box_plan_to_robot(
+            self.plan.candidate_id, symbol=self.key.symbol,
+            expected_snapshot_sha256=self.plan.snapshot_sha256, approved_at_ms=4001,
+        )
+        self.store.save_robot_candidate_state(
+            robot.candidate_id, status="INVALIDATED",
+            robot_state={"execution": {"box_emergency_close_intent": {
+                "slot": 0, "symbol": self.key.symbol.value, "order_id": "stop",
+                "quantity": "2", "side": "Sell",
+            }}},
+            expected_revision=robot.state_revision, updated_at_ms=5001,
+        )
+        # A terminal marker is not enough to release an unsettled exposure.
+        with self.store.autopilot_decision_transaction():
+            self.assertEqual(self.store.robot_account_quarantines(self.account),
+                             {self.key.symbol.value: (robot.candidate_id,)})
+            self.assertTrue(self.store._connection.in_transaction)
+        self.fill("emergency-exit", "stop", OrderSide.SELL,
+                  "2", "90", "0", None, 6000)
+        # Exact EXIT-0 and reconciled FLAT release only this proven marker.
+        with self.store.autopilot_decision_transaction():
+            self.assertEqual(self.store.robot_account_quarantines(self.account), {})
+            self.assertTrue(self.store._connection.in_transaction)
+        with SQLiteStore.open_reader(self.path) as reader:
+            with reader.read_snapshot():
+                self.assertEqual(reader.robot_account_quarantines(self.account), {})
+                self.assertTrue(reader._connection.in_transaction)
+            self.assertEqual(reader.robot_account_quarantines(self.account), {})
+            self.assertFalse(reader._connection.in_transaction)
+
     def _latched_stop_with_abandoned_exit_zero(self):
         from terminal.domain.models import CommandId
         self.fill("entry-fill-shadow", "entry-1", OrderSide.BUY,
@@ -420,9 +453,16 @@ class BoxOrderOwnershipTests(unittest.TestCase):
         path = Path(self.tmp.name) / "legacy.sqlite3"
         con = sqlite3.connect(path, isolation_level=None)
         con.row_factory = sqlite3.Row
-        for statement in schema.SCHEMA_STATEMENTS[:-len(schema.SCHEMA_V23_MIGRATION_STATEMENTS)]:
+        # Build exactly v22, independent of how many migrations follow v23.
+        statements = schema.SCHEMA_V1_STATEMENTS + tuple(
+            statement
+            for version in range(2, 23)
+            for statement in getattr(schema, f"SCHEMA_V{version}_MIGRATION_STATEMENTS")
+        )
+        for statement in statements:
             con.execute(statement)
         con.execute("PRAGMA user_version=22")
+        self.assertIsNone(con.execute("SELECT name FROM sqlite_master WHERE name='box_attempt_ownership'").fetchone())
         legacy = SQLiteStore(con, path, 5000)
         legacy.create_robot_candidate(candidate_id="wedge", trading_account_id=self.account,
             symbol=self.key.symbol, status="APPROVED", signal_snapshot={"pattern": "Falling Wedge"},
@@ -443,6 +483,6 @@ class BoxOrderOwnershipTests(unittest.TestCase):
             self.assertEqual(migrated.get_robot_trade("trade-1"), before)
             self.assertEqual(migrated.get_robot_candidate("wedge").status, "OPEN")
             self.assertEqual(migrated._connection.execute("PRAGMA foreign_key_check").fetchall(), [])
-            self.assertEqual(migrated._connection.execute("PRAGMA user_version").fetchone()[0], 23)
+            self.assertEqual(migrated._connection.execute("PRAGMA user_version").fetchone()[0], schema.SCHEMA_VERSION)
         finally:
             migrated.close()
