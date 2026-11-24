@@ -228,17 +228,21 @@ class WorkspaceStreamBroker:
                     )
                 if stream_id in self._attached:
                     raise WorkspaceStreamError("Workspace stream is already attached")
-                self._attached.add(stream_id)
                 events = session.resume_after(after_sequence if after_sequence is not None else -1)
+                # A failed resume never reaches the HTTP handler's detach path.
+                self._attached.add(stream_id)
                 return WorkspaceStreamOpen(session, events, True)
             self._make_room_locked()
             session = WorkspaceStreamSession(
                 lambda: self._projection_factory(normalized), self._instrument_factory,
                 interval=interval,
             )
+            # A not-ready snapshot is not an opened connection. Publish the
+            # session only after the initial projection has succeeded.
+            snapshot = session.initial_snapshot()
             self._sessions[session.stream_id] = session
             self._attached.add(session.stream_id)
-            return WorkspaceStreamOpen(session, (session.initial_snapshot(),), False)
+            return WorkspaceStreamOpen(session, (snapshot,), False)
 
     def detach(self, stream_id: str) -> None:
         with self._lock:
