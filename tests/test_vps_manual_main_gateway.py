@@ -8,6 +8,26 @@ import pytest
 
 from tools import vps_manual_main_gateway as gateway
 
+@pytest.fixture(autouse=True)
+def _prepared_sealed_key(monkeypatch):
+    # Host key attestation is covered independently; fake Nginx fixtures
+    # cannot access a real root-owned encrypted systemd credential.
+    monkeypatch.setattr(gateway, "verify_main_store_key", lambda: "VERIFIED")
+
+
+def test_preflight_refuses_unproven_main_store_key_before_nginx(tmp_path, monkeypatch):
+    root, ng, site, _ = _site(tmp_path)
+    calls = []
+    def missing():
+        raise ValueError("not prepared")
+    monkeypatch.setattr(gateway, "verify_main_store_key", missing)
+    with pytest.raises(gateway.MainGatewayBlocked, match="main_store_key_preflight_unproven"):
+        gateway.inspect_authenticated_site(
+            root=root, run=_runner(site, calls), nginx_dir=ng, uid=os.geteuid(),
+        )
+    assert calls == []
+
+
 
 def _site(tmp_path: Path, *, content: str | None = None, claim_source: bool = False):
     ng = tmp_path / "nginx"
