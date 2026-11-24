@@ -192,15 +192,20 @@ export function AccountMenu({
   const currentClass = (id: string) => id === currentAccountId
     ? ` is-current${selectedVerified ? " is-verified-current" : ""}` : "";
   const currentLabel = mode ? "Текущий" : "Current";
-  const otherRole = (account: AccountDescriptor) => {
-    if (!mode || account.id === currentAccountId || account.id !== otherWorkspaceAccountId) return null;
-    const ready = ["READY", "READ_ONLY"].includes(account.status);
+  const workspaceRole = (account: AccountDescriptor) => {
+    if (!mode) return null;
+    const current = account.id === currentAccountId;
+    const other = account.id === otherWorkspaceAccountId;
+    if (!current && !other) return <span className="account-robot-role">Не подключён</span>;
+    const robot = current ? mode === "AUTOPILOT" : mode === "TERMINAL";
+    const ready = ["READY", "READ_ONLY"].includes(account.status) && (!current || selectedVerified);
     return <span className={`account-robot-role${ready ? " account-role-connected" : ""}`}>
-      {mode === "TERMINAL"
+      {robot
         ? ready ? "Подключён к Роботу" : "Счёт Робота"
         : ready ? "Подключён к Терминалу" : "Счёт Терминала"}
     </span>;
   };
+  const selectionRank = (id: string) => id === currentAccountId ? 0 : id === otherWorkspaceAccountId ? 1 : 2;
   useEffect(() => {
     onActiveAccountChange?.(selected ? { id: selected.id, name: selected.display_name } : null);
   }, [selected?.display_name, selected?.id, onActiveAccountChange]);
@@ -362,7 +367,7 @@ export function AccountMenu({
 
   const catalogCards = catalogError || !catalog || !active ? [<p key="catalog-unavailable" role="alert">Account catalog unavailable</p>] : catalog.accounts
               .filter((account) => !mode || account.provider === "PAPER")
-              .sort((a, b) => Number(b.id === currentAccountId) - Number(a.id === currentAccountId))
+              .sort((a, b) => selectionRank(a.id) - selectionRank(b.id))
               .map((account) => (
               <article
                 className={`account-card ${account.environment.toLowerCase()} status-${account.status.toLowerCase()}${currentClass(account.id)}`}
@@ -380,7 +385,8 @@ export function AccountMenu({
                   ><span className="account-key-head" /><span className="account-key-shaft" /></span> : null}
                 </div>
                 <small>{account.provider === account.environment ? account.provider : `${account.provider} · ${account.environment}`} · {account.status === "READY" ? <span className="account-ready-status">READY</span> : account.status}</small>
-                {account.id === currentAccountId ? <span>{currentLabel}</span> : otherRole(account)}
+                {account.id === currentAccountId ? <span>{currentLabel}</span> : null}
+                {workspaceRole(account)}
                 {refreshError[account.id] ? <small className="account-refresh-error" role="alert">{refreshError[account.id]}</small> : null}
                 {account.provider === "BYBIT" ? <button
                   className="account-refresh-button"
@@ -390,7 +396,7 @@ export function AccountMenu({
                 >{refreshingAccount === account.id ? "Refreshing…" : account.status === "DISCONNECTED" || account.status === "ERROR" ? "Reconnect" : "Refresh"}</button> : null}
               </article>
             ));
-  const mainCards = [...manualMain].sort((a, b) => Number(b.id === currentAccountId) - Number(a.id === currentAccountId)).map((account) => (
+  const mainCards = [...manualMain].sort((a, b) => selectionRank(a.id) - selectionRank(b.id)).map((account) => (
               <article className={`account-card mainnet manual-main-account status-${account.status.toLowerCase()}${mode === "TERMINAL" ? currentClass(account.id) : ""}`} key={account.id} aria-label="Manual MAIN account"
                 aria-current={mode === "TERMINAL" && account.id === currentAccountId ? "true" : undefined}>
                 <div className="account-card-title">
@@ -400,7 +406,8 @@ export function AccountMenu({
                   ><span className="account-key-head" /><span className="account-key-shaft" /></span> : null}
                 </div>
                 <small>BYBIT · MAINNET · {account.status === "READY" ? <span className="account-ready-status">READY</span> : account.status} · Separate MAIN service</small>
-                {mode === "TERMINAL" && account.id === currentAccountId ? <span>{currentLabel}</span> : otherRole(account)}
+                {mode === "TERMINAL" && account.id === currentAccountId ? <span>{currentLabel}</span> : null}
+                {workspaceRole(account)}
                 {mode !== "AUTOPILOT" ? <>
                 <small>{workspaceProjection?.account_id === account.id && workspaceProjection.read_only === false
                   ? "Manual MAIN trading verified for this session."
@@ -486,7 +493,7 @@ export function AccountMenu({
               <button aria-label="Close Accounts" className="account-menu-close" onClick={onToggle} type="button">×</button>
             </header>
             {mode === "TERMINAL" && manualMain.some(account => account.id === currentAccountId)
-              ? [...mainCards, ...catalogCards] : [...catalogCards, ...mainCards]}
+              ? [...mainCards.slice(0, 1), ...catalogCards, ...mainCards.slice(1)] : [...catalogCards, ...mainCards]}
             {mainInventoryError ? <small role="alert">{mainInventoryError}</small> : null}
             {modeAccountError ? <small role="alert">{modeAccountError}</small> : null}
             {manualMainUnavailable ? <small role="status">Separate MAIN service unavailable; PAPER unchanged.</small> : null}
