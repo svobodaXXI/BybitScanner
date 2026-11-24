@@ -428,6 +428,21 @@ class BybitReadAdapterTests(_AdapterFixture, unittest.TestCase):
                 "BTCUSDT", start_time_ms=0, end_time_ms=7 * 24 * 60 * 60 * 1000 + 1
             )
 
+    def test_main_trade_history_filters_and_rejects_non_trade_records(self):
+        self.http.responses["get_executions"] = lambda kwargs: (
+            response([execution_payload(execType="Trade", execId="exec-2")])
+            if kwargs.get("cursor") else
+            response([execution_payload(execType="Trade")], cursor="next")
+        )
+        events = self.adapter.list_executions("BTCUSDT", start_time_ms=0,
+                                              end_time_ms=3000, trade_only=True)
+        self.assertEqual([item.exec_id.value for item in events], ["exec-1", "exec-2"])
+        self.assertTrue(all(kwargs["execType"] == "Trade"
+                            for name, kwargs in self.http.calls if name == "get_executions"))
+        self.http.responses["get_executions"] = response([execution_payload(execType="Funding")])
+        with self.assertRaises(UnsupportedPayload):
+            self.adapter.list_executions("BTCUSDT", trade_only=True)
+
     def test_position_and_instrument_reads_are_normalized(self):
         rest_position = position_payload()
         self.http.responses["get_positions"] = response([rest_position])
