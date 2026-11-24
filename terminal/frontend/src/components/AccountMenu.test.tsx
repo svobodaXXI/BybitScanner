@@ -236,10 +236,19 @@ describe("AccountMenu", () => {
       { status: 502, message: "HTTP 502" },
     ];
     for (const { status, message } of cases) {
-      const fetchMock = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => catalog })
-        .mockResolvedValueOnce({
-          ok: false, status, json: async () => { throw new SyntaxError("unexpected HTML"); },
-        });
+      const fetchMock = vi.fn(async (url: string, options?: RequestInit) => {
+        if (url === "/api/accounts") return { ok: true, json: async () => catalog };
+        if (url === "/api/manual-main/accounts" && options?.method === "POST") {
+          return {
+            ok: false, status,
+            json: async () => { throw new SyntaxError("unexpected HTML"); },
+          };
+        }
+        if (url === "/api/manual-main/accounts") {
+          return { ok: true, json: async () => ({ ok: true, accounts: [] }) };
+        }
+        throw new Error("unexpected route");
+      });
       vi.stubGlobal("fetch", fetchMock);
       const { unmount } = render(<AccountMenu open onToggle={vi.fn()} />);
       await screen.findByText("Current");
@@ -257,7 +266,8 @@ describe("AccountMenu", () => {
       expect(alert).toHaveTextContent(message);
       expect(alert).not.toHaveTextContent("private-key");
       expect(alert).not.toHaveTextContent("private-secret");
-      expect(fetchMock.mock.calls[1][0]).toBe("/api/manual-main/accounts");
+      expect(fetchMock.mock.calls.some(([url, options]) =>
+        url === "/api/manual-main/accounts" && options?.method === "POST")).toBe(true);
       unmount();
     }
   });
