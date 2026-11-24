@@ -103,10 +103,20 @@ class ConfirmedBoundaryEvidence(unittest.TestCase):
         if u is not None and v is not None:
             g=evaluate_candidate_pair(u,v,highs=highs,lows=lows,current_index=len(frame)-1,candles=frame)
             if g is not None:
-                direct=dict(validation=g.validation.get("valid"),sequence=g.pair_metrics.get("anchor_sequence"),
+                direct=dict(validation=g.validation,sequence=g.pair_metrics.get("anchor_sequence"),
                     compression=g.compression,mode=g.pair_metrics.get("geometry_mode"),end=g.end_index,
                     fresh=engine._is_candidate_fresh(g,_freshness_predicate),
                     boundary=engine._is_boundary_structurally_valid(g))
+        # The candidate is supported by confirmed local pivots but does not
+        # satisfy the existing apex-extension limit. Do not tune a threshold
+        # or extend END just to reproduce the historical manual drawing.
+        self.assertIsNotNone(direct)
+        self.assertIn("apex_quality",direct["validation"]["failed_checks"])
+        apex_quality=direct["validation"]["checks"]["apex_quality"]
+        self.assertEqual(apex_quality["reason"],"Apex extension too large")
+        self.assertGreater(apex_quality["details"]["ratio"],3.0)
+        self.assertEqual(direct["end"],186)
+        self.assertTrue(direct["sequence"]["valid"])
         winner=engine.analyze_geometry(highs,lows,len(frame)-1,frame,_freshness_predicate)
         print("BMT_NATIVE",json.dumps(dict(local_highs=[x["index"] for x in qh],
             local_lows=[x["index"] for x in ql],upper=contacts(upper,148),lower=contacts(lower,146),
