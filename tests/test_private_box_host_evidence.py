@@ -189,6 +189,44 @@ class PrivateBoxReceiptTests(unittest.TestCase):
         self.assertEqual(started, ["started"])
         self.assertIs(runtime._robot_command_dispatcher, dispatcher)
 
+    def test_private_box_durable_robot_stop_pause_and_reconciliation_are_inert(self):
+        from terminal.runtime.paper_runtime import PaperRuntime
+        from terminal.market_data.private_box_host_evidence import PrivateBoxReceiptEvidence
+
+        runtime = PaperRuntime.__new__(PaperRuntime)
+        runtime._paper_account_id = TradingAccountId("paper")
+        calls = []
+        valid = PrivateBoxReceiptEvidence("RECEIPTS_OBSERVED_UNATTESTED")
+        runtime._robot_breakout_monitor = NS(
+            inspect_private_box=lambda cid: calls.append(cid) or valid,
+        )
+        state = NS(mode="ROBOT_RUNNING", recovery_status="READY")
+        runtime.store = NS(
+            is_owned_by_current_thread=lambda: True,
+            get_robot_runtime_state=lambda _: state,
+        )
+        for mode, recovery in (
+            ("ROBOT_STOPPED", "ROBOT_STOPPED"),
+            ("ROBOT_RUNNING", "PAUSED"),
+            ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED"),
+            ("ROBOT_STOPPED", "RECONCILIATION_REQUIRED"),
+        ):
+            state.mode, state.recovery_status = mode, recovery
+            self.assertEqual(
+                runtime.inspect_robot_private_box_receipts("box-robot-123").status,
+                "UNKNOWN",
+            )
+        self.assertEqual(calls, [])
+        state.mode, state.recovery_status = "ROBOT_RUNNING", "READY"
+        self.assertIs(runtime.inspect_robot_private_box_receipts("box-robot-123"), valid)
+        self.assertEqual(calls, ["box-robot-123"])
+        runtime.store.is_owned_by_current_thread = lambda: False
+        self.assertEqual(
+            runtime.inspect_robot_private_box_receipts("box-robot-123").status,
+            "UNKNOWN",
+        )
+        self.assertEqual(calls, ["box-robot-123"])
+
     def test_missing_or_reset_tape_never_claims_reconstruction(self):
         store, good = setup()
         for replacement in ((), (good["book"]["frames"][1],)):
