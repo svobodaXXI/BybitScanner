@@ -322,6 +322,7 @@ button {
 .editor-review-fields > small {
   overflow-wrap: anywhere;
 }
+.editor-correction-export .editor-review-fields > button.editor-reject-signal,
 .editor-correction-export .editor-review-fields > button.editor-owner-signal-save-error {
   color: #ff7373;
   border-color: #ff7373;
