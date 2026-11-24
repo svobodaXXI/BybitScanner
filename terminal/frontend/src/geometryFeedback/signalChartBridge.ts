@@ -65,10 +65,10 @@ export function projectSignalGeometry(
  * Carry original Scanner rays and the owner's verified correction onto a chart
  * of the SAME signal/ticker even after the source pivots age out of its bars.
  * Reference geometry still comes exclusively from frozen UTC evidence.
- * For rays only, derive two *display-only* points at actual chart candle times
- * from the exact price/time line equation. Do NOT snap old pivots to new bars,
- * move stored anchors, change trading signals, or feed the derived points back
- * into the geometry-feedback store.
+ * For rays, derive two display-only points from the exact UTC price/time equation.
+ * For Fibonacci, horizontal levels depend only on the two frozen prices; the
+ * visible x-span is display-only, never a replacement for the original UTC pivots.
+ * Do NOT move stored anchors, change trading signals, or persist projected points.
  *
  * The caller validates signal identity, symbol and account scope.
  */
@@ -98,6 +98,20 @@ export function projectVerifiedSignalOverlay(
     return exact.map((drawing, index) => {
       const original = boundaries[index];
       const indices = original.anchors.map((anchor) => indexOfTime.get(anchor.bar_open_time_ms));
+      if (drawing.type === "fibonacci") {
+        const [a, b] = original.anchors;
+        if (currentTimes[currentTimes.length - 1] < b.bar_open_time_ms)
+          throw new Error("Source Fibonacci is not complete at the current chart time");
+        // These are display coordinates only. The prices are always the exact
+        // immutable source (or verified correction) prices, including descending grids.
+        const first = indices[0] ?? currentTimes.findIndex((time) => time >= a.bar_open_time_ms);
+        const last = indices[1] ?? currentTimes.length - 1;
+        if (first < 0 || last < first)
+          throw new Error("Source Fibonacci has no visible time span");
+        return { ...drawing, referenceExtendRight: true, anchors: [
+          { logical: first, price: a.price }, { logical: last, price: b.price },
+        ] };
+      }
       if (indices.every((at) => at !== undefined)) {
         return { ...drawing, anchors: drawing.anchors.map((anchor, i) => ({
           ...anchor, logical: indices[i]!,
@@ -168,6 +182,20 @@ export function initialSourceGeometryRange(
  * rejects good reviews. Projection still fails closed on invalid UTC anchors,
  * duplicate IDs, malformed prices, or geometry not present in frozen candles.
  */
+/** Account-specific overlays stay scoped; only the verified immutable public Box
+ * grid can be shown in the linked Terminal with another selected account. */
+export function selectSignalOverlayForAccount(
+  overlay: DrawingObject[],
+  sameAccount: boolean,
+  allowPublicBox: boolean,
+): DrawingObject[] | null {
+  if (sameAccount) return overlay;
+  if (!allowPublicBox) return null;
+  const source = overlay.filter((line) => line.id === "box_fibonacci" &&
+    line.type === "fibonacci" && line.locked && line.referenceExtendRight === true && !line.hidden);
+  return source.length === 1 ? source : null;
+}
+
 export function restoreSavedSignalCorrection(
   sourceReferences: readonly DrawingObject[],
   correctedBoundaries: readonly TimestampDrawing[],
