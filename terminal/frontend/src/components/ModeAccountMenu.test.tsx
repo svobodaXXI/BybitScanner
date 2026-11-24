@@ -43,6 +43,45 @@ describe("mode-specific account selector", () => {
     expect(fetchMock.mock.calls.every(([url]) => !String(url).includes("/activate"))).toBe(true);
   });
 
+  it("offers refresh for a disconnected MAIN, reports progress, and leaves PAPER selected", async () => {
+    let connected = false;
+    let resolveRefresh!: () => void;
+    const pendingRefresh = new Promise<void>((resolve) => { resolveRefresh = resolve; });
+    const fetchMock = vi.fn(async (url: string, options?: RequestInit) => {
+      if (url === "/api/accounts") return { ok: true, json: async () => ({
+        ok: true, active_account_id: "paper", session_generation: 1, accounts: [paper],
+      }) };
+      if (url === "/api/manual-main/accounts") return { ok: true, json: async () => ({
+        ok: true, accounts: [{ ...main, status: connected ? "READ_ONLY" : "DISCONNECTED" }],
+      }) };
+      if (url === "/api/manual-main/accounts/bybit-test/refresh" && options?.method === "POST") {
+        await pendingRefresh;
+        connected = true;
+        return { ok: true, json: async () => ({ ok: true }) };
+      }
+      throw new Error("unexpected endpoint");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const onSelectAccount = vi.fn(async () => undefined);
+    render(<AccountMenu open onToggle={vi.fn()} mode="TERMINAL"
+      selectedAccountId="paper" onSelectAccount={onSelectAccount} workspaceProjection={projection} />);
+    const refresh = await screen.findByRole("button", { name: "Refresh MAIN" });
+    expect(refresh).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Select MAIN" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "All MAIN positions" })).toBeEnabled();
+    expect(screen.getByLabelText("Manual MAIN account")).toHaveClass("status-disconnected");
+    fireEvent.click(refresh);
+    expect(screen.getByRole("button", { name: "Refreshing MAIN…" })).toBeDisabled();
+    resolveRefresh();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Refresh MAIN" })).toBeEnabled());
+    expect(screen.getByLabelText("Manual MAIN account")).toHaveClass("status-read_only");
+    expect(screen.getByText("Current")).toBeInTheDocument();
+    expect(onSelectAccount).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.filter(([, options]) => options?.method === "POST")).toEqual([
+      ["/api/manual-main/accounts/bybit-test/refresh", { method: "POST" }],
+    ]);
+  });
+
   it("AUTOPILOT offers only PAPER, no MAIN account or provisioning", async () => {
     mockCatalog();
     render(<AccountMenu open onToggle={vi.fn()} mode="AUTOPILOT"
