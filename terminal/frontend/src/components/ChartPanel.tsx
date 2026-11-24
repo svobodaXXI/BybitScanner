@@ -1208,13 +1208,6 @@ export function ChartPanel({
               onClick={() => void saveCorrection()}>
               {reviewPending ? "Сохранение…" : reviewStatus.startsWith("Не удалось сохранить:") ? "Не удалось сохранить" : "Передать исправление"}
             </button>
-            {!ownerChartMode && signalIdentity && (
-              <button type="button" className="editor-reject-signal"
-                disabled={extensionPending || reviewPending || !snapshotRevision || !barsSha256 || !onSaveGeometryReview || !referenceDrawings.length}
-                onClick={() => void saveCorrection(true)}>
-                ❌ Ошибочный сигнал
-              </button>
-            )}
             {lastSavedReviewLabel === "FALSE_POSITIVE" && (
               <output className="editor-review-success" role="status" aria-live="polite">
                 Сигнал забракован
@@ -1264,6 +1257,13 @@ export function ChartPanel({
                 disabled={reviewPending || proposalPending}
                 onClick={restoreOriginalGeometry}>
                 Вернуть исходную геометрию
+              </button>
+            )}
+            {!ownerChartMode && !newSignalMode && signalIdentity && (
+              <button type="button" className="editor-reject-signal"
+                disabled={extensionPending || reviewPending || !snapshotRevision || !barsSha256 || !onSaveGeometryReview || !referenceDrawings.length}
+                onClick={() => void saveCorrection(true)}>
+                ❌ Ошибочный сигнал
               </button>
             )}
           </div>
