@@ -4,6 +4,9 @@ on:
   pull_request:
     paths:
       - "geometry/pair_metrics.py"
+      - "geometry/evaluation.py"
+      - "geometry/envelope_metrics.py"
+      - "tests/test_geometry_strict_wedge_owner.py"
       - "tests/test_geometry_triangle_local_anchors.py"
       - "tests/fixtures/geometry_gold/**"
       - ".github/workflows/triangle-first-wave-ci.yml"
@@ -30,3 +33,5 @@ jobs:
         run: python -m py_compile geometry/pair_metrics.py tests/test_geometry_triangle_local_anchors.py
       - name: Verify single first wave, owner Gold and HORN independence
         run: python -m unittest -v tests.test_geometry_triangle_local_anchors tests.test_broadening_detector
+      - name: Verify strict wedge owner case
+        run: python -m unittest -v tests.test_geometry_strict_wedge_owner
