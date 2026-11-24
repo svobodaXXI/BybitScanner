@@ -17,7 +17,7 @@ import json
 from pathlib import Path
 import shutil
 import tempfile
-from urllib.request import Request, urlopen
+from research.simulator_v2.public_trade_download import fetch_public_trade_day
 
 from research.simulator_v2.trade_archive import (
     MAX_ARCHIVE_BYTES, import_trade_day_into_cache,
@@ -41,27 +41,12 @@ def fetch_archives(archive_dir: Path, cache_dir: Path) -> tuple[int, tuple[Trade
     for i in range(DAYS):
         day = START_DAY + timedelta(days=i)
         name = f"{SYMBOL}{day.isoformat()}.csv.gz"
-        url = f"https://public.bybit.com/trading/{SYMBOL}/{name}"
         destination = archive_dir / name
-        request = Request(
-            url, method="GET",
-            headers={"User-Agent": "BybitScanner-SimulatorV2-Research/1.0"},
+        daily = fetch_public_trade_day(
+            destination, symbol=SYMBOL, utc_day=day,
+            byte_limit=min(MAX_ARCHIVE_BYTES, MAX_TOTAL_ARCHIVE_BYTES - total),
         )
-        daily = 0
-        with urlopen(request, timeout=30) as response, destination.open("xb") as output:
-            if response.geturl() != url:
-                raise ValueError("unapproved public archive redirect")
-            while True:
-                block = response.read(1024 * 1024)
-                if not block:
-                    break
-                daily += len(block)
-                total += len(block)
-                if daily > MAX_ARCHIVE_BYTES or total > MAX_TOTAL_ARCHIVE_BYTES:
-                    raise ValueError("bounded public trade archives exceed size limit")
-                output.write(block)
-        if daily == 0:
-            raise ValueError("empty public Bybit daily archive")
+        total += daily
         # Validate and cache each individual complete day BEFORE downloading
         # the next; never spend bandwidth on later days after the first gap.
         try:
