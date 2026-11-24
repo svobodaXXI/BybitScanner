@@ -1,5 +1,8 @@
 """Synthetic exact-host and private L2 receipt tests; no IO or trading."""
 import unittest
+import json
+import tempfile
+from pathlib import Path
 from decimal import Decimal
 
 from terminal.application.robot_breakout_monitor import RobotBreakoutMonitor
@@ -7,7 +10,7 @@ from terminal.domain.models import TradingAccountId
 from types import SimpleNamespace as NS
 
 from terminal.market_data.private_box_host_evidence import (
-    PrivateBoxCapture, inspect_private_box_receipts,
+    PrivateBoxCapture, inspect_private_box_receipts, save_first_private_box_receipt,
 )
 
 
@@ -343,6 +346,34 @@ class PrivateBoxCaptureTests(unittest.TestCase):
         capture.observe(store.get, robot_ready=False, observed_at_ms=2100,
                         save=lambda *args: saved.append(args))
         self.assertEqual(len(saved), 1)
+
+
+    def test_private_sink_is_single_sample_and_never_overwrites(self):
+        from terminal.market_data.impulse_observation import ObservedPrint
+
+        store, data = setup()
+        data["trades"]["prints"] = (ObservedPrint(
+            "t1", 2000, 9, "Buy", Decimal("100"), Decimal("1"), 2002,
+        ),)
+        result = inspect_private_box_receipts(
+            store.get, lambda _: data, candidate_id="box-robot-123",
+            observed_at_ms=2100,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "private.json"
+            self.assertFalse(save_first_private_box_receipt(
+                path, result, data, allow_write=lambda: False))
+            self.assertFalse(path.exists())
+            self.assertTrue(save_first_private_box_receipt(
+                path, result, data, allow_write=lambda: True))
+            original = path.read_bytes()
+            parsed = json.loads(original)
+            self.assertFalse(parsed["source_complete"])
+            self.assertFalse(parsed["trading_authorized"])
+            self.assertEqual(parsed["trades"]["prints"][0]["received_at_ms"], 2002)
+            self.assertFalse(save_first_private_box_receipt(
+                path, result, data, allow_write=lambda: True))
+            self.assertEqual(path.read_bytes(), original)
 
 
 if __name__ == "__main__":
