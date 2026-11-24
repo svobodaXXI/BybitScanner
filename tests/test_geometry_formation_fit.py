@@ -63,6 +63,61 @@ class HistoricalFormationFitTest(unittest.TestCase):
             with self.subTest(symbol=name):
                 geometry = self.winners[name]
                 want = case["expected"]
+                # Pinned pre-change baseline 8cd852a / CI 45374861702:
+                # INJ and XRP already returned None; their archived triangle
+                # lines are historical evidence, not current admitted pairs.
+                if name in ("INJ", "XRP"):
+                    self.assertIsNone(geometry)
+                    continue
+                if name in ("WLD", "AAVE"):
+                    # Explicit dispositions measured in the same baseline/PR
+                    # comparison, not automatic refresh of archived winners.
+                    frame = self.frames[name]
+                    if name == "WLD":
+                        # The preceding baseline rising wedge U80/165 L89/177
+                        # violates its strict lower side at seven candles.
+                        # LOW147 is even below LOW89: no rising line through
+                        # the structural lower anchor can enclose this episode.
+                        a, b = 89, 177
+                        pa, pb = float(frame.iloc[a].low), float(frame.iloc[b].low)
+                        slope = (pb-pa)/(b-a)
+                        old_lower = {"anchor_index": a, "slope": slope,
+                                     "intercept": pa-slope*a}
+                        self.assertEqual(evaluate_strict_wedge_wicks(
+                            old_lower, frame, "lower", 190, len(frame)-1
+                        ), [145,146,147,148,149,153,154])
+                        self.assertLess(frame.iloc[147].low, pa)
+                        expected = [39,117,43,89,39,117]
+                        lower_breaches = [61,62,63]
+                    else:
+                        # No selected baseline geometry. The new local support
+                        # yields a stale falling diagnostic, not a signal.
+                        expected = [38,79,40,91,38,91]
+                        lower_breaches = [44,45,46,47,48,49,52,53,54,55]
+                    self.assertEqual(identity(geometry), expected)
+                    sequence = geometry.pair_metrics["anchor_sequence"]
+                    self.assertEqual(sequence["family"], "falling")
+                    self.assertTrue(sequence["valid"])
+                    for side, a, b in (("upper", expected[0], expected[1]),
+                                       ("lower", expected[2], expected[3])):
+                        line = getattr(geometry, side + "_line")
+                        column = "high" if side == "upper" else "low"
+                        self.assertAlmostEqual(line_value(line, a), frame.iloc[a][column], places=12)
+                        self.assertAlmostEqual(line_value(line, b), frame.iloc[b][column], places=12)
+                    self.assertEqual(evaluate_strict_wedge_wicks(
+                        geometry.upper_line, frame, "upper", geometry.end_index,
+                        len(frame)-1
+                    ), [])
+                    fit = geometry.envelope_metrics["formation_body_fit"]
+                    self.assertEqual(fit["upper"]["body_breach_indices"], [])
+                    self.assertEqual(fit["lower"]["body_breach_indices"], lower_breaches)
+                    self.assertLess(fit["lower"]["max_consecutive_breaches"], 7)
+                    self.assertFalse(_freshness_predicate(
+                        geometry.start_index, geometry.end_index,
+                        geometry.apex["index"], geometry.current_index
+                    ))
+                    self.assertFalse(detect_structure(geometry, candles=frame)["detected"])
+                    continue
                 if name == "PONS":
                     # Explicit owner strict-boundary revision, not a rewrite
                     # of the archived historical fixture. The old upper ray
@@ -165,7 +220,12 @@ class HistoricalFormationFitTest(unittest.TestCase):
                 with self.subTest(symbol=name,cutoff=cutoff):
                     with patch.object(engine,"GEOMETRY_MAX_BODY_BREACH_RUN",cutoff), patch.object(engine,"build_candidate_lines",side_effect=[[None],[None]*len(pool)]), patch.object(engine,"filter_candidates",side_effect=lambda x:x), patch.object(engine,"evaluate_candidate_pair",side_effect=pool), contextlib.redirect_stdout(io.StringIO()):
                         winner=engine.analyze_geometry([{}]*4,[{}]*4,199,freshness_predicate=_freshness_predicate)
-                    self.assertEqual(identity(winner),identity(self.winners[name]))
+                    # AAVE's measured six-bar non-strict body run is
+                    # admitted only under the existing cutoff 7 or above.
+                    # Below that, the historical comparison proved no winner.
+                    # All other PR winners remain stable across this range.
+                    expected = None if name == "AAVE" and cutoff <= 6 else identity(self.winners[name])
+                    self.assertEqual(identity(winner), expected)
 
 
 if __name__ == "__main__":
