@@ -368,6 +368,9 @@ class RobotBreakoutMonitor:
 
         capture, path = self._private_box_capture
         try:
+            if path.exists():
+                capture.close()
+                return
             store = self._store()
 
             def ready_epoch():
@@ -407,7 +410,8 @@ class RobotBreakoutMonitor:
 
             capture.observe(store.get_robot_candidate,
                             robot_ready=ready_epoch() == epoch,
-                            observed_at_ms=self._now_ms(), save=save)
+                            observed_at_ms=self._now_ms(), save=save,
+                            observation_clock=self._now_ms)
             if path.exists() or ready_epoch() != epoch:
                 capture.close()
         except Exception:
