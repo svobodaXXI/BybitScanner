@@ -4,7 +4,7 @@ import {
 } from "lightweight-charts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  completeHourlyCandles, nextClosedCandleCursor, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations,
+  replayPricePrecision, completeHourlyCandles, nextClosedCandleCursor, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations,
   visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy,
   type ReplayDocument, type ReplayEvent, type PublicScannerObservation,
 } from "./replayModel";
@@ -109,6 +109,7 @@ function ReplayChart({ document, cursor, paperOverlay, paperFacts, showTrendGeom
   const shown = useMemo(() => visibleReplay(document.events, cursor), [document, cursor]);
   const displayCandles = useMemo(() => timeframe === "1h"
     ? completeHourlyCandles(shown.candles) : shown.candles, [shown.candles, timeframe]);
+  const pricePrecision = useMemo(() => replayPricePrecision(shown.candles), [shown.candles]);
   // Build a frozen visual-only record once per archive. Each already
   // revealed provisional line persists as drawn; rewinding masks its future.
   const earlyTimeline = useMemo(() => earlyGeometryTimeline(document), [document]);
@@ -195,6 +196,12 @@ function ReplayChart({ document, cursor, paperOverlay, paperFacts, showTrendGeom
       api.remove();
     };
   }, []);
+
+  useEffect(() => {
+    series.current?.applyOptions({
+      priceFormat: { type: "price", precision: pricePrecision, minMove: 10 ** -pricePrecision },
+    });
+  }, [pricePrecision]);
 
   useEffect(() => {
     const candleSeries = series.current;
