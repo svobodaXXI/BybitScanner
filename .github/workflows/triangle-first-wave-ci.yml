@@ -4,6 +4,12 @@ on:
   pull_request:
     paths:
       - "geometry/pair_metrics.py"
+      - "geometry/evaluation.py"
+      - "geometry/engine.py"
+      - "geometry/wedge_boundaries.py"
+      - "tests/test_geometry_formation_fit.py"
+      - "geometry/envelope_metrics.py"
+      - "tests/test_geometry_strict_wedge_owner.py"
       - "tests/test_geometry_triangle_local_anchors.py"
       - "tests/fixtures/geometry_gold/**"
       - ".github/workflows/triangle-first-wave-ci.yml"
@@ -15,7 +21,7 @@ permissions:
 jobs:
   triangle-first-wave:
     runs-on: ubuntu-latest
-    timeout-minutes: 6
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -30,3 +36,7 @@ jobs:
         run: python -m py_compile geometry/pair_metrics.py tests/test_geometry_triangle_local_anchors.py
       - name: Verify single first wave, owner Gold and HORN independence
         run: python -m unittest -v tests.test_geometry_triangle_local_anchors tests.test_broadening_detector
+      - name: Verify strict wedge owner case
+        run: python -m unittest -v tests.test_geometry_strict_wedge_owner
+      - name: Verify frozen eleven-case formation fit and selection
+        run: python -m unittest -v tests.test_geometry_formation_fit

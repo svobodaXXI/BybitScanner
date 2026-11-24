@@ -165,7 +165,8 @@ class PonsUniversalAnchorPositiveControlTest(unittest.TestCase):
     fixture whose already-selected anchors satisfy the universal rule
     exactly: first anchor U143 (a HIGH) is chronologically before L145, and
     L145 is the immediate next confirmed LOW pivot after 143 -- a genuine
-    single local episode. The fix must not disturb it.
+    single local episode. The structural first anchors must remain unchanged;
+    the strict boundary contact must follow the actual outer highs.
     """
 
     @classmethod
@@ -185,11 +186,22 @@ class PonsUniversalAnchorPositiveControlTest(unittest.TestCase):
             _freshness_predicate,
         )
 
-    def test_pons_wedge_anchors_unchanged(self):
+    def test_pons_episode_unchanged_and_strict_upper_corrected(self):
         want = self.expected["geometry"]
         self.assertIsNotNone(self.geometry)
         self.assertEqual(self.geometry.upper_line["anchor_index"], want["anchors"][0])
-        self.assertEqual(self.geometry.upper_line["second_index"], want["anchors"][1])
+        # The archived U143/178 reference is not strict: one wick and two
+        # body crossings. Preserve the old fixture as evidence, not a target.
+        from geometry.envelope_metrics import evaluate_strict_wedge_wicks
+        self.assertEqual(want["anchors"][1], 178)
+        self.assertEqual(evaluate_strict_wedge_wicks(
+            want["lines"][0], self.frame, "upper", want["end"], len(self.frame)-1
+        ), [158, 167, 168])
+        self.assertEqual(self.geometry.upper_line["second_index"], 167)
+        self.assertEqual(self.geometry.upper_line["second_price"], self.frame.iloc[167].high)
+        self.assertEqual(evaluate_strict_wedge_wicks(
+            self.geometry.upper_line, self.frame, "upper", want["end"], len(self.frame)-1
+        ), [])
         self.assertEqual(self.geometry.lower_line["anchor_index"], want["anchors"][2])
         self.assertEqual(self.geometry.lower_line["second_index"], want["anchors"][3])
         self.assertEqual(self.geometry.start_index, want["start"])

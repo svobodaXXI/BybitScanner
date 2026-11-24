@@ -45,6 +45,9 @@ from .evaluation import (
 )
 
 from .touches import _atr_series
+from .wedge_boundaries import (
+    build_strict_wedge_support_lines, is_strict_wedge_support, strict_support_pair_allowed,
+)
 
 from .ranking import (
     rank_geometry
@@ -320,9 +323,12 @@ def analyze_geometry(
         )
     )
 
-    upper_candidates = upper_candidates + triangle_upper
+    strict_upper, strict_lower = build_strict_wedge_support_lines(
+        highs, lows, upper_candidates, lower_candidates, candles, current_index
+    )
+    upper_candidates = upper_candidates + triangle_upper + strict_upper
 
-    lower_candidates = lower_candidates + triangle_lower
+    lower_candidates = lower_candidates + triangle_lower + strict_lower
 
     if (
         not upper_candidates
@@ -349,6 +355,13 @@ def analyze_geometry(
     for upper_candidate in upper_candidates:
 
         for lower_candidate in lower_candidates:
+
+            if not strict_support_pair_allowed(upper_candidate, lower_candidate):
+                continue
+            if (is_strict_wedge_support(upper_candidate) or
+                    is_strict_wedge_support(lower_candidate)) and not anchor_order_possible(
+                        upper_candidate["line"], lower_candidate["line"], highs, lows):
+                continue
 
             #
             # 3a. A Triangle-only line pairs only into a Triangle: falling
