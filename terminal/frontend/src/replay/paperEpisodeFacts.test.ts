@@ -248,3 +248,67 @@ describe("PAPER episode facts are display-only, never SIMULATION fills", () => {
     expect(facts.execution_allocations[0].allocated_fee).toBe("0E-8");
   });
 });
+
+
+describe("PAPER mixed-controller cohorts match canonical Diary scope", () => {
+  const [open, close] = source.execution_allocations;
+  const mixed = (allocations: typeof source.execution_allocations,
+                 cohort = "JOINT_MANAGEMENT", owner = "ROBOT") =>
+    ({ ...source, cohort, owner, execution_allocations: allocations });
+  const reduce = { ...close, execution_id: "exec-reduce", order_id: "order-reduce",
+    allocation_role: "REDUCE", controller: "MANUAL", allocated_quantity: "1",
+    occurred_at_ms: open.occurred_at_ms + 1000 };
+  const increase = { ...open, execution_id: "exec-increase", order_id: "order-increase",
+    allocation_role: "INCREASE", controller: "MANUAL", allocated_quantity: "1",
+    occurred_at_ms: open.occurred_at_ms + 1000 };
+
+  it("accepts manual opening and Robot close under both joint report scopes", () => {
+    const rows = [{ ...open, controller: "MANUAL" }, close];
+    for (const owner of ["ROBOT", "MANUAL"]) {
+      const facts = parsePaperEpisodeFacts(mixed(rows, "JOINT_MANAGEMENT", owner));
+      expect(facts.execution_allocations.map(a => a.controller)).toEqual(["MANUAL", "ROBOT"]);
+      expect(facts.cohort).toBe("JOINT_MANAGEMENT");
+    }
+  });
+
+  it("replays manual open and increase, then Robot increase and close", () => {
+    const rows = [
+      { ...open, controller: "MANUAL" },
+      increase,
+      { ...increase, execution_id: "exec-robot-add", order_id: "order-robot-add",
+        controller: "ROBOT", occurred_at_ms: increase.occurred_at_ms + 1000 },
+      { ...close, allocated_quantity: "4" },
+    ];
+    const facts = parsePaperEpisodeFacts(mixed(rows));
+    expect(facts.execution_allocations).toEqual(rows);
+    expect(matchPaperFactsToMarket(facts, market()).markers).toHaveLength(4);
+  });
+
+  it("accepts manual partial reduction or increase without changing the source executions", () => {
+    for (const mid of [reduce, increase]) {
+      const rows = [open, mid, { ...close,
+        allocated_quantity: mid.allocation_role === "REDUCE" ? "1" : "3" }];
+      const facts = parsePaperEpisodeFacts(mixed(rows));
+      expect(facts.execution_allocations).toEqual(rows);
+      expect(matchPaperFactsToMarket(facts, market()).markers).toHaveLength(3);
+    }
+  });
+
+  it("accepts manual increase and manual final close as joint, not assisted", () => {
+    const rows = [open, increase, { ...close, controller: "MANUAL", allocated_quantity: "3" }];
+    expect(parsePaperEpisodeFacts(mixed(rows)).cohort).toBe("JOINT_MANAGEMENT");
+    expect(() => parsePaperEpisodeFacts(mixed(rows, "ROBOT_MANUAL_CLOSE"))).toThrow();
+  });
+
+  it("rejects mislabeled autonomous, assisted, unknown and invalid intermediate lifecycle", () => {
+    const assisted = [open, { ...close, controller: "MANUAL" }];
+    expect(parsePaperEpisodeFacts(mixed(assisted, "ROBOT_MANUAL_CLOSE")).cohort)
+      .toBe("ROBOT_MANUAL_CLOSE");
+    for (const rows of [
+      [open, close],
+      assisted,
+      [open, { ...reduce, controller: "EXTERNAL" }, close],
+      [open, { ...increase, allocation_role: "OPEN" }, close],
+    ]) expect(() => parsePaperEpisodeFacts(mixed(rows))).toThrow();
+  });
+});
