@@ -243,6 +243,7 @@ export type LocalWedgeStatus = {
   python_dependencies_available: boolean;
   archive_files_present: boolean;
   wedge_risk_profile_present: boolean;
+  auto_m1_preparation?: boolean;
   archive_hint?: {
     symbol: string; start_utc: string; end_utc_inclusive: string;
   };
@@ -254,6 +255,9 @@ export function parseWedgeStatus(raw: unknown): LocalWedgeStatus {
       ["can_attempt", "wedge_engine_available", "python_dependencies_available",
        "archive_files_present", "wedge_risk_profile_present"].some(k => typeof x[k] !== "boolean")) {
     throw new Error("Неверный ответ локального SIMULATION");
+  }
+  if (x.auto_m1_preparation !== undefined && typeof x.auto_m1_preparation !== "boolean") {
+    throw new Error("Неверная возможность подготовки M1");
   }
   if (x.archive_hint !== undefined) {
     const hint = x.archive_hint;
