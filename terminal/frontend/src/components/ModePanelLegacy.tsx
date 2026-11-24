@@ -12,6 +12,7 @@ import {
   formatPositionAverageEntry,
   formatPositionPnlPercent,
   positionPnlPercent,
+  positionPnlPercentFromEntryNotional,
 } from "../marketData/positionPnl";
 import { baseAssetFromSymbol } from "../marketData/symbol";
 import { TradingControlButton } from "../interactions/useTradingControlActivation";
@@ -333,14 +334,34 @@ export function ModePanel({
   const alternatives = (["TERMINAL", "AUTOPILOT", "EDITOR"] as const).filter(
     (candidate) => candidate !== mode,
   );
-  const pnlPercent = positionPnlPercent(
-    positionSide,
-    positionAverageEntry,
-    Number(sizingReferencePrice),
-  );
-  const pnlTone = pnlPercent === null || pnlPercent === 0
+  const isMainPosition = accountWorkspaceProjection?.provider === "BYBIT";
+  const mainPnlPosition = isMainPosition
+    ? accountWorkspaceProjection.positions.find((position) =>
+        position.account_id === accountWorkspaceProjection.account_id
+        && position.symbol === symbol
+        && (position.side === "Long" || position.side === "Short")
+        && Number(position.size) > 0,
+      )
+    : undefined;
+  const paperPercent = !isMainPosition && paperState?.ok && paperState.symbol === symbol
+    ? positionPnlPercent(paperState.position_side, Number(paperState.average_entry), Number(sizingReferencePrice))
+    : null;
+  const paperEntryNotional = Number(paperState?.position_quantity) * Number(paperState?.average_entry);
+  const rawMainPnl = mainPnlPosition?.unrealized_pnl;
+  const mainPnl = typeof rawMainPnl === "string" && rawMainPnl.trim() !== ""
+    && Number.isFinite(Number(rawMainPnl)) ? Number(rawMainPnl) : null;
+  const pnlUsdt = isMainPosition ? mainPnl
+    : paperPercent !== null && Number.isFinite(paperEntryNotional) && paperEntryNotional > 0
+      && Number.isFinite(paperPercent / 100 * paperEntryNotional)
+      ? paperPercent / 100 * paperEntryNotional : null;
+  const pnlPercent = isMainPosition
+    ? mainPnl === null ? null : positionPnlPercentFromEntryNotional(
+        mainPnl, Number(mainPnlPosition?.size), Number(mainPnlPosition?.average_entry),
+      )
+    : paperPercent;
+  const pnlTone = pnlUsdt === null || pnlUsdt === 0
     ? "neutral"
-    : pnlPercent > 0 ? "positive" : "negative";
+    : pnlUsdt > 0 ? "positive" : "negative";
   const positionBaseAsset = baseAssetFromSymbol(positionSymbol);
   const currentPrice = Number(sizingReferencePrice);
   const longDefaultPrice = Number.isFinite(currentPrice) && currentPrice > 0
@@ -947,11 +968,12 @@ export function ModePanel({
                     {formatPositionAverageEntry(positionAverageEntry)}
                   </span>
                 ) : null}
-                {pnlPercent !== null ? (
-                  <span className={`paper-position-pnl ${pnlTone}`}>
-                    {formatPositionPnlPercent(pnlPercent)}
-                  </span>
-                ) : null}
+                <span className={`paper-position-pnl ${pnlTone}`}>
+                  {pnlUsdt === null ? "—" : `${pnlUsdt > 0 ? "+" : pnlUsdt < 0 ? "−" : ""}${Math.abs(pnlUsdt).toFixed(2)} USDT`}
+                </span>
+                <span className={`paper-position-pnl ${pnlTone}`}>
+                  {pnlPercent === null ? "—" : formatPositionPnlPercent(pnlPercent)}
+                </span>
               </div>
             ) : null}
           </div>
