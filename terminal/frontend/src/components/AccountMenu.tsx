@@ -53,7 +53,7 @@ function validCatalog(value: unknown): value is AccountCatalog {
 
 export function AccountMenu({
   open, onToggle, workspaceProjection = null, onActiveAccountChange,
-  mode, selectedAccountId, onSelectAccount, modeAccountError,
+  mode, selectedAccountId, otherWorkspaceAccountId, onSelectAccount, modeAccountError,
 }: {
   open: boolean;
   onToggle: () => void;
@@ -61,6 +61,7 @@ export function AccountMenu({
   onActiveAccountChange?: (account: { id: string; name: string } | null) => void;
   mode?: AccountMode;
   selectedAccountId?: string | null;
+  otherWorkspaceAccountId?: string | null;
   onSelectAccount?: (mode: AccountMode, account: ModeAccountDescriptor) => Promise<void>;
   modeAccountError?: string | null;
 }) {
@@ -160,7 +161,7 @@ export function AccountMenu({
   }, []);
 
   useEffect(() => {
-    if ((open && mode !== "AUTOPILOT") || (mode === "TERMINAL" && selectedAccountId?.startsWith("bybit-")))
+    if (open || (mode === "TERMINAL" && selectedAccountId?.startsWith("bybit-")))
       void refreshManualMain();
   }, [open, mode, selectedAccountId]);
 
@@ -190,6 +191,16 @@ export function AccountMenu({
   const currentAccountId = mode ? selectedAccountId : catalog?.active_account_id;
   const currentClass = (id: string) => id === currentAccountId
     ? ` is-current${selectedVerified ? " is-verified-current" : ""}` : "";
+  const currentLabel = mode ? "Текущий" : "Current";
+  const otherRole = (account: AccountDescriptor) => {
+    if (!mode || account.id === currentAccountId || account.id !== otherWorkspaceAccountId) return null;
+    const ready = ["READY", "READ_ONLY"].includes(account.status);
+    return <span className={`account-robot-role${ready ? " account-role-connected" : ""}`}>
+      {mode === "TERMINAL"
+        ? ready ? "Подключён к Роботу" : "Счёт Робота"
+        : ready ? "Подключён к Терминалу" : "Счёт Терминала"}
+    </span>;
+  };
   useEffect(() => {
     onActiveAccountChange?.(selected ? { id: selected.id, name: selected.display_name } : null);
   }, [selected?.display_name, selected?.id, onActiveAccountChange]);
@@ -349,6 +360,76 @@ export function AccountMenu({
     }
   };
 
+  const catalogCards = catalogError || !catalog || !active ? <p role="alert">Account catalog unavailable</p> : catalog.accounts
+              .filter((account) => !mode || account.provider === "PAPER")
+              .sort((a, b) => Number(b.id === currentAccountId) - Number(a.id === currentAccountId))
+              .map((account) => (
+              <article
+                className={`account-card ${account.environment.toLowerCase()} status-${account.status.toLowerCase()}${currentClass(account.id)}`}
+                aria-current={account.id === currentAccountId ? "true" : undefined}
+                key={account.id}
+                onClick={() => account.id !== (mode ? selectedAccountId : catalog.active_account_id)
+                  && !switching && setConfirmAccount(account)}
+              >
+                <div className="account-card-title">
+                  <strong>{account.display_name}</strong>
+                  {account.id === (mode ? selectedAccountId : catalog.active_account_id) ? <span
+                    aria-label="Current account golden key"
+                    className="account-switch-key account-current-key"
+                    role="img"
+                  ><span className="account-key-head" /><span className="account-key-shaft" /></span> : null}
+                </div>
+                <small>{account.provider === account.environment ? account.provider : `${account.provider} · ${account.environment}`} · {account.status === "READY" ? <span className="account-ready-status">READY</span> : account.status}</small>
+                {account.id === currentAccountId ? <span>{currentLabel}</span> : otherRole(account)}
+                {refreshError[account.id] ? <small className="account-refresh-error" role="alert">{refreshError[account.id]}</small> : null}
+                {account.provider === "BYBIT" ? <button
+                  className="account-refresh-button"
+                  disabled={refreshingAccount === account.id}
+                  onClick={(event) => { event.stopPropagation(); void refreshLiveAccount(account.id); }}
+                  type="button"
+                >{refreshingAccount === account.id ? "Refreshing…" : account.status === "DISCONNECTED" || account.status === "ERROR" ? "Reconnect" : "Refresh"}</button> : null}
+              </article>
+            ));
+  const mainCards = [...manualMain].sort((a, b) => Number(b.id === currentAccountId) - Number(a.id === currentAccountId)).map((account) => (
+              <article className={`account-card mainnet manual-main-account status-${account.status.toLowerCase()}${mode === "TERMINAL" ? currentClass(account.id) : ""}`} key={account.id} aria-label="Manual MAIN account"
+                aria-current={mode === "TERMINAL" && account.id === currentAccountId ? "true" : undefined}>
+                <div className="account-card-title">
+                  <strong>{account.display_name}</strong>
+                  {mode === "TERMINAL" && account.id === currentAccountId ? <span
+                    aria-label="Current account golden key" className="account-switch-key account-current-key" role="img"
+                  ><span className="account-key-head" /><span className="account-key-shaft" /></span> : null}
+                </div>
+                <small>BYBIT · MAINNET · {account.status === "READY" ? <span className="account-ready-status">READY</span> : account.status} · Separate MAIN service</small>
+                {mode === "TERMINAL" && account.id === currentAccountId ? <span>{currentLabel}</span> : otherRole(account)}
+                {mode !== "AUTOPILOT" ? <>
+                <small>{workspaceProjection?.account_id === account.id && workspaceProjection.read_only === false
+                  ? "Manual MAIN trading verified for this session."
+                  : "Trading requires independent MAIN authorization; read-only until verified."}</small>
+                {mode === "TERMINAL" && account.id !== selectedAccountId ? (
+                  <button type="button" disabled={switching}
+                    onClick={() => setConfirmAccount(account)}>Select MAIN</button>
+                ) : null}
+                <button type="button" disabled={mainInventoryLoading === account.id}
+                  onClick={() => void openMainInventory(account)}>
+                  {mainInventoryLoading === account.id ? "Loading positions…" : "All MAIN positions"}
+                </button>
+                {refreshError[account.id] ? <small role="alert">{refreshError[account.id]}</small> : null}
+                <button type="button" disabled={refreshingAccount === account.id}
+                  onClick={() => void (async () => {
+                    setRefreshingAccount(account.id);
+                    try {
+                      const response = await fetch(marketApiRoutes.manualMainRefresh(account.id), { method: "POST" });
+                      if (!response.ok) throw new Error("main_refresh_failed");
+                      await refreshManualMain();
+                      setRefreshError((current) => ({ ...current, [account.id]: "" }));
+                    } catch {
+                      setRefreshError((current) => ({ ...current, [account.id]: "MAIN refresh failed." }));
+                    } finally { setRefreshingAccount(null); }
+                  })()}>{refreshingAccount === account.id ? "Refreshing MAIN…" : "Refresh MAIN"}</button>
+                </> : null}
+              </article>
+            ));
+
   return (
     <div className="paper-account-control">
       <TradingControlButton
@@ -404,78 +485,11 @@ export function AccountMenu({
               <strong>Accounts</strong>
               <button aria-label="Close Accounts" className="account-menu-close" onClick={onToggle} type="button">×</button>
             </header>
-            {catalogError || !catalog || !active ? <p role="alert">Account catalog unavailable</p> : catalog.accounts
-              .filter((account) => !mode || account.provider === "PAPER")
-              .map((account) => (
-              <article
-                className={`account-card ${account.environment.toLowerCase()} status-${account.status.toLowerCase()}${currentClass(account.id)}`}
-                aria-current={account.id === currentAccountId ? "true" : undefined}
-                key={account.id}
-                onClick={() => account.id !== (mode ? selectedAccountId : catalog.active_account_id)
-                  && !switching && setConfirmAccount(account)}
-              >
-                <div className="account-card-title">
-                  <strong>{account.display_name}</strong>
-                  {account.id === (mode ? selectedAccountId : catalog.active_account_id) ? <span
-                    aria-label="Current account golden key"
-                    className="account-switch-key account-current-key"
-                    role="img"
-                  ><span className="account-key-head" /><span className="account-key-shaft" /></span> : null}
-                </div>
-                <small>{account.provider === account.environment ? account.provider : `${account.provider} · ${account.environment}`} · {account.status === "READY" ? <span className="account-ready-status">READY</span> : account.status}</small>
-                {account.id === currentAccountId ? <span>Current</span>
-                  : mode === "TERMINAL" && selectedAccountId && account.id === "paper"
-                    && account.provider === "PAPER" && account.environment === "PAPER"
-                    ? <span className="account-robot-role">Robot account</span> : null}
-                {refreshError[account.id] ? <small className="account-refresh-error" role="alert">{refreshError[account.id]}</small> : null}
-                {account.provider === "BYBIT" ? <button
-                  className="account-refresh-button"
-                  disabled={refreshingAccount === account.id}
-                  onClick={(event) => { event.stopPropagation(); void refreshLiveAccount(account.id); }}
-                  type="button"
-                >{refreshingAccount === account.id ? "Refreshing…" : account.status === "DISCONNECTED" || account.status === "ERROR" ? "Reconnect" : "Refresh"}</button> : null}
-              </article>
-            ))}
-            {mode !== "AUTOPILOT" && manualMain.map((account) => (
-              <article className={`account-card mainnet manual-main-account status-${account.status.toLowerCase()}${mode === "TERMINAL" ? currentClass(account.id) : ""}`} key={account.id} aria-label="Manual MAIN account"
-                aria-current={mode === "TERMINAL" && account.id === currentAccountId ? "true" : undefined}>
-                <div className="account-card-title">
-                  <strong>{account.display_name}</strong>
-                  {mode === "TERMINAL" && account.id === currentAccountId ? <span
-                    aria-label="Current account golden key" className="account-switch-key account-current-key" role="img"
-                  ><span className="account-key-head" /><span className="account-key-shaft" /></span> : null}
-                </div>
-                {mode === "TERMINAL" && account.id === currentAccountId ? <span>Current</span> : null}
-                <small>BYBIT · MAINNET · {account.status} · Separate MAIN service</small>
-                <small>{workspaceProjection?.account_id === account.id && workspaceProjection.read_only === false
-                  ? "Manual MAIN trading verified for this session."
-                  : "Trading requires independent MAIN authorization; read-only until verified."}</small>
-                {mode === "TERMINAL" && account.id !== selectedAccountId ? (
-                  <button type="button" disabled={switching}
-                    onClick={() => setConfirmAccount(account)}>Select MAIN</button>
-                ) : null}
-                <button type="button" disabled={mainInventoryLoading === account.id}
-                  onClick={() => void openMainInventory(account)}>
-                  {mainInventoryLoading === account.id ? "Loading positions…" : "All MAIN positions"}
-                </button>
-                {refreshError[account.id] ? <small role="alert">{refreshError[account.id]}</small> : null}
-                <button type="button" disabled={refreshingAccount === account.id}
-                  onClick={() => void (async () => {
-                    setRefreshingAccount(account.id);
-                    try {
-                      const response = await fetch(marketApiRoutes.manualMainRefresh(account.id), { method: "POST" });
-                      if (!response.ok) throw new Error("main_refresh_failed");
-                      await refreshManualMain();
-                      setRefreshError((current) => ({ ...current, [account.id]: "" }));
-                    } catch {
-                      setRefreshError((current) => ({ ...current, [account.id]: "MAIN refresh failed." }));
-                    } finally { setRefreshingAccount(null); }
-                  })()}>{refreshingAccount === account.id ? "Refreshing MAIN…" : "Refresh MAIN"}</button>
-              </article>
-            ))}
+            {mode === "TERMINAL" && manualMain.some(account => account.id === currentAccountId)
+              ? <>{mainCards}{catalogCards}</> : <>{catalogCards}{mainCards}</>}
             {mainInventoryError ? <small role="alert">{mainInventoryError}</small> : null}
             {modeAccountError ? <small role="alert">{modeAccountError}</small> : null}
-            {mode !== "AUTOPILOT" && manualMainUnavailable ? <small role="status">Separate MAIN service unavailable; PAPER unchanged.</small> : null}
+            {manualMainUnavailable ? <small role="status">Separate MAIN service unavailable; PAPER unchanged.</small> : null}
             {mode !== "AUTOPILOT" ? <button className="account-add-button" onClick={() => setAddOpen(true)} type="button">+ Add New Account</button> : null}
           </section>
         </div>
