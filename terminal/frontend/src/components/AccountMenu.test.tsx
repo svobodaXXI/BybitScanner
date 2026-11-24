@@ -144,13 +144,13 @@ describe("AccountMenu", () => {
     expect(screen.getByRole("img", { name: "Current account golden key" }).closest("article"))
       .toHaveTextContent("Paper / Virtual");
     expect(document.querySelectorAll(".account-switch-key")).toHaveLength(1);
-    fireEvent.click(screen.getByRole("button", { name: "+ Add new" }));
+    fireEvent.click(screen.getByRole("button", { name: "+ Add New Account" }));
     fireEvent.click(screen.getByRole("button", { name: "Bybit MAIN · Real account" }));
     fireEvent.change(screen.getByLabelText("API Secret"), { target: { value: "never-store-me" } });
     expect(screen.getByLabelText("API Secret")).toHaveAttribute("type", "password");
-    expect(screen.getByRole("button", { name: "Add account" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add Account" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Close add account" }));
-    fireEvent.click(screen.getByRole("button", { name: "+ Add new" }));
+    fireEvent.click(screen.getByRole("button", { name: "+ Add New Account" }));
     fireEvent.click(screen.getByRole("button", { name: "Bybit MAIN · Real account" }));
     expect(screen.getByLabelText("API Secret")).toHaveValue("");
     rerender(<AccountMenu open={false} onToggle={vi.fn()} />);
@@ -201,14 +201,14 @@ describe("AccountMenu", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<AccountMenu open onToggle={vi.fn()} />);
     await screen.findByText("Current");
-    fireEvent.click(screen.getByRole("button", { name: "+ Add new" }));
+    fireEvent.click(screen.getByRole("button", { name: "+ Add New Account" }));
     fireEvent.click(screen.getByRole("button", { name: "Bybit MAIN · Real account" }));
     fireEvent.change(screen.getByLabelText("Account name"), { target: { value: "Main" } });
     fireEvent.change(screen.getByLabelText("API Key"), { target: { value: "key" } });
     fireEvent.change(screen.getByLabelText("API Secret"), { target: { value: "secret" } });
-    fireEvent.click(screen.getByRole("button", { name: "Add account" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add Account" }));
     await screen.findByText("Main");
-    expect(screen.queryByRole("dialog", { name: "Add account" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Add Account" })).not.toBeInTheDocument();
     expect(fetchMock.mock.calls[1][1].body).toContain('"api_secret":"secret"');
     expect(screen.getAllByText("Current")).toHaveLength(1);
   });
@@ -219,14 +219,47 @@ describe("AccountMenu", () => {
       .mockResolvedValueOnce({ ok: false, json: async () => ({ ok: false, error: "bybit_validation_failed" }) }));
     render(<AccountMenu open onToggle={vi.fn()} />);
     await screen.findByText("Current");
-    fireEvent.click(screen.getByRole("button", { name: "+ Add new" }));
+    fireEvent.click(screen.getByRole("button", { name: "+ Add New Account" }));
     fireEvent.click(screen.getByRole("button", { name: "Bybit MAIN · Real account" }));
     for (const [label, value] of [["Account name", "Main"], ["API Key", "key"], ["API Secret", "secret"]]) {
       fireEvent.change(screen.getByLabelText(label), { target: { value } });
     }
-    fireEvent.click(screen.getByRole("button", { name: "Add account" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add Account" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Bybit rejected these credentials.");
     expect(screen.getByLabelText("API Secret")).toHaveValue("secret");
+  });
+
+  it("reports MAIN gateway failures without exposing credentials or raw response bodies", async () => {
+    const cases = [
+      { status: 401, message: "Terminal session expired" },
+      { status: 413, message: "request size" },
+      { status: 502, message: "HTTP 502" },
+    ];
+    for (const { status, message } of cases) {
+      const fetchMock = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => catalog })
+        .mockResolvedValueOnce({
+          ok: false, status, json: async () => { throw new SyntaxError("unexpected HTML"); },
+        });
+      vi.stubGlobal("fetch", fetchMock);
+      const { unmount } = render(<AccountMenu open onToggle={vi.fn()} />);
+      await screen.findByText("Current");
+      fireEvent.click(screen.getByRole("button", { name: "+ Add New Account" }));
+      fireEvent.click(screen.getByRole("button", { name: "Bybit MAIN · Real account" }));
+      for (const [label, value] of [
+        ["Account name", "Main"], ["API Key", "private-key"], ["API Secret", "private-secret"],
+      ]) {
+        fireEvent.change(screen.getByLabelText(label), { target: { value } });
+      }
+      const submit = screen.getByRole("button", { name: "Add Account" });
+      expect(submit).toHaveClass("account-add-submit-button");
+      fireEvent.click(submit);
+      const alert = await screen.findByRole("alert");
+      expect(alert).toHaveTextContent(message);
+      expect(alert).not.toHaveTextContent("private-key");
+      expect(alert).not.toHaveTextContent("private-secret");
+      expect(fetchMock.mock.calls[1][0]).toBe("/api/manual-main/accounts");
+      unmount();
+    }
   });
 
   it("visually classifies non-tradable and unverified account statuses", async () => {
