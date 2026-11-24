@@ -1616,6 +1616,19 @@ button {
 .account-refresh-button { justify-self: start; cursor: pointer; }
 .account-refresh-error { color: #e88888 !important; }
 .account-add-button { cursor: pointer !important; color: #d7e0e8 !important; }
+.account-dialog .account-add-submit-button {
+  min-height: 2.7rem;
+  border: 1px solid #3c7757;
+  border-radius: 0.35rem;
+  background: #14231c;
+  color: #8ce0ad;
+  font-weight: 700;
+  cursor: pointer;
+}
+.account-dialog .account-add-submit-button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
 .account-dialog-backdrop {
   position: fixed;
   inset: 0;
