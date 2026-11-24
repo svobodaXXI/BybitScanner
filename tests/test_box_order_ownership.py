@@ -61,6 +61,39 @@ class BoxOrderOwnershipTests(unittest.TestCase):
     def proof(self):
         return self.store.prove_box_owned_position(self.plan.candidate_id)
 
+    def test_terminal_box_quarantine_proof_reuses_admission_and_read_snapshot(self):
+        self.fill("emergency-entry", "entry-1", OrderSide.BUY,
+                  "2", "94", "2", "94", 5000)
+        robot, _ = self.store.handoff_box_plan_to_robot(
+            self.plan.candidate_id, symbol=self.key.symbol,
+            expected_snapshot_sha256=self.plan.snapshot_sha256, approved_at_ms=4001,
+        )
+        self.store.save_robot_candidate_state(
+            robot.candidate_id, status="INVALIDATED",
+            robot_state={"execution": {"box_emergency_close_intent": {
+                "slot": 0, "symbol": self.key.symbol.value, "order_id": "stop",
+                "quantity": "2", "side": "Sell",
+            }}},
+            expected_revision=robot.state_revision, updated_at_ms=5001,
+        )
+        # A terminal marker is not enough to release an unsettled exposure.
+        with self.store.autopilot_decision_transaction():
+            self.assertEqual(self.store.robot_account_quarantines(self.account),
+                             {self.key.symbol.value: (robot.candidate_id,)})
+            self.assertTrue(self.store._connection.in_transaction)
+        self.fill("emergency-exit", "stop", OrderSide.SELL,
+                  "2", "90", "0", None, 6000)
+        # Exact EXIT-0 and reconciled FLAT release only this proven marker.
+        with self.store.autopilot_decision_transaction():
+            self.assertEqual(self.store.robot_account_quarantines(self.account), {})
+            self.assertTrue(self.store._connection.in_transaction)
+        with SQLiteStore.open_reader(self.path) as reader:
+            with reader.read_snapshot():
+                self.assertEqual(reader.robot_account_quarantines(self.account), {})
+                self.assertTrue(reader._connection.in_transaction)
+            self.assertEqual(reader.robot_account_quarantines(self.account), {})
+            self.assertFalse(reader._connection.in_transaction)
+
     def _latched_stop_with_abandoned_exit_zero(self):
         from terminal.domain.models import CommandId
         self.fill("entry-fill-shadow", "entry-1", OrderSide.BUY,
