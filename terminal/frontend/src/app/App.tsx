@@ -24,7 +24,7 @@ import {
 } from "../marketData/workspaceSwitch";
 import { TelegramMiniAppBridge } from "../telegram/TelegramMiniAppBridge";
 import { parseSignalWorkspaceLink } from "../geometryFeedback/signalDeepLink";
-import { appendRetrospectiveCandles, projectVerifiedSignalOverlay, projectSignalGeometry, restoreSavedSignalCorrection, type RetrospectiveOhlc } from "../geometryFeedback/signalChartBridge";
+import { appendRetrospectiveCandles, projectVerifiedSignalOverlay, selectSignalOverlayForAccount, projectSignalGeometry, restoreSavedSignalCorrection, type RetrospectiveOhlc } from "../geometryFeedback/signalChartBridge";
 import type { OwnerChartDraftV3, OwnerSignalDraft } from "../geometryFeedback/ownerSignalDraft";
 import { isEditorReviewPattern, matchesStoredGeometryReview, type GeometryReviewDraft, type TimestampDrawing } from "../geometryFeedback/geometryReviewDraft";
 import type { Candle } from "../contracts/marketData";
@@ -313,7 +313,7 @@ export function App() {
   // reinterpret a source pivot using a nearby candle or another ticker.
   const currentSignalOverlay = useMemo(() => {
     if (!launchLink?.signalId || !frozenSignal
-        || tradingSymbol !== launchLink.symbol)
+        || frozenSignal.signalId !== launchLink.signalId || tradingSymbol !== launchLink.symbol)
       return null;
     try {
       return projectVerifiedSignalOverlay(
@@ -326,7 +326,7 @@ export function App() {
   }, [launchLink, frozenSignal, tradingSymbol, timeframe, market.candles]);
   const editorCurrentOverlay = useMemo(() => {
     if (!launchLink?.signalId || !frozenSignal
-        || tradingSymbol !== launchLink.symbol)
+        || frozenSignal.signalId !== launchLink.signalId || tradingSymbol !== launchLink.symbol)
       return null;
     if (!ownerChartCandles) return currentSignalOverlay;
     try {
@@ -350,20 +350,20 @@ export function App() {
       ? scopedProjection(mode, selectedModeAccountId,
           accountWorkspace.projection, modeAccountSelection.mainProjection)
       : null;
-  // A Telegram signal is not evidence of another account's geometry.
-  // Reuse the linked rays in Terminal only when its selected account is the
-  // same explicitly scoped account as the Editor source view.
+  // Keep account-specific geometry scoped. A verified immutable Box signal
+  // is public market evidence; its read-only grid does not belong to an account.
   const terminalSignalDrawings = useMemo(() => {
     const eligible = launchLink?.mode === "TERMINAL"
       ? mode === "TERMINAL" || mode === "AUTOPILOT"
       : launchLink?.mode === "EDITOR" && mode === "TERMINAL";
     if (!eligible || !currentSignalOverlay || accountWorkspace.switching ||
         !modeAccountSelection.ready || modeAccountSelection.pendingMode === mode ||
-        !accountProjection?.account_id ||
-        accountProjection.account_id !== accountWorkspace.projection?.account_id)
+        !accountProjection?.account_id || !accountWorkspace.projection?.account_id)
       return null;
-    return currentSignalOverlay;
-  }, [mode, launchLink, currentSignalOverlay, accountWorkspace.switching,
+    return selectSignalOverlayForAccount(currentSignalOverlay,
+      accountProjection.account_id === accountWorkspace.projection.account_id,
+      mode === "TERMINAL" && timeframe === launchLink?.timeframe);
+  }, [mode, launchLink, timeframe, currentSignalOverlay, accountWorkspace.switching,
       accountWorkspace.projection?.account_id, modeAccountSelection.ready,
       modeAccountSelection.pendingMode, accountProjection?.account_id]);
   const mutationsAllowed = !accountWorkspace.switching
