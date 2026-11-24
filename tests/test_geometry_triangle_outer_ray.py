@@ -216,11 +216,18 @@ class ConfirmedNonStrictHullEvidence(unittest.TestCase):
         different=deepcopy(corrected)
         different["geometry"].pair_metrics["anchor_sequence"]["impulse_origin_index"]=116
         self.assertEqual(prefer_recovered_wedge_hulls([previous,different],frame),[previous])
-        print("USUAL_DETECTION",json.dumps(detect_structure(winner,candles=frame),default=str,sort_keys=True))
+        detected=detect_structure(winner,candles=frame)
+        self.assertTrue(detected["detected"],detected)
+        self.assertEqual(detected["pattern"],"Falling Wedge")
+        print("USUAL_DETECTION",json.dumps(detected,default=str,sort_keys=True))
         for mirrored in (False,True):
             with self.subTest(mirrored=mirrored):
                 if mirrored:
-                    ceiling=0.03
+                    # Reflect near the original quote scale: a 0.03 ceiling
+                    # increases price enough to turn two additional pivots
+                    # into percentage-tolerance confirmations. This fixture
+                    # must retain the actual one-forward-contact hull premise.
+                    ceiling=0.0212
                     bars=frame.copy()
                     for key,source in (("high","low"),("low","high"),("open","open"),("close","close")):
                         bars[key]=ceiling-frame[source]
@@ -230,6 +237,10 @@ class ConfirmedNonStrictHullEvidence(unittest.TestCase):
                     bars,hs,ls=frame,highs,lows
                 strict=pick(build_candidate_lines(ls if mirrored else hs),120,189)
                 self.assertIsNotNone(strict)
+                self.assertEqual(strict["confirmations"],2)
+                reference_hull=pick(build_candidate_lines(hs if mirrored else ls,min_confirmations=1),123,167)
+                self.assertIsNotNone(reference_hull)
+                self.assertEqual(reference_hull["confirmations"],1)
                 hu,hl=build_wedge_hull_support_lines(hs,ls,[] if mirrored else [strict],
                                                    [strict] if mirrored else [],bars,len(bars)-1)
                 hull=pick(hu if mirrored else hl,123,167)
