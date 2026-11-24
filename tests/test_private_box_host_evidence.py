@@ -170,6 +170,25 @@ class PrivateBoxReceiptTests(unittest.TestCase):
         finally:
             broken.close()
 
+    def test_optional_private_box_binding_failure_does_not_block_robot_start(self):
+        from terminal.runtime.paper_runtime import PaperRuntime
+
+        started = []
+        runtime = PaperRuntime.__new__(PaperRuntime)
+        runtime._robot_command_dispatcher = None
+        runtime._robot_breakout_monitor = NS(
+            start=lambda: started.append("started"),
+        )
+        runtime.bind_robot_private_box_inspector = (
+            lambda _: (_ for _ in ()).throw(RuntimeError("optional research failure"))
+        )
+        dispatcher = lambda _: None
+        runtime.start_robot_monitor(
+            dispatcher, private_box_research_snapshot=lambda _: None,
+        )
+        self.assertEqual(started, ["started"])
+        self.assertIs(runtime._robot_command_dispatcher, dispatcher)
+
     def test_missing_or_reset_tape_never_claims_reconstruction(self):
         store, good = setup()
         for replacement in ((), (good["book"]["frames"][1],)):
