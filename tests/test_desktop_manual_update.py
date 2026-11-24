@@ -61,6 +61,15 @@ def test_exact_stable_tag_and_github_digest_protect_download(tmp_path):
     assert destination.read_bytes() == ASSET
 
 
+def test_exact_stable_release_does_not_request_redundant_compare():
+    """A verified equal tag/head needs no network Compare response."""
+    def exact(request, timeout=0):
+        assert "/compare/" not in request.full_url
+        return opener(request, timeout=timeout)
+
+    assert updates.find_asset("manager", opener=exact).sha == SHA
+
+
 def test_untrusted_release_ref_fails_without_download():
     def tampered(request, timeout=0):
         if "/git/ref/tags/" in request.full_url:
