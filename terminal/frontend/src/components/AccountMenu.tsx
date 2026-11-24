@@ -368,7 +368,7 @@ export function AccountMenu({
             ? selected.provider === "PAPER" ? "PAPER" : selected.display_name
             : mode ? "UNAVAILABLE" : catalogError ? "UNAVAILABLE" : "LOADING"}</strong>
           <small>{selected && selectedVerified
-            ? `${selected.provider} · ${selected.status}`
+            ? selected.provider === "PAPER" ? selected.status : `${selected.provider} · ${selected.status}`
             : mode ? "SELECTED ACCOUNT UNAVAILABLE" : "ACCOUNT STATUS"}</small>
         </span>
       </TradingControlButton>
@@ -422,8 +422,11 @@ export function AccountMenu({
                     role="img"
                   ><span className="account-key-head" /><span className="account-key-shaft" /></span> : null}
                 </div>
-                <small>{account.provider} · {account.environment} · {account.status}</small>
-                {account.id === (mode ? selectedAccountId : catalog.active_account_id) ? <span>Current</span> : null}
+                <small>{account.provider === account.environment ? account.provider : `${account.provider} · ${account.environment}`} · {account.status === "READY" ? <span className="account-ready-status">READY</span> : account.status}</small>
+                {account.id === currentAccountId ? <span>Current</span>
+                  : mode === "TERMINAL" && selectedAccountId && account.id === "paper"
+                    && account.provider === "PAPER" && account.environment === "PAPER"
+                    ? <span className="account-robot-role">Robot account</span> : null}
                 {refreshError[account.id] ? <small className="account-refresh-error" role="alert">{refreshError[account.id]}</small> : null}
                 {account.provider === "BYBIT" ? <button
                   className="account-refresh-button"
@@ -489,7 +492,7 @@ export function AccountMenu({
           <section aria-label="Confirm account switch" aria-modal="true" className="account-dialog" role="dialog">
             <header><strong>Switch workspace account?</strong></header>
             <p>{confirmAccount.display_name}</p>
-            <small>{confirmAccount.provider} · {confirmAccount.environment} · {confirmAccount.status}</small>
+            <small>{confirmAccount.provider === confirmAccount.environment ? confirmAccount.provider : `${confirmAccount.provider} · ${confirmAccount.environment}`} · {confirmAccount.status}</small>
             <p>{mode
               ? "Only this mode's account preference changes. Manual MAIN trading requires separate verified authority."
               : "The entire account-scoped workspace will switch. LIVE trading remains disabled."}</p>
