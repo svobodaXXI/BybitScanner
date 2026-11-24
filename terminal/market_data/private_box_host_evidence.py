@@ -238,7 +238,7 @@ class PrivateBoxCapture:
             return PrivateBoxReceiptEvidence("UNKNOWN")
 
     def observe(self, get_candidate, *, robot_ready: bool,
-                observed_at_ms: int) -> PrivateBoxReceiptEvidence:
+                observed_at_ms: int, save=None) -> PrivateBoxReceiptEvidence:
         """Read only our exact witness; never accept a replacement host."""
         if robot_ready is not True:
             self.close()
@@ -255,13 +255,43 @@ class PrivateBoxCapture:
             if current != host:
                 self.close()
                 return PrivateBoxReceiptEvidence("UNKNOWN")
-            return inspect_private_box_receipts(
-                get_candidate,
-                lambda symbol: self._hub.private_protected_research_snapshot(
+            detached = None
+
+            def read(symbol):
+                nonlocal detached
+                detached = self._hub.private_protected_research_snapshot(
                     symbol, expected_witness=witness,
-                ),
+                )
+                return detached
+
+            result = inspect_private_box_receipts(
+                get_candidate, read,
                 candidate_id=host.candidate_id, observed_at_ms=observed_at_ms,
             )
+            # Never persist a different revision that raced host selection.
+            current = inspect_private_box_receipts(
+                get_candidate, lambda _symbol: None,
+                candidate_id=host.candidate_id, observed_at_ms=observed_at_ms,
+            )
+            if (current != host
+                    or result.candidate_id != host.candidate_id
+                    or result.state_revision != host.state_revision
+                    or result.snapshot_sha256 != host.snapshot_sha256):
+                self.close()
+                return PrivateBoxReceiptEvidence("UNKNOWN")
+            if save is not None and result.status == "RECEIPTS_OBSERVED_UNATTESTED":
+                # Pass the SAME detached source used for validation, never
+                # a second snapshot or a different candidate's older prints.
+                book, trades = detached["book"], detached["trades"]
+                save(result, {
+                    "book": book,
+                    "trades": {**trades, "prints": tuple(
+                        item for item in trades["prints"]
+                        if type(getattr(item, "received_at_ms", None)) is int
+                        and item.received_at_ms >= host.approved_at_ms
+                    )},
+                })
+            return result
         except Exception:
             self.close()
             return PrivateBoxReceiptEvidence("UNKNOWN")
