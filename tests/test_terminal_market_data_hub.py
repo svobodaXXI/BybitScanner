@@ -740,3 +740,32 @@ if __name__ == "__main__":
     for test in TESTS:
         test()
     print(f"market data hub tests: {len(TESTS)} passed")
+
+
+def test_protected_research_capture_cannot_be_stolen_or_released_by_another_owner():
+    ws = _WebSocket()
+    hub = MarketDataHub(_Registry(), _context, connection_factory=lambda *_a, **_k: ws)
+    try:
+        hub._ws = ws
+        full = hub.subscribe("BTCUSDT")
+        topics = tuple(ws.sent)
+        box_owner = object()
+        wedge = hub.begin_protected_research_capture("BTCUSDT")
+        assert wedge is not None
+        assert hub.begin_protected_research_capture("BTCUSDT", owner_token=box_owner) is None
+        assert not hub.end_protected_research_capture("BTCUSDT", owner_token=box_owner)
+        assert hub.end_protected_research_capture("BTCUSDT")
+        box = hub.begin_protected_research_capture("BTCUSDT", owner_token=box_owner)
+        assert box is not None and box is not wedge
+        assert hub.begin_protected_research_capture("BTCUSDT", owner_token=box_owner) is box
+        assert hub.begin_protected_research_capture("BTCUSDT") is None
+        assert not hub.end_protected_research_capture("BTCUSDT")
+        assert hub.private_protected_research_snapshot("BTCUSDT", expected_witness=wedge) is None
+        assert hub.private_protected_research_snapshot("BTCUSDT", expected_witness=box) is not None
+        assert hub.end_protected_research_capture("BTCUSDT", owner_token=box_owner)
+        assert hub.private_protected_research_snapshot("BTCUSDT", expected_witness=box) is None
+        assert tuple(ws.sent) == topics
+        assert hub.list_contexts() == (full,)
+        assert not full.public_orderbook.closed
+    finally:
+        hub.close()
