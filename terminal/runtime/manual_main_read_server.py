@@ -8,7 +8,9 @@ and updates only the separate MAIN snapshot store.
 from __future__ import annotations
 
 import json
+import logging
 import os
+from threading import get_ident
 from terminal.exchange.bybit_account_validation import AccountValidationError
 from terminal.persistence.credential_store import CredentialStoreError
 from terminal.application.manual_main_accounts import ManualMainAccountError
@@ -26,6 +28,7 @@ from terminal.persistence.live_account_store import LiveAccountProjectionStore
 HOST = "127.0.0.1"
 PORT = 8771
 PREFIX = "/api/manual-main"
+_LOG = logging.getLogger(__name__)
 
 
 def checked_main_state_dir(value: str) -> Path:
@@ -92,6 +95,7 @@ class MainReadHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         path = urlsplit(self.path).path
         if path == PREFIX + "/accounts":
+            _LOG.warning("MAIN_PROVISION stage=HTTP_RECEIVED thread=%d", get_ident())
             self._provision()
             return
         trade_prefix = PREFIX + "/trade/"
