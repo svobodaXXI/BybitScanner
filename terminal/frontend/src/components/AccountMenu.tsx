@@ -360,7 +360,7 @@ export function AccountMenu({
     }
   };
 
-  const catalogCards = catalogError || !catalog || !active ? <p role="alert">Account catalog unavailable</p> : catalog.accounts
+  const catalogCards = catalogError || !catalog || !active ? [<p key="catalog-unavailable" role="alert">Account catalog unavailable</p>] : catalog.accounts
               .filter((account) => !mode || account.provider === "PAPER")
               .sort((a, b) => Number(b.id === currentAccountId) - Number(a.id === currentAccountId))
               .map((account) => (
@@ -486,7 +486,7 @@ export function AccountMenu({
               <button aria-label="Close Accounts" className="account-menu-close" onClick={onToggle} type="button">×</button>
             </header>
             {mode === "TERMINAL" && manualMain.some(account => account.id === currentAccountId)
-              ? <>{mainCards}{catalogCards}</> : <>{catalogCards}{mainCards}</>}
+              ? [...mainCards, ...catalogCards] : [...catalogCards, ...mainCards]}
             {mainInventoryError ? <small role="alert">{mainInventoryError}</small> : null}
             {modeAccountError ? <small role="alert">{modeAccountError}</small> : null}
             {manualMainUnavailable ? <small role="status">Separate MAIN service unavailable; PAPER unchanged.</small> : null}
