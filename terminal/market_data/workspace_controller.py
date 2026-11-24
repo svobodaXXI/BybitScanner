@@ -71,6 +71,7 @@ class WorkspaceController:
         self._warm_timers: dict[str, threading.Timer] = {}
         self._lock = threading.RLock()
         self._switch_lock = threading.Lock()
+        self._last_switch_timing: dict[str, object] | None = None
 
     def state(self) -> WorkspaceState:
         with self._lock:
@@ -108,7 +109,9 @@ class WorkspaceController:
             self._fail(error)
             raise error
         normalized = symbol.strip().upper()
+        started = time.monotonic()
         with self._switch_lock:
+            acquired = time.monotonic()
             self._expire_warm()
             with self._lock:
                 self._requested_symbol = normalized
@@ -140,7 +143,18 @@ class WorkspaceController:
                 if was_warm:
                     self._remove_warm_locked(candidate.symbol)
                 self._pending = candidate
-            readiness = self._wait_until_ready(candidate, timeout)
+            subscribed = time.monotonic()
+            first_ready_ms: dict[str, int] = {}
+            readiness = self._wait_until_ready(candidate, timeout, first_ready_ms=first_ready_ms)
+            ready_at = time.monotonic()
+            timing = {
+                "symbol": normalized,
+                "context": "warm" if was_warm else "existing" if existed else "cold",
+                "queue_ms": round((acquired - started) * 1000),
+                "subscribe_ms": round((subscribed - acquired) * 1000),
+                "readiness_ms": round((ready_at - subscribed) * 1000),
+                "first_ready_ms": first_ready_ms,
+            }
             if not readiness.ready:
                 with self._lock:
                     self._pending = None
@@ -153,6 +167,11 @@ class WorkspaceController:
                     requested_symbol=normalized, active_symbol=self._active.symbol,
                 )
                 self._fail(error)
+                with self._lock:
+                    self._last_switch_timing = {
+                        **timing, "result": "not_ready",
+                        "total_ms": round((time.monotonic() - started) * 1000),
+                    }
                 raise error
             with self._lock:
                 previous = self._active
@@ -165,6 +184,10 @@ class WorkspaceController:
                         requested_symbol=normalized, active_symbol=previous.symbol,
                     )
                     self._fail_locked(error)
+                    self._last_switch_timing = {
+                        **timing, "result": "activation_failed",
+                        "total_ms": round((time.monotonic() - started) * 1000),
+                    }
                     if was_warm:
                         self._retain_warm_locked(candidate)
                     if not existed:
@@ -178,6 +201,13 @@ class WorkspaceController:
                 self._last_switch_error = None
                 self._retain_warm_locked(previous)
             self._enforce_warm_limit()
+            finished = time.monotonic()
+            with self._lock:
+                self._last_switch_timing = {
+                    **timing, "result": "ready",
+                    "activation_ms": round((finished - ready_at) * 1000),
+                    "total_ms": round((finished - started) * 1000),
+                }
             return candidate
 
     def readiness(self, context: SymbolContext) -> WorkspaceReadiness:
@@ -252,6 +282,7 @@ class WorkspaceController:
                     "live_candle_ready": readiness.live_candle_ready,
                 },
                 "upstream": context.health_snapshot(),
+                "last_switch_timing": self._last_switch_timing,
             }
 
     def close(self) -> None:
@@ -262,10 +293,19 @@ class WorkspaceController:
         for timer in timers:
             timer.cancel()
 
-    def _wait_until_ready(self, context: SymbolContext, timeout: float) -> WorkspaceReadiness:
-        deadline = time.monotonic() + timeout
+    def _wait_until_ready(
+        self, context: SymbolContext, timeout: float,
+        *, first_ready_ms: dict[str, int] | None = None,
+    ) -> WorkspaceReadiness:
+        started = time.monotonic()
+        deadline = started + timeout
         while True:
             readiness = self.readiness(context)
+            if first_ready_ms is not None:
+                elapsed = round((time.monotonic() - started) * 1000)
+                for stage in ("book_ready", "trades_ready", "candle_history_ready", "live_candle_ready"):
+                    if getattr(readiness, stage):
+                        first_ready_ms.setdefault(stage, elapsed)
             if readiness.ready or time.monotonic() >= deadline:
                 return readiness
             time.sleep(min(self._poll_interval, max(0, deadline - time.monotonic())))
