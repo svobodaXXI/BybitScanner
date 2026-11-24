@@ -1536,7 +1536,7 @@ class SerializedPaperRuntime:
                     raise RuntimeError("protection ingress pending during shutdown proof")
                 self._shutdown_sealed = True
 
-    def start_robot_monitor(self) -> None:
+    def start_robot_monitor(self, *, private_box_research_snapshot=None) -> None:
         """Bind self.call as the owned PaperRuntime's Robot command dispatcher
         and start RobotBreakoutMonitor's background thread.
 
@@ -1545,7 +1545,9 @@ class SerializedPaperRuntime:
         the factory runs before this object's own __init__ has returned and
         nothing is pulling the request queue yet.
         """
-        self.call(lambda runtime: runtime.start_robot_monitor(self.call))
+        self.call(lambda runtime: runtime.start_robot_monitor(
+            self.call, private_box_research_snapshot=private_box_research_snapshot,
+        ))
 
     def enqueue_book_update(self, book_update_id: str) -> None:
         if not book_update_id:
@@ -5611,16 +5613,11 @@ def main() -> None:
                 runtime.call(lambda owned: owned.bind_robot_pattern_flow_observer(
                     pattern_flow_observer.get,
                 ))
-        # An on-demand private Box audit shares this Robot's start/stop.
-        # It reads only an EXISTING, separately opted-in protected witness:
-        # no capture activation, extra thread/socket, order or public endpoint.
-        try:
-            runtime.call(lambda owned: owned.bind_robot_private_box_inspector(
-                hub.private_protected_research_snapshot,
-            ))
-        except (RuntimeError, TypeError, ValueError):
-            LOGGER.warning("Optional private Box inspector binding failed; Robot unchanged")
-        runtime.start_robot_monitor()
+        # One canonical Robot-start request also binds optional PRIVATE Box
+        # inspection; no extra owner RPC, capture, subscription or public API.
+        runtime.start_robot_monitor(
+            private_box_research_snapshot=hub.private_protected_research_snapshot,
+        )
         if pattern_flow_observer is not None:
             pattern_flow_observer.start()
 
