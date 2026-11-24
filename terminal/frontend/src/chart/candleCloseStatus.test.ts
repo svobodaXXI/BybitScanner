@@ -21,9 +21,9 @@ describe("Shared chart UTC/Moscow display and countdown", () => {
 
   it("does not present a stale market chart as a live candle", () => {
     expect(candleCloseStatus("2026-11-11T09:35:00Z", "5m", Date.parse("2026-11-11T09:41:00Z")))
-      .toEqual({ status: "STALE", label: "Нет свежих свечей" });
+      .toEqual({ status: "STALE", label: "--:--" });
     expect(candleCloseStatus("2026-11-11T09:35:00Z", "5m", Date.parse("2026-11-11T10:10:00Z")))
-      .toEqual({ status: "STALE", label: "Нет свежих свечей" });
+      .toEqual({ status: "STALE", label: "--:--" });
     expect(candleCloseStatus(undefined, "5m", Date.now()))
       .toEqual({ status: "UNAVAILABLE", label: "" });
   });

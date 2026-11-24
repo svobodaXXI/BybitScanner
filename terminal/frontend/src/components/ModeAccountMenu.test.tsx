@@ -98,6 +98,8 @@ describe("mode-specific account selector", () => {
     expect(paperCard).not.toHaveTextContent("PAPER · PAPER");
     expect(paperCard).not.toHaveTextContent("Подключён к Роботу");
     expect(mainCard).not.toHaveClass("is-current");
+    expect(mainCard).toHaveTextContent("BYBIT · MAINNET · READY");
+    expect(mainCard).not.toHaveTextContent("Separate MAIN service");
     expect(mainCard).toHaveTextContent("Не подключён");
     expect(mainCard.querySelector(".account-role-connected")).toBeNull();
     rerender(<AccountMenu open onToggle={onToggle} mode="TERMINAL"

@@ -3,10 +3,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal, ROUND_DOWN
 from enum import Enum
 
 from .models import OrderSide, PositionSide, Quantity
 from .states import CommandState, ConnectivityState
+
+
+def working_volume_usdt(wallet_balance_usdt: Decimal) -> Decimal:
+    one_wv = (
+        wallet_balance_usdt * Decimal("0.05")
+    ).to_integral_value(rounding=ROUND_DOWN)
+    if one_wv <= 0:
+        raise ValueError("wallet balance is too small for working-volume sizing")
+    return one_wv
 
 
 class TradingAction(str, Enum):

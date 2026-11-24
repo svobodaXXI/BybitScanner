@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 
+from terminal.domain.policies import working_volume_usdt
+
 
 class LiveAccountStoreError(RuntimeError):
     pass
@@ -29,12 +31,19 @@ class LiveAccountSnapshot:
     balance_provenance: dict[str, str | None] | None = None
 
     def transport(self, *, status: str) -> dict[str, object]:
+        one_wv = None
+        if status in {"READY", "READ_ONLY"} and self.wallet_balance_usdt.is_finite():
+            try:
+                one_wv = str(working_volume_usdt(self.wallet_balance_usdt))
+            except ValueError:
+                pass  # Insufficient Wallet: no sizing default, but inventory remains readable.
         return {
             "account_id": self.account_id,
             "environment": self.environment,
             "status": status,
             "refresh_generation": self.refresh_generation,
             "wallet_balance_usdt": str(self.wallet_balance_usdt),
+            "one_wv_usdt": one_wv,
             "total_equity_usdt": str(self.total_equity_usdt),
             "available_balance_usdt": str(self.available_balance_usdt),
             "exchange_time_ms": self.exchange_time_ms,

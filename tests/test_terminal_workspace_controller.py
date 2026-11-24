@@ -149,6 +149,15 @@ def test_pending_candidate_does_not_replace_active_until_composite_ready():
     assert activations == [(btc, ong)]
     assert controller.is_current(btc, 1) is False
     assert controller.is_current(ong, 2) is True
+    timing = controller.diagnostics()["last_switch_timing"]
+    assert timing["symbol"] == "ONGUSDT"
+    assert timing["context"] == "cold"
+    assert timing["result"] == "ready"
+    assert set(timing["first_ready_ms"]) == {
+        "book_ready", "trades_ready", "candle_history_ready", "live_candle_ready",
+    }
+    assert all(value >= 0 for value in timing["first_ready_ms"].values())
+    assert timing["total_ms"] >= timing["readiness_ms"]
 
 
 def test_quiet_trades_are_ready_after_subscription_and_empty_bootstrap():
@@ -242,6 +251,9 @@ def test_timeout_preserves_previous_and_discards_new_candidate():
         "request_id": None,
         "message": "Workspace candidate did not reach composite readiness",
     }
+    timing = diagnostic["last_switch_timing"]
+    assert timing["result"] == "not_ready"
+    assert timing["first_ready_ms"] == {}
     assert hub.discarded == [ong]
     assert controller.is_current(btc, 1) is True
 
@@ -324,6 +336,7 @@ def test_warm_context_reuse_and_bounded_eviction():
 
     assert controller.switch("ONGUSDT", 0.01) is ong
     assert controller.switch("BTCUSDT", 0.01) is btc
+    assert controller.diagnostics()["last_switch_timing"]["context"] == "warm"
     assert controller.switch("ETHUSDT", 0.01) is eth
 
     assert btc.generation == 3

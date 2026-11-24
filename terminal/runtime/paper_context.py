@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from decimal import Decimal, ROUND_DOWN
+from decimal import Decimal
 from typing import Callable
 
 from terminal.api.rest import ServerCommandContext
@@ -16,6 +16,7 @@ from terminal.domain.models import (
     Symbol,
     TradingAccountId,
 )
+from terminal.domain.policies import working_volume_usdt
 from terminal.domain.states import ConnectivityState
 from terminal.exchange.events import (
     InstrumentSnapshot,
@@ -23,15 +24,6 @@ from terminal.exchange.events import (
     PositionEvent,
 )
 from terminal.persistence.sqlite_store import SQLiteStore
-
-
-def working_volume_usdt(wallet_balance_usdt: Decimal) -> Decimal:
-    one_wv = (
-        wallet_balance_usdt * Decimal("0.05")
-    ).to_integral_value(rounding=ROUND_DOWN)
-    if one_wv <= 0:
-        raise ValueError("wallet balance is too small for working-volume sizing")
-    return one_wv
 
 
 @dataclass(slots=True)

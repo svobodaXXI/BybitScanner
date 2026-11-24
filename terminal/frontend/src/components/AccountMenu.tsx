@@ -405,7 +405,7 @@ export function AccountMenu({
                     aria-label="Current account golden key" className="account-switch-key account-current-key" role="img"
                   ><span className="account-key-head" /><span className="account-key-shaft" /></span> : null}
                 </div>
-                <small>BYBIT · MAINNET · {account.status === "READY" ? <span className="account-ready-status">READY</span> : account.status} · Separate MAIN service</small>
+                <small>BYBIT · MAINNET · {account.status === "READY" ? <span className="account-ready-status">READY</span> : account.status}</small>
                 {mode === "TERMINAL" && account.id === currentAccountId ? <span>{currentLabel}</span> : null}
                 {workspaceRole(account)}
                 {mode !== "AUTOPILOT" ? <>
