@@ -74,9 +74,12 @@ class StrictWedgeOwnerCase(unittest.TestCase):
         frame["close"] = ceiling - self.frame["close"]
         frame["high"] = ceiling - self.frame["low"]
         frame["low"] = ceiling - self.frame["high"]
-        highs, lows = find_pivots(frame.copy())
-        upper = filter_candidates(build_candidate_lines(highs))
-        lower = self.pick(filter_candidates(build_candidate_lines(lows)), 140, 189)
+        # Reflect the identical confirmed input pivots, not the relative-price
+        # noise filter (which is not invariant under additive reflection).
+        highs = [{**p, "price": ceiling - p["price"], "type": "high"} for p in self.lows]
+        lows = [{**p, "price": ceiling - p["price"], "type": "low"} for p in self.highs]
+        upper = build_candidate_lines(highs)
+        lower = self.pick(build_candidate_lines(lows), 140, 189)
         for a, b, rejected in ((138, 185, True), (138, 178, False)):
             with self.subTest(second=b):
                 candidate = self.pick(upper, a, b)
@@ -97,6 +100,37 @@ class StrictWedgeOwnerCase(unittest.TestCase):
         # A new single excursion inside the formation is measured explicitly.
         frame.loc[179, "low"] = lower["slope"] * 179 + lower["intercept"] - 0.01
         self.assertEqual(evaluate_strict_wedge_wicks(lower, frame, "lower", end, 198), [179])
+
+
+class PonsStrictSupportCase(unittest.TestCase):
+    def test_missing_local_high_is_available_as_strict_support(self):
+        from geometry.wedge_boundaries import build_strict_wedge_support_lines, strict_support_pair_allowed
+        from geometry.triangle_boundaries import local_alternation_pivots
+        fixture = Path(__file__).parent / "fixtures/geometry_formation_fit/historical_cases.json"
+        case = json.loads(fixture.read_text(encoding="utf-8"))["cases"]["PONS"]
+        frame = pd.DataFrame(case["candles"], columns=["time", "open", "high", "low", "close", "volume"])
+        highs, lows = find_pivots(frame.copy())
+        upper = filter_candidates(build_candidate_lines(highs))
+        lower = filter_candidates(build_candidate_lines(lows))
+        self.assertNotIn(167, [p["index"] for p in highs])
+        local_highs, _ = local_alternation_pivots(frame, len(frame)-1)
+        self.assertIn(167, [p["index"] for p in local_highs])
+        extra, _ = build_strict_wedge_support_lines(highs, lows, upper, lower, frame, len(frame)-1)
+        matches = [c for c in extra if (c["anchor_index"], c["second_index"]) == (143, 167)]
+        self.assertEqual(len(matches), 1)
+        candidate = matches[0]
+        self.assertGreaterEqual(candidate["structure_span"], 30)
+        self.assertEqual(evaluate_strict_wedge_wicks(candidate["line"], frame, "upper", 186, len(frame)-1), [])
+        opposite = next(c for c in lower if (c["anchor_index"], c["second_index"]) == (145, 186))
+        self.assertTrue(strict_support_pair_allowed(candidate, opposite))
+        self.assertFalse(strict_support_pair_allowed(candidate, {**opposite, "triangle_only": True}))
+        self.assertFalse(strict_support_pair_allowed(candidate, {"line": {"slope": 1}}))
+        geometry = evaluate_candidate_pair(candidate, opposite, highs=highs, lows=lows,
+                                           candles=frame, current_index=len(frame)-1)
+        self.assertIsNotNone(geometry)
+        self.assertTrue(geometry.pair_metrics["anchor_sequence"]["valid"])
+        self.assertEqual(geometry.start_index, 143)
+        self.assertEqual(geometry.end_index, 186)
 
 
 if __name__ == "__main__":
