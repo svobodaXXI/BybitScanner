@@ -73,6 +73,7 @@ export function AccountMenu({
   const [mainInventoryLoading, setMainInventoryLoading] = useState<string | null>(null);
   const mainInventoryRequest = useRef(0);
   const [addOpen, setAddOpen] = useState(false);
+  const [addKind, setAddKind] = useState<"BYBIT_MAIN" | null>(null);
   const [name, setName] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [apiSecret, setApiSecret] = useState("");
@@ -191,6 +192,7 @@ export function AccountMenu({
   }, [selected?.display_name, selected?.id, onActiveAccountChange]);
   const closeAdd = () => {
     setAddOpen(false);
+    setAddKind(null);
     setName("");
     setApiKey("");
     setApiSecret("");
@@ -208,24 +210,45 @@ export function AccountMenu({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ display_name: name.trim(), api_key: apiKey.trim(), api_secret: apiSecret }),
       });
-      const payload = await response.json() as {
+      // Non-JSON replies (e.g. Nginx/owner-auth 401/413/502) must not hide
+      // the failing boundary. Never reflect request contents or raw response text.
+      const payload = await response.json().catch(() => null) as {
         ok?: boolean; error?: string; account_id?: string;
-      };
-      if (!response.ok || payload.ok !== true || !payload.account_id) {
+      } | null;
+      if (!response.ok || payload?.ok !== true || !payload?.account_id) {
         const messages: Record<string, string> = {
-          bybit_validation_failed: "Bybit rejected these credentials.",
-          credential_storage_failed: "Secure credential storage is unavailable.",
+          bybit_validation_failed: "Bybit rejected the account credentials or API permissions.",
+          credential_storage_failed: "Secure MAIN credential storage is unavailable.",
           invalid_account_payload: "Complete all account fields.",
           main_account_ineligible: "Only eligible Bybit MAINNET accounts can be connected.",
-          origin_required: "Open the authenticated HTTPS terminal before adding an account.",
+          origin_required: "MAIN requires an authenticated HTTPS session. Reopen the Terminal.",
+          account_provisioning_unavailable: "The MAIN service could not register the account.",
+          invalid_payload: "The MAIN service rejected the account request format.",
+          json_required: "The MAIN service requires a JSON request.",
         };
-        setSubmitError(messages[payload.error ?? ""] ?? "Account could not be added.");
+        const statusMessages: Record<number, string> = {
+          401: "Terminal session expired. Reopen the Terminal through Telegram.",
+          403: "MAIN account access was denied by the authenticated gateway.",
+          404: "MAIN account endpoint is not available on this server.",
+          413: "The MAIN gateway rejected the request size.",
+          415: "The MAIN gateway rejected the request content type.",
+          502: "The MAIN gateway cannot reach the MAIN service (HTTP 502).",
+          503: "The MAIN service is unavailable (HTTP 503).",
+          504: "The MAIN gateway timed out (HTTP 504).",
+        };
+        setSubmitError(
+          messages[payload?.error ?? ""]
+          ?? statusMessages[response.status]
+          ?? (response.ok
+            ? "Unexpected MAIN response. Check Accounts before retrying."
+            : "MAIN account request failed. Check Accounts before retrying."),
+        );
         return;
       }
       closeAdd();
       await refreshManualMain();
     } catch {
-      setSubmitError("Account could not be added.");
+      setSubmitError("MAIN connection failed. Check Accounts before retrying.");
     } finally {
       submitInFlight.current = false;
       setSubmitting(false);
@@ -409,7 +432,7 @@ export function AccountMenu({
             {mainInventoryError ? <small role="alert">{mainInventoryError}</small> : null}
             {modeAccountError ? <small role="alert">{modeAccountError}</small> : null}
             {mode !== "AUTOPILOT" && manualMainUnavailable ? <small role="status">Separate MAIN service unavailable; PAPER unchanged.</small> : null}
-            {mode !== "AUTOPILOT" ? <button className="account-add-button" onClick={() => setAddOpen(true)} type="button">+ Add MAIN account</button> : null}
+            {mode !== "AUTOPILOT" ? <button className="account-add-button" onClick={() => setAddOpen(true)} type="button">+ Add New Account</button> : null}
           </section>
         </div>
       ) : null}
@@ -445,15 +468,28 @@ export function AccountMenu({
           if (event.target === event.currentTarget) closeAdd();
         }}>
           <section aria-label="Add account" aria-modal="true" className="account-dialog" role="dialog">
-            <header><strong>Add Bybit MAIN account</strong><button aria-label="Close add account" onClick={closeAdd} type="button">×</button></header>
-            <small>Keys are sent only to the separate MAIN service. No real orders can be placed yet.</small>
-            <label>Account name<input value={name} onChange={(event) => setName(event.target.value)} /></label>
-            <label>API Key<input value={apiKey} onChange={(event) => setApiKey(event.target.value)} /></label>
-            <label>API Secret<input autoComplete="new-password" type="password" value={apiSecret} onChange={(event) => setApiSecret(event.target.value)} /></label>
-            {submitError ? <p role="alert">{submitError}</p> : null}
-            <button disabled={submitting || !name.trim() || !apiKey.trim() || !apiSecret.trim()} onClick={submitAccount} type="button">
-              {submitting ? "Validating…" : "Add account"}
-            </button>
+            <header><strong>{addKind === null ? "Add new account" : "Add Bybit MAIN account"}</strong><button aria-label="Close add account" onClick={closeAdd} type="button">×</button></header>
+            {addKind === null ? (
+              <>
+                <p>Choose the account type to connect.</p>
+                <button className="account-add-button" type="button" onClick={() => setAddKind("BYBIT_MAIN")}>Bybit MAIN · Real account</button>
+                <small>Other account types are not supported yet. PAPER is managed separately.</small>
+              </>
+            ) : (
+              <>
+                <small>Keys are sent only to the separate MAIN service. Live trading requires independent authorization.</small>
+                <label>Account name<input value={name} onChange={(event) => setName(event.target.value)} /></label>
+                <label>API Key<input value={apiKey} onChange={(event) => setApiKey(event.target.value)} /></label>
+                <label>API Secret<input autoComplete="new-password" type="password" value={apiSecret} onChange={(event) => setApiSecret(event.target.value)} /></label>
+                {submitError ? <p role="alert">{submitError}</p> : null}
+                <button className="account-add-submit-button" disabled={submitting || !name.trim() || !apiKey.trim() || !apiSecret.trim()} onClick={submitAccount} type="button">
+                  {submitting ? "Validating…" : "Add Account"}
+                </button>
+                <button type="button" disabled={submitting} onClick={() => {
+                  setName(""); setApiKey(""); setApiSecret(""); setSubmitError(""); setAddKind(null);
+                }}>Account types</button>
+              </>
+            )}
           </section>
         </div>
       ) : null}

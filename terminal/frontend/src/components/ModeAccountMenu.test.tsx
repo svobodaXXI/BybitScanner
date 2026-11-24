@@ -50,6 +50,6 @@ describe("mode-specific account selector", () => {
     await screen.findByRole("dialog", { name: "Accounts" });
     expect(screen.getByText("Paper / Virtual")).toBeInTheDocument();
     expect(screen.queryByText("My MAIN")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Select MAIN|Add MAIN account/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Select MAIN|Add New Account/ })).not.toBeInTheDocument();
   });
 });
