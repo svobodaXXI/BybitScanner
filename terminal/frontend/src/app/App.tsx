@@ -1951,6 +1951,8 @@ export function App() {
           accountWorkspaceProjection={accountProjection}
           refreshMain={modeAccountSelection.refreshMain}
           modeAccountId={selectedModeAccountId}
+          otherWorkspaceAccountId={modeAccountSelection.ready
+            ? modeAccountSelection.preferences[mode === "AUTOPILOT" ? "TERMINAL" : "AUTOPILOT"] : null}
           onModeAccountSelect={modeAccountSelection.selectAccount}
           modeAccountError={modeAccountSelection.error}
           mutationsAllowed={mutationsAllowed}
