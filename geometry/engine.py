@@ -220,6 +220,63 @@ def _is_candidate_fresh(
     )
 
 
+def _preserve_corrective_episode(candidates, candles):
+    """Remove a proven nested tail of the same corrective wedge episode.
+
+    The earlier pair must already be fresh and structurally admitted, have
+    a clean strict side, and share the final opposite contact with the tail.
+    The tail's START is exactly the earlier strict line's second contact.
+    The earlier preceding impulse exceeds its first counter-wave, whereas
+    the tail's local impulse does not. Otherwise keep the existing pool.
+    No score, distance threshold, or new pivot is introduced.
+    """
+    if candles is None:
+        return candidates
+
+    owners = set()
+    tails = {}
+    for i, candidate in enumerate(candidates):
+        if not candidate["fresh"]:
+            continue
+        g = candidate["geometry"]
+        pm = getattr(g, "pair_metrics", {}) or {}
+        seq = pm.get("anchor_sequence") or {}
+        family = seq.get("family")
+        side = {"falling": "high", "rising": "low"}.get(family)
+        if side is None or seq.get("primary_side") != side or not seq.get("valid"):
+            continue
+        strict = g.upper_line if side == "high" else g.lower_line
+        opposite = g.lower_line if side == "high" else g.upper_line
+        origin = seq.get("impulse_origin_index")
+        start = seq.get("primary_anchor")
+        second = seq.get("secondary_anchor")
+        contact = strict.get("second_index")
+        end = g.end_index
+        if any(v is None for v in (origin, start, second, contact, end)):
+            continue
+        if not (0 <= origin < start < second <= end < len(candles)):
+            continue
+        if strict.get("anchor_index") != start or opposite.get("anchor_index") != second:
+            continue
+        if opposite.get("second_index") != end:
+            continue
+        try:
+            terminal_price = float(candles[side].iloc[start])
+            other_side = "low" if side == "high" else "high"
+            impulse = abs(terminal_price - float(candles[other_side].iloc[origin]))
+            first_wave = abs(terminal_price - float(candles[other_side].iloc[second]))
+        except (KeyError, IndexError, TypeError, ValueError):
+            continue
+        if impulse <= first_wave:
+            tails[i] = (family, start, end)
+        elif (not candidate["strict_wick_exception"]
+              and second < contact < end):
+            owners.add((family, contact, end))
+
+    return [candidate for i, candidate in enumerate(candidates)
+            if i not in tails or tails[i] not in owners]
+
+
 def analyze_geometry(
     highs,
     lows,
@@ -548,6 +605,9 @@ def analyze_geometry(
 
     if not eligible_candidates:
         eligible_candidates = ranked_candidates
+    else:
+        # Resolve proven same-episode ownership before comparing fit quality.
+        eligible_candidates = _preserve_corrective_episode(eligible_candidates, candles)
 
     best_geometry = None
 

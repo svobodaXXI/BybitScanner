@@ -121,8 +121,48 @@ class EarlyImpulseFrozenTest(unittest.TestCase):
             record = trace[anchors]
             self.assertTrue(all(record[k] for k in ("validation","local","boundary","sequence","fresh")))
         self.assertIn((128,161,148,189), trace)
+        self.assertIsNotNone(winner)
+        self.assertEqual(winner.start_index, 75)
+        self.assertEqual(winner.end_index, 189)
+        self.assertEqual(winner.pair_metrics["anchor_sequence"]["expected_secondary_index"],78)
         print("EIGEN_SELECTION",json.dumps({"pairs":list(trace.values()),
               "winner":identity(winner)},default=str,sort_keys=True))
+
+
+
+class CorrectiveEpisodeOwnershipControls(unittest.TestCase):
+    def test_only_proven_nested_tail_is_removed_in_both_directions(self):
+        from types import SimpleNamespace
+        from geometry.engine import _preserve_corrective_episode
+        for family, side in (("falling","high"),("rising","low")):
+            with self.subTest(family=family):
+                frame = pd.DataFrame({"high":[100.]*25,"low":[90.]*25})
+                frame.loc[[1,9],"low"] = [80.,94.]
+                frame.loc[[3,11],"high"] = [110.,101.]
+                frame.loc[[5,13],"low"] = [95.,91.]
+                if side == "low":
+                    frame = pd.DataFrame({"high":200-frame.low,"low":200-frame.high})
+                def item(origin,start,second,contact,end=20,exception=False,fresh=True,opposite_end=None):
+                    strict = dict(anchor_index=start,second_index=contact)
+                    opposite = dict(anchor_index=second,second_index=end if opposite_end is None else opposite_end)
+                    seq = dict(family=family,primary_side=side,valid=True,impulse_origin_index=origin,
+                               primary_anchor=start,secondary_anchor=second)
+                    g = SimpleNamespace(pair_metrics={"anchor_sequence":seq},end_index=end,
+                        upper_line=strict if side=="high" else opposite,
+                        lower_line=opposite if side=="high" else strict)
+                    return dict(geometry=g,fresh=fresh,strict_wick_exception=exception)
+                early = item(1,3,5,11)
+                late = item(9,11,13,17)
+                self.assertEqual(_preserve_corrective_episode([late,early],frame),[early])
+                self.assertEqual(_preserve_corrective_episode([early,late],frame),[early])
+                for unrelated in (item(9,11,13,17,end=21), item(9,11,13,17,opposite_end=19)):
+                    self.assertEqual(_preserve_corrective_episode([early,unrelated],frame),[early,unrelated])
+                for unsupported in (item(1,3,5,12), item(1,3,5,11,exception=True),
+                                    item(1,3,5,11,fresh=False)):
+                    self.assertEqual(_preserve_corrective_episode([unsupported,late],frame),[unsupported,late])
+                independent = item(1,11,13,17)
+                self.assertEqual(_preserve_corrective_episode([early,independent],frame),[early,independent])
+                self.assertEqual(_preserve_corrective_episode([early,late],None),[early,late])
 
 
 if __name__ == "__main__":
