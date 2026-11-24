@@ -18,7 +18,7 @@ function response(body: unknown, ok = true) {
 }
 
 function mockServer(initial: string | null) {
-  const server = { selected: initial, connected: true, preferenceAvailable: true, writeAllowed: true };
+  const server = { selected: initial, connected: true, preferenceAvailable: true, writeAllowed: true, tradingEnabled: false };
   const fetchMock = vi.fn(async (url: string, options?: RequestInit) => {
     if (url === PREF) {
       if (!server.preferenceAvailable) return response({ ok: false }, false);
@@ -35,7 +35,7 @@ function mockServer(initial: string | null) {
     if (url === "/api/manual-main/accounts/bybit-a/refresh" && options?.method === "POST")
       return response({ ok: server.connected }, server.connected);
     if (url === "/api/manual-main/accounts/bybit-a/summary")
-      return response({ ok: true, summary: snapshot });
+      return response({ ok: true, summary: { ...snapshot, trading_enabled: server.tradingEnabled } });
     throw new Error("unexpected API route " + url);
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -44,6 +44,7 @@ function mockServer(initial: string | null) {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   window.localStorage.clear();
 });
@@ -103,6 +104,50 @@ describe("restored per-mode account selection", () => {
     server.connected = true;
     await waitFor(() => expect(result.current.mainProjection?.account_id).toBe("bybit-a"), { timeout: 3000 });
     expect(result.current.error).toBeNull();
+  });
+
+  it("refreshes a connected read-only MAIN inventory, reconnects on failure and stops on PAPER", async () => {
+    vi.useFakeTimers();
+    const { server, fetchMock } = mockServer("bybit-a");
+    const { result } = renderHook(() => useModeAccountSelection());
+    const advance = async (ms: number) => {
+      await act(async () => { await vi.advanceTimersByTimeAsync(ms); });
+    };
+    const reads = () => fetchMock.mock.calls.filter(([url, opts]) =>
+      url === "/api/manual-main/accounts/bybit-a/refresh" && opts?.method === "POST").length;
+    await advance(0);
+    await advance(0);
+    expect(result.current.mainProjection?.read_only).toBe(true);
+    const initial = reads();
+    await advance(15_000);
+    expect(reads()).toBe(initial + 1);
+    await advance(15_000);
+    expect(reads()).toBe(initial + 2);
+    server.connected = false;
+    await advance(15_000);
+    expect(result.current.mainProjection).toBeNull();
+    expect(result.current.preferences.TERMINAL).toBe("bybit-a");
+    server.connected = true;
+    await advance(1000);
+    expect(result.current.mainProjection?.read_only).toBe(true);
+    await act(async () => { await result.current.selectAccount("TERMINAL", paper); });
+    const before = reads();
+    await advance(30_000);
+    expect(reads()).toBe(before);
+    expect(result.current.preferences.AUTOPILOT).toBe("paper");
+  });
+
+  it("does not rotate writable MAIN session generations in the inventory timer", async () => {
+    vi.useFakeTimers();
+    const { server, fetchMock } = mockServer("bybit-a");
+    server.tradingEnabled = true;
+    const { result } = renderHook(() => useModeAccountSelection());
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(result.current.mainProjection?.read_only).toBe(false);
+    const reads = fetchMock.mock.calls.length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(fetchMock.mock.calls).toHaveLength(reads);
   });
 
   it("never uses PAPER as fallback for an unavailable binding", async () => {
