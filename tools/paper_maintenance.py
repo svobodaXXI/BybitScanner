@@ -1629,7 +1629,6 @@ def _paper_full_readiness(*, root: Path, env_file: Path | None, readiness=None,
             if not readiness():
                 raise ValueError("Robot readiness rejected")
         else:
-            import sqlite3
             from tools.stop_robot_runtime import _database_path
             db = _database_path(root, _environment(env_file))
             with sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True) as conn:
