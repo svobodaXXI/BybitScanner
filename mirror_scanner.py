@@ -221,6 +221,25 @@ def empty_state(symbol: str, timeframe: str) -> dict[str, Any]:
             "updated_at_ms": None}
 
 
+def retired_candidate_breakout_groups(state: Mapping[str, Any]) -> set[tuple[int, str]]:
+    """Compact risk witnesses survive removal of old visual/tracker records.
+
+    A missing field is the legacy format; malformed witnesses must never be
+    interpreted as an empty risk history.
+    """
+    items = state.get("retired_candidate_breakouts", [])
+    if not isinstance(items, list):
+        raise ValueError("invalid retired MIRROR breakout history")
+    groups = set()
+    for item in items:
+        if (not isinstance(item, list) or len(item) != 2
+                or type(item[0]) is not int or item[0] < 0
+                or item[1] not in ("LONG", "SHORT")):
+            raise ValueError("invalid retired MIRROR breakout identity")
+        groups.add((item[0], item[1]))
+    return groups
+
+
 def load_state(symbol: str, timeframe: str, root=None) -> dict[str, Any]:
     path = state_path(symbol, timeframe, root)
     if not path.exists():
@@ -233,6 +252,7 @@ def load_state(symbol: str, timeframe: str, root=None) -> dict[str, Any]:
         LevelRegistry.from_dict(state["registry"])
         if not isinstance(state["records"], dict) or not isinstance(state["pending_notifications"], list):
             raise ValueError("state structure")
+        retired_candidate_breakout_groups(state)
         return state
     except (OSError, ValueError, KeyError, TypeError, MirrorLevelError) as exc:
         raise MirrorStateError(f"{path.name}: {type(exc).__name__}: {exc}") from exc
@@ -278,10 +298,119 @@ def _retest_potential_percent(target: float | Decimal, reference: float | Decima
     return abs(level - price) * Decimal("100") / price
 
 
-def _judge_breakout(level: MirrorLevel, record: Mapping[str, Any], latest_close_ms: int, step: int) -> str | None:
+def _prior_wick_rejection(level: MirrorLevel, rows, breakout_open_ms: int) -> str | None:
+    """Only an untouched source ray may initiate a new naked MIRROR breakout.
+
+    Check closed candles AFTER source confirmation / latest source anchor and BEFORE the
+    breakout, including the candle immediately before the signal. A candle's
+    exact wick timestamp is unknown within OHLC; a possible penetration of a
+    sloping boundary therefore rejects the candidate rather than assuming a
+    pristine level. Missing historical bars cannot establish untouchedness.
+    This read-only gate does not revise a previously confirmed campaign.
+    """
+    anchor_ms = max(at for at, _ in level.anchors)
+    step = timeframe_ms(level.timeframe)
+    # For multi-touch swing zones the first anchor is obsolete when a
+    # subsequent formative wick has already pierced it. Checking only AFTER
+    # the second pivot confirmation silently reuses this stale anchor.
+    # A standalone one-pivot source, or a pattern, starts at its own
+    # causal confirmation instead; never count pre-source formation there.
+    source_pivots = level.provenance.get("pivots") or ()
+    first = (anchor_ms + step
+             if level.source == SOURCE_SWING_ZONE and len(source_pivots) >= 2
+             else max(anchor_ms + step, int(level.confirmed_at_ms)))
+    if first >= breakout_open_ms:
+        return None
+    earlier = [r for r in rows if first <= int(r["open_time_ms"]) < breakout_open_ms]
+    if not earlier or int(earlier[0]["open_time_ms"]) != first:
+        return "prior_wick_history_unavailable"
+    cursor = first
+    for row in earlier:
+        at = int(row["open_time_ms"])
+        if at != cursor or int(row["close_time_ms"]) != at + step:
+            return "prior_wick_history_unavailable"
+        boundary_min = min(level.price_at(at), level.price_at(at + step))
+        boundary_max = max(level.price_at(at), level.price_at(at + step))
+        # Equal contact also means the ray is no longer provably untouched.
+        if ((level.side == "upper" and float(row["high"]) >= boundary_min)
+                or (level.side == "lower" and float(row["low"]) <= boundary_max)):
+            return "prior_wick_breached_level"
+        cursor = at + step
+    if cursor != breakout_open_ms:
+        return "prior_wick_history_unavailable"
+    return None
+
+
+def _fresh_pivots_inside_confirmed_zones(levels, highs, lows, rows) -> list[MirrorLevel]:
+    """Reveal untouched confirmed pivots when a two-touch swing zone becomes known.
+
+    The two-touch zone is an evidence source, NOT permission to reuse its
+    earlier wick anchor after that ray has already been pierced. A pivot
+    within the formation can be a separate dated mirror target, but it is
+    only published once the parent zone was causally confirmed. Require
+    complete closed OHLC from the pivot through that confirmation to prove
+    the newly proposed ray remained untouched.
+    """
+    by_time = {int(c["open_time_ms"]): c for c in rows}
+    result: dict[str, MirrorLevel] = {}
+    for zone in levels:
+        if zone.source != SOURCE_SWING_ZONE or len(zone.provenance.get("pivots") or ()) < 2:
+            continue
+        step = timeframe_ms(zone.timeframe)
+        origin = int(zone.anchors[0][0])
+        known = int(zone.confirmed_at_ms)
+        # The owner permits a new source to REPLACE a damaged old ray,
+        # not extra trade candidates beside an intact two-touch zone.
+        # Check the complete causal formation prefix; a gap cannot prove
+        # the parent was invalid, even if a later pivot itself is pristine.
+        cursor = origin + step
+        old_ray_damaged = False
+        while cursor < known:
+            row = by_time.get(cursor)
+            if row is None or int(row["close_time_ms"]) != cursor + step:
+                break
+            if ((zone.side == "upper" and float(row["high"]) >= zone.price_at(cursor))
+                    or (zone.side == "lower" and float(row["low"]) <= zone.price_at(cursor))):
+                old_ray_damaged = True
+            cursor += step
+        if cursor != known or not old_ray_damaged:
+            continue
+        for pivot in (highs if zone.side == "upper" else lows):
+            t, p = int(pivot["pivot_at_ms"]), float(pivot["price"])
+            if not (origin < t and int(pivot["confirmed_at_ms"]) <= known):
+                continue
+            cursor = t + step
+            untouched = True
+            while cursor < known:
+                row = by_time.get(cursor)
+                if (row is None or int(row["close_time_ms"]) != cursor + step
+                        or (float(row["high"]) >= p if zone.side == "upper"
+                            else float(row["low"]) <= p)):
+                    untouched = False
+                    break
+                cursor += step
+            if not untouched or cursor != known:
+                continue
+            renewed = horizontal_level(
+                symbol=zone.symbol, timeframe=zone.timeframe,
+                source=SOURCE_SWING_ZONE, pattern=None, side=zone.side,
+                price=p, anchor_time_ms=t, confirmed_at_ms=known, touches=1,
+                provenance={"source": "untouched_confirmed_pivot_in_swing_zone",
+                            "formation_level_id": zone.level_id,
+                            "pivot_confirmed_at_ms": int(pivot["confirmed_at_ms"])},
+            )
+            result[renewed.level_id] = renewed
+    return list(result.values())
+
+
+def _judge_breakout(level: MirrorLevel, record: Mapping[str, Any], latest_close_ms: int, step: int, *, prior_rows=None) -> str | None:
     """Rejection reason of a naked breakout as a live MIRROR candidate, or None (candidate)."""
 
     breakout = record["naked_retest"]["breakout"]
+    if prior_rows is not None:
+        prior_rejection = _prior_wick_rejection(level, prior_rows, int(breakout["open_time_ms"]))
+        if prior_rejection is not None:
+            return prior_rejection
     age = (latest_close_ms - int(breakout["close_time_ms"])) // step
     if age > FRESH_BREAKOUT_CANDLES:
         return f"stale_breakout:{age}_candles_before_latest_close"
@@ -305,14 +434,14 @@ def _judge_breakout(level: MirrorLevel, record: Mapping[str, Any], latest_close_
 
 
 def _duplicate_breakout(level_id, level, record, records, registry) -> str | None:
-    """One naked candle through two adjacent levels of one side is one MIRROR event, not two."""
+    """Suppress duplicate *real boundaries*, not independent valid levels.\n\n    One closed candle may genuinely cross two still-untouched price levels.\n    Keep their distinct source IDs and retest targets; identical geometry is\n    already reconciled in LevelRegistry and stays deduplicated here.\n    """
 
     breakout = record["naked_retest"]["breakout"]
     for other_id, other in records.items():
         other_level = registry.levels.get(other_id)
         other_breakout = other["naked_retest"].get("breakout")
         if (other_id != level_id and other.get("candidate") and other_level is not None
-                and other_level.side == level.side and other_breakout is not None
+                and same_level(other_level, level, 0.0) and other_breakout is not None
                 and other_breakout["open_time_ms"] == breakout["open_time_ms"]
                 and other_breakout["direction"] == breakout["direction"]):
             return f"duplicate_breakout_of:{other_id}"
@@ -509,8 +638,8 @@ def _advance(level: MirrorLevel, record: dict[str, Any], rows, *, atr_at, gaps, 
     for row in rows:
         if cursor is not None and row["close_time_ms"] <= cursor:
             continue
-        # A subsequently CONFIRMED higher high / lower low invalidates an
-        # unbroken horizontal mirror ray, even when only its wick crosses.
+        # A subsequently CONFIRMED swing replaces a horizontal level only
+        # when the old level was already wick-touched after confirmation.
         # Wait until the right-hand pivot candles CLOSE: never look ahead.
         # A breakout already proven before confirmation remains historical;
         # it must not be rewritten using future pivot evidence.
@@ -521,9 +650,21 @@ def _advance(level: MirrorLevel, record: dict[str, Any], rows, *, atr_at, gaps, 
                     continue
                 new_price = float(pivot["price"])
                 old_price = level.price_at(int(pivot["pivot_at_ms"]))
-                superseded = ((level.side == "upper" and new_price > old_price)
-                              or (level.side == "lower" and new_price < old_price))
-                if superseded:
+                pivot_ms = int(pivot["pivot_at_ms"])
+                # A later confirmed swing can replace an already breached
+                # historical ray even when it is a HIGHER low / LOWER high.
+                # Prove the old ray was touched using only candles that had
+                # closed by this pivot's confirmation; never inspect future
+                # OHLC or use pre-confirmation formation touches.
+                prior_breach = any(
+                    int(c["open_time_ms"]) >= level.confirmed_at_ms
+                    and int(c["open_time_ms"]) <= pivot_ms
+                    and int(c["close_time_ms"]) <= int(row["close_time_ms"])
+                    and ((float(c["high"]) >= old_price) if level.side == "upper"
+                         else (float(c["low"]) <= old_price))
+                    for c in rows
+                )
+                if prior_breach:
                     record.update(lifecycle=LIFECYCLE_REJECTED,
                                   rejection="superseded_by_confirmed_extremum",
                                   superseding_extremum={"pivot_at_ms": int(pivot["pivot_at_ms"]),
@@ -581,11 +722,12 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
     journal: list[dict[str, Any]] = []
     base = {"symbol": symbol, "timeframe": timeframe}
 
-    for level in sorted(collect_levels(symbol, timeframe, candles, wedge_result=wedge_result,
-                                       horn_observation=horn_observation,
-                                       l_shape_observation=l_shape_observation,
-                                       box_source=box_source),
-                        key=lambda x: (x.confirmed_at_ms, x.level_id)):
+    sources = collect_levels(symbol, timeframe, candles, wedge_result=wedge_result,
+                             horn_observation=horn_observation,
+                             l_shape_observation=l_shape_observation,
+                             box_source=box_source)
+    sources += _fresh_pivots_inside_confirmed_zones(sources, highs, lows, rows)
+    for level in sorted(sources, key=lambda x: (x.confirmed_at_ms, x.level_id)):
         if not mirror_level_allowed(level):
             continue
         # Do not alias a newly confirmed replacement to an invalidated
@@ -699,7 +841,7 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
             elif status == STATUS_UNTESTED:
                 rejection = (None if mirror_breakout_allowed(level, record["naked_retest"]["breakout"])
                              else "mirror_breakout_direction_revoked") \
-                    or _judge_breakout(level, record, latest_close, step) \
+                    or _judge_breakout(level, record, latest_close, step, prior_rows=rows) \
                     or _duplicate_breakout(level_id, level, record, records, registry)
                 record["candidate"] = rejection is None
                 record["rejection"] = rejection
@@ -747,19 +889,119 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
                             "reason": "expired_before_breakout"})
         records[level_id] = record
 
+    # After an old horizontal ray has been retired by a proven pierce, later
+    # independently confirmed pivots are valid NEW potential sources even if
+    # they are less extreme than that first successor. EVAA/BLESS owner edits
+    # selected later higher lows after earlier deeper lows. Replaying an old
+    # obsolete ray must never keep the search stuck at its deepest excursion.
+    retired = []
+    for level_id, rec in records.items():
+        source = registry.levels.get(level_id)
+        if source is None or not source.is_horizontal:
+            continue
+        if (rec.get("rejection") == "superseded_by_confirmed_extremum"
+                and isinstance(rec.get("superseding_extremum"), dict)):
+            retired.append((level_id, source, rec["superseding_extremum"]))
+        elif rec.get("rejection") == "prior_wick_breached_level":
+            # A rejected full-body breakout can have finished its invalid
+            # retest campaign BEFORE the offending wick becomes a confirmed
+            # pivot. The old state will never pass through WAITING again.
+            # Recover its FIRST proven, closed pre-breakout touch only from
+            # this available contiguous OHLC history, then allow later
+            # independently confirmed pivots without reviving the old ray.
+            breakout = (rec.get("naked_retest") or {}).get("breakout")
+            if not isinstance(breakout, dict):
+                continue
+            until = int(breakout["open_time_ms"])
+            since = int(source.confirmed_at_ms)
+            # A single observed touch is not sufficient evidence when the
+            # retained source→breakout history has a missing candle.
+            by_open = {int(c["open_time_ms"]): c for c in rows}
+            cursor = since
+            first_touch = None
+            while cursor < until:
+                candle = by_open.get(cursor)
+                if candle is None or int(candle["close_time_ms"]) != cursor + step:
+                    break
+                if (first_touch is None
+                        and ((float(candle["high"]) >= source.price_at(cursor))
+                             if source.side == "upper"
+                             else (float(candle["low"]) <= source.price_at(cursor)))):
+                    first_touch = candle
+                cursor += step
+            if cursor == until and first_touch is not None:
+                retired.append((level_id, source, {
+                    "pivot_at_ms": int(first_touch["open_time_ms"]) - step,
+                    "confirmed_at_ms": since,
+                }))
+    for side, pivots in (("upper", highs), ("lower", lows)):
+        retired_same_side = [(source_id, pivot)
+                             for source_id, source, pivot in retired if source.side == side]
+        if not retired_same_side:
+            continue
+        for pivot in pivots:
+            anchor_time = int(pivot["pivot_at_ms"])
+            known_at = int(pivot["confirmed_at_ms"])
+            if known_at > latest_close or known_at < rows[0]["close_time_ms"]:
+                continue
+            if latest_close - anchor_time > WAITING_EXPIRY_CANDLES * step:
+                continue
+            parent = next((
+                source_id for source_id, obsolete in retired_same_side
+                if anchor_time > int(obsolete["pivot_at_ms"])
+                and known_at > int(obsolete["confirmed_at_ms"])
+            ), None)
+            if parent is None:
+                continue
+            fresh = horizontal_level(
+                symbol=symbol, timeframe=timeframe, source=SOURCE_SWING_ZONE,
+                pattern=None, side=side, price=float(pivot["price"]),
+                anchor_time_ms=anchor_time, confirmed_at_ms=known_at, touches=1,
+                provenance={"renewed_after_invalidated_level_id": parent,
+                            "source": "later_confirmed_swing"},
+            )
+            if fresh.level_id in records:
+                continue
+            registry.add(fresh, merge_tolerance=0.0)
+            records[fresh.level_id] = {
+                **new_record(fresh), "registered_at_ms": known_at,
+                "sources": [_source_entry(fresh)], "lifecycle": LIFECYCLE_TRACKING,
+                "candidate": None, "rejection": None, "freshness": None,
+                "robot": None, "last_event_ms": known_at, "notified": [],
+            }
+            journal.append({"event": "mirror_level_registered", **base,
+                            "level_id": fresh.level_id, "source": fresh.source,
+                            "pattern": None, "side": side,
+                            "anchors": [list(a) for a in fresh.anchors],
+                            "confirmed_at_ms": known_at,
+                            "renewed_after_invalidated_level_id": parent})
+
     # Finished records stay visible for RETENTION_MS; the registry keeps every identity it still
     # needs, so a re-scan inside the window maps a known level back onto it instead of a new one.
     window_start = rows[0]["open_time_ms"]
+    retired_breakouts = retired_candidate_breakout_groups(state)
     for level_id in [key for key, rec in records.items()
                      if rec["lifecycle"] != LIFECYCLE_TRACKING
                      and int(rec.get("last_event_ms") or 0) < now_ms - RETENTION_MS
                      and key in registry.levels
                      and all(t < window_start for t, _ in registry.levels[key].anchors)
                      and not any(item["level_id"] == key for item in pending)]:
+        record = records[level_id]
+        if record.get("candidate") is True:
+            breakout = (record.get("naked_retest") or {}).get("breakout")
+            if (not mirror_breakout_allowed(registry.levels[level_id], breakout)
+                    or type(breakout.get("close_time_ms")) is not int
+                    or breakout["close_time_ms"] < 0):
+                continue  # do not discard a candidate with unproven risk identity
+            # Remember the event, not the full historical chart. Any surviving
+            # sibling must remain observation-only even across timeframe files.
+            retired_breakouts.add((breakout["close_time_ms"], breakout["campaign_direction"]))
         records.pop(level_id)
         registry.levels.pop(level_id, None)
         registry.aliases.pop(level_id, None)
 
+    if retired_breakouts:
+        state["retired_candidate_breakouts"] = [list(group) for group in sorted(retired_breakouts)]
     state.update(registry=registry.to_dict(), records=records, pending_notifications=pending,
                  updated_at_ms=now_ms)
     save_state(state, root)                      # durable before anything leaves the process
@@ -823,6 +1065,46 @@ def _standalone_source_authorized(symbol: str, state: Mapping[str, Any], entry: 
         return False
 
 
+def _standalone_multisource_breakout_unresolved(
+    state: Mapping[str, Any], terms: Mapping[str, Any],
+) -> bool:
+    """Fail closed for two tradable MIRROR rays sharing an ungrouped R0 event.
+
+    Scanner/Telegram keep both independent level identities and candidates.
+    Downstream Robot R0 attribution is currently keyed by each level's own
+    campaign ID, so do not prepare *either* standalone trade before an
+    independently approved shared risk-campaign identity exists. The guard
+    also prevents handing a second level after a previously sent entry
+    changed lifecycle or after a process restart.
+    """
+    level_id = terms.get("level_id")
+    breakout_open = terms.get("level_breakout_close_ms")
+    direction = terms.get("level_breakout_direction")
+    if type(breakout_open) is not int or direction not in ("UP", "DOWN"):
+        return True
+    campaign_direction = "SHORT" if direction == "UP" else "LONG"
+    if (breakout_open, campaign_direction) in retired_candidate_breakout_groups(state):
+        return True
+    for other_id, record in (state.get("records") or {}).items():
+        if other_id == level_id or not isinstance(record, Mapping):
+            continue
+        other_breakout = (record.get("naked_retest") or {}).get("breakout")
+        if (isinstance(other_breakout, Mapping)
+                and other_breakout.get("close_time_ms") == breakout_open
+                and other_breakout.get("direction") == direction
+                and record.get("candidate") is True):
+            return True
+    for other in state.get("standalone_entries") or ():
+        prior_terms = other.get("terms") if isinstance(other, Mapping) else None
+        if (isinstance(prior_terms, Mapping)
+                and prior_terms.get("level_id") != level_id
+                and prior_terms.get("level_breakout_close_ms") == breakout_open
+                and prior_terms.get("level_breakout_direction") == direction
+                and other.get("handoff") in ("SENT", "HANDED", "FAILED")):
+            return True
+    return False
+
+
 def _hand_off_standalone_entries(
     symbol: str, state: dict[str, Any], root=None, *,
     now_ms: int | None = None, reversal_by_tf: Mapping[str, Any] | None = None,
@@ -842,6 +1124,16 @@ def _hand_off_standalone_entries(
         if not _standalone_source_authorized(symbol, state, entry):
             entry["handoff"] = "OFF"
             save_state(state, root)
+            continue
+        if _standalone_multisource_breakout_unresolved(state, entry["terms"]):
+            entry["handoff"] = "OFF"
+            entry["block_reason"] = "mirror_multi_source_shared_r0_unproven"
+            save_state(state, root)
+            append_event({
+                "event": "mirror_entry_handoff_blocked",
+                "symbol": symbol, "entry_id": entry["entry_id"],
+                "reason": entry["block_reason"],
+            }, root)
             continue
         # The auxiliary must have been frozen from THIS MIRROR confirmation,
         # not acquired from a newer candle during a retry or restart.

@@ -217,6 +217,216 @@ def test_confirmed_lower_wick_extremum_replaces_support_ray(root, fixed_levels):
     assert state["records"][level.level_id]["superseded_by_level_id"] == successor
 
 
+@pytest.mark.parametrize("side,breach,successor", [
+    ("lower", 99.8, 100.2),  # later HIGHER low, EVAA/BLESS-type revision
+    ("upper", 100.2, 99.8),  # later LOWER high (symmetric)
+])
+def test_wick_sweep_later_less_extreme_confirmed_pivot_replaces_breached_ray(
+        root, fixed_levels, monkeypatch, side, breach, successor):
+    old = level_at(100.0, 5 * M, side=side)
+    fixed_levels["levels"] = [old]
+    price = 100.6 if side == "lower" else 99.4
+    clean = (price, 101.0, 100.4, price) if side == "lower" else (
+        price, 99.6, 99.0, price)
+    bars = [clean] * 34
+    bars[25] = ((price, 101.0, breach, price) if side == "lower"
+                else (price, breach, 99.0, price))
+    bars[30] = ((price, 101.0, successor, price) if side == "lower"
+                else (price, successor, 99.0, price))
+    later = {"price": successor, "pivot_at_ms": 30 * M,
+             "confirmed_at_ms": 34 * M, "confirmed_index": 33, "index": 30}
+
+    # Isolate the successor transition from other pivots. The 3-bar
+    # confirmation is exposed only when the final bar has closed.
+    def pivots(rows):
+        available = [later] if len(rows) >= 34 else []
+        return (available, []) if side == "upper" else ([], available)
+
+    monkeypatch.setattr(ms, "confirmed_pivots", pivots)
+    observe(frame(bars[:33]), root)
+    early = ms.load_state("TESTUSDT", "1", root)
+    assert early["records"][old.level_id]["lifecycle"] == ms.LIFECYCLE_TRACKING
+    observe(frame(bars), root)
+    state = ms.load_state("TESTUSDT", "1", root)
+    record = state["records"][old.level_id]
+    assert record["rejection"] == "superseded_by_confirmed_extremum"
+    assert record["candidate"] is False
+    successor_id = record["superseded_by_level_id"]
+    ray = ms.LevelRegistry.from_dict(state["registry"]).levels[successor_id]
+    assert ray.boundary.anchor_price == successor
+    assert ray.boundary.anchor_time_ms == 30 * M
+    assert ray.confirmed_at_ms == 34 * M
+    assert ray.provenance["supersedes_level_id"] == old.level_id
+    observe(frame(bars), root)
+    assert ms.load_state("TESTUSDT", "1", root)["records"][old.level_id][
+        "superseded_by_level_id"] == successor_id
+
+
+@pytest.mark.parametrize("side,pivot_price", [
+    ("lower", 100.2), ("upper", 99.8),
+])
+def test_wick_sweep_later_less_extreme_pivot_does_not_replace_intact_ray(
+        root, fixed_levels, monkeypatch, side, pivot_price):
+    # A newer pivot ALONE cannot retire an untouched original boundary.
+    original = level_at(100.0, 5 * M, side=side)
+    fixed_levels["levels"] = [original]
+    price = 100.6 if side == "lower" else 99.4
+    bars = [((price, 101.0, 100.4, price) if side == "lower"
+             else (price, 99.6, 99.0, price))] * 34
+    bars[30] = ((price, 101.0, pivot_price, price) if side == "lower"
+                else (price, pivot_price, 99.0, price))
+    pivot = {"price": pivot_price, "pivot_at_ms": 30 * M,
+             "confirmed_at_ms": 34 * M, "confirmed_index": 33, "index": 30}
+    monkeypatch.setattr(ms, "confirmed_pivots", lambda rows:
+                        ([], [pivot]) if side == "lower" else ([pivot], []))
+    observe(frame(bars), root)
+    state = ms.load_state("TESTUSDT", "1", root)
+    record = state["records"][original.level_id]
+    assert record["lifecycle"] == ms.LIFECYCLE_TRACKING
+    assert record.get("superseded_by_level_id") is None
+    assert list(state["records"]) == [original.level_id]
+
+
+def test_wick_sweep_rejected_old_ray_cannot_spawn_successor_with_history_gap(
+        root, fixed_levels, monkeypatch):
+    # Even a proved old wick + later 3-right pivot does not license a new
+    # source if a candle is missing between old confirmation and breakout.
+    from mirror_levels.levels import LevelRegistry
+    from mirror_levels.tracker import new_record
+    old = level_at(100.0, 5 * M)
+    registry = LevelRegistry()
+    registry.add(old)
+    state = ms.empty_state("TESTUSDT", "1")
+    state["registry"] = registry.to_dict()
+    record = new_record(old)
+    record.update(lifecycle=ms.LIFECYCLE_DONE, candidate=False,
+                  rejection="prior_wick_breached_level")
+    record["naked_retest"]["breakout"] = {
+        "direction": "UP", "campaign_direction": "SHORT",
+        "open_time_ms": 20 * M, "close_time_ms": 21 * M,
+    }
+    state["records"] = {old.level_id: record}
+    ms.save_state(state, root)
+    fixed_levels["levels"] = []
+    later = {"price": 101.0, "pivot_at_ms": 26 * M,
+             "confirmed_at_ms": 30 * M, "index": 26,
+             "confirmed_index": 29}
+    monkeypatch.setattr(ms, "confirmed_pivots", lambda rows: ([later], []))
+    bars = flat_bars(35, price=99.2, spread=0.2)
+    bars[16] = (99.2, 100.2, 99.0, 99.2)
+    complete = frame(bars)
+    missing = complete.loc[complete["time"] != 11 * M].reset_index(drop=True)
+    observe(missing, root)
+    assert set(ms.load_state("TESTUSDT", "1", root)["records"]) == {old.level_id}
+    # Recovery is allowed only once the missing closed candle is supplied.
+    observe(complete, root)
+    recovered = ms.load_state("TESTUSDT", "1", root)
+    renewed = [x for x in ms.LevelRegistry.from_dict(recovered["registry"]).levels.values()
+               if x.anchors == ((26 * M, 101.0),)]
+    assert len(renewed) == 1
+    assert recovered["records"][renewed[0].level_id]["candidate"] is None
+    assert recovered["records"][old.level_id]["candidate"] is False
+
+
+def test_wick_sweep_retired_old_ray_allows_later_higher_low_source(
+        root, fixed_levels, monkeypatch):
+    # Owner EVAA/BLESS: a deep pierced low is replaced, then a later
+    # confirmed HIGHER low is also its own valid untouched retest source.
+    old = level_at(100.0, 5 * M, side="lower")
+    fixed_levels["levels"] = [old]
+    clean = (100.6, 100.9, 100.4, 100.6)
+    bars = [clean] * 60
+    bars[23] = (100.6, 100.9, 99.8, 100.6)
+    bars[52] = (100.6, 100.9, 100.2, 100.6)
+    first = {"price": 99.8, "pivot_at_ms": 23 * M,
+             "confirmed_at_ms": 27 * M, "confirmed_index": 26, "index": 23}
+    later = {"price": 100.2, "pivot_at_ms": 52 * M,
+             "confirmed_at_ms": 56 * M, "confirmed_index": 55, "index": 52}
+
+    def pivots(rows):
+        available = [p for p in (first, later)
+                     if int(p["confirmed_at_ms"]) <= int(rows[-1]["close_time_ms"])]
+        return [], available
+
+    monkeypatch.setattr(ms, "confirmed_pivots", pivots)
+    observe(frame(bars[:55]), root)
+    early = ms.load_state("TESTUSDT", "1", root)
+    assert not any(
+        level.boundary.anchor_time_ms == 52 * M
+        for level in ms.LevelRegistry.from_dict(early["registry"]).levels.values()
+    )
+    observe(frame(bars), root)
+    state = ms.load_state("TESTUSDT", "1", root)
+    levels = ms.LevelRegistry.from_dict(state["registry"]).levels
+    fresh = [level for level in levels.values()
+             if level.side == "lower" and level.boundary.anchor_time_ms == 52 * M]
+    assert len(fresh) == 1
+    successor = fresh[0]
+    assert successor.boundary.anchor_price == 100.2
+    assert successor.confirmed_at_ms == 56 * M
+    assert state["records"][successor.level_id]["candidate"] is None
+    assert successor.provenance["source"] == "later_confirmed_swing"
+    # Re-scan preserves identity, does not create duplicate candidate/source.
+    observe(frame(bars), root)
+    repeat = ms.load_state("TESTUSDT", "1", root)
+    assert list(repeat["records"]).count(successor.level_id) == 1
+    # Once the newer source exists, its own first clean naked breakout is
+    # detectable. The already-invalid older ray must remain non-candidate.
+    triggered = [*bars, (100.6, 100.9, 96.7, 97.0)]
+    summary = observe(frame(triggered), root)
+    active = ms.load_state("TESTUSDT", "1", root)["records"]
+    # The earlier deeper pivot at 99.8 is also untouched; the owner explicitly
+    # permits both independent targets rather than one duplicate event.
+    first_successor = next(level for level in levels.values()
+                           if level.side == "lower"
+                           and level.boundary.anchor_time_ms == 23 * M)
+    assert summary["new_candidates"] == 2
+    assert {level_id for level_id, row in active.items() if row["candidate"]} == {
+        first_successor.level_id, successor.level_id
+    }
+    assert active[old.level_id]["candidate"] is False
+    observed = ms.load_state("TESTUSDT", "1", root)["pending_notifications"]
+    assert {item["level_id"] for item in observed} == {
+        first_successor.level_id, successor.level_id
+    }
+
+
+def test_wick_sweep_rejected_body_break_does_not_strand_later_confirmed_pivot(
+        root, fixed_levels):
+    # A prior wick invalidates a would-be full-body breakout. The rejected
+    # breakout can enter CAMPAIGN_ACTIVE and finish before the offending
+    # wick receives its three right-side closed pivot confirmations.
+    # The next fresh level must still be registered, with no old card.
+    original = level_at(100.0, 5 * M)
+    fixed_levels["levels"] = [original]
+    quiet = (99.5, 99.8, 99.2, 99.5)
+    bars = [quiet] * 26
+    bars.append((99.5, 100.2, 99.3, 99.5))  # index 26: first wick breach
+    bars.append((99.5, 100.1, 99.3, 100.05))  # index 27: invalid body breakout
+    observe(frame(bars), root)
+    state = ms.load_state("TESTUSDT", "1", root)
+    old = state["records"][original.level_id]
+    assert old["candidate"] is False
+    assert old["rejection"] == "prior_wick_breached_level"
+    assert not state["pending_notifications"]
+    bars.extend([(100.03, 100.09, 99.95, 100.02),
+                 (100.02, 100.08, 99.95, 100.02)])
+    observe(frame(bars), root)
+    state = ms.load_state("TESTUSDT", "1", root)
+    levels = ms.LevelRegistry.from_dict(state["registry"]).levels
+    fresh = [ray for ray in levels.values()
+             if ray.side == "upper" and ray.boundary.anchor_time_ms == 26 * M]
+    assert len(fresh) == 1
+    assert fresh[0].boundary.anchor_price == 100.2
+    assert fresh[0].confirmed_at_ms == 30 * M
+    assert state["records"][fresh[0].level_id]["candidate"] is None
+    assert state["records"][original.level_id]["candidate"] is False
+    assert not state["pending_notifications"]
+    observe(frame(bars), root)
+    repeated = ms.load_state("TESTUSDT", "1", root)
+    assert list(repeated["records"]).count(fresh[0].level_id) == 1
+
+
 def test_wick_sweep_before_confirmation_does_not_cancel_existing_level(root, fixed_levels):
     # An unconfirmed spike can be revised by later bars. Never anticipate
     # the new pivot at the moment of the wick.
@@ -243,6 +453,192 @@ def test_completed_naked_breakout_is_not_retroactively_revoked_by_later_pivot(ro
     observe(frame(bars), root)
     state = ms.load_state("TESTUSDT", "1", root)["records"][level.level_id]
     assert state["rejection"] != "superseded_by_confirmed_extremum"
+
+
+@pytest.mark.parametrize("side,clean,broken,signal", [
+    ("upper", (99.5, 99.8, 99.2, 99.5), (99.5, 101.2, 99.2, 99.5),
+     (99.5, 103.5, 99.3, 103.0)),
+    ("lower", (100.5, 100.8, 100.2, 100.5), (100.5, 100.8, 98.8, 100.5),
+     (100.5, 100.7, 96.5, 97.0)),
+])
+def test_wick_sweep_owner_mirror_prior_wick_breach_rejects_old_horizontal_level(
+        root, fixed_levels, side, clean, broken, signal):
+    level = level_at(100.0, 5 * M, side=side)
+    fixed_levels["levels"] = [level]
+    # The real body stays on the original side and the final candle crosses.
+    # Its predecessor's wick alone must still retire eligibility.
+    bars = [clean] * 29 + [broken, signal]
+    summary = observe(frame(bars), root)
+    record = ms.load_state("TESTUSDT", "1", root)["records"][level.level_id]
+    assert record["naked_retest"]["breakout"] is not None
+    assert record["candidate"] is False
+    assert record["rejection"] == "prior_wick_breached_level"
+    assert summary["new_candidates"] == 0
+    assert ms.load_state("TESTUSDT", "1", root)["pending_notifications"] == []
+
+
+@pytest.mark.parametrize("side,sequence,expected", [
+    ("upper", [0.004136, 0.004135, 0.004135, 0.004135, 0.004134,
+               0.004137, 0.004137, 0.004136, 0.004135, 0.004127], 0.004137),
+    ("lower", [0.004130, 0.004131, 0.004131, 0.004131, 0.004132,
+               0.004128, 0.004128, 0.004129, 0.004130, 0.004131], 0.004128),
+])
+def test_wick_sweep_owner_adjacent_equal_extrema_causal_plateau(
+        side, sequence, expected):
+    # Owner ALTUSDT review selected the second equal HIGH (0.004137),
+    # which strict 3-left / 3-right pivots lose completely.
+    from mirror_levels.swing import confirmed_pivots
+
+    def extract(prefix):
+        rows = [{
+            "open_time_ms": i * M, "close_time_ms": (i + 1) * M,
+            "high": value if side == "upper" else 0.0042,
+            "low": value if side == "lower" else 0.0040,
+        } for i, value in enumerate(prefix)]
+        highs, lows = confirmed_pivots(rows)
+        return highs if side == "upper" else lows
+
+    # Before the third right-hand candle closes, the second equal wick
+    # is NOT a confirmed source; adding a future candle cannot rewrite it.
+    assert not any(p["index"] == 6 for p in extract(sequence[:9]))
+    confirmed = [p for p in extract(sequence) if p["index"] == 6]
+    assert len(confirmed) == 1
+    assert confirmed[0]["price"] == expected
+    assert confirmed[0]["confirmed_index"] == 9
+    assert confirmed[0]["confirmed_at_ms"] == 10 * M
+    assert [p for p in extract(sequence + [sequence[-1]]) if p["index"] == 6] == confirmed
+
+
+def test_wick_sweep_intact_swing_zone_does_not_spawn_extra_pivot_candidates(
+        root, fixed_levels):
+    # A second and third lower local high do not invalidate the source
+    # resistance at 100.0. Do not mint independent one-pivot MIRROR rays
+    # merely because the confirmed two-touch zone contains other pivots.
+    original = horizontal_level(
+        symbol="TESTUSDT", timeframe="1", source=SOURCE_SWING_ZONE,
+        pattern=None, side="upper", price=100.0,
+        anchor_time_ms=5 * M, confirmed_at_ms=24 * M, touches=2,
+        provenance={"pivots": [[5 * M, 100.0], [20 * M, 99.9]]},
+    )
+    fixed_levels["levels"] = [original]
+    bars = flat_bars(30, price=98.7, spread=0.2)
+    bars[5] = (98.7, 100.0, 98.4, 98.7)
+    bars[12] = (98.7, 99.8, 98.4, 98.7)
+    bars[20] = (98.7, 99.9, 98.4, 98.7)
+    summary = observe(frame(bars), root)
+    state = ms.load_state("TESTUSDT", "1", root)
+    registry = ms.LevelRegistry.from_dict(state["registry"])
+    assert set(registry.levels) == {original.level_id}
+    assert set(state["records"]) == {original.level_id}
+    assert summary["new_candidates"] == 0
+    assert state["pending_notifications"] == []
+
+
+def test_wick_sweep_owner_formative_zone_selects_untouched_fresh_pivots(
+        root, fixed_levels):
+    # Real owner state evidence: the original two-touch swing zone becomes
+    # confirmed only AFTER a newer independent pivot has already formed.
+    # A pre-confirmation wick through its first anchor makes the original
+    # zone unfit for the later breakout; publish the unpierced later pivots.
+    original = horizontal_level(
+        symbol="TESTUSDT", timeframe="1", source=SOURCE_SWING_ZONE,
+        pattern=None, side="upper", price=100.0,
+        anchor_time_ms=5 * M, confirmed_at_ms=24 * M, touches=2,
+        provenance={"pivots": [[5 * M, 100.0], [20 * M, 100.1]],
+                    "atr_period": 14, "tolerance_atr": 0.25},
+    )
+    fixed_levels["levels"] = [original]
+    bars = flat_bars(30, price=99.2, spread=0.3)
+    bars[5] = (99.2, 100.0, 99.0, 99.2)
+    bars[12] = (99.2, 102.0, 99.0, 99.2)  # later unpierced owner pivot
+    bars[20] = (99.2, 100.1, 99.0, 99.2)  # second zone pivot confirms at 24M
+    bars.append((99.2, 103.7, 99.1, 103.5))
+    summary = observe(frame(bars), root)
+    state = ms.load_state("TESTUSDT", "1", root)
+    levels = ms.LevelRegistry.from_dict(state["registry"]).levels
+    assert state["records"][original.level_id]["candidate"] is False
+    assert state["records"][original.level_id]["rejection"] == "prior_wick_breached_level"
+    renewed = [ray for ray in levels.values()
+               if ray.provenance.get("source") == "untouched_confirmed_pivot_in_swing_zone"]
+    assert any(ray.anchors == ((12 * M, 102.0),) for ray in renewed)
+    assert all(ray.confirmed_at_ms == 24 * M for ray in renewed)
+    assert all(state["records"][ray.level_id]["candidate"] is True for ray in renewed)
+    assert summary["new_candidates"] == len(renewed)
+    observe(frame(bars), root)
+    repeated = ms.load_state("TESTUSDT", "1", root)
+    assert {key for key, row in repeated["records"].items() if row["candidate"]} == {
+        ray.level_id for ray in renewed
+    }
+
+
+def test_wick_sweep_source_formation_touches_before_confirmation_are_not_false_breaches(
+        root, fixed_levels):
+    # Confirmed swing zones require prior touches; those formative touches
+    # must not poison an otherwise fresh level before it became knowable.
+    level = level_at(100.0, 25 * M)
+    fixed_levels["levels"] = [level]
+    bars = flat_bars(30, price=99.5, spread=0.2)
+    bars[20] = (99.5, 100.2, 99.3, 99.5)  # before confirmation, not an active breach
+    bars.append((99.5, 103.5, 99.3, 103.0))
+    summary = observe(frame(bars), root)
+    record = ms.load_state("TESTUSDT", "1", root)["records"][level.level_id]
+    assert summary["new_candidates"] == 1
+    assert record["candidate"] is True
+
+
+@pytest.mark.parametrize("symbol,side,level_price,ohlc,expected", [
+    # Owner Editor's exact frozen final 5m candles. A low through the
+    # corrected BREV level is a WICK touch, not a naked/full-body breakout.
+    ("BREVUSDT", "lower", 0.10713,
+     (0.11021, 0.11127, 0.10469, 0.10726), None),
+    # EVAA has a genuine bearish candle body crossing its later HIGHER low.
+    ("EVAAUSDT", "lower", 5.9656,
+     (6.0242, 6.0432, 5.7238, 5.796), "DOWN"),
+])
+def test_wick_sweep_owner_frozen_final_candle_requires_body_not_wick(
+        symbol, side, level_price, ohlc, expected):
+    from geometry.naked_retest import naked_breakout_direction
+    source = horizontal_level(
+        symbol=symbol, timeframe="5", source=SOURCE_SWING_ZONE,
+        pattern=None, side=side, price=level_price,
+        anchor_time_ms=0, confirmed_at_ms=5 * M,
+    )
+    o, h, l, c = ohlc
+    result = naked_breakout_direction(source.boundary, {
+        "open_time_ms": 20 * M, "close_time_ms": 25 * M,
+        "open": o, "high": h, "low": l, "close": c, "closed": True,
+    })
+    assert result == expected
+
+
+def test_wick_sweep_owner_mirror_previous_wick_pierces_sloped_triangle_upper_ray(root, fixed_levels):
+    # 5m-style RAREUSDT geometry: previous wick pierced the descending
+    # upper line, but the next candle has a valid real-body crossing.
+    level = line_level(symbol="TESTUSDT", timeframe="1",
+                       pattern="Triangle Compression", side="upper",
+                       first=(0, 103.0), second=(5 * M, 102.95),
+                       confirmed_at_ms=6 * M)
+    fixed_levels["levels"] = [level]
+    bars = [(99.5, 100.0, 99.1, 99.5)] * 29
+    bars.append((99.5, 103.1, 99.4, 99.5))  # only this wick pierces 102.71
+    bars.append((99.5, 105.0, 99.4, 104.0))  # full-body breakout
+    summary = observe(frame(bars), root)
+    record = ms.load_state("TESTUSDT", "1", root)["records"][level.level_id]
+    assert record["rejection"] == "prior_wick_breached_level"
+    assert record["candidate"] is False and summary["new_candidates"] == 0
+
+
+def test_wick_sweep_owner_mirror_pristine_slope_still_allows_breakout(root, fixed_levels):
+    level = line_level(symbol="TESTUSDT", timeframe="1",
+                       pattern="Triangle Compression", side="upper",
+                       first=(0, 103.0), second=(5 * M, 102.95),
+                       confirmed_at_ms=6 * M)
+    fixed_levels["levels"] = [level]
+    bars = [(99.5, 100.0, 99.1, 99.5)] * 30
+    bars.append((99.5, 105.0, 99.4, 104.0))
+    summary = observe(frame(bars), root)
+    record = ms.load_state("TESTUSDT", "1", root)["records"][level.level_id]
+    assert record["candidate"] is True and summary["new_candidates"] == 1
 
 
 def test_level_without_parent_fresh_breakout_becomes_candidate_and_first_retest_is_terminal(root, fixed_levels):
@@ -309,6 +705,184 @@ def test_waiting_level_expires_and_history_gap_rejects(root, fixed_levels):
 
 
 # --- dedup ------------------------------------------------------------------------------------------
+
+def test_wick_sweep_box_overlay_never_rekeys_shared_breakout_r0_after_retest(root):
+    # Box-overlay reads Scanner MIRROR candidates independently of the
+    # standalone handoff. A two-level breakout must not acquire two separate
+    # boundary-derived risk campaigns or re-key after its first target ends.
+    import mirror_retest_robot as mirror
+    from mirror_levels.levels import LevelRegistry
+    from mirror_levels.tracker import new_record
+    levels = [
+        horizontal_level(
+            symbol="TESTUSDT", timeframe="5", source=SOURCE_SWING_ZONE,
+            pattern=None, side="upper", price=price,
+            anchor_time_ms=i * 5 * M, confirmed_at_ms=10 * M,
+        ) for i, price in enumerate((101.0, 102.0, 103.0))
+    ]
+    registry = LevelRegistry()
+    records = {}
+    for index, level in enumerate(levels):
+        registry.add(level)
+        record = new_record(level)
+        record.update(candidate=True, lifecycle=ms.LIFECYCLE_TRACKING,
+                      status=STATUS_UNTESTED, rejection=None)
+        record["naked_retest"]["breakout"] = {
+            "direction": "UP", "campaign_direction": "SHORT",
+            "open_time_ms": 30 * M if index < 2 else 40 * M,
+            "close_time_ms": 35 * M if index < 2 else 45 * M,
+        }
+        records[level.level_id] = record
+    state = ms.empty_state("TESTUSDT", "5")
+    state.update(registry=registry.to_dict(), records=records,
+                 pending_notifications=[
+                     {"level_id":lv.level_id, "kind": "breakout"} for lv in levels
+                 ])
+    ms.save_state(state, root)
+    sources = mirror.scanner_level_sources("TESTUSDT", root=root)
+    assert [x["level_id"] for x in sources] == [levels[2].level_id]
+    # The owner sees both separate level targets; only Box-overlay's
+    # executable source path hides the ambiguous shared-risk group.
+    assert [x["level_id"] for x in ms.load_state(
+        "TESTUSDT", "5", root)["pending_notifications"]] == [
+            lv.level_id for lv in levels
+        ]
+    # After retest closes the first source, its original candidate remains
+    # durable. It must still prevent the other from becoming a fresh R0.
+    records[levels[0].level_id].update(
+        lifecycle=ms.LIFECYCLE_DONE, status=STATUS_RETESTED
+    )
+    ms.save_state(state, root)
+    assert [x["level_id"] for x in mirror.scanner_level_sources(
+        "TESTUSDT", root=root)] == [levels[2].level_id]
+    assert [x["level_id"] for x in mirror.scanner_level_sources(
+        "TESTUSDT", root=root)] == [levels[2].level_id]
+
+
+@pytest.mark.parametrize("retired_tf", ["5", "1"])
+def test_wick_sweep_box_overlay_risk_fence_survives_actual_record_retention(
+        root, fixed_levels, retired_tf):
+    import mirror_retest_robot as mirror
+    from mirror_levels.levels import LevelRegistry
+    from mirror_levels.tracker import new_record
+
+    # The Scanner's real retention pass removes a finished source older than
+    # three days, while the other source remains BROKEN_UNTESTED. Exercise
+    # both same-file and M1/M5 state-file histories.
+    offset = 4 * 86_400_000
+    levels = [
+        horizontal_level(symbol="TESTUSDT", timeframe=tf, source=SOURCE_SWING_ZONE,
+                         pattern=None, side="upper", price=price,
+                         anchor_time_ms=0, confirmed_at_ms=15 * M)
+        for tf, price in ((retired_tf, 101.0), ("5", 102.0), ("5", 103.0))
+    ]
+    for tf in {retired_tf, "5"}:
+        registry = LevelRegistry()
+        records = {}
+        for index, level in enumerate(levels):
+            if level.timeframe != tf:
+                continue
+            registry.add(level)
+            record = new_record(level)
+            record.update(candidate=True, lifecycle=ms.LIFECYCLE_DONE if index == 0
+                          else ms.LIFECYCLE_TRACKING,
+                          status=STATUS_RETESTED if index == 0 else STATUS_UNTESTED,
+                          rejection=None, last_event_ms=50 * M)
+            close = 35 * M if index < 2 else 45 * M
+            record["naked_retest"].update(
+                breakout={"direction": "UP", "campaign_direction": "SHORT",
+                          "open_time_ms": close - int(tf) * M, "close_time_ms": close},
+                cursor_close_time_ms=offset + 4 * int(tf) * M,
+            )
+            # Active records already consumed this closed prefix; isolate
+            # the actual retention path from unrelated entry-pattern discovery.
+            record["entry_cursors"] = {"5": offset + 20 * M, "1": offset + 20 * M}
+            records[level.level_id] = record
+        state = ms.empty_state("TESTUSDT", tf)
+        state.update(registry=registry.to_dict(), records=records)
+        ms.save_state(state, root)
+
+    assert [x["level_id"] for x in mirror.scanner_level_sources(
+        "TESTUSDT", root=root)] == [levels[2].level_id]
+
+    df = frame(flat_bars(4, price=110), step=int(retired_tf) * M)
+    df["time"] += offset
+    ms.observe_mirror_levels("TESTUSDT", df, timeframe=retired_tf, root=root,
+                             now_ms=offset + 4 * int(retired_tf) * M)
+    reloaded = ms.load_state("TESTUSDT", retired_tf, root)
+    assert levels[0].level_id not in reloaded["records"]
+    assert levels[0].level_id not in LevelRegistry.from_dict(reloaded["registry"]).levels
+    assert reloaded["retired_candidate_breakouts"] == [[35 * M, "SHORT"]]
+    assert ms.load_state("TESTUSDT", "5", root)["records"][levels[1].level_id]["status"] == STATUS_UNTESTED
+    assert [x["level_id"] for x in mirror.scanner_level_sources(
+        "TESTUSDT", root=root)] == [levels[2].level_id]
+
+    if retired_tf == "5":
+        terms = {"level_id": levels[1].level_id, "level_breakout_close_ms": 35 * M,
+                 "level_breakout_direction": "UP"}
+        assert ms._standalone_multisource_breakout_unresolved(reloaded, terms)
+        terms.update(level_id=levels[2].level_id, level_breakout_close_ms=45 * M)
+        assert not ms._standalone_multisource_breakout_unresolved(reloaded, terms)
+
+
+def test_wick_sweep_two_distinct_fresh_levels_one_breakout_candle_are_both_observed(
+        root, fixed_levels):
+    # Owner diagram: separate #1 and #2 extrema can be pierced by the same
+    # naked candle. Their targets differ, so neither is an event duplicate.
+    first = level_at(101.0, 5 * M)
+    second = level_at(102.0, 5 * M)
+    fixed_levels["levels"] = [first, second]
+    summary = observe(frame(flat_bars(30)), root)
+    assert summary["new_candidates"] == 0
+    bars = flat_bars(30)
+    bars.append((100.0, 104.5, 99.9, 104.0))
+    summary = observe(frame(bars), root)
+    state = ms.load_state("TESTUSDT", "1", root)
+    assert {key for key, row in state["records"].items() if row["candidate"]} == {
+        first.level_id, second.level_id
+    }
+    assert summary["new_candidates"] == 2
+    assert {item["level_id"] for item in state["pending_notifications"]} == {
+        first.level_id, second.level_id
+    }
+    # Repeated closed Scanner prefix is idempotent, no duplicate cards.
+    observe(frame(bars), root)
+    repeated = ms.load_state("TESTUSDT", "1", root)
+    assert len(repeated["pending_notifications"]) == 2
+
+
+def test_wick_sweep_two_nearby_dated_swing_extrema_never_atr_alias(
+        root, fixed_levels):
+    # The old registry merged distinct real extrema whenever their
+    # prices differed by <= 0.25 ATR. Owner explicitly wants both
+    # potential mirror-return targets even when the gap is tiny.
+    a = horizontal_level(
+        symbol="TESTUSDT", timeframe="1", source=SOURCE_SWING_ZONE,
+        pattern=None, side="upper", price=101.0,
+        anchor_time_ms=2 * M, confirmed_at_ms=6 * M,
+    )
+    b = horizontal_level(
+        symbol="TESTUSDT", timeframe="1", source=SOURCE_SWING_ZONE,
+        pattern=None, side="upper", price=101.05,
+        anchor_time_ms=12 * M, confirmed_at_ms=16 * M,
+    )
+    fixed_levels["levels"] = [a, b]
+    observe(frame(flat_bars(30)), root)
+    state = ms.load_state("TESTUSDT", "1", root)
+    assert set(state["records"]) == {a.level_id, b.level_id}
+    assert set(ms.LevelRegistry.from_dict(state["registry"]).levels) == {
+        a.level_id, b.level_id
+    }
+    summary = observe(frame(flat_bars(30) + [
+        (100.0, 104.5, 99.9, 104.0)
+    ]), root)
+    state = ms.load_state("TESTUSDT", "1", root)
+    assert summary["new_candidates"] == 2
+    assert {lid for lid, record in state["records"].items()
+            if record["candidate"]} == {a.level_id, b.level_id}
+    observe(frame(flat_bars(30) + [(100.0, 104.5, 99.9, 104.0)]), root)
+    assert len(ms.load_state("TESTUSDT", "1", root)["pending_notifications"]) == 2
+
 
 def test_one_real_level_from_several_sources_and_repeated_scans_is_one_candidate(root, fixed_levels):
     swing = level_at(101.0, 5 * M)
@@ -714,6 +1288,75 @@ def test_real_box_cpusdt_and_l_shape_levels_come_from_the_scanner_engines(root):
     l_record = next(r for r in record.values() if any(s["parent_pattern"] == "L-shape" for s in r["sources"]))
     assert l_record["status"] == STATUS_UNTESTED                          # the L-shape breakout candle itself
     assert l_record["naked_retest"]["breakout"]["open_time_ms"] == breakout_open
+
+
+@pytest.mark.parametrize("first_handoff", ["PENDING", "HANDED"])
+def test_wick_sweep_two_visual_sources_share_breakout_but_never_spend_split_r0(
+        root, monkeypatch, first_handoff):
+    # Two valid MIRROR levels/Telegram observations remain independent, but
+    # risk-campaign identity downstream is still per-level. Fail closed
+    # before Robot handoff, even when a previous source was already sent
+    # on an earlier scan/restart; neither source may spend a second R0.
+    from mirror_levels.levels import LevelRegistry
+    from mirror_levels.tracker import new_record
+    import pattern_robot_integration as bridge
+
+    monkeypatch.setattr(bridge, "is_robot_executable_signal", lambda *a, **kw: True)
+    monkeypatch.setattr(bridge, "prepare_robot_handoff",
+                        lambda *a, **kw: pytest.fail("multi-source R0 spend"))
+    registry = LevelRegistry()
+    levels = [
+        horizontal_level(
+            symbol="TESTUSDT", timeframe="5", source=SOURCE_SWING_ZONE,
+            pattern=None, side="upper", price=price,
+            anchor_time_ms=i * 5 * M, confirmed_at_ms=10 * M,
+        ) for i, price in enumerate((101.0, 102.0))
+    ]
+    state = ms.empty_state("TESTUSDT", "5")
+    entries = []
+    records = {}
+    for i, level in enumerate(levels):
+        registry.add(level)
+        record = new_record(level)
+        record.update(candidate=True, rejection=None,
+                      lifecycle=ms.LIFECYCLE_TRACKING, status=STATUS_UNTESTED)
+        record["naked_retest"]["breakout"] = {
+            "direction": "UP", "campaign_direction": "SHORT",
+            "open_time_ms": 30 * M, "close_time_ms": 35 * M,
+        }
+        records[level.level_id] = record
+        entries.append({
+            "entry_id": f"{level.level_id}@5@{40 * M}",
+            "terms": {
+                "level_id": level.level_id, "level_timeframe": "5",
+                "level_source": SOURCE_SWING_ZONE, "level_pattern": None,
+                "level_side": "upper", "level_breakout_direction": "UP",
+                "level_breakout_close_ms": 35 * M,
+                "source_timeframe": "5", "direction": "SHORT",
+                "confirmation": {"close_time_ms": 40 * M},
+            },
+            "handoff": first_handoff if i == 0 else "PENDING",
+            "candidate_id": "already-sent" if i == 0 and first_handoff == "HANDED" else None,
+        })
+    state.update(registry=registry.to_dict(), records=records,
+                 standalone_entries=entries, pending_notifications=[
+                     {"level_id":lv.level_id, "kind":"breakout"} for lv in levels
+                 ])
+    ms.save_state(state, root)
+    assert ms._hand_off_standalone_entries("TESTUSDT", state, root, now_ms=40*M) == []
+    reloaded = ms.load_state("TESTUSDT", "5", root)
+    expected = ["OFF" if first_handoff == "PENDING" else "HANDED", "OFF"]
+    assert [e["handoff"] for e in reloaded["standalone_entries"]] == expected
+    for entry in reloaded["standalone_entries"]:
+        if entry["handoff"] == "OFF":
+            assert entry["block_reason"] == "mirror_multi_source_shared_r0_unproven"
+    assert {e["level_id"] for e in reloaded["pending_notifications"]} == {
+        lv.level_id for lv in levels
+    }
+    assert all(reloaded["records"][lv.level_id]["candidate"] is True for lv in levels)
+    assert ms._hand_off_standalone_entries("TESTUSDT", reloaded, root, now_ms=40*M) == []
+    assert [e["handoff"] for e in ms.load_state(
+        "TESTUSDT", "5", root)["standalone_entries"]] == expected
 
 
 def test_mirror_standalone_handoff_carries_double_reversal_only_as_context(monkeypatch, tmp_path):
