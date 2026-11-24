@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - "geometry/pair_metrics.py"
+      - "geometry/triangle_boundaries.py"
+      - "tests/test_geometry_triangle_outer_ray.py"
       - "geometry/evaluation.py"
       - "tests/test_geometry_strict_wedge.py"
       - "geometry/engine.py"
@@ -43,3 +45,6 @@ jobs:
         run: python -m unittest -v tests.test_geometry_formation_fit
       - name: Verify frozen strict wedge boundary
         run: python -m unittest -v tests.test_geometry_strict_wedge
+
+      - name: Verify owner triangle outer ray evidence
+        run: python -m unittest -v tests.test_geometry_triangle_outer_ray
