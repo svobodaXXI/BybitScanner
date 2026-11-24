@@ -179,6 +179,36 @@ class ManualMainAccountsTests(unittest.TestCase):
         self.assertEqual(self.c.saves, [])
         self.assertEqual(self.v.calls, 0)
 
+    def test_trade_only_adapter_paginates_and_rejects_nontrade(self):
+        from terminal.exchange.bybit_v5_adapter import (
+            BybitCredentials, BybitV5ReadAdapter, MalformedResponse, UnsupportedPayload,
+        )
+        from tests.test_terminal_bybit_adapter import FakeHTTP, execution_payload, response
+
+        http = FakeHTTP()
+        adapter = BybitV5ReadAdapter(TradingAccountId("bybit-a"),
+                                    BybitCredentials("key", "secret"), testnet=False,
+                                    http_factory=lambda **kwargs: http)
+        http.responses["get_executions"] = lambda kwargs: (
+            response([execution_payload(execType="Trade", execId="exec-2")])
+            if kwargs.get("cursor") else
+            response([execution_payload(execType="Trade")], cursor="next")
+        )
+        events = adapter.list_executions("BTCUSDT", start_time_ms=0,
+                                         end_time_ms=3000, trade_only=True)
+        self.assertEqual([item.exec_id.value for item in events], ["exec-1", "exec-2"])
+        self.assertTrue(all(kwargs["execType"] == "Trade"
+                            for name, kwargs in http.calls if name == "get_executions"))
+        http.responses["get_executions"] = response([execution_payload(execType="Funding")])
+        with self.assertRaises(UnsupportedPayload):
+            adapter.list_executions("BTCUSDT", trade_only=True)
+        http.calls.clear()
+        http.responses["get_executions"] = lambda kwargs: response(
+            [execution_payload(execType="Trade")], cursor=str(len(http.calls)))
+        with self.assertRaises(MalformedResponse):
+            adapter.list_executions("BTCUSDT", trade_only=True)
+        self.assertEqual(len(http.calls), 20)
+
     def test_existing_credentials_are_registered_without_network_or_paper(self):
         record = StoredBybitAccount(
             "bybit-preexisting", "Main", "MAINNET", "key", "secret", True,
