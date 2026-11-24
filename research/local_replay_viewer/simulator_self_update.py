@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import json
 import hashlib
 import os
 import re
@@ -14,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 from zipfile import ZipFile
+from urllib.request import ProxyHandler, build_opener
 
 from research.local_replay_viewer.desktop_update import find_asset, fetch_verified, require_forward_update, UpdateBlocked
 
@@ -192,6 +195,108 @@ def _verified_launch_path(launcher: Path) -> None:
         raise UpdateBlocked("simulator_release_identity_unproven")
 
 
+
+# Only the existing owner shortcut is eligible. Never create another link or
+# scan/rewrite arbitrary shortcuts, and never touch an unrelated application.
+_SHORTCUT_SCRIPT = r"""
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+$name = 'Машина времени (актуальная).lnk'
+$dirs = @([Environment]::GetFolderPath('Desktop'))
+if ($env:PUBLIC) { $dirs += (Join-Path $env:PUBLIC 'Desktop') }
+$links = @($dirs | Where-Object { $_ } | ForEach-Object {
+    Join-Path $_ $name
+} | Select-Object -Unique | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })
+if ($links.Count -ne 1) { throw 'shortcut_missing_or_ambiguous' }
+$w = New-Object -ComObject WScript.Shell
+$s = $w.CreateShortcut($links[0])
+if ($env:BS_MT_NEW_TARGET) {
+    if ($links[0] -ne $env:BS_MT_EXPECTED_LINK -or
+        $s.TargetPath -ne $env:BS_MT_EXPECTED_TARGET -or $s.Arguments -or
+        $s.WorkingDirectory -ne (Split-Path -Parent $s.TargetPath)) {
+        throw 'shortcut_changed'
+    }
+    $s.TargetPath = $env:BS_MT_NEW_TARGET
+    $s.WorkingDirectory = Split-Path -Parent $s.TargetPath
+    $s.Save()
+    $s = $w.CreateShortcut($links[0])
+}
+@{path=$links[0]; target=$s.TargetPath; workdir=$s.WorkingDirectory;
+  arguments=$s.Arguments} | ConvertTo-Json -Compress
+"""
+
+
+def _owner_shortcut(*, expected: dict | None = None,
+                    launcher: Path | None = None) -> dict:
+    env = os.environ.copy()
+    for key in ("BS_MT_NEW_TARGET", "BS_MT_EXPECTED_LINK", "BS_MT_EXPECTED_TARGET"):
+        env.pop(key, None)
+    if expected is not None and launcher is not None:
+        env.update(BS_MT_NEW_TARGET=str(launcher),
+                   BS_MT_EXPECTED_LINK=expected["path"],
+                   BS_MT_EXPECTED_TARGET=expected["target"])
+    shell = Path(env["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"
+    encoded = base64.b64encode(_SHORTCUT_SCRIPT.encode("utf-16-le")).decode("ascii")
+    result = subprocess.run([str(shell), "-NoProfile", "-NonInteractive",
+                             "-EncodedCommand", encoded],
+                            env=env, capture_output=True, encoding="utf-8",
+                            timeout=15, check=True)
+    value = json.loads(result.stdout)
+    if (not isinstance(value, dict) or
+            any(not isinstance(value.get(key), str)
+                for key in ("path", "target", "workdir", "arguments"))):
+        raise UpdateBlocked("shortcut_metadata_unproven")
+    return value
+
+
+def _canonical_launcher_sha(launcher: Path, root: Path) -> str:
+    sha = launcher.parent.parent.name
+    if (not re.fullmatch(r"[0-9a-f]{40}", sha)
+            or launcher != root / sha / APP / "START_LOCAL.cmd"
+            or launcher.is_symlink() or not launcher.is_file()
+            or launcher.resolve() != launcher
+            or (launcher.parent / "desktop-build-sha.txt").is_symlink()
+            or (launcher.parent / "desktop-build-sha.txt").read_text(
+                encoding="ascii").strip() != sha):
+        raise UpdateBlocked("shortcut_release_unproven")
+    return sha
+
+
+def _advance_owner_shortcut(launcher: Path, root: Path) -> None:
+    new_sha = _canonical_launcher_sha(launcher, root)
+    old_link = _owner_shortcut()
+    old = Path(old_link["target"])
+    if old_link["arguments"] or Path(old_link["workdir"]) != old.parent:
+        raise UpdateBlocked("shortcut_customized")
+    old_sha = _canonical_launcher_sha(old, root)
+    if old_sha == new_sha:
+        return
+    # A shortcut can have been manually redirected to a newer release. Never
+    # downgrade it, nor overwrite changes made while the ancestry check runs.
+    require_forward_update(old_sha, new_sha)
+    updated = _owner_shortcut(expected=old_link, launcher=launcher)
+    if (updated["path"] != old_link["path"] or
+            Path(updated["target"]) != launcher or
+            Path(updated["workdir"]) != launcher.parent or updated["arguments"]):
+        raise UpdateBlocked("shortcut_save_unproven")
+
+
+def _wait_for_release_identity(launcher: Path, port: int) -> bool:
+    sha = launcher.parent.parent.name
+    opener = build_opener(ProxyHandler({}))
+    for _ in range(120):
+        try:
+            with opener.open(
+                f"http://127.0.0.1:{port}/local-replay/desktop-version", timeout=1
+            ) as response:
+                if json.loads(response.read(512)) == {"sha": sha}:
+                    return True
+        except (OSError, ValueError):
+            pass
+        time.sleep(1)
+    return False
+
+
 def _relaunch_after_port_closes(launcher: Path, port: int) -> int:
     _verified_launch_path(launcher)
     if not 1 <= port <= 65535:
@@ -203,6 +308,19 @@ def _relaunch_after_port_closes(launcher: Path, port: int) -> int:
                 continue
         except OSError:
             launch_new_simulator(launcher)
+            # The verified package must actually be running before its
+            # shortcut can replace the prior known-good target.
+            try:
+                if not _wait_for_release_identity(launcher, port):
+                    raise UpdateBlocked("shortcut_new_viewer_unproven")
+                root = (Path(os.environ["LOCALAPPDATA"]) / "BybitScanner" /
+                        APP / "releases").resolve()
+                _advance_owner_shortcut(launcher, root)
+            except (UpdateBlocked, OSError, ValueError, KeyError, subprocess.SubprocessError):
+                # The viewer launch remains independent of shortcut maintenance.
+                print("MACHINE_TIME_SHORTCUT_NOT_UPDATED", flush=True)
+                return 2
+            print("MACHINE_TIME_SHORTCUT_UPDATED", flush=True)
             return 0
     return 2
 
