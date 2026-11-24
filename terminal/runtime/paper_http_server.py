@@ -5611,6 +5611,15 @@ def main() -> None:
                 runtime.call(lambda owned: owned.bind_robot_pattern_flow_observer(
                     pattern_flow_observer.get,
                 ))
+        # An on-demand private Box audit shares this Robot's start/stop.
+        # It reads only an EXISTING, separately opted-in protected witness:
+        # no capture activation, extra thread/socket, order or public endpoint.
+        try:
+            runtime.call(lambda owned: owned.bind_robot_private_box_inspector(
+                hub.private_protected_research_snapshot,
+            ))
+        except (RuntimeError, TypeError, ValueError):
+            LOGGER.warning("Optional private Box inspector binding failed; Robot unchanged")
         runtime.start_robot_monitor()
         if pattern_flow_observer is not None:
             pattern_flow_observer.start()
