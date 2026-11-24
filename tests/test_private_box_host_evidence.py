@@ -6,7 +6,9 @@ from terminal.application.robot_breakout_monitor import RobotBreakoutMonitor
 from terminal.domain.models import TradingAccountId
 from types import SimpleNamespace as NS
 
-from terminal.market_data.private_box_host_evidence import inspect_private_box_receipts
+from terminal.market_data.private_box_host_evidence import (
+    PrivateBoxCapture, inspect_private_box_receipts,
+)
 
 
 def setup():
@@ -235,6 +237,75 @@ class PrivateBoxReceiptTests(unittest.TestCase):
                                 "RECEIPTS_OBSERVED_UNATTESTED")
         bad = {**good, "book": {**good["book"], "active": False}}
         self.assertEqual(self.audit(store, bad).status, "UNKNOWN")
+
+
+class PrivateBoxCaptureTests(unittest.TestCase):
+    def test_exact_host_rotation_and_robot_stop(self):
+        store, data = setup()
+        calls = []
+        token = None
+        witness = None
+
+        def begin(symbol, *, owner_token):
+            nonlocal token, witness
+            calls.append(("begin", symbol))
+            if witness is None:
+                token, witness = owner_token, object()
+            self.assertIs(owner_token, token)
+            return witness
+
+        def end(symbol, *, owner_token):
+            nonlocal witness
+            calls.append(("end", symbol))
+            self.assertIs(owner_token, token)
+            witness = None
+            return True
+
+        def snapshot(symbol, *, expected_witness):
+            self.assertIs(expected_witness, witness)
+            return data
+
+        capture = PrivateBoxCapture(NS(
+            begin_protected_research_capture=begin,
+            end_protected_research_capture=end,
+            private_protected_research_snapshot=snapshot,
+        ))
+        ids = ("box-robot-123",)
+        self.assertEqual(capture.sync(store.get, ids, robot_ready=False,
+                                      observed_at_ms=2100).status, "UNKNOWN")
+        self.assertEqual(calls, [])
+        self.assertEqual(capture.sync(store.get, ids, robot_ready=True,
+                                      observed_at_ms=2100).status, "NO_RECEIPT")
+        self.assertEqual(capture.observe(store.get, robot_ready=True,
+                                         observed_at_ms=2100).status,
+                         "RECEIPTS_OBSERVED_UNATTESTED")
+        store[ids[0]].state_revision = 2
+        self.assertEqual(capture.observe(store.get, robot_ready=True,
+                                         observed_at_ms=2100).status, "UNKNOWN")
+        self.assertEqual(calls, [("begin", "BTCUSDT"), ("end", "BTCUSDT")])
+        capture.sync(store.get, ids, robot_ready=True, observed_at_ms=2100)
+        capture.sync(store.get, ids, robot_ready=False, observed_at_ms=2100)
+        self.assertEqual(calls[-2:], [("begin", "BTCUSDT"), ("end", "BTCUSDT")])
+        capture.close()
+        self.assertEqual(len(calls), 4)
+
+    def test_missing_context_and_invalid_host_do_not_subscribe(self):
+        store, _ = setup()
+        calls = []
+        capture = PrivateBoxCapture(NS(
+            begin_protected_research_capture=lambda symbol, **_k: calls.append(symbol),
+            end_protected_research_capture=lambda *_a, **_k: False,
+        ))
+        self.assertEqual(capture.sync(store.get, ("box-robot-other",),
+                                      robot_ready=True, observed_at_ms=2100).status,
+                         "NO_PROVEN_HOST")
+        self.assertEqual(calls, [])
+        capture.sync(store.get, ("box-robot-123",),
+                     robot_ready=True, observed_at_ms=2100)
+        self.assertEqual(calls, ["BTCUSDT"])
+        self.assertEqual(capture.observe(store.get, robot_ready=True,
+                                         observed_at_ms=2100).status, "NO_RECEIPT")
+        capture.close()
 
 
 if __name__ == "__main__":
