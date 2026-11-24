@@ -10,12 +10,12 @@
       "fixture_ref": "tests/fixtures/geometry_formation_fit/historical_cases.json",
       "fixture_case": "PONS",
       "as_of_index": 199,
-      "provenance": "RVL-G1 READY formation-fit historical pack; positive universal wedge-anchor control.",
+      "provenance": "RVL-G1 READY formation-fit historical pack; strict falling-wedge upper boundary revalidated on the same closed window: former 143/178 crosses highs 158, 167, 168; 143/167 has no wick crossings through END 186. Historical fixture retained.",
       "expectation": {
         "kind": "POSITIVE_ANCHOR",
         "geometry_identity": [
           143,
-          178,
+          167,
           145,
           186,
           143,
