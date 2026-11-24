@@ -128,5 +128,57 @@ class ConfirmedBoundaryEvidence(unittest.TestCase):
                 winner.lower_line["second_index"],winner.start_index,winner.end_index]),default=str,sort_keys=True))
 
 
+
+class ConfirmedNonStrictHullEvidence(unittest.TestCase):
+    def test_usual_owner_adjacent_clean_pair(self):
+        from unittest.mock import patch
+        from geometry.evaluation import evaluate_candidate_pair
+        f = json.loads((FIXTURE.parent / "USUALUSDT_5m_adjacent_boundary_20261125.json").read_text())
+        rows = f["ohlc_int"]
+        self.assertEqual(hashlib.sha256(json.dumps(rows,separators=(",",":")).encode()).hexdigest(),
+                         f["ohlc_int_sha256"])
+        frame = pd.DataFrame(rows,columns=["open","high","low","close"])/f["price_scale"]
+        frame["time"]=[f["first_open_ms"]+i*f["step_ms"] for i in range(len(frame))]
+        frame["volume"]=0.
+        frame=frame.iloc[:f["as_of_index"]+1].copy()
+        highs,lows=find_pivots(frame.copy())
+        for points,indices in ((highs,(120,189)),(lows,(123,167))):
+            self.assertTrue(all(i in [p["index"] for p in points] for i in indices))
+        for side,a,b,sign in (("high",120,189,1),("low",123,167,-1)):
+            x,y=frame.iloc[a][side],frame.iloc[b][side]
+            self.assertEqual([i for i in range(a,190)
+                if sign*(frame.iloc[i][side]-x-(y-x)*(i-a)/(b-a))>1e-12],[])
+        pick=lambda pool,a,b:next((p for p in pool if (p["anchor_index"],p["second_index"])==(a,b)),None)
+        upper=pick(filter_candidates(build_candidate_lines(highs)),120,189)
+        lower=pick(build_candidate_lines(lows,min_confirmations=1),123,167)
+        self.assertIsNotNone(upper)
+        self.assertIsNotNone(lower)
+        self.assertEqual(lower["confirmations"],1)
+        direct=evaluate_candidate_pair(upper,lower,highs=highs,lows=lows,current_index=len(frame)-1,candles=frame)
+        observed=None if direct is None else dict(
+            validation=direct.validation,sequence=direct.pair_metrics.get("anchor_sequence"),
+            boundary=engine._is_boundary_structurally_valid(direct),
+            local=engine._is_candidate_local(direct,len(frame)-1),
+            fresh=engine._is_candidate_fresh(direct,_freshness_predicate),end=direct.end_index)
+        native_calls=[]
+        native=engine.evaluate_candidate_pair
+        def trace(u,l,*args,**kwargs):
+            if [u["anchor_index"],u["second_index"],l["anchor_index"],l["second_index"]]==f["corrected_anchors"]:
+                native_calls.append(True)
+            return native(u,l,*args,**kwargs)
+        with patch.object(engine,"evaluate_candidate_pair",side_effect=trace):
+            winner=engine.analyze_geometry(highs,lows,len(frame)-1,frame,_freshness_predicate)
+        print("USUAL_NATIVE",json.dumps(dict(direct=observed,native_calls=len(native_calls),
+            winner=None if winner is None else [winner.upper_line["anchor_index"],
+                winner.upper_line["second_index"],winner.lower_line["anchor_index"],
+                winner.lower_line["second_index"],winner.start_index,winner.end_index]),default=str,sort_keys=True))
+        # Do not conflate geometric containment with otherwise valid admission.
+        self.assertIsNotNone(observed, "Owner pair must survive direct native evaluation before generator change")
+        self.assertTrue(observed["validation"]["valid"],observed)
+        self.assertTrue(observed["sequence"]["valid"],observed)
+        self.assertTrue(all(observed[k] for k in ("boundary","local","fresh")),observed)
+        self.assertTrue(native_calls,"Otherwise valid owner pair lost before native evaluation")
+
+
 if __name__=="__main__":
     unittest.main()
