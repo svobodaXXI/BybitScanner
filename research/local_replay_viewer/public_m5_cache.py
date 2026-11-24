@@ -173,8 +173,16 @@ def complete_history_fetch(
             else:
                 spans.append((t, t + FIVE_MINUTES_MS))
         for lo, hi in spans:
+            # The backward pager's normal 1000-bar request would download
+            # known bars before short gaps. Bound every page by the actual
+            # remaining missing interval, including the final partial page.
+            def fetch_gap(request_symbol, interval, limit, *, end_ms):
+                remaining = (end_ms - lo) // FIVE_MINUTES_MS + 1
+                return upstream_fetch(
+                    request_symbol, interval, min(limit, remaining), end_ms=end_ms,
+                )
             fetched = load_closed_five_minute_history(
-                symbol=symbol, start_ms=lo, end_ms=hi, fetch_candles=upstream_fetch,
+                symbol=symbol, start_ms=lo, end_ms=hi, fetch_candles=fetch_gap,
             )
             for candle in fetched:
                 previous = known.get(candle.start_ms)
