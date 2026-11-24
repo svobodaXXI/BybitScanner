@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { manualMainReadProjection } from "./manualMainReadProjection";
+import { manualMainReadProjection, parseMainExecutionHistory } from "./manualMainReadProjection";
+import { projectLiveProtectionPosition } from "../orders/liveProtectionProjection";
 
 const main = (account_id = "bybit-a") => ({
   account_id, environment: "MAINNET", status: "READY",
@@ -56,5 +57,34 @@ describe("manual MAIN account inventory boundary", () => {
       ...main(), orders: [{ account_id: "paper", symbol: "ETHUSDT" }],
     })).toBeNull();
     expect(manualMainReadProjection("bybit-a", null)).toBeNull();
+  });
+});
+
+describe("MAIN exact execution history", () => {
+  const start = 1800000000000;
+  const row = { exec_id: "fill-1", time_ms: start + 42, price: "65000.125", side: "Buy" };
+  const payload = { ok: true, account_id: "bybit-a", symbol: "BTCUSDT", start_ms: start,
+    end_ms: start + 604800000, executions: [row, row] };
+  it("deduplicates actual fills, never invents markers or accepts wrong scope", () => {
+    expect(parseMainExecutionHistory("bybit-a", "BTCUSDT", payload)?.markers)
+      .toEqual([{ time_ms: row.time_ms, price: row.price, side: "Buy", filled: true }]);
+    expect(parseMainExecutionHistory("bybit-b", "BTCUSDT", payload)).toBeNull();
+    expect(parseMainExecutionHistory("bybit-a", "ETHUSDT", payload)).toBeNull();
+    expect(parseMainExecutionHistory("bybit-a", "BTCUSDT", {
+      ...payload, executions: [row, { ...row, price: "1" }],
+    })).toBeNull();
+    expect(parseMainExecutionHistory("bybit-a", "BTCUSDT", {
+      ...payload, executions: [{ ...row, time_ms: start - 1 }],
+    })).toBeNull();
+    expect(parseMainExecutionHistory("bybit-a", "BTCUSDT", {
+      ...payload, executions: [],
+    })?.markers).toEqual([]);
+  });
+  it("reads the actual open position average without granting mutation permissions", () => {
+    const projection = manualMainReadProjection("bybit-a", { ...main(), status: "READ_ONLY",
+      positions: [{ account_id: "bybit-a", symbol: "BTCUSDT", side: "Long", size: "1", average_entry: "65000.125" }] });
+    expect(projection?.capabilities?.stop).toBe(false);
+    expect(projectLiveProtectionPosition(projection, "BTCUSDT")?.averageEntry).toBe("65000.125");
+    expect(projectLiveProtectionPosition(projection, "ETHUSDT")).toBeNull();
   });
 });

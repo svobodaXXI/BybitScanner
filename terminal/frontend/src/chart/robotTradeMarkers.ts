@@ -30,10 +30,11 @@ export function tradeTrianglePoints(x: number, y: number, side: "Buy" | "Sell"):
 export function visibleRobotTradeMarkers(
   markers: readonly RobotTradeMarker[], candles: readonly Candle[], timeframe: string,
 ): VisibleRobotMarker[] {
-  const minutes = Number(timeframe.endsWith("m") ? timeframe.slice(0, -1) :
-    timeframe.endsWith("h") ? Number(timeframe.slice(0, -1)) * 60 : NaN);
-  if (!Number.isSafeInteger(minutes) || minutes <= 0) return [];
-  const duration = minutes * 60_000;
+  const match = /^(\d+)(s|m|h|d)$/.exec(timeframe);
+  if (!match) return [];
+  const unit = { s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 }[match[2] as "s" | "m" | "h" | "d"];
+  const duration = Number(match[1]) * unit;
+  if (!Number.isSafeInteger(duration) || duration <= 0) return [];
   const bars = candles.map((c) => Date.parse(c.time));
   if (!bars.every((time) => Number.isSafeInteger(time)) ||
       bars.some((time, i) => i > 0 && time <= bars[i - 1])) return [];

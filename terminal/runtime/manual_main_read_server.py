@@ -16,7 +16,7 @@ from terminal.persistence.credential_store import CredentialStoreError
 from terminal.application.manual_main_accounts import ManualMainAccountError
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from terminal.application.manual_main_accounts import ManualMainAccounts
 from terminal.application.manual_main_trading import (
@@ -80,6 +80,23 @@ class MainReadHandler(BaseHTTPRequestHandler):
                              "trading_enabled": bool(self.trader and self.trader.enabled)})
         elif path == PREFIX + "/accounts":
             self._json(200, {"ok": True, **self.accounts.catalog()})
+        elif (account_id := self._account_path(path, "/executions")) is not None:
+            query = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
+            if set(query) != {"symbol"} or len(query["symbol"]) != 1:
+                self._json(400, {"ok": False, "error": "invalid_execution_query"})
+                return
+            try:
+                history = self.accounts.execution_history(account_id, query["symbol"][0])
+            except LookupError:
+                self._json(404, {"ok": False, "error": "account_not_found"})
+                return
+            except ValueError:
+                self._json(400, {"ok": False, "error": "invalid_execution_query"})
+                return
+            except Exception:
+                self._json(503, {"ok": False, "error": "main_execution_history_unavailable"})
+                return
+            self._json(200, {"ok": True, **history})
         elif (account_id := self._account_path(path, "/summary")) is not None:
             try:
                 summary = self.accounts.summary(account_id)

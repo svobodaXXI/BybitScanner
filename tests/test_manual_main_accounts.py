@@ -1,5 +1,7 @@
 """Boundary tests for independent manual MAIN account inventory (#930)."""
 import unittest
+from decimal import Decimal
+from terminal.domain.models import TradingAccountId, Category, OrderSide, ExecutionId
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -137,6 +139,75 @@ class ManualMainAccountsTests(unittest.TestCase):
         with self.assertRaisesRegex(ManualMainAccountError, "duplicate_api_key"):
             app.provision("Main", "key", "different")
         self.assertEqual(len(self.c.saves), 1)
+
+    def test_execution_history_is_read_only_scoped_deduplicated_and_exact(self):
+        record = StoredBybitAccount("bybit-a", "Main", "MAINNET", "key", "secret", True)
+        self.c = FakeCredentials((record,))
+        event = SimpleNamespace(
+            trading_account_id=TradingAccountId(record.id), category=Category.LINEAR,
+            symbol="BTCUSDT", exec_id=ExecutionId("fill-1"), side=OrderSide.BUY,
+            execution_price=Decimal("65000.125"), execution_quantity=Decimal("0.01"),
+            executed_at_ms=999999999999,
+        )
+        calls = []
+        def read(symbol, **kwargs):
+            calls.append((symbol, kwargs))
+            return (event, event)
+        def factory(account_id, credentials, *, testnet):
+            self.assertEqual(account_id, TradingAccountId(record.id))
+            self.assertFalse(testnet)
+            return SimpleNamespace(list_executions=read)
+        app = ManualMainAccounts(self.c, self.snap, validator=self.v, adapter_factory=factory)
+        with patch("terminal.application.manual_main_accounts.time.time", return_value=1000000000):
+            result = app.execution_history(record.id, "BTCUSDT")
+            self.assertEqual(result["end_ms"] - result["start_ms"], 7 * 86400000)
+            self.assertEqual(result["executions"], [{"exec_id": "fill-1", "time_ms": event.executed_at_ms,
+                                                      "price": "65000.125", "side": "Buy"}])
+            self.assertEqual(result["account_id"], record.id)
+            self.assertTrue(calls[0][1]["trade_only"])
+            with self.assertRaises(LookupError):
+                app.execution_history("paper", "BTCUSDT")
+            with self.assertRaises(ValueError):
+                app.execution_history(record.id, "BTC/USDT")
+            event.symbol = "ETHUSDT"
+            with self.assertRaises(ManualMainAccountError):
+                app.execution_history(record.id, "BTCUSDT")
+            event.symbol = "BTCUSDT"
+            event.trading_account_id = TradingAccountId("other-account")
+            with self.assertRaises(ManualMainAccountError):
+                app.execution_history(record.id, "BTCUSDT")
+        self.assertEqual(self.c.saves, [])
+        self.assertEqual(self.v.calls, 0)
+
+    def test_trade_only_adapter_paginates_and_rejects_nontrade(self):
+        from terminal.exchange.bybit_v5_adapter import (
+            BybitCredentials, BybitV5ReadAdapter, MalformedResponse, UnsupportedPayload,
+        )
+        from tests.test_terminal_bybit_adapter import FakeHTTP, execution_payload, response
+
+        http = FakeHTTP()
+        adapter = BybitV5ReadAdapter(TradingAccountId("bybit-a"),
+                                    BybitCredentials("key", "secret"), testnet=False,
+                                    http_factory=lambda **kwargs: http)
+        http.responses["get_executions"] = lambda kwargs: (
+            response([execution_payload(execType="Trade", execId="exec-2")])
+            if kwargs.get("cursor") else
+            response([execution_payload(execType="Trade")], cursor="next")
+        )
+        events = adapter.list_executions("BTCUSDT", start_time_ms=0,
+                                         end_time_ms=3000, trade_only=True)
+        self.assertEqual([item.exec_id.value for item in events], ["exec-1", "exec-2"])
+        self.assertTrue(all(kwargs["execType"] == "Trade"
+                            for name, kwargs in http.calls if name == "get_executions"))
+        http.responses["get_executions"] = response([execution_payload(execType="Funding")])
+        with self.assertRaises(UnsupportedPayload):
+            adapter.list_executions("BTCUSDT", trade_only=True)
+        http.calls.clear()
+        http.responses["get_executions"] = lambda kwargs: response(
+            [execution_payload(execType="Trade")], cursor=str(len(http.calls)))
+        with self.assertRaises(MalformedResponse):
+            adapter.list_executions("BTCUSDT", trade_only=True)
+        self.assertEqual(len(http.calls), 20)
 
     def test_existing_credentials_are_registered_without_network_or_paper(self):
         record = StoredBybitAccount(

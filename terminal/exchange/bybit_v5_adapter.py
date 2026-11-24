@@ -249,6 +249,7 @@ class BybitV5ReadAdapter:
         *,
         start_time_ms: int | None = None,
         end_time_ms: int | None = None,
+        trade_only: bool = False,
     ) -> tuple[ExecutionEvent, ...]:
         _validate_history_window(start_time_ms, end_time_ms)
         params: dict[str, Any] = {
@@ -257,6 +258,18 @@ class BybitV5ReadAdapter:
             "limit": 100,
         }
         _add_time_window(params, start_time_ms, end_time_ms)
+        if trade_only:
+            params["execType"] = "Trade"
+
+            def normalize_trade(payload, account_id):
+                if payload.get("execType") != "Trade":
+                    raise UnsupportedPayload("non-trade execution in Trade history")
+                return normalize_execution(payload, account_id)
+
+            return self._paginated_events(
+                method_name="get_executions", normalizer=normalize_trade,
+                max_pages=20, **params,
+            )
         return self._paginated_events(
             method_name="get_executions",
             normalizer=normalize_execution,
@@ -277,7 +290,7 @@ class BybitV5ReadAdapter:
         except PayloadNormalizationError as exc:
             raise UnsupportedPayload(str(exc)) from exc
 
-    def _paginated_events(self, method_name: str, normalizer, **params):
+    def _paginated_events(self, method_name: str, normalizer, *, max_pages=None, **params):
         events = []
         cursor: str | None = None
         seen_cursors: set[str] = set()
@@ -291,6 +304,8 @@ class BybitV5ReadAdapter:
                 events.append(self._normalize(normalizer, _with_category(item, category)))
             if not next_cursor:
                 break
+            if max_pages is not None and len(seen_cursors) + 1 >= max_pages:
+                raise MalformedResponse("history pagination budget exceeded")
             if next_cursor in seen_cursors:
                 raise MalformedResponse("pagination cursor repeated")
             seen_cursors.add(next_cursor)

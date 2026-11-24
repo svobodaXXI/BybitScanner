@@ -149,6 +149,8 @@ export function ChartPanel({
   positionFooter,
   readOnly = false,
   robotTradeMarkers = [],
+  mainTradeMarkers = [],
+  mainHistoryStatus,
   editorMode = false,
   referenceDrawings = [],
   editableSeedDrawings = [],
@@ -208,6 +210,9 @@ export function ChartPanel({
   readOnly?: boolean;
   /** Confirmed Telegram card TradeMarkers. Never projected for manual/Editor. */
   robotTradeMarkers?: readonly RobotTradeMarker[];
+  /** Account-scoped MAIN factual executions; display does not grant trading rights. */
+  mainTradeMarkers?: readonly RobotTradeMarker[];
+  mainHistoryStatus?: "loading" | "ready" | "unavailable";
   editorMode?: boolean;
   /** Read-only source geometry; only supplied from a verified signal snapshot. */
   referenceDrawings?: readonly DrawingObject[];
@@ -707,10 +712,9 @@ export function ChartPanel({
     };
   }, [renderTick]);
   const visibleRobotMarkers = useMemo(
-    () => readOnly
-      ? visibleRobotTradeMarkers(robotTradeMarkers, candles, timeframe)
-      : [],
-    [readOnly, robotTradeMarkers, candles, timeframe],
+    () => editorMode ? [] : visibleRobotTradeMarkers(
+      readOnly ? robotTradeMarkers : mainTradeMarkers, candles, timeframe),
+    [editorMode, readOnly, robotTradeMarkers, mainTradeMarkers, candles, timeframe],
   );
   const robotMarkerShapes = visibleRobotMarkers.flatMap((marker, index) => {
     const x = coordinates.logicalToX(marker.logical);
@@ -1340,8 +1344,16 @@ export function ChartPanel({
             </span>
           );
         })()}
+        {!editorMode && !readOnly && mainHistoryStatus && (
+          <output aria-live="polite" style={{ position: "absolute", left: 4, bottom: 32,
+            zIndex: 5, fontSize: 10, color: mainHistoryStatus === "unavailable" ? "#ffdcaa" : "#8996a3",
+            background: "var(--chart-bg)", pointerEvents: "none" }}>
+            {mainHistoryStatus === "ready" ? "MAIN: исполнения за 7 суток"
+              : mainHistoryStatus === "loading" ? "MAIN: загрузка исполнений…" : "MAIN: исполнения недоступны"}
+          </output>
+        )}
         {robotMarkerShapes.length > 0 ? (
-          <svg className="robot-execution-marker-layer" aria-label="Маркеры исполнений робота"
+          <svg className="robot-execution-marker-layer" aria-label={readOnly ? "Маркеры исполнений робота" : "Маркеры исполнений MAIN"}
             aria-hidden="true" viewBox={`0 0 ${hostRef.current?.clientWidth ?? 1} ${hostRef.current?.clientHeight ?? 1}`}
             preserveAspectRatio="none">
             {robotMarkerShapes}

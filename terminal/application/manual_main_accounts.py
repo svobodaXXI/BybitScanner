@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hmac
 import logging
+import re
 import time
 from threading import RLock, get_ident
 from uuid import uuid4
@@ -160,6 +161,38 @@ class ManualMainAccounts:
             if self._reconciler is None:
                 raise ManualMainAccountError("manual_main_unconfigured")
             return self._reconciler.summary(account_id)
+
+    def execution_history(self, account_id: str, symbol: str) -> dict[str, object]:
+        """Bounded signed GET for one MAIN account and instrument, never PAPER."""
+        if not isinstance(symbol, str) or not re.fullmatch(r"[A-Z0-9]{2,24}USDT", symbol):
+            raise ValueError("invalid_execution_symbol")
+        with self._lock:
+            stored = self._lookup(account_id)
+        # Do not hold the account refresh/mutation lock during history I/O.
+        identity = TradingAccountId(account_id)
+        adapter = self._adapter_factory(
+            identity, BybitCredentials(stored.api_key, stored.api_secret), testnet=False,
+        )
+        end = int(time.time() * 1000)
+        start = end - 7 * 24 * 60 * 60 * 1000
+        events = adapter.list_executions(
+            symbol, start_time_ms=start, end_time_ms=end, trade_only=True,
+        )
+        rows = {}
+        for event in events:
+            if (event.trading_account_id != identity or event.category.value != "linear"
+                    or event.symbol != symbol or not start <= event.executed_at_ms <= end
+                    or not event.execution_price.is_finite() or event.execution_price <= 0
+                    or not event.execution_quantity.is_finite() or event.execution_quantity <= 0):
+                raise ManualMainAccountError("invalid_execution_evidence")
+            row = {"exec_id": event.exec_id.value, "time_ms": event.executed_at_ms,
+                   "price": str(event.execution_price), "side": event.side.value}
+            if row["exec_id"] in rows and rows[row["exec_id"]] != row:
+                raise ManualMainAccountError("conflicting_execution_evidence")
+            rows[row["exec_id"]] = row
+        return {"account_id": account_id, "symbol": symbol,
+                "start_ms": start, "end_ms": end,
+                "executions": sorted(rows.values(), key=lambda row: (row["time_ms"], row["exec_id"]))}
 
     def close(self) -> None:
         self._snapshots.close()
