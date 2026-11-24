@@ -219,19 +219,23 @@ def scanner_level_sources(symbol: str, *, root: Any = None) -> list[dict[str, An
 
     from mirror_levels.levels import LevelRegistry, MirrorLevelError, mirror_breakout_allowed
     from mirror_levels.tracker import STATUS_UNTESTED
-    from mirror_scanner import LIFECYCLE_TRACKING, MirrorStateError, load_state, state_path
+    from mirror_scanner import (
+        LIFECYCLE_TRACKING, MirrorStateError, load_state, retired_candidate_breakout_groups, state_path,
+    )
 
     sources = []
     # Risk identity must not change when one of two independently signalled
     # levels is later retested. Include durable historical candidate=True
     # records in the same-breakout grouping, not only active sources.
     breakout_groups: dict[tuple[int, str], set[str]] = {}
+    retired_breakouts: set[tuple[int, str]] = set()
     for timeframe in SCANNER_TIMEFRAMES:
         if not state_path(symbol, timeframe, root).exists():
             continue
         try:
             state = load_state(symbol, timeframe, root)
             registry = LevelRegistry.from_dict(state["registry"])
+            retired_breakouts.update(retired_candidate_breakout_groups(state))
         except (MirrorStateError, MirrorLevelError, KeyError, TypeError, ValueError) as exc:
             raise MirrorRobotError(f"MIRROR Scanner state unreadable: {symbol} {timeframe}m") from exc
         for level_id, record in sorted(state["records"].items()):
@@ -258,10 +262,12 @@ def scanner_level_sources(symbol: str, *, root: Any = None) -> list[dict[str, An
     # identity is implemented. The standalone MIRROR handoff has its own
     # guard; this prevents bypass through Box-overlay's direct source reader.
     # Keep both Scanner candidates/Telegram levels untouched. A finished
-    # source continues fencing its counterpart across restart/retest.
+    # source continues fencing its counterpart across restart/retest and
+    # record retention; a pruned event is no longer provably a singleton.
     sources = [item for item in sources
-               if len(breakout_groups[(item["breakout_close_ms"],
-                                       item["campaign_direction"])]) == 1]
+               if (item["breakout_close_ms"], item["campaign_direction"]) not in retired_breakouts
+               and len(breakout_groups[(item["breakout_close_ms"],
+                                        item["campaign_direction"])]) == 1]
     sources.sort(key=lambda item: (-item["breakout_close_ms"], item["level_id"]))
     return sources[:MAX_SCANNER_LEVELS]                  # bounded network work per attachment
 

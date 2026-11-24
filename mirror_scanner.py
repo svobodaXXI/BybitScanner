@@ -221,6 +221,25 @@ def empty_state(symbol: str, timeframe: str) -> dict[str, Any]:
             "updated_at_ms": None}
 
 
+def retired_candidate_breakout_groups(state: Mapping[str, Any]) -> set[tuple[int, str]]:
+    """Compact risk witnesses survive removal of old visual/tracker records.
+
+    A missing field is the legacy format; malformed witnesses must never be
+    interpreted as an empty risk history.
+    """
+    items = state.get("retired_candidate_breakouts", [])
+    if not isinstance(items, list):
+        raise ValueError("invalid retired MIRROR breakout history")
+    groups = set()
+    for item in items:
+        if (not isinstance(item, list) or len(item) != 2
+                or type(item[0]) is not int or item[0] < 0
+                or item[1] not in ("LONG", "SHORT")):
+            raise ValueError("invalid retired MIRROR breakout identity")
+        groups.add((item[0], item[1]))
+    return groups
+
+
 def load_state(symbol: str, timeframe: str, root=None) -> dict[str, Any]:
     path = state_path(symbol, timeframe, root)
     if not path.exists():
@@ -233,6 +252,7 @@ def load_state(symbol: str, timeframe: str, root=None) -> dict[str, Any]:
         LevelRegistry.from_dict(state["registry"])
         if not isinstance(state["records"], dict) or not isinstance(state["pending_notifications"], list):
             raise ValueError("state structure")
+        retired_candidate_breakout_groups(state)
         return state
     except (OSError, ValueError, KeyError, TypeError, MirrorLevelError) as exc:
         raise MirrorStateError(f"{path.name}: {type(exc).__name__}: {exc}") from exc
@@ -959,16 +979,29 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
     # Finished records stay visible for RETENTION_MS; the registry keeps every identity it still
     # needs, so a re-scan inside the window maps a known level back onto it instead of a new one.
     window_start = rows[0]["open_time_ms"]
+    retired_breakouts = retired_candidate_breakout_groups(state)
     for level_id in [key for key, rec in records.items()
                      if rec["lifecycle"] != LIFECYCLE_TRACKING
                      and int(rec.get("last_event_ms") or 0) < now_ms - RETENTION_MS
                      and key in registry.levels
                      and all(t < window_start for t, _ in registry.levels[key].anchors)
                      and not any(item["level_id"] == key for item in pending)]:
+        record = records[level_id]
+        if record.get("candidate") is True:
+            breakout = (record.get("naked_retest") or {}).get("breakout")
+            if (not mirror_breakout_allowed(registry.levels[level_id], breakout)
+                    or type(breakout.get("close_time_ms")) is not int
+                    or breakout["close_time_ms"] < 0):
+                continue  # do not discard a candidate with unproven risk identity
+            # Remember the event, not the full historical chart. Any surviving
+            # sibling must remain observation-only even across timeframe files.
+            retired_breakouts.add((breakout["close_time_ms"], breakout["campaign_direction"]))
         records.pop(level_id)
         registry.levels.pop(level_id, None)
         registry.aliases.pop(level_id, None)
 
+    if retired_breakouts:
+        state["retired_candidate_breakouts"] = [list(group) for group in sorted(retired_breakouts)]
     state.update(registry=registry.to_dict(), records=records, pending_notifications=pending,
                  updated_at_ms=now_ms)
     save_state(state, root)                      # durable before anything leaves the process
@@ -1048,6 +1081,9 @@ def _standalone_multisource_breakout_unresolved(
     breakout_open = terms.get("level_breakout_close_ms")
     direction = terms.get("level_breakout_direction")
     if type(breakout_open) is not int or direction not in ("UP", "DOWN"):
+        return True
+    campaign_direction = "SHORT" if direction == "UP" else "LONG"
+    if (breakout_open, campaign_direction) in retired_candidate_breakout_groups(state):
         return True
     for other_id, record in (state.get("records") or {}).items():
         if other_id == level_id or not isinstance(record, Mapping):

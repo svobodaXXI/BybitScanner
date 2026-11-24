@@ -759,6 +759,72 @@ def test_wick_sweep_box_overlay_never_rekeys_shared_breakout_r0_after_retest(roo
         "TESTUSDT", root=root)] == [levels[2].level_id]
 
 
+@pytest.mark.parametrize("retired_tf", ["5", "1"])
+def test_wick_sweep_box_overlay_risk_fence_survives_actual_record_retention(
+        root, fixed_levels, retired_tf):
+    import mirror_retest_robot as mirror
+    from mirror_levels.levels import LevelRegistry
+    from mirror_levels.tracker import new_record
+
+    # The Scanner's real retention pass removes a finished source older than
+    # three days, while the other source remains BROKEN_UNTESTED. Exercise
+    # both same-file and M1/M5 state-file histories.
+    offset = 4 * 86_400_000
+    levels = [
+        horizontal_level(symbol="TESTUSDT", timeframe=tf, source=SOURCE_SWING_ZONE,
+                         pattern=None, side="upper", price=price,
+                         anchor_time_ms=0, confirmed_at_ms=15 * M)
+        for tf, price in ((retired_tf, 101.0), ("5", 102.0), ("5", 103.0))
+    ]
+    for tf in {retired_tf, "5"}:
+        registry = LevelRegistry()
+        records = {}
+        for index, level in enumerate(levels):
+            if level.timeframe != tf:
+                continue
+            registry.add(level)
+            record = new_record(level)
+            record.update(candidate=True, lifecycle=ms.LIFECYCLE_DONE if index == 0
+                          else ms.LIFECYCLE_TRACKING,
+                          status=STATUS_RETESTED if index == 0 else STATUS_UNTESTED,
+                          rejection=None, last_event_ms=50 * M)
+            close = 35 * M if index < 2 else 45 * M
+            record["naked_retest"].update(
+                breakout={"direction": "UP", "campaign_direction": "SHORT",
+                          "open_time_ms": close - int(tf) * M, "close_time_ms": close},
+                cursor_close_time_ms=offset + 4 * int(tf) * M,
+            )
+            # Active records already consumed this closed prefix; isolate
+            # the actual retention path from unrelated entry-pattern discovery.
+            record["entry_cursors"] = {"5": offset + 20 * M, "1": offset + 20 * M}
+            records[level.level_id] = record
+        state = ms.empty_state("TESTUSDT", tf)
+        state.update(registry=registry.to_dict(), records=records)
+        ms.save_state(state, root)
+
+    assert [x["level_id"] for x in mirror.scanner_level_sources(
+        "TESTUSDT", root=root)] == [levels[2].level_id]
+
+    df = frame(flat_bars(4, price=110), step=int(retired_tf) * M)
+    df["time"] += offset
+    ms.observe_mirror_levels("TESTUSDT", df, timeframe=retired_tf, root=root,
+                             now_ms=offset + 4 * int(retired_tf) * M)
+    reloaded = ms.load_state("TESTUSDT", retired_tf, root)
+    assert levels[0].level_id not in reloaded["records"]
+    assert levels[0].level_id not in LevelRegistry.from_dict(reloaded["registry"]).levels
+    assert reloaded["retired_candidate_breakouts"] == [[35 * M, "SHORT"]]
+    assert ms.load_state("TESTUSDT", "5", root)["records"][levels[1].level_id]["status"] == STATUS_UNTESTED
+    assert [x["level_id"] for x in mirror.scanner_level_sources(
+        "TESTUSDT", root=root)] == [levels[2].level_id]
+
+    if retired_tf == "5":
+        terms = {"level_id": levels[1].level_id, "level_breakout_close_ms": 35 * M,
+                 "level_breakout_direction": "UP"}
+        assert ms._standalone_multisource_breakout_unresolved(reloaded, terms)
+        terms.update(level_id=levels[2].level_id, level_breakout_close_ms=45 * M)
+        assert not ms._standalone_multisource_breakout_unresolved(reloaded, terms)
+
+
 def test_wick_sweep_two_distinct_fresh_levels_one_breakout_candle_are_both_observed(
         root, fixed_levels):
     # Owner diagram: separate #1 and #2 extrema can be pierced by the same
