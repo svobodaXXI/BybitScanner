@@ -178,6 +178,48 @@ class ConfirmedNonStrictHullEvidence(unittest.TestCase):
         self.assertTrue(observed["sequence"]["valid"],observed)
         self.assertTrue(all(observed[k] for k in ("boundary","local","fresh")),observed)
         self.assertTrue(native_calls,"Otherwise valid owner pair lost before native evaluation")
+        self.assertIsNotNone(winner)
+        self.assertEqual([winner.upper_line["anchor_index"],winner.upper_line["second_index"],
+                          winner.lower_line["anchor_index"],winner.lower_line["second_index"]],
+                         f["corrected_anchors"])
+        from geometry.wedge_boundaries import build_wedge_hull_support_lines, wedge_hull_pair_allowed
+        for mirrored in (False,True):
+            with self.subTest(mirrored=mirrored):
+                if mirrored:
+                    ceiling=0.03
+                    bars=frame.copy()
+                    for key,source in (("high","low"),("low","high"),("open","open"),("close","close")):
+                        bars[key]=ceiling-frame[source]
+                    hs=[dict(p,price=ceiling-p["price"],type="high") for p in lows]
+                    ls=[dict(p,price=ceiling-p["price"],type="low") for p in highs]
+                else:
+                    bars,hs,ls=frame,highs,lows
+                strict=pick(build_candidate_lines(ls if mirrored else hs),120,189)
+                self.assertIsNotNone(strict)
+                hu,hl=build_wedge_hull_support_lines(hs,ls,[] if mirrored else [strict],
+                                                   [strict] if mirrored else [],bars,len(bars)-1)
+                hull=pick(hu if mirrored else hl,123,167)
+                self.assertIsNotNone(hull)
+                u,v=(hull,strict) if mirrored else (strict,hull)
+                allowed=lambda x,y,b,cut=len(bars)-1: wedge_hull_pair_allowed(x,y,hs,ls,b,cut)
+                self.assertTrue(allowed(u,v,bars))
+                self.assertFalse(allowed(u,v,None))
+                self.assertFalse(allowed(u,v,bars,188))
+                other=dict(strict,triangle_only=True)
+                self.assertFalse(allowed(hull,other,bars) if mirrored else allowed(other,hull,bars))
+                other=dict(strict,strict_wedge_support="lower" if mirrored else "upper")
+                self.assertFalse(allowed(hull,other,bars) if mirrored else allowed(other,hull,bars))
+                # A real outside wick before END must veto the extra edge;
+                # an excursion after END must not change frozen evidence.
+                key="high" if mirrored else "low"
+                change=1.0 if mirrored else 0.000001
+                outside=bars.copy()
+                outside.loc[150,key]=change
+                self.assertFalse(allowed(u,v,outside))
+                outside=bars.copy()
+                outside.loc[190,key]=change
+                self.assertTrue(allowed(u,v,outside))
+
 
 
 if __name__=="__main__":

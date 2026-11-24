@@ -6,7 +6,8 @@ generator. Global structural pivots and first-anchor selection stay intact.
 These alternatives are not usable for triangles or the non-strict side.
 """
 from .candidate import DEFAULT_MIN_LINE_SPAN, build_candidate_lines
-from .triangle_boundaries import local_alternation_pivots
+from .triangle_boundaries import anchor_order_possible, local_alternation_pivots
+from .envelope_metrics import evaluate_strict_wedge_wicks
 
 
 def build_strict_wedge_support_lines(highs, lows, upper, lower, candles, current_index):
@@ -54,3 +55,63 @@ def strict_support_pair_allowed(upper, lower):
     if is_strict_wedge_support(lower):
         return isinstance(upper, dict) and not upper.get("triangle_only") and upper.get("line", {}).get("slope", 0) > 0
     return True
+
+
+def build_wedge_hull_support_lines(highs, lows, upper, lower, candles, current_index):
+    """Recover a clean non-strict wedge edge with two global confirmed pivots.
+
+    Keep the normal 30-bar contact span. Unlike the local strict-support
+    generator, this path adds only a single forward confirmation (the
+    second contact), and requires clean candle containment of both paired
+    boundaries before evaluation. No new structural pivots or tolerances.
+    """
+    if candles is None or current_index is None:
+        return [], []
+    result = []
+    for side, points, existing in (("upper", highs, upper), ("lower", lows, lower)):
+        seen = {(c["anchor_index"], c["second_index"]) for c in existing
+                if isinstance(c, dict) and "second_index" in c}
+        extra = []
+        for c in build_candidate_lines(points, min_confirmations=1):
+            key = (c["anchor_index"], c["second_index"])
+            if key in seen or c["confirmations"] != 1:
+                continue
+            slope = c["line"]["slope"]
+            if not (slope > 0 if side == "upper" else slope < 0):
+                continue
+            if evaluate_strict_wedge_wicks(c["line"], candles, side,
+                                           c["second_index"], current_index) != []:
+                continue
+            c["wedge_hull_support"] = side
+            seen.add(key)
+            extra.append(c)
+        result.append(extra)
+    return result[0], result[1]
+
+
+def wedge_hull_pair_allowed(upper, lower, highs, lows, candles, current_index):
+    """Extra two-contact edges may pair only with a regular strict boundary.
+
+    Both boundaries must be wick-clean through the actual pair END, not
+    through future breakout candles. The normal pair validator, anchor,
+    locality, freshness and selection gates still run unchanged.
+    """
+    up = upper.get("wedge_hull_support") if isinstance(upper, dict) else None
+    low = lower.get("wedge_hull_support") if isinstance(lower, dict) else None
+    if not up and not low:
+        return True
+    if (up and low) or candles is None or current_index is None:
+        return False
+    counterpart = lower if up else upper
+    if (not isinstance(counterpart, dict) or counterpart.get("triangle_only")
+            or is_strict_wedge_support(counterpart)):
+        return False
+    ul, ll = upper["line"], lower["line"]
+    us, ls = ul["slope"], ll["slope"]
+    if not (0 < us < ls if up else us < ls < 0):
+        return False
+    if not anchor_order_possible(ul, ll, highs, lows):
+        return False
+    end = max(upper["points"][-1]["index"], lower["points"][-1]["index"])
+    return (evaluate_strict_wedge_wicks(ul, candles, "upper", end, current_index) == []
+            and evaluate_strict_wedge_wicks(ll, candles, "lower", end, current_index) == [])
