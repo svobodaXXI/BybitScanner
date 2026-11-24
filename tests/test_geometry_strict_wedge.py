@@ -46,5 +46,60 @@ class StrictWedgeFrozenTest(unittest.TestCase):
         self.assertIsNone(original, "strict lower wick protrusions must prevent pair construction")
 
 
+
+class EarlyImpulseFrozenTest(unittest.TestCase):
+    def test_early_high_and_immediate_low_are_distinct_from_drawn_support(self):
+        from geometry.pair_metrics import calculate_pair_metrics
+        import geometry.engine as engine
+        from unittest.mock import patch
+        case = json.loads((FIXTURE.parent / "EIGENUSDT_5m_early_impulse_20261124.json").read_text())
+        rows = case["ohlc_int"]
+        self.assertEqual(hashlib.sha256(json.dumps(rows, separators=(",", ":")).encode()).hexdigest(),
+                         case["ohlc_int_sha256"])
+        frame = pd.DataFrame(rows, columns=["open", "high", "low", "close"]) / case["price_scale"]
+        frame["time"] = [case["first_open_ms"] + i * case["step_ms"] for i in range(len(frame))]
+        frame["volume"] = 0.
+        frame = frame.iloc[:case["as_of_index"] + 1].copy()
+        highs, lows = find_pivots(frame.copy())
+        upper = filter_candidates(build_candidate_lines(highs))
+        lower = filter_candidates(build_candidate_lines(lows))
+        def pick(items, a, b):
+            return next(c for c in items if (c["anchor_index"], c["second_index"]) == (a,b))
+        def metrics(u,l):
+            return calculate_pair_metrics(u,l,len(frame)-1,highs=highs,lows=lows,candles=frame)["anchor_sequence"]
+        old_u, old_l = pick(upper,128,161), pick(lower,148,189)
+        new_u, new_l = pick(upper,75,128), pick(lower,91,173)
+        old_seq, new_seq = metrics(old_u,old_l), metrics(new_u,new_l)
+        self.assertEqual(new_seq["expected_secondary_index"],78)
+        self.assertEqual(new_seq["secondary_anchor"],91)
+        self.assertFalse(new_seq["valid"])
+        self.assertTrue(old_seq["valid"])
+        def identity(g):
+            return None if g is None else [g.upper_line["anchor_index"],g.upper_line["second_index"],
+                    g.lower_line["anchor_index"],g.lower_line["second_index"],g.start_index,g.end_index]
+        # Read-only trace of the actual engine, not a replacement selector.
+        trace = []
+        native = engine.evaluate_candidate_pair
+        def observe(u,l,*args,**kwargs):
+            result = native(u,l,*args,**kwargs)
+            ul, ll = u["line"], l["line"]
+            if ul["anchor_index"] == 75 and ll["anchor_index"] == 78:
+                record = {"anchors":[75,ul["second_index"],78,ll["second_index"]],
+                          "geometry":identity(result)}
+                if result is not None:
+                    record.update(validation=result.validation.get("valid"),
+                                  local=engine._is_candidate_local(result,len(frame)-1),
+                                  boundary=engine._is_boundary_structurally_valid(result),
+                                  sequence=engine._is_anchor_sequence_valid(result),
+                                  fresh=engine._is_candidate_fresh(result,_freshness_predicate),
+                                  compression=result.compression)
+                trace.append(record)
+            return result
+        with patch.object(engine, "evaluate_candidate_pair", side_effect=observe):
+            winner=engine.analyze_geometry(highs,lows,len(frame)-1,frame,_freshness_predicate)
+        print("EIGEN_NATIVE",json.dumps({"original":old_seq,"manual":new_seq,
+              "early_adjacent_pairs":trace,"winner":identity(winner)},default=str,sort_keys=True))
+
+
 if __name__ == "__main__":
     unittest.main()
