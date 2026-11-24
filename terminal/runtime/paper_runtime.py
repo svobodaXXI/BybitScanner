@@ -1192,6 +1192,38 @@ class PaperRuntime:
         )
         self._wedge_terminal_producer.start()
 
+    def bind_robot_private_box_inspector(self, research_snapshot) -> None:
+        """Attach read-only Box audit to the existing Robot before its start.
+
+        The callback only reads an ALREADY opted-in protected hub witness.
+        This does not activate capture, open a new market feed or affect orders.
+        """
+        if self._robot_command_dispatcher is not None:
+            raise RuntimeError("Cannot bind private Box inspector after Robot start")
+        if not callable(research_snapshot):
+            raise TypeError("private Box snapshot callback must be callable")
+        from terminal.market_data.private_box_host_evidence import (
+            inspect_private_box_receipts, PrivateBoxReceiptEvidence,
+        )
+
+        def inspect(candidate_id: str) -> PrivateBoxReceiptEvidence:
+            if not self.store.is_owned_by_current_thread():
+                return PrivateBoxReceiptEvidence("UNKNOWN")
+            return inspect_private_box_receipts(
+                self.store.get_robot_candidate, research_snapshot,
+                candidate_id=candidate_id, observed_at_ms=int(time.time() * 1000),
+            )
+
+        self._robot_breakout_monitor.bind_private_box_inspector(inspect)
+
+    def inspect_robot_private_box_receipts(self, candidate_id: str):
+        """Private owner-thread research call; not exposed by an HTTP route."""
+        from terminal.market_data.private_box_host_evidence import PrivateBoxReceiptEvidence
+
+        if not self.store.is_owned_by_current_thread():
+            return PrivateBoxReceiptEvidence("UNKNOWN")
+        return self._robot_breakout_monitor.inspect_private_box(candidate_id)
+
     def bind_robot_pattern_flow_observer(self, observer) -> None:
         """Bind a read-only market-flow hint to the EXISTING Robot monitor."""
         if self._robot_command_dispatcher is not None:
