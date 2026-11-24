@@ -97,7 +97,7 @@ class DynamicControlAnchorTest(unittest.TestCase):
 
 
 class ControlBoundaryConstructionTest(unittest.TestCase):
-    def fixture(self, highs, *, mirror=False, current=70, opposite=None):
+    def fixture(self, highs, *, mirror=False, current=70, opposite=None, post_slope=.5):
         import pandas as pd
         from geometry.control_anchor import RebuildRequest
         anchors = tuple(ConfirmedAnchor(i, str(p), i*1000, i*1000+1)
@@ -111,7 +111,7 @@ class ControlBoundaryConstructionTest(unittest.TestCase):
             if after:
                 high = float(before.price)+(float(after.price)-float(before.price))*(i-before.index)/(after.index-before.index)
             else:
-                high = float(before.price)-.4*(i-before.index)
+                high = float(before.price)-post_slope*(i-before.index)
             prices.append(high)
         opposite = opposite or {"slope":-.1, "intercept":102.5}
         frame = pd.DataFrame({"high": prices, "low": [min(h-.1, 90.) for h in prices]})
@@ -144,7 +144,7 @@ class ControlBoundaryConstructionTest(unittest.TestCase):
     def test_preceding_highs_force_outer_line_and_mirror(self):
         for mirror in (False, True):
             with self.subTest(mirror=mirror):
-                q,a,f,o = self.fixture([(0,120),(15,117),(30,114),(60,100)], mirror=mirror)
+                q,a,f,o = self.fixture([(0,120),(15,117),(30,114),(60,100)], mirror=mirror, post_slope=.4)
                 result = self.select(q,a,f,o)
                 self.assertEqual(result.status, "EARLIER_ENVELOPE")
                 self.assertTrue(result.candidates)
