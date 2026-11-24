@@ -76,6 +76,19 @@ def _stored():
 
 
 class LiveAccountReconciliationTests(unittest.TestCase):
+    def test_snapshot_working_volume_uses_wallet_only_and_fails_closed(self):
+        for wallet, status, expected in (
+            ("342.75", "READY", "17"), ("342.75", "READ_ONLY", "17"),
+            ("19.99", "READY", None), ("0", "READY", None),
+            ("342.75", "DISCONNECTED", None),
+        ):
+            with self.subTest(wallet=wallet, status=status):
+                snapshot = LiveAccountSnapshot(
+                    "bybit-one", "MAINNET", True, 1, Decimal(wallet),
+                    Decimal("5000"), Decimal("3000"), 100, (), (), 200,
+                )
+                self.assertEqual(snapshot.transport(status=status)["one_wv_usdt"], expected)
+
     def test_fresh_account_wide_refresh_sets_safe_status_and_preserves_paper(self):
         for read_only, expected in (
             (False, TradingAccountStatus.READY), (True, TradingAccountStatus.READ_ONLY),
