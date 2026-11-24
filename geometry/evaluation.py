@@ -25,7 +25,7 @@ from .touches import analyze_touches
 from .validation import validate_geometry
 from .model import GeometryModel
 from .pair_metrics import calculate_pair_metrics
-from .envelope_metrics import calculate_envelope_metrics
+from .envelope_metrics import calculate_envelope_metrics, evaluate_strict_wedge_wicks
 from .pre_pattern import detect_pre_pattern_impulse
 
 def evaluate_candidate_pair(
@@ -95,6 +95,26 @@ def evaluate_candidate_pair(
         upper_points[-1]["index"],
         lower_points[-1]["index"]
     )
+
+    # Strict containment is a construction condition, not a ranking penalty.
+    # The owner permits only a separately proven single-wick exception; that
+    # exception remains disabled until real supporting evidence is pinned.
+    # Falling = upper strict, rising = lower strict. Triangle stays unchanged.
+    strict_side = None
+    upper_slope = upper_line.get("slope", 0)
+    lower_slope = lower_line.get("slope", 0)
+    if upper_slope > 0 and lower_slope > 0:
+        strict_side = "lower"
+    elif upper_slope < 0 and lower_slope < 0:
+        strict_side = "upper"
+
+    if strict_side is not None and candles is not None:
+        strict_line = upper_line if strict_side == "upper" else lower_line
+        strict_breaches = evaluate_strict_wedge_wicks(
+            strict_line, candles, strict_side, end_index, current_index
+        )
+        if strict_breaches is None or strict_breaches:
+            return None
 
     #
     # Apex

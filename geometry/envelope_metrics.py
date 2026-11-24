@@ -30,6 +30,8 @@ Rising Wedge hypothesis:
 """
 
 
+import math
+
 from .candidate import DEFAULT_TOLERANCE_PERCENT
 from confirmation import calculate_atr
 
@@ -1133,6 +1135,46 @@ def evaluate_body_zone_breaches(
         "lower_body_breach_early_indices": lower_body_breach_early_indices,
         "lower_body_breach_late_indices": lower_body_breach_late_indices,
     }
+
+
+def evaluate_strict_wedge_wicks(line, candles, side, end_index, current_index):
+    """Measure only the strict side from its own anchor through formation END.
+
+    No price tolerance: allow only floating-point arithmetic roundoff.
+    None means evidence unavailable; never represents a measured clean line.
+    Breakout candles after END cannot change a frozen formation.
+    """
+    if candles is None:
+        return None
+    start = line.get("anchor_index")
+    if (not isinstance(start, int) or not isinstance(end_index, int)
+            or start < 0 or end_index < start or end_index >= len(candles)
+            or (current_index is not None and end_index > current_index)):
+        return None
+    if side not in ("upper", "lower"):
+        return None
+    try:
+        slope = float(line["slope"])
+        intercept = float(line["intercept"])
+        values = candles["high" if side == "upper" else "low"].to_numpy(copy=False)
+        breaches = []
+        for i in range(start, end_index + 1):
+            actual = float(values[i])
+            projected = line_value(line, i)
+            product = slope * i
+            if not all(math.isfinite(v) for v in (actual, projected, product, intercept)):
+                return None
+            if actual <= 0 or projected <= 0:
+                return None
+            # Account for the multiply/add and line-coefficient roundoff only.
+            epsilon = 4 * (math.ulp(product) + math.ulp(intercept)
+                           + math.ulp(actual) + math.ulp(projected))
+            delta = actual - projected if side == "upper" else projected - actual
+            if delta > epsilon:
+                breaches.append(i)
+        return breaches
+    except (KeyError, TypeError, ValueError, AttributeError, OverflowError, IndexError):
+        return None
 
 
 def evaluate_formation_body_fit(upper_line, lower_line, candles, end_index):

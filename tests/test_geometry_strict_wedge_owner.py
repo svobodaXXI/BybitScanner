@@ -14,6 +14,7 @@ import pandas as pd
 
 from geometry.candidate import build_candidate_lines
 from geometry.evaluation import evaluate_candidate_pair
+from geometry.envelope_metrics import evaluate_strict_wedge_wicks
 from geometry.filter import filter_candidates
 from pivots import find_pivots
 
@@ -63,6 +64,39 @@ class StrictWedgeOwnerCase(unittest.TestCase):
         self.assertTrue(all(line["slope"]*i+line["intercept"]-self.frame.iloc[i].low <= 1e-10
                             for i in range(138, end+1)))
         self.assertIsNotNone(self.evaluate(upper, lower))
+
+
+    def test_mirrored_falling_wedge_native_pairs(self):
+        # Reflection preserves time, all actual candle distances and pivot order.
+        frame = self.frame.copy()
+        ceiling = 200.0
+        frame["open"] = ceiling - self.frame["open"]
+        frame["close"] = ceiling - self.frame["close"]
+        frame["high"] = ceiling - self.frame["low"]
+        frame["low"] = ceiling - self.frame["high"]
+        highs, lows = find_pivots(frame.copy())
+        upper = filter_candidates(build_candidate_lines(highs))
+        lower = self.pick(filter_candidates(build_candidate_lines(lows)), 140, 189)
+        for a, b, rejected in ((138, 185, True), (138, 178, False)):
+            with self.subTest(second=b):
+                candidate = self.pick(upper, a, b)
+                result = evaluate_candidate_pair(candidate, lower, highs=highs, lows=lows,
+                                                 current_index=len(frame)-1, candles=frame)
+                self.assertEqual(result is None, rejected)
+
+    def test_strict_side_measurement_excludes_post_end_and_pre_anchor(self):
+        lower = self.pick(self.lower, 138, 178)["line"]
+        frame = self.frame.copy()
+        end = 189
+        baseline = evaluate_strict_wedge_wicks(lower, frame, "lower", end, 198)
+        self.assertEqual(baseline, [])
+        for index in (137, 190, 198):
+            frame.loc[index, "low"] = 1.0
+        self.assertEqual(evaluate_strict_wedge_wicks(lower, frame, "lower", end, 198), [])
+        self.assertIsNone(evaluate_strict_wedge_wicks(lower, frame, "lower", end, 188))
+        # A new single excursion inside the formation is measured explicitly.
+        frame.loc[179, "low"] = lower["slope"] * 179 + lower["intercept"] - 0.01
+        self.assertEqual(evaluate_strict_wedge_wicks(lower, frame, "lower", end, 198), [179])
 
 
 if __name__ == "__main__":
