@@ -376,5 +376,64 @@ class PrivateBoxCaptureTests(unittest.TestCase):
             self.assertEqual(path.read_bytes(), original)
 
 
+    def test_monitor_capture_pass_respects_durable_epoch_and_never_trades(self):
+        store, data = setup()
+        state = NS(mode="ROBOT_RUNNING", recovery_status="READY", version=1)
+        calls = []
+        capture = NS(
+            close=lambda: calls.append("close"),
+            sync=lambda *a, **k: calls.append(("sync", k["robot_ready"])),
+            observe=lambda *a, **k: calls.append(("observe", k["robot_ready"])),
+        )
+        db = NS(
+            get_robot_runtime_state=lambda _: state,
+            load_robot_candidates_by_status=lambda *_: (store["box-robot-123"],),
+            get_robot_candidate=store.get,
+        )
+        monitor = RobotBreakoutMonitor(
+            lambda: db, TradingAccountId("paper"),
+            get_closed_candle=lambda _: None, action_executor=object(),
+            tick_size_provider=lambda _: Decimal("0.01"), clock_ms=lambda: 2100,
+            tick_interval_s=3600,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "private.json"
+            monitor.bind_private_box_capture(capture, path)
+            monitor._private_box_capture_pass()
+            self.assertEqual(calls, ["close", ("sync", True), ("observe", True)])
+            calls.clear()
+            state.recovery_status = "PAUSED"
+            monitor._private_box_capture_pass()
+            self.assertTrue(calls)
+            self.assertEqual(set(calls), {"close"})
+            calls.clear()
+            state.mode = "ROBOT_STOPPED"
+            monitor._private_box_capture_pass()
+            self.assertEqual(set(calls), {"close"})
+            calls.clear()
+            state.mode, state.recovery_status, state.version = "ROBOT_RUNNING", "READY", 2
+            monitor._private_box_capture_pass()
+            self.assertEqual(calls, ["close", ("sync", True), ("observe", True)])
+            calls.clear()
+            path.write_text("existing", encoding="utf-8")
+            monitor._private_box_capture_pass()
+            self.assertEqual(calls, ["close"])
+            self.assertEqual(path.read_text(encoding="utf-8"), "existing")
+
+    def test_observation_clock_follows_detached_read(self):
+        store, data = setup()
+        capture = PrivateBoxCapture(NS(
+            begin_protected_research_capture=lambda *_a, **_k: object(),
+            end_protected_research_capture=lambda *_a, **_k: True,
+            private_protected_research_snapshot=lambda *_a, **_k: data,
+        ))
+        capture.sync(store.get, ("box-robot-123",),
+                     robot_ready=True, observed_at_ms=2000)
+        result = capture.observe(store.get, robot_ready=True,
+                                 observed_at_ms=2000,
+                                 observation_clock=lambda: 2100)
+        self.assertEqual(result.status, "RECEIPTS_OBSERVED_UNATTESTED")
+
+
 if __name__ == "__main__":
     unittest.main()
