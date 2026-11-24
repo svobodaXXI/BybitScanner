@@ -31,6 +31,14 @@ class FakeMainAccounts:
             raise LookupError()
         return {"account_id": account_id, "positions": [{"symbol": "BTCUSDT"}], "orders": []}
 
+    def execution_history(self, account_id, symbol):
+        if account_id != "bybit-abc":
+            raise LookupError()
+        if symbol != "BTCUSDT":
+            raise ValueError("invalid")
+        return {"account_id": account_id, "symbol": symbol, "start_ms": 1,
+                "end_ms": 604800001, "executions": []}
+
     def provision(self, display_name, api_key, api_secret):
         if not display_name or not api_key or not api_secret:
             raise ValueError("invalid")
@@ -78,6 +86,21 @@ class MainReadGatewayTests(unittest.TestCase):
         self.assertEqual(self.app.refreshed, ["bybit-abc"])
         status, health, _ = self.request("/api/manual-main/health")
         self.assertEqual((status, health["trading_enabled"]), (200, False))
+
+    def test_execution_history_get_only_and_validated_scope(self):
+        route = "/api/manual-main/accounts/bybit-abc/executions"
+        status, payload, headers = self.request(route + "?symbol=BTCUSDT")
+        self.assertEqual((status, payload["account_id"], payload["executions"]),
+                         (200, "bybit-abc", []))
+        self.assertEqual(headers["Cache-Control"], "no-store")
+        for suffix in ("", "?symbol=BTCUSDT&symbol=ETHUSDT", "?symbol=ETHUSDT"):
+            self.assertEqual(self.request(route + suffix)[0], 400)
+        self.assertEqual(self.request(route.replace("bybit-abc", "bybit-unknown") + "?symbol=BTCUSDT")[0], 404)
+        self.assertEqual(self.request(route + "?symbol=BTCUSDT", method="POST", body=b"")[0], 405)
+        with patch.object(self.app, "execution_history", side_effect=RuntimeError("private-data")):
+            status, payload, _ = self.request(route + "?symbol=BTCUSDT")
+            self.assertEqual((status, payload["error"]), (503, "main_execution_history_unavailable"))
+            self.assertNotIn("private-data", repr(payload))
 
     def test_no_trading_or_credential_post_and_no_paper_routes(self):
         for path in ("/api/manual-main/order",
