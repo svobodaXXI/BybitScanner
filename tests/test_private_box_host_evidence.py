@@ -1,5 +1,9 @@
 """Synthetic exact-host and private L2 receipt tests; no IO or trading."""
 import unittest
+from decimal import Decimal
+
+from terminal.application.robot_breakout_monitor import RobotBreakoutMonitor
+from terminal.domain.models import TradingAccountId
 from types import SimpleNamespace as NS
 
 from terminal.market_data.private_box_host_evidence import inspect_private_box_receipts
@@ -111,6 +115,60 @@ class PrivateBoxReceiptTests(unittest.TestCase):
                 NS(trade_id="t1", timestamp_ms=2000,
                    received_at_ms=received, sequence=9),)}}
             self.assertEqual(self.audit(store, bad).status, expected)
+
+    def test_stale_complete_looking_tape_is_not_fresh_evidence(self):
+        store, good = setup()
+        # Frames and prints are internally contiguous but were received long ago.
+        self.assertEqual(self.audit(store, good, now=5000).status, "UNKNOWN")
+
+    def test_robot_owned_private_inspector_start_stop_and_error_isolation(self):
+        events = []
+        monitor = RobotBreakoutMonitor(
+            lambda: None, TradingAccountId("paper"),
+            get_closed_candle=lambda _: None,
+            action_executor=object(),
+            tick_size_provider=lambda _: Decimal("0.01"),
+            clock_ms=lambda: 2100,
+            tick_interval_s=3600,
+        )
+        monitor.bind_private_box_inspector(
+            lambda identity: events.append(identity)
+            or self.audit(*setup()),
+        )
+        self.assertEqual(monitor.inspect_private_box("box-robot-123").status, "UNKNOWN")
+        self.assertEqual(events, [])
+        try:
+            monitor.start()
+            # Start alone cannot read a book, call the inspector, or trade.
+            self.assertEqual(events, [])
+            result = monitor.inspect_private_box("box-robot-123")
+            self.assertEqual(result.status, "RECEIPTS_OBSERVED_UNATTESTED")
+            self.assertFalse(result.source_complete)
+            self.assertFalse(result.trading_authorized)
+            self.assertEqual(events, ["box-robot-123"])
+            with self.assertRaises(RuntimeError):
+                monitor.bind_private_box_inspector(lambda _: None)
+        finally:
+            monitor.close()
+        self.assertEqual(monitor.inspect_private_box("box-robot-123").status, "UNKNOWN")
+        self.assertEqual(events, ["box-robot-123"])
+        with self.assertRaises(RuntimeError):
+            monitor.bind_private_box_inspector(lambda _: None)
+
+        broken = RobotBreakoutMonitor(
+            lambda: None, TradingAccountId("paper"),
+            get_closed_candle=lambda _: None,
+            action_executor=object(),
+            tick_size_provider=lambda _: Decimal("0.01"),
+            clock_ms=lambda: 2100, tick_interval_s=3600,
+        )
+        broken.bind_private_box_inspector(
+            lambda _: (_ for _ in ()).throw(RuntimeError("research failed")))
+        try:
+            broken.start()
+            self.assertEqual(broken.inspect_private_box("box-robot-123").status, "UNKNOWN")
+        finally:
+            broken.close()
 
     def test_missing_or_reset_tape_never_claims_reconstruction(self):
         store, good = setup()
