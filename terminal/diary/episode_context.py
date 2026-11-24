@@ -1,7 +1,7 @@
 """Optional read-only, exact-ID D2 context for a selected PAPER trade episode.
 
-No guessed signal matches by symbol/time. D2's setup-instance link is the
-ONLY supported join. D2 events are research decision observations, NOT the
+No guessed signal matches by symbol/time. D2 and exact Robot candidate
+lineage are independent proofs; neither substitutes for the other. D2 events are research decision observations, NOT the
 complete Robot runtime journal. Feature/risk snapshot references are NOT
 signal geometry. Never create, migrate or write a D2/PAPER database here.
 """
@@ -226,6 +226,26 @@ def attach_verified_original_geometry(
             or type(opened_at_ms) is not int or opened_at_ms <= 0):
         return setup_context
 
+    if setup.get("symbol") != symbol:
+        return setup_context
+    original = _verified_archive_geometry(
+        candidate_id=candidate_id, symbol=symbol, timeframe=setup.get("timeframe"),
+        pattern=setup.get("pattern"), opened_at_ms=opened_at_ms,
+        linkage_basis="D2_SETUP_ID_EQUALS_ARCHIVED_CANDIDATE_ID",
+    )
+    if original is None:
+        return setup_context
+    return {**setup_context, "geometry_status": "ORIGINAL_ARCHIVE_HASH_VERIFIED",
+            "original_geometry": original}
+
+
+def _verified_archive_geometry(*, candidate_id, symbol, timeframe, pattern,
+                               opened_at_ms, linkage_basis, signal_time_ms=None):
+    if (not isinstance(candidate_id, str) or not 1 <= len(candidate_id) <= 128
+            or not isinstance(timeframe, str) or not timeframe
+            or not isinstance(pattern, str) or not pattern
+            or type(opened_at_ms) is not int or opened_at_ms <= 0):
+        return None
     # Reuse archive's existing original-image and canonical geometry checks.
     # Both only read files and never access live price, Robot, PAPER or MAIN.
     from signal_archive import load_frozen_signal_geometry, load_original_signal
@@ -233,47 +253,99 @@ def attach_verified_original_geometry(
 
     meta = load_original_signal([candidate_id])
     if meta is None:
-        return setup_context
+        return None
     if (meta.get("candidate_id") != candidate_id
-            or meta.get("symbol") != symbol or setup.get("symbol") != symbol
-            or meta.get("timeframe") != setup.get("timeframe")
-            or meta.get("pattern") != setup.get("pattern")):
-        return setup_context
+            or meta.get("symbol") != symbol
+            or meta.get("timeframe") != timeframe
+            or meta.get("pattern") != pattern):
+        return None
     sent_ms = meta.get("sent_at_ms")
-    if type(sent_ms) is not int or sent_ms < 0 or sent_ms > opened_at_ms:
-        return setup_context
+    if (type(sent_ms) is not int or sent_ms < 0 or sent_ms > opened_at_ms
+            or (signal_time_ms is not None and not 0 <= signal_time_ms <= sent_ms)):
+        return None
 
     frozen = load_frozen_signal_geometry(candidate_id)
     if frozen is None:
-        return setup_context
+        return None
     try:
         _, digest = validate_snapshot(
             frozen, candidate_id=candidate_id,
-            symbol=symbol, timeframe=str(setup["timeframe"]),
+            symbol=symbol, timeframe=timeframe,
         )
     except (ValueError, TypeError, KeyError):
-        return setup_context
+        return None
     if digest != meta.get("geometry_sha256"):
-        return setup_context
+        return None
     bars = frozen.get("bars")
     if (not isinstance(bars, list) or not bars
             or type(bars[-1].get("open_time_ms")) is not int
             or bars[-1]["open_time_ms"] > sent_ms):
-        return setup_context
+        return None
 
     # Export observational geometry as-is. Do not mix with corrected owner
     # geometry, simulated Scanner lines, nor inferred decision chronology.
     return {
-        **setup_context,
-        "geometry_status": "ORIGINAL_ARCHIVE_HASH_VERIFIED",
-        "original_geometry": {
-            "schema": "BYBITSCANNER_ARCHIVED_SIGNAL_GEOMETRY_V1",
-            "source": "ORIGINAL_TELEGRAM_SIGNAL_ARCHIVE",
-            "linkage_basis": "D2_SETUP_ID_EQUALS_ARCHIVED_CANDIDATE_ID",
-            "integrity": "LOCAL_ARCHIVE_HASH_ONLY_NOT_CRYPTOGRAPHIC_PROOF",
-            "signal_id": candidate_id,
-            "sent_at_ms": sent_ms,
-            "sha256": digest,
-            "snapshot": frozen,
-        },
+        "schema": "BYBITSCANNER_ARCHIVED_SIGNAL_GEOMETRY_V1",
+        "source": "ORIGINAL_TELEGRAM_SIGNAL_ARCHIVE",
+        "linkage_basis": linkage_basis,
+        "integrity": "LOCAL_ARCHIVE_HASH_ONLY_NOT_CRYPTOGRAPHIC_PROOF",
+        "signal_id": candidate_id,
+        "sent_at_ms": sent_ms,
+        "sha256": digest,
+        "snapshot": frozen,
     }
+
+
+def project_exact_candidate_archive_geometry(snapshot, projection, d2_context):
+    """Independent observational archive proof, never a D2 setup or decisions.
+
+    The caller has already authorized and projected this exact closed episode
+    from the same PAPER snapshot. Only autonomous Robot episodes qualify.
+    An actual conflicting or unreadable D2 link is not treated as absent.
+    """
+    from .wedge_lineage import attach_verified_wedge_signals
+    from .robot_pattern_lineage import attach_verified_robot_pattern_signals
+
+    if (d2_context.get("status") not in {"D2_STORE_ABSENT", "NO_EXACT_EPISODE_LINK"}
+            or projection.get("account_id") != "paper"
+            or projection.get("owner") != "ROBOT" or projection.get("cohort") != "ROBOT"
+            or projection.get("source_revision") != getattr(snapshot, "source_revision", None)
+            or getattr(snapshot, "wedge_evidence", None) is None):
+        return None
+    row = {**projection, "execution_count": len(projection["execution_allocations"])}
+    report = {"account_id": "paper", "owner": "ROBOT",
+              "source_revision": snapshot.source_revision, "closed_episodes": [row]}
+    report = attach_verified_wedge_signals(snapshot, report)
+    report = attach_verified_robot_pattern_signals(snapshot, report)
+    proof = report["closed_episodes"][0].get("verified_signal")
+    if (not isinstance(proof, dict) or proof.get("status") != "PROVEN"
+            or proof.get("trade_episode_id") != projection["trade_episode_id"]
+            or proof.get("source_revision") != snapshot.source_revision
+            or proof.get("evidence_scope") not in {
+                "EXACT_WEDGE_CANDIDATE_ENTRY_ORDER_EXECUTION_EPISODE",
+                "EXACT_ROBOT_CANDIDATE_ENTRY_ORDER_EXECUTION_EPISODE"}):
+        return None
+    candidate_id = proof.get("candidate_id")
+    trades = [t for t in snapshot.wedge_evidence["trades"]
+              if t.get("trading_account_id") == "paper"
+              and t.get("candidate_id") == candidate_id]
+    if len(trades) != 1:
+        return None
+    trade = trades[0]
+    signal_time_ms = trade.get("signal_time_ms")
+    if (type(signal_time_ms) is not int or signal_time_ms < 0
+            or trade.get("symbol") != projection["symbol"]
+            or trade.get("direction") != projection["side"]
+            or trade.get("pattern") != proof.get("pattern")
+            or trade.get("source_timeframe") != proof.get("source_timeframe")):
+        return None
+    geometry = _verified_archive_geometry(
+        candidate_id=candidate_id, symbol=projection["symbol"],
+        timeframe=proof.get("source_timeframe"), pattern=proof.get("pattern"),
+        opened_at_ms=projection["opened_at_ms"], signal_time_ms=signal_time_ms,
+        linkage_basis="EXACT_ROBOT_CANDIDATE_ENTRY_ORDER_EXECUTION_EPISODE",
+    )
+    if geometry is None:
+        return None
+    return {"verified_signal": proof, "signal_time_ms": signal_time_ms,
+            "geometry": geometry}

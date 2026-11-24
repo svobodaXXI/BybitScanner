@@ -325,10 +325,12 @@ function ReplayChart({ document, cursor, paperOverlay, paperFacts, showTrendGeom
       // Source-original detector geometry is read-only archive evidence and
       // DISTINCT from the dynamically computed yellow H1 / blue M5 lines.
       // The exact anchors are never refitted to candles; no pre-signal leak.
-      const original = paperOverlay.status === "MATCHED" &&
-        paperFacts?.setup_context?.status === "EXACT_D2_LINK" &&
-        paperFacts.setup_context.geometry_status === "ORIGINAL_ARCHIVE_HASH_VERIFIED"
-        ? paperFacts.setup_context.original_geometry : undefined;
+      const original = paperOverlay.status === "MATCHED"
+        ? (paperFacts?.candidate_geometry?.geometry ??
+          (paperFacts?.setup_context?.status === "EXACT_D2_LINK" &&
+            paperFacts.setup_context.geometry_status === "ORIGINAL_ARCHIVE_HASH_VERIFIED"
+            ? paperFacts.setup_context.original_geometry : undefined))
+        : undefined;
       let paintedOriginal = 0;
       if (original && shown.lastTimeMs !== null && shown.lastTimeMs >= original.sent_at_ms
           && displayCandles.length >= 2) {
@@ -621,7 +623,7 @@ export function ReplayPage() {
       start: new Date(startMs).toISOString().slice(0, 16),
       end: new Date(endExclusive - 60_000).toISOString().slice(0, 16),
       pattern: paperFacts.setup_context?.status === "EXACT_D2_LINK"
-        ? paperFacts.setup_context.setup.pattern : null,
+        ? paperFacts.setup_context.setup.pattern : paperFacts.candidate_geometry?.pattern ?? null,
     };
   }, [paperFacts]);
   const paperOverlay = useMemo(
@@ -1403,7 +1405,12 @@ export function ReplayPage() {
         {" · "}JSON без криптографической подписи; не виртуальные сделки и не решения Robot.
         {paperSetupContext && (
           paperSetupContext.status !== "EXACT_D2_LINK"
-            ? " · D2: нет подтверждённой связи с исходным setup"
+            ? " · D2: нет подтверждённой связи с исходным setup" +
+              (paperFacts?.candidate_geometry
+                ? (shown.lastTimeMs !== null && shown.lastTimeMs >= paperFacts.candidate_geometry.geometry.sent_at_ms
+                  ? " · лиловая пунктирная: архив исходного кандидата (без журнала решений D2)"
+                  : " · архивная геометрия появится после времени исходного сигнала")
+                : "")
             : paperSetupVisible
               ? ` · D2: ${paperSetupContext.setup.pattern} · ${paperSetupContext.setup.timeframe} · версия ${paperSetupContext.setup.strategy_version}` +
                 (paperSetupContext.geometry_status !== "ORIGINAL_ARCHIVE_HASH_VERIFIED"

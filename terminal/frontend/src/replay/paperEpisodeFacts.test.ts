@@ -312,3 +312,40 @@ describe("PAPER mixed-controller cohorts match canonical Diary scope", () => {
     ]) expect(() => parsePaperEpisodeFacts(mixed(rows))).toThrow();
   });
 });
+
+
+describe("Exact Robot candidate archive independent of D2", () => {
+  const d2 = { status: "D2_STORE_ABSENT", source: "TRADING_DIARY_D2",
+    geometry_status: "NOT_EXPORTED", decision_scope: "D2_OBSERVATIONS_NOT_ROBOT_RUNTIME_LOG" };
+  const candidate = {
+    verified_signal: {
+      trade_episode_id: source.trade_episode_id, source_revision: source.source_revision,
+      candidate_id: "candidate-42", pattern: "Falling Wedge", source_timeframe: "5m",
+      status: "PROVEN", provenance: "DURABLE_ROBOT_TRADE_METADATA_NOT_ORIGINAL_GEOMETRY",
+      evidence_scope: "EXACT_WEDGE_CANDIDATE_ENTRY_ORDER_EXECUTION_EPISODE",
+    },
+    signal_time_ms: t + 300_000,
+    geometry: { ...originalArchive, linkage_basis: "EXACT_ROBOT_CANDIDATE_ENTRY_ORDER_EXECUTION_EPISODE" },
+  };
+  it("preserves original boundaries and truthful D2 absence", () => {
+    const imported = parsePaperEpisodeFacts({ ...source, setup_context: d2, candidate_geometry: candidate });
+    expect(imported.setup_context?.status).toBe("D2_STORE_ABSENT");
+    expect(imported.candidate_geometry?.geometry.boundaries[0].anchors)
+      .toEqual(originalArchive.snapshot.boundaries[0].anchors);
+    expect(imported.candidate_geometry?.pattern).toBe("Falling Wedge");
+  });
+  it("rejects mismatched revision, episode, candidate, timeframe, future time and conflicting D2", () => {
+    for (const patch of [
+      { source_revision: 4 }, { trade_episode_id: "te_" + "b".repeat(24) },
+      { candidate_id: "other" }, { source_timeframe: "1m" }, { status: "UNPROVEN" },
+    ]) expect(() => parsePaperEpisodeFacts({ ...source, setup_context: d2,
+      candidate_geometry: { ...candidate, verified_signal: { ...candidate.verified_signal, ...patch } },
+    })).toThrow();
+    expect(() => parsePaperEpisodeFacts({ ...source, setup_context: d2,
+      candidate_geometry: { ...candidate, signal_time_ms: originalArchive.sent_at_ms + 1 },
+    })).toThrow();
+    expect(() => parsePaperEpisodeFacts({ ...source, setup_context: { ...d2, status: "CONFLICTING_D2_LINK" },
+      candidate_geometry: candidate,
+    })).toThrow();
+  });
+});
