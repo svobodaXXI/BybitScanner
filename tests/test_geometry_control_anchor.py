@@ -265,6 +265,37 @@ class FrozenPrintPrefixTest(unittest.TestCase):
         self.assertIsNone(build_wedge_print_prefix(snapshot,current_prints=(prints[1],prints[0]),
             trade=prints[0],**args))
 
+    def test_contiguous_closed_extension_without_future_or_seed_mutation(self):
+        from copy import deepcopy
+        from dataclasses import replace
+        from terminal.market_data.wedge_control_source import build_wedge_print_prefix
+        snapshot,prints,args=self.fixture()
+        original=deepcopy(snapshot)
+        extension=tuple({"open_time_ms":at,"open":108.,"high":111.,
+                         "low":100.,"close":102.} for at in (600000,900000))
+        later=tuple(replace(p,timestamp_ms=p.timestamp_ms+600000,
+                            received_at_ms=p.received_at_ms+600000) for p in prints)
+        args={**args,"observed_from_ms":1200000,
+              "closed_extension":extension,
+              "extension_known_at_ms":(900003,1200000)}
+        result=build_wedge_print_prefix(snapshot,current_prints=later,trade=later[1],**args)
+        self.assertIsNotNone(result)
+        self.assertEqual(list(result.frame.time),[0,300000,600000,900000,1200000])
+        self.assertEqual(result.closed_known_at_ms,(300000,600000,900003,1200000))
+        self.assertEqual(result.frame.iloc[-1].low,99.99)
+        self.assertEqual(result.frame.iloc[-1].high,108.)
+        self.assertEqual(snapshot,original)
+        for patch in (
+            {"closed_extension":extension[1:],"extension_known_at_ms":(1200000,)},
+            {"extension_known_at_ms":(900003,1200005)},
+            {"extension_known_at_ms":(899999,1200000)},
+            {"closed_extension":({**extension[0],"low":999.},extension[1])},
+            {"closed_extension":({**extension[0],"open_time_ms":300000},extension[1])},
+            {"extension_known_at_ms":()},
+        ):
+            self.assertIsNone(build_wedge_print_prefix(snapshot,current_prints=later,
+                trade=later[1],**{**args,**patch}))
+
 
 if __name__ == "__main__":
     unittest.main()

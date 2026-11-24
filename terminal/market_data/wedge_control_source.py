@@ -102,12 +102,13 @@ class WedgePrintPrefix:
 
 def build_wedge_print_prefix(snapshot, *, candidate_id, symbol, timeframe,
                              closed_known_at_ms, current_prints, trade,
-                             observed_from_ms, source_valid):
+                             observed_from_ms, source_valid,
+                             closed_extension=(), extension_known_at_ms=()):
     """Use the existing immutable signal archive as the closed-bar seed.
 
-    Deliberately bounded to the immediately following source-TF bar.
-    A later bar requires a new proved closed prefix from the same owner;
-    no fabricated gaps, later OHLC, or REST call is allowed here.
+    Later source-TF bars may extend the seed only via the same owner's
+    contiguous, already-closed OHLC and actual receipt evidence.
+    No fabricated gaps, later OHLC, or REST call is allowed here.
     The caller must establish observed_from_ms and source_valid from its
     actual market owner; a publicTrade cross-sequence alone proves neither
     continuity nor the absence of dropped prints. This is an observed
@@ -120,7 +121,17 @@ def build_wedge_print_prefix(snapshot, *, candidate_id, symbol, timeframe,
         validate_snapshot(snapshot, candidate_id=candidate_id,
                           symbol=symbol, timeframe=timeframe)
         interval = TIMEFRAME_MS[str(timeframe)]
-        bars = snapshot["bars"]
+        seed = snapshot["bars"]
+        if (not isinstance(closed_extension, (tuple, list))
+                or len(closed_known_at_ms) != len(seed)
+                or len(extension_known_at_ms) != len(closed_extension)):
+            return None
+        bars = [*seed, *closed_extension]
+        # Reuse the existing source snapshot validation, including bar
+        # bounds, OHLC integrity and original identity. Never mutate it.
+        validate_snapshot({**snapshot, "bars": bars},
+                          candidate_id=candidate_id, symbol=symbol, timeframe=timeframe)
+        known_at_ms = (*closed_known_at_ms, *extension_known_at_ms)
         times = [b["open_time_ms"] for b in bars]
         if (any(t < 0 or t % interval for t in times)
                 or any(b-a != interval for a,b in zip(times,times[1:]))):
@@ -131,9 +142,8 @@ def build_wedge_print_prefix(snapshot, *, candidate_id, symbol, timeframe,
                 or not start <= trade.timestamp_ms < start+interval
                 or type(observed_from_ms) is not int
                 or not 0 <= observed_from_ms <= start
-                or len(closed_known_at_ms) != len(bars)
                 or any(type(k) is not int or not t+interval <= k <= receipt
-                       for t,k in zip(times, closed_known_at_ms))):
+                       for t,k in zip(times, known_at_ms))):
             return None
 
         # Process only the ordered prefix ending at the exact target print.
@@ -174,7 +184,7 @@ def build_wedge_print_prefix(snapshot, *, candidate_id, symbol, timeframe,
                  ("open","high","low","close")}} for b in bars]
         rows.append({"time":start, "open":prices[0], "high":max(prices),
                      "low":min(prices), "close":prices[-1]})
-        return WedgePrintPrefix(pd.DataFrame(rows), tuple(closed_known_at_ms),
+        return WedgePrintPrefix(pd.DataFrame(rows), known_at_ms,
                                 trade.trade_id)
     except (KeyError, TypeError, ValueError, AttributeError, IndexError, OverflowError):
         return None
