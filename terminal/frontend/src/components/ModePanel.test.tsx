@@ -82,6 +82,58 @@ function ModePanel(props: {
   );
 }
 
+describe("ModePanel position PnL", () => {
+  it("shows authoritative MAIN USDT above percentage, and does not fabricate missing PnL", () => {
+    const projection = {
+      ok: true as const, account_id: "main", provider: "BYBIT" as const,
+      environment: "MAINNET", status: "READY", read_only: true,
+      session_generation: 1, projection_generation: 1, wallet_balance_usdt: "100",
+      total_equity_usdt: "100", available_balance_usdt: "50", one_wv_usdt: "5",
+      positions: [{ account_id: "main", symbol: "BTCUSDT", side: "Long",
+        size: "2", average_entry: "100", mark_price: "97", unrealized_pnl: "-6" }],
+      orders: [], paper_state: null,
+    };
+    const props = {
+      mode: "TERMINAL" as const, onModeChange: vi.fn(), symbol: "BTCUSDT",
+      paperState: null, activeLimitOrders: [], refreshPaperState: async () => {},
+      sizingReferencePrice: "110", authoritativeTickSize: "0.5",
+      limitDraftState: EMPTY_LIMIT_DRAFT_STATE, dispatchLimitDraft: vi.fn(),
+      onLimitDraftConfirm: vi.fn(), onPositionSideChange: vi.fn(),
+      mutationsAllowed: false,
+    };
+    const { container, rerender } = render(<ModePanelView {...props} accountWorkspaceProjection={projection} />);
+    const lines = () => Array.from(container.querySelectorAll(".paper-position-pnl"));
+    expect(lines().map((el) => el.textContent)).toEqual(["−6.00 USDT", "−3.00%"]);
+    expect(lines().every((el) => el.classList.contains("negative"))).toBe(true);
+    rerender(<ModePanelView {...props} accountWorkspaceProjection={{
+      ...projection, positions: [{ ...projection.positions[0], unrealized_pnl: "4" }],
+    }} />);
+    expect(lines().map((el) => el.textContent)).toEqual(["+4.00 USDT", "+2.00%"]);
+    expect(lines().every((el) => el.classList.contains("positive"))).toBe(true);
+    rerender(<ModePanelView {...props} accountWorkspaceProjection={{
+      ...projection, positions: [{ ...projection.positions[0], unrealized_pnl: null }],
+    }} />);
+    expect(lines().map((el) => el.textContent)).toEqual(["—", "—"]);
+    rerender(<ModePanelView {...props} accountWorkspaceProjection={{
+      ...projection, positions: [],
+    }} />);
+    expect(lines()).toHaveLength(0);
+  });
+
+  it("shows matching PAPER gross USDT and price-move percentage", () => {
+    const { container } = render(<ModePanelView
+      mode="TERMINAL" onModeChange={vi.fn()} symbol="BTCUSDT"
+      paperState={paperState({ position_side: "Short", position_quantity: "2", average_entry: "100" }) as PaperState}
+      activeLimitOrders={[]} refreshPaperState={async () => {}}
+      sizingReferencePrice="95" authoritativeTickSize="0.5"
+      limitDraftState={EMPTY_LIMIT_DRAFT_STATE} dispatchLimitDraft={vi.fn()}
+      onLimitDraftConfirm={vi.fn()} onPositionSideChange={vi.fn()}
+    />);
+    expect(Array.from(container.querySelectorAll(".paper-position-pnl")).map((el) => el.textContent))
+      .toEqual(["+10.00 USDT", "+5.00%"]);
+  });
+});
+
 describe("ModePanel PAPER Market amounts", () => {
   const activeLimit = {
     order_id: "paper-limit-1",
