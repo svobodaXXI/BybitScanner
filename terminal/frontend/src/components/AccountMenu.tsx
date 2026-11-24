@@ -199,17 +199,47 @@ export function AccountMenu({
     setSubmitError("");
   };
 
-  const submitAccount = async () => {
+  const checkMainConnection = async () => {
     if (submitInFlight.current) return;
     submitInFlight.current = true;
     setSubmitting(true);
     setSubmitError("");
     try {
+      // Intentionally invalid schema: MAIN rejects {} before provision or Bybit access.
+      // Do not read the form, send credentials, retry automatically, or change routes.
       const response = await fetch(marketApiRoutes.manualMainAccounts, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ display_name: name.trim(), api_key: apiKey.trim(), api_secret: apiSecret }),
+        body: "{}",
+        redirect: "error",
       });
+      const payload = await response.json().catch(() => null) as { ok?: boolean; error?: string } | null;
+      setSubmitError(response.status === 400 && payload?.ok === false && payload.error === "invalid_account_payload"
+        ? "MAIN transport verified (HTTP 400). No account was submitted."
+        : `MAIN transport probe: HTTP ${response.status}. Account registration not verified.`);
+    } catch {
+      setSubmitError("MAIN transport probe: no readable HTTP response. No credentials sent.");
+    } finally {
+      submitInFlight.current = false;
+      setSubmitting(false);
+    }
+  };
+
+  const submitAccount = async () => {
+    if (submitInFlight.current) return;
+    submitInFlight.current = true;
+    setSubmitting(true);
+    setSubmitError("");
+    let stage: "PREPARE" | "FETCH" | "RESPONSE" = "PREPARE";
+    try {
+      const body = JSON.stringify({ display_name: name.trim(), api_key: apiKey.trim(), api_secret: apiSecret });
+      stage = "FETCH";
+      const response = await fetch(marketApiRoutes.manualMainAccounts, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+      });
+      stage = "RESPONSE";
       // Non-JSON replies (e.g. Nginx/owner-auth 401/413/502) must not hide
       // the failing boundary. Never reflect request contents or raw response text.
       const payload = await response.json().catch(() => null) as {
@@ -248,7 +278,7 @@ export function AccountMenu({
       closeAdd();
       await refreshManualMain();
     } catch {
-      setSubmitError("MAIN connection failed. Check Accounts before retrying.");
+      setSubmitError(`MAIN connection failed (${stage}). Check Accounts before retrying.`);
     } finally {
       submitInFlight.current = false;
       setSubmitting(false);
@@ -484,6 +514,9 @@ export function AccountMenu({
                 {submitError ? <p role="alert">{submitError}</p> : null}
                 <button className="account-add-submit-button" disabled={submitting || !name.trim() || !apiKey.trim() || !apiSecret.trim()} onClick={submitAccount} type="button">
                   {submitting ? "Validating…" : "Add Account"}
+                </button>
+                <button type="button" disabled={submitting} onClick={() => void checkMainConnection()}>
+                  Check MAIN connection (no keys)
                 </button>
                 <button type="button" disabled={submitting} onClick={() => {
                   setName(""); setApiKey(""); setApiSecret(""); setSubmitError(""); setAddKind(null);
