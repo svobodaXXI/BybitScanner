@@ -1212,7 +1212,7 @@ export function ChartPanel({
               <button type="button" className="editor-reject-signal"
                 disabled={extensionPending || reviewPending || !snapshotRevision || !barsSha256 || !onSaveGeometryReview || !referenceDrawings.length}
                 onClick={() => void saveCorrection(true)}>
-                Забраковать сигнал
+                ❌ Ошибочный сигнал
               </button>
             )}
             {lastSavedReviewLabel === "FALSE_POSITIVE" && (
