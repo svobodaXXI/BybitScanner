@@ -24,6 +24,7 @@ from terminal.application.manual_main_trading import (
 )
 from terminal.persistence.main_credential_store import create_main_credential_store
 from terminal.persistence.live_account_store import LiveAccountProjectionStore
+from terminal.persistence.mode_account_preference import ModeAccountPreferenceStore
 
 HOST = "127.0.0.1"
 PORT = 8771
@@ -78,6 +79,13 @@ class MainReadHandler(BaseHTTPRequestHandler):
         if path == PREFIX + "/health":
             self._json(200, {"ok": True, "component": "manual_main_read",
                              "trading_enabled": bool(self.trader and self.trader.enabled)})
+        elif path == PREFIX + "/terminal-preference":
+            try:
+                selected = self.accounts.terminal_preference()
+            except Exception:
+                self._json(503, {"ok": False, "error": "terminal_preference_unavailable"})
+                return
+            self._json(200, {"ok": True, "account_id": selected})
         elif path == PREFIX + "/accounts":
             self._json(200, {"ok": True, **self.accounts.catalog()})
         elif (account_id := self._account_path(path, "/executions")) is not None:
@@ -115,6 +123,9 @@ class MainReadHandler(BaseHTTPRequestHandler):
             _LOG.warning("MAIN_PROVISION stage=HTTP_RECEIVED thread=%d", get_ident())
             self._provision()
             return
+        if path == PREFIX + "/terminal-preference":
+            self._save_terminal_preference()
+            return
         trade_prefix = PREFIX + "/trade/"
         if path.startswith(trade_prefix):
             self._trade(path[len(trade_prefix):])
@@ -135,6 +146,40 @@ class MainReadHandler(BaseHTTPRequestHandler):
             self._json(503, {"ok": False, "error": "main_account_refresh_unavailable"})
             return
         self._json(200, {"ok": True, "summary": summary})
+
+    def _save_terminal_preference(self) -> None:
+        host = self.headers.get("Host", "")
+        if not host or self.headers.get("Origin", "") != "https://" + host:
+            self._json(403, {"ok": False, "error": "origin_required"})
+            return
+        if self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower() != "application/json":
+            self._json(415, {"ok": False, "error": "json_required"})
+            return
+        if self.headers.get("Transfer-Encoding"):
+            self._json(400, {"ok": False, "error": "invalid_payload"})
+            return
+        try:
+            size = int(self.headers.get("Content-Length", "-1"))
+        except ValueError:
+            size = -1
+        if not 0 < size <= 256:
+            self._json(413, {"ok": False, "error": "invalid_payload"})
+            return
+        try:
+            payload = json.loads(self.rfile.read(size))
+            if not isinstance(payload, dict) or set(payload) != {"account_id"}:
+                raise ValueError("invalid_terminal_preference")
+            selected = self.accounts.save_terminal_preference(payload["account_id"])
+        except (ValueError, TypeError, UnicodeError):
+            self._json(400, {"ok": False, "error": "invalid_terminal_preference"})
+            return
+        except LookupError:
+            self._json(404, {"ok": False, "error": "account_not_found"})
+            return
+        except Exception:
+            self._json(503, {"ok": False, "error": "terminal_preference_unavailable"})
+            return
+        self._json(200, {"ok": True, "account_id": selected})
 
     def _trade(self, operation: str) -> None:
         """Same-origin manual MAIN action, not PAPER execution."""
@@ -246,6 +291,7 @@ def main() -> None:
     accounts = ManualMainAccounts(
         create_main_credential_store(state_dir / "main.credentials.systemd"),
         LiveAccountProjectionStore(state_dir / "main.snapshots.sqlite3", check_same_thread=False),
+        terminal_preferences=ModeAccountPreferenceStore(state_dir / "terminal.preference.json"),
     )
     enabled, ceiling = enabled_from_environment()
     ledger = ManualMainTradeLedger(state_dir / "main.actions.sqlite3") if enabled and ceiling > 0 else None

@@ -35,10 +35,61 @@ export function scopedProjection(
 }
 
 function readDeviceMainId(): string | null {
-  const id = window.localStorage.getItem(MAIN_DEVICE_KEY);
-  if (!id) return null;
-  if (!MAIN_ACCOUNT_ID.test(id)) throw new Error("invalid_stored_main_account");
-  return id;
+  try {
+    const id = window.localStorage.getItem(MAIN_DEVICE_KEY);
+    return id && MAIN_ACCOUNT_ID.test(id) ? id : null;
+  } catch { return null; }
+}
+
+function clearLegacyMainId() {
+  try { window.localStorage.removeItem(MAIN_DEVICE_KEY); } catch { /* server is authoritative */ }
+}
+
+async function readTerminalPreference(): Promise<string | null> {
+  const response = await fetch(marketApiRoutes.terminalAccountPreference, { cache: "no-store" });
+  if (!response.ok) throw new Error("terminal_preference_unavailable");
+  const data = await response.json() as { ok?: boolean; account_id?: unknown };
+  if (data.ok !== true || (data.account_id !== null && data.account_id !== "paper" &&
+      (typeof data.account_id !== "string" || !MAIN_ACCOUNT_ID.test(data.account_id))))
+    throw new Error("invalid_terminal_preference");
+  return data.account_id as string | null;
+}
+
+async function saveTerminalPreference(accountId: string) {
+  const response = await fetch(marketApiRoutes.terminalAccountPreference, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ account_id: accountId }),
+  });
+  const data = await response.json() as { ok?: boolean; account_id?: unknown };
+  if (!response.ok || data.ok !== true || data.account_id !== accountId)
+    throw new Error("terminal_preference_not_saved");
+  clearLegacyMainId();
+}
+
+async function restoreTerminalPreference(): Promise<string> {
+  const saved = await readTerminalPreference();
+  if (saved !== null) {
+    clearLegacyMainId();
+    return saved;
+  }
+  const legacy = readDeviceMainId();
+  if (legacy) {
+    // The server validates the existing configured identity. A disconnect
+    // does not erase an established display binding.
+    await saveTerminalPreference(legacy);
+    return legacy;
+  }
+  return "paper";
+}
+
+async function readAutopilotPreference(): Promise<string> {
+  const response = await fetch(marketApiRoutes.modeAccountPreferences, { cache: "no-store" });
+  if (!response.ok) throw new Error("mode_preferences_unavailable");
+  const data = await response.json() as { ok?: boolean; preferences?: Preferences };
+  if (data.ok !== true || !data.preferences ||
+      (data.preferences.AUTOPILOT !== null && data.preferences.AUTOPILOT !== "paper"))
+    throw new Error("invalid_mode_preferences");
+  return "paper";
 }
 
 async function mainProjectionFor(accountId: string, refresh: boolean): Promise<AccountWorkspaceProjection> {
@@ -78,42 +129,46 @@ export function useModeAccountSelection() {
 
   useEffect(() => {
     const sequence = ++request.current;
-    void (async () => {
-      try {
-        const response = await fetch(marketApiRoutes.modeAccountPreferences, { cache: "no-store" });
-        if (!response.ok) throw new Error("mode_preferences_unavailable");
-        const payload = await response.json() as { ok?: boolean; preferences?: Preferences };
-        const selected = payload.preferences;
-        if (payload.ok !== true || !selected
-          || (selected.TERMINAL !== null && typeof selected.TERMINAL !== "string")
-          || (selected.AUTOPILOT !== null && selected.AUTOPILOT !== "paper"))
-          throw new Error("invalid_mode_preferences");
-        const localMain = readDeviceMainId();
-        const next: Preferences = {
-          TERMINAL: localMain ?? selected.TERMINAL ?? "paper",
-          AUTOPILOT: selected.AUTOPILOT ?? "paper",
-        };
-        if (sequence === request.current) {
-          setPreferences(next);
-          setReady(true);
-        }
-      } catch {
-        if (sequence === request.current) {
-          // The independent MAIN gateway must not depend on PAPER preferences.
-          let localMain: string | null = null;
-          try { localMain = readDeviceMainId(); } catch { /* fail closed */ }
-          if (localMain) {
-            setPreferences({ TERMINAL: localMain, AUTOPILOT: null });
-            setError("PAPER preferences unavailable; MAIN requires independent verification.");
-            setReady(true);
-          } else {
-            setError("Saved account selection unavailable. Trading is disabled.");
-            setReady(false);
-          }
-        }
+    let timer: number | undefined;
+    let retryDelay = 1000;
+    let terminalResolved = false;
+    let autopilotResolved = false;
+    // The two display authorities restore independently; neither waits for
+    // the other's network response. An unknown MAIN binding never means PAPER.
+    const restore = async () => {
+      if (sequence !== request.current) return;
+      if (busy.current) {
+        timer = window.setTimeout(restore, 1000);
+        return;
       }
-    })();
-    return () => { ++request.current; };
+      const jobs: Promise<void>[] = [];
+      if (!terminalResolved) jobs.push(restoreTerminalPreference().then((selected) => {
+        if (sequence !== request.current || busy.current) return;
+        terminalResolved = true;
+        setPreferences(current => ({ ...current, TERMINAL: current.TERMINAL ?? selected }));
+        setReady(true);
+      }).catch(() => {
+        if (sequence === request.current) setError("Terminal account binding unavailable; no PAPER fallback.");
+      }));
+      if (!autopilotResolved) jobs.push(readAutopilotPreference().then((selected) => {
+        if (sequence !== request.current || busy.current) return;
+        autopilotResolved = true;
+        setPreferences(current => ({ ...current, AUTOPILOT: current.AUTOPILOT ?? selected }));
+        setReady(true);
+      }).catch(() => {
+        if (sequence === request.current) setError("Autopilot preference unavailable.");
+      }));
+      await Promise.all(jobs);
+      if (sequence !== request.current) return;
+      if (terminalResolved && autopilotResolved) {
+        setError(null);
+        return;
+      }
+      timer = window.setTimeout(restore, retryDelay);
+      retryDelay = Math.min(30_000, retryDelay * 2);
+    };
+    void restore();
+    return () => { ++request.current; if (timer !== undefined) window.clearTimeout(timer); };
   }, []);
 
   const mainId = ready && preferences.TERMINAL !== "paper" ? preferences.TERMINAL : null;
@@ -122,28 +177,49 @@ export function useModeAccountSelection() {
   const refreshMain = useCallback(async () => {
     const accountId = currentMainId.current;
     if (!accountId) throw new Error("main_account_not_selected");
-    const projection = await mainProjectionFor(accountId, true);
-    if (currentMainId.current !== accountId) throw new Error("main_account_changed");
-    setMainProjection(projection);
+    try {
+      const projection = await mainProjectionFor(accountId, true);
+      if (currentMainId.current !== accountId) throw new Error("main_account_changed");
+      setMainProjection(projection);
+    } catch (reason) {
+      if (currentMainId.current === accountId) setMainProjection(null);
+      throw reason;
+    }
   }, []);
   useEffect(() => {
     let live = true;
+    let timer: number | undefined;
+    let delay = 1000;
     if (!mainId) {
       setMainProjection(null);
       return () => { live = false; };
     }
-    // A successful explicit selection already contains a verified snapshot.
     if (mainProjection?.account_id === mainId) return () => { live = false; };
     setMainProjection(null);
-    // After a gateway restart, its catalog is DISCONNECTED until a read-only
-    // refresh. Reconcile on restore rather than showing a stale saved snapshot.
-    void mainProjectionFor(mainId, true).then((projection) => {
-      if (live) setMainProjection(projection);
-    }).catch(() => {
-      if (live) setError("Selected MAIN account unavailable; no fallback to PAPER.");
-    });
-    return () => { live = false; };
-  }, [mainId]);
+    const reconnect = async () => {
+      if (!live) return;
+      if (busy.current) {
+        timer = window.setTimeout(reconnect, 1000);
+        return;
+      }
+      try {
+        const projection = await mainProjectionFor(mainId, true);
+        if (live && currentMainId.current === mainId && !busy.current) {
+          setMainProjection(projection);
+          setError(null);
+          return;
+        }
+      } catch {
+        if (live) setError("Selected MAIN account unavailable; reconnecting without PAPER fallback.");
+      }
+      if (live) {
+        timer = window.setTimeout(reconnect, delay);
+        delay = Math.min(30_000, delay * 2);
+      }
+    };
+    void reconnect();
+    return () => { live = false; if (timer !== undefined) window.clearTimeout(timer); };
+  }, [mainId, mainProjection?.account_id]);
 
   const selectAccount = useCallback(async (mode: AccountMode, account: ModeAccountDescriptor) => {
     if (!ready || busy.current) throw new Error("account_switch_in_progress");
@@ -157,22 +233,24 @@ export function useModeAccountSelection() {
       if (account.id === "paper") {
         if (account.provider !== "PAPER" || account.environment !== "PAPER"
           || account.status !== "READY") throw new Error("paper_account_not_ready");
-        const response = await fetch(marketApiRoutes.modeAccountPreferences, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ mode, account_id: account.id }),
-        });
-        const result = await response.json() as { ok?: boolean; mode?: string; account_id?: string };
-        if (!response.ok || result.ok !== true || result.mode !== mode
-          || result.account_id !== "paper") throw new Error("mode_preference_not_saved");
-        if (mode === "TERMINAL") window.localStorage.removeItem(MAIN_DEVICE_KEY);
+        if (mode === "TERMINAL") {
+          await saveTerminalPreference("paper");
+        } else {
+          const response = await fetch(marketApiRoutes.modeAccountPreferences, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ mode, account_id: account.id }),
+          });
+          const result = await response.json() as { ok?: boolean; mode?: string; account_id?: string };
+          if (!response.ok || result.ok !== true || result.mode !== mode
+            || result.account_id !== "paper") throw new Error("mode_preference_not_saved");
+        }
         setPreferences((current) => ({ ...current, [mode]: "paper" }));
       } else {
         if (mode !== "TERMINAL" || account.provider !== "BYBIT"
           || account.environment !== "MAINNET") throw new Error("main_not_allowed");
         const projection = await mainProjectionFor(account.id, true);
-        // Only a credential-free identity is stored on the current device.
-        window.localStorage.setItem(MAIN_DEVICE_KEY, account.id);
+        await saveTerminalPreference(account.id);
         setMainProjection(projection);
         setPreferences((current) => ({ ...current, TERMINAL: account.id }));
       }

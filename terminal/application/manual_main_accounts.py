@@ -23,6 +23,7 @@ from terminal.exchange.bybit_account_validation import BybitAccountValidator
 from terminal.exchange.bybit_v5_adapter import BybitCredentials, BybitV5ReadAdapter
 from terminal.persistence.credential_store import CredentialStore, StoredBybitAccount
 from terminal.persistence.live_account_store import LiveAccountProjectionStore
+from terminal.persistence.mode_account_preference import ModeAccountPreferenceStore
 
 
 _LOG = logging.getLogger(__name__)
@@ -46,10 +47,12 @@ class ManualMainAccounts:
         snapshot_store: LiveAccountProjectionStore,
         *, validator: BybitAccountValidator | None = None,
         adapter_factory=BybitV5ReadAdapter,
+        terminal_preferences: ModeAccountPreferenceStore | None = None,
     ) -> None:
         self._lock = RLock()
         self._credentials = credential_store
         self._snapshots = snapshot_store
+        self._terminal_preferences = terminal_preferences
         self._validator = validator or BybitAccountValidator()
         self._adapter_factory = adapter_factory
         self._stored = list(credential_store.load())
@@ -161,6 +164,25 @@ class ManualMainAccounts:
             if self._reconciler is None:
                 raise ManualMainAccountError("manual_main_unconfigured")
             return self._reconciler.summary(account_id)
+
+    def terminal_preference(self) -> str | None:
+        with self._lock:
+            if self._terminal_preferences is None:
+                raise ManualMainAccountError("terminal_preference_unavailable")
+            selected = self._terminal_preferences.load("TERMINAL")
+            return selected.value if selected is not None else None
+
+    def save_terminal_preference(self, account_id: str) -> str:
+        """Display binding only; no account activation, exchange call or trade grant."""
+        if not isinstance(account_id, str) or not account_id:
+            raise ValueError("invalid_terminal_account")
+        with self._lock:
+            if self._terminal_preferences is None:
+                raise ManualMainAccountError("terminal_preference_unavailable")
+            if account_id != "paper":
+                self._lookup(account_id)
+            self._terminal_preferences.save("TERMINAL", TradingAccountId(account_id))
+            return account_id
 
     def execution_history(self, account_id: str, symbol: str) -> dict[str, object]:
         """Bounded signed GET for one MAIN account and instrument, never PAPER."""
