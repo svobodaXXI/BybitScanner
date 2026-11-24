@@ -115,3 +115,70 @@ def wedge_hull_pair_allowed(upper, lower, highs, lows, candles, current_index):
     end = max(upper["points"][-1]["index"], lower["points"][-1]["index"])
     return (evaluate_strict_wedge_wicks(ul, candles, "upper", end, current_index) == []
             and evaluate_strict_wedge_wicks(ll, candles, "lower", end, current_index) == [])
+
+
+def prefer_recovered_wedge_hulls(candidates, candles):
+    """Replace only a proven defective competing boundary of the same episode.
+
+    A recovered hull must share both strict contacts, the other second
+    contact and END with a regular, equally canonical candidate. Its
+    impulse origin must be exactly the old non-strict START, and its
+    primary anchor the old secondary anchor. The old non-strict ray
+    must actually cross a wick; the corrected pair must enclose both
+    sides. Otherwise the recovered alternative cannot change selection.
+    """
+    def details(candidate):
+        g = candidate["geometry"]
+        pm = getattr(g, "pair_metrics", {}) or {}
+        seq = pm.get("anchor_sequence") or {}
+        family = seq.get("family")
+        if family not in ("rising", "falling") or not seq.get("valid"):
+            return None
+        strict, other = ((g.upper_line, g.lower_line) if family == "falling"
+                         else (g.lower_line, g.upper_line))
+        key = (family, strict.get("anchor_index"), strict.get("second_index"),
+               other.get("second_index"), g.end_index, candidate["mode_priority"])
+        return g, pm, seq, strict, other, key
+
+    originals = {}
+    additions = []
+    for i, candidate in enumerate(candidates):
+        g = candidate["geometry"]
+        pm = getattr(g, "pair_metrics", {}) or {}
+        d = details(candidate)
+        if pm.get("wedge_hull_support"):
+            additions.append((i, candidate, d))
+        elif d is not None:
+            originals.setdefault(d[-1], []).append((i, candidate, d))
+    if not additions:
+        return candidates
+    drop = {i for i, _, _ in additions}
+    if candles is None:
+        # No new source-dependent alternative in candle-free replay.
+        return [c for i, c in enumerate(candidates) if i not in drop]
+    for i, candidate, d in additions:
+        if d is None or not candidate["fresh"] or candidate["strict_wick_exception"]:
+            continue
+        g, pm, seq, strict, other, key = d
+        if (seq.get("primary_anchor") != strict.get("anchor_index")
+                or seq.get("secondary_anchor") != other.get("anchor_index")):
+            continue
+        side = pm["wedge_hull_support"]
+        if side != ("lower" if key[0] == "falling" else "upper"):
+            continue
+        if any(evaluate_strict_wedge_wicks(getattr(g, s + "_line"), candles,
+                    s, g.end_index, g.current_index) != [] for s in ("upper", "lower")):
+            continue
+        for j, old, od in originals.get(key, ()):
+            og, _, os, _, oo, _ = od
+            if (not old["fresh"] or old["strict_wick_exception"]
+                    or candidate["body_breaches"] > old["body_breaches"]
+                    or os.get("primary_anchor") != oo.get("anchor_index")
+                    or os.get("primary_anchor") != seq.get("impulse_origin_index")
+                    or os.get("secondary_anchor") != seq.get("primary_anchor")):
+                continue
+            breaches = evaluate_strict_wedge_wicks(oo, candles, side, og.end_index, og.current_index)
+            if breaches:
+                drop.discard(i)
+                drop.add(j)
+    return [c for i, c in enumerate(candidates) if i not in drop]

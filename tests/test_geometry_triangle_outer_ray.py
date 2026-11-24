@@ -162,6 +162,7 @@ class ConfirmedNonStrictHullEvidence(unittest.TestCase):
             fresh=engine._is_candidate_fresh(direct,_freshness_predicate),end=direct.end_index)
         native_calls=[]
         comparison=[]
+        compared_models={}
         native=engine.evaluate_candidate_pair
         def trace(u,l,*args,**kwargs):
             anchors=[u["anchor_index"],u["second_index"],l["anchor_index"],l["second_index"]]
@@ -170,6 +171,7 @@ class ConfirmedNonStrictHullEvidence(unittest.TestCase):
                 native_calls.append(True)
             if g is not None and anchors in (f["corrected_anchors"],f["original_anchors"]):
                 from geometry.envelope_metrics import evaluate_strict_wedge_wicks
+                compared_models[tuple(anchors)]=g
                 seq=g.pair_metrics.get("anchor_sequence")
                 comparison.append(dict(anchors=anchors,sequence=seq,
                     mode=g.pair_metrics.get("geometry_mode"),
@@ -196,7 +198,25 @@ class ConfirmedNonStrictHullEvidence(unittest.TestCase):
         self.assertEqual([winner.upper_line["anchor_index"],winner.upper_line["second_index"],
                           winner.lower_line["anchor_index"],winner.lower_line["second_index"]],
                          f["corrected_anchors"])
-        from geometry.wedge_boundaries import build_wedge_hull_support_lines, wedge_hull_pair_allowed
+        from geometry.wedge_boundaries import build_wedge_hull_support_lines, wedge_hull_pair_allowed, prefer_recovered_wedge_hulls
+        from copy import deepcopy
+        from wedge.detector import detect_structure
+        def ranked(g):
+            return dict(geometry=g,mode_priority=1,fresh=True,strict_wick_exception=False,
+                        body_breaches=engine._body_zone_breach_count(g),score=engine.rank_geometry(g))
+        previous=ranked(compared_models[tuple(f["original_anchors"])])
+        corrected=ranked(compared_models[tuple(f["corrected_anchors"])])
+        self.assertEqual(corrected["geometry"].pair_metrics["wedge_hull_support"],"lower")
+        self.assertEqual(prefer_recovered_wedge_hulls([previous,corrected],frame),[corrected])
+        self.assertEqual(prefer_recovered_wedge_hulls([corrected,previous],frame),[corrected])
+        self.assertEqual(prefer_recovered_wedge_hulls([corrected],frame),[])
+        self.assertEqual(prefer_recovered_wedge_hulls([previous,corrected],None),[previous])
+        for field,value in (("fresh",False),("mode_priority",0),("body_breaches",1)):
+            self.assertEqual(prefer_recovered_wedge_hulls([previous,dict(corrected,**{field:value})],frame),[previous])
+        different=deepcopy(corrected)
+        different["geometry"].pair_metrics["anchor_sequence"]["impulse_origin_index"]=116
+        self.assertEqual(prefer_recovered_wedge_hulls([previous,different],frame),[previous])
+        print("USUAL_DETECTION",json.dumps(detect_structure(winner,candles=frame),default=str,sort_keys=True))
         for mirrored in (False,True):
             with self.subTest(mirrored=mirrored):
                 if mirrored:
