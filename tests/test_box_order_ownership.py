@@ -453,9 +453,16 @@ class BoxOrderOwnershipTests(unittest.TestCase):
         path = Path(self.tmp.name) / "legacy.sqlite3"
         con = sqlite3.connect(path, isolation_level=None)
         con.row_factory = sqlite3.Row
-        for statement in schema.SCHEMA_STATEMENTS[:-len(schema.SCHEMA_V23_MIGRATION_STATEMENTS)]:
+        # Build exactly v22, independent of how many migrations follow v23.
+        statements = schema.SCHEMA_V1_STATEMENTS + tuple(
+            statement
+            for version in range(2, 23)
+            for statement in getattr(schema, f"SCHEMA_V{version}_MIGRATION_STATEMENTS")
+        )
+        for statement in statements:
             con.execute(statement)
         con.execute("PRAGMA user_version=22")
+        self.assertIsNone(con.execute("SELECT name FROM sqlite_master WHERE name='box_attempt_ownership'").fetchone())
         legacy = SQLiteStore(con, path, 5000)
         legacy.create_robot_candidate(candidate_id="wedge", trading_account_id=self.account,
             symbol=self.key.symbol, status="APPROVED", signal_snapshot={"pattern": "Falling Wedge"},
@@ -476,6 +483,6 @@ class BoxOrderOwnershipTests(unittest.TestCase):
             self.assertEqual(migrated.get_robot_trade("trade-1"), before)
             self.assertEqual(migrated.get_robot_candidate("wedge").status, "OPEN")
             self.assertEqual(migrated._connection.execute("PRAGMA foreign_key_check").fetchall(), [])
-            self.assertEqual(migrated._connection.execute("PRAGMA user_version").fetchone()[0], 23)
+            self.assertEqual(migrated._connection.execute("PRAGMA user_version").fetchone()[0], schema.SCHEMA_VERSION)
         finally:
             migrated.close()
