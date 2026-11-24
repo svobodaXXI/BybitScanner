@@ -98,6 +98,34 @@ class ManualMainAccountsTests(unittest.TestCase):
         self.assertEqual(len(self.c.saves), 1)
         self.assertEqual(self.v.calls, 1)
 
+    def test_provision_stage_receipts_are_sanitized_on_success_and_failure(self):
+        app = self.runtime()
+        logger = "terminal.application.manual_main_accounts"
+        with self.assertLogs(logger, level="WARNING") as captured:
+            app.provision("private-name", "private-key", "private-secret")
+        messages = "\n".join(captured.output)
+        stages = [entry.split("stage=")[1].split()[0] for entry in captured.output]
+        self.assertEqual(stages, ["WAIT_LOCK", "LOCK_ACQUIRED", "VALIDATION_BEGIN",
+                                  "VALIDATION_RETURNED", "STORAGE_BEGIN", "STORAGE_RETURNED",
+                                  "REGISTERED"])
+        for value in ("private-name", "private-key", "private-secret", self.c.accounts[0].id):
+            self.assertNotIn(value, messages)
+        with patch.object(self.v, "validate", side_effect=RuntimeError("sensitive-exception")):
+            with self.assertLogs(logger, level="WARNING") as captured:
+                with self.assertRaises(RuntimeError):
+                    app.provision("private-name", "other-key", "other-secret")
+        self.assertIn("stage=VALIDATION_FAILED", "\n".join(captured.output))
+        self.assertNotIn("sensitive-exception", "\n".join(captured.output))
+        self.assertEqual(len(self.c.saves), 1)
+        with patch.object(self.c, "save", side_effect=RuntimeError("sensitive-storage")):
+            with self.assertLogs(logger, level="WARNING") as captured:
+                with self.assertRaises(RuntimeError):
+                    app.provision("private-name", "other-key", "other-secret")
+        self.assertIn("stage=STORAGE_FAILED", "\n".join(captured.output))
+        self.assertNotIn("sensitive-storage", "\n".join(captured.output))
+        self.assertNotIn("stage=REGISTERED", "\n".join(captured.output))
+        self.assertEqual(len(app.catalog()["accounts"]), 1)
+
     def test_reject_testnet_and_duplicate_secret_change_before_persistence(self):
         self.v.environment = "TESTNET"
         app = self.runtime()
