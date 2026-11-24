@@ -98,9 +98,12 @@ describe("mode-specific account selector", () => {
     expect(paperCard).not.toHaveTextContent("PAPER · PAPER");
     expect(paperCard).not.toHaveTextContent("Подключён к Роботу");
     expect(mainCard).not.toHaveClass("is-current");
+    expect(mainCard).toHaveTextContent("Не подключён");
+    expect(mainCard.querySelector(".account-role-connected")).toBeNull();
     rerender(<AccountMenu open onToggle={onToggle} mode="TERMINAL"
       selectedAccountId={main.id} otherWorkspaceAccountId="paper" onSelectAccount={onSelectAccount} workspaceProjection={mainProjection} />);
     expect(mainCard).toHaveClass("is-verified-current");
+    expect(mainCard.querySelector(".account-role-connected")).toHaveTextContent("Подключён к Терминалу");
     expect(paperCard).not.toHaveClass("is-current");
     expect(paperCard).toHaveTextContent("Подключён к Роботу");
     expect(paperCard).not.toHaveTextContent("Текущий");
@@ -117,8 +120,8 @@ describe("mode-specific account selector", () => {
     rerender(<AccountMenu open onToggle={onToggle} mode="AUTOPILOT"
       selectedAccountId="paper" otherWorkspaceAccountId={main.id} onSelectAccount={onSelectAccount} workspaceProjection={projection} />);
     expect(paperCard).toHaveClass("is-verified-current");
-    expect(paperCard).not.toHaveTextContent("Подключён к Роботу");
-    expect(screen.getByLabelText("Manual MAIN account")).toHaveTextContent("Подключён к Терминалу");
+    expect(paperCard?.querySelector(".account-role-connected")).toHaveTextContent("Подключён к Роботу");
+    expect(screen.getByLabelText("Manual MAIN account").querySelector(".account-role-connected")).toHaveTextContent("Подключён к Терминалу");
     expect(container.querySelector(".account-card")).toBe(paperCard);
     expect(screen.queryByRole("button", { name: /Select MAIN|Refresh MAIN|All MAIN positions/ })).not.toBeInTheDocument();
     expect(container.querySelectorAll('[aria-current="true"]')).toHaveLength(1);
