@@ -1614,6 +1614,17 @@ button {
 }
 .account-card span { color: #70d49a; font-size: 0.65rem; }
 .account-refresh-button { justify-self: start; cursor: pointer; }
+.account-menu .manual-main-account button:not(:disabled) {
+  min-height: 2.75rem;
+  color: #d7e0e8;
+  border-color: #657383;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.account-menu .manual-main-account button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
 .account-refresh-error { color: #e88888 !important; }
 .account-add-button { cursor: pointer !important; color: #d7e0e8 !important; }
 .account-dialog .account-add-submit-button {
