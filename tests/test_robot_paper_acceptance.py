@@ -446,7 +446,45 @@ class RobotPaperDeterministicAcceptanceTests(unittest.TestCase):
                 self.assertEqual(admitted.status, "APPROVED")
                 self.assertIsNone(admitted.robot_state)
 
+                # A is an immutable malformed Wedge on a separate symbol.
+                # Its failure must be locally inert in this real single owner.
+                fault_id, fault_symbol = "fault-a", "FAULTUSDT"
+                fault_snapshot = _snapshot()
+                fault_snapshot["symbol"] = fault_symbol
+                fault_snapshot["geometry"]["apex"]["valid_intersection"] = False
+                _, created_a = runtime.call(
+                    lambda owner: owner.store.create_robot_candidate(
+                        candidate_id=fault_id, trading_account_id=ACCOUNT_ID,
+                        symbol=Symbol(fault_symbol), status="APPROVED",
+                        signal_snapshot=fault_snapshot,
+                        approved_at_ms=1, updated_at_ms=1,
+                    )
+                )
+                self.assertTrue(created_a)
+
                 _start_robot_monitor(runtime)
+
+                def isolated_fault():
+                    record = runtime.call(
+                        lambda owner: owner.store.get_robot_candidate(fault_id)
+                    )
+                    return record if record and record.status == "INVALIDATED" else None
+
+                isolated_a = _wait_until(isolated_fault)
+                self.assertEqual(
+                    isolated_a.robot_state["paper_quarantine"]["reason"],
+                    "FROZEN_INIT_INVALID",
+                )
+                self.assertEqual(
+                    runtime.call(lambda owner: owner.store.get_robot_runtime_state(
+                        ACCOUNT_ID
+                    )).recovery_status, "READY",
+                )
+                self.assertEqual(
+                    runtime.call(lambda owner: owner.store.load_executions_for_symbol(
+                        ACCOUNT_ID, Symbol(fault_symbol)
+                    )), (),
+                )
 
                 def candidate_record():
                     return runtime.call(lambda owner: owner.store.get_robot_candidate(CANDIDATE_ID))
@@ -552,6 +590,21 @@ class RobotPaperDeterministicAcceptanceTests(unittest.TestCase):
                 )
                 self.assertEqual(final_position.side.value, "Flat")
                 self.assertEqual(final_position.quantity.value, Decimal("0"))
+                # After B's actual event-triggered TAKE, A is still isolated;
+                # there was no A command, trade or global admission fence.
+                self.assertEqual(
+                    runtime.call(lambda owner: owner.store.get_robot_candidate(
+                        fault_id
+                    )), isolated_a,
+                )
+                self.assertIsNone(runtime.call(
+                    lambda owner: owner.store.get_robot_trade(f"robot-trade-{fault_id}")
+                ))
+                self.assertEqual(
+                    runtime.call(lambda owner: owner.store.get_robot_runtime_state(
+                        ACCOUNT_ID
+                    )).recovery_status, "READY",
+                )
             finally:
                 runtime.close()
 
