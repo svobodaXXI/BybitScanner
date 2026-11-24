@@ -1192,6 +1192,50 @@ class PaperRuntime:
         )
         self._wedge_terminal_producer.start()
 
+    def bind_robot_private_box_inspector(self, research_snapshot) -> None:
+        """Attach read-only Box audit to the existing Robot before its start.
+
+        The callback only reads an ALREADY opted-in protected hub witness.
+        This does not activate capture, open a new market feed or affect orders.
+        """
+        if self._robot_command_dispatcher is not None:
+            raise RuntimeError("Cannot bind private Box inspector after Robot start")
+        if not callable(research_snapshot):
+            raise TypeError("private Box snapshot callback must be callable")
+        from terminal.market_data.private_box_host_evidence import (
+            inspect_private_box_receipts, PrivateBoxReceiptEvidence,
+        )
+
+        def inspect(candidate_id: str) -> PrivateBoxReceiptEvidence:
+            if not self.store.is_owned_by_current_thread():
+                return PrivateBoxReceiptEvidence("UNKNOWN")
+            return inspect_private_box_receipts(
+                self.store.get_robot_candidate, research_snapshot,
+                candidate_id=candidate_id, observed_at_ms=int(time.time() * 1000),
+            )
+
+        self._robot_breakout_monitor.bind_private_box_inspector(inspect)
+
+    def inspect_robot_private_box_receipts(self, candidate_id: str):
+        """Private owner-thread research call; not exposed by an HTTP route.
+
+        The monitor thread may remain alive after durable Robot STOP. Require
+        actual (ROBOT_RUNNING, READY) before reading any optional L2 witness;
+        PAUSED, STOPPED or reconciliation are not research-authorized states.
+        """
+        from terminal.market_data.private_box_host_evidence import PrivateBoxReceiptEvidence
+
+        if not self.store.is_owned_by_current_thread():
+            return PrivateBoxReceiptEvidence("UNKNOWN")
+        try:
+            runtime = self.store.get_robot_runtime_state(self._paper_account_id)
+            if (runtime is None or runtime.mode != ROBOT_RUNNING
+                    or runtime.recovery_status != READY):
+                return PrivateBoxReceiptEvidence("UNKNOWN")
+        except Exception:
+            return PrivateBoxReceiptEvidence("UNKNOWN")
+        return self._robot_breakout_monitor.inspect_private_box(candidate_id)
+
     def bind_robot_pattern_flow_observer(self, observer) -> None:
         """Bind a read-only market-flow hint to the EXISTING Robot monitor."""
         if self._robot_command_dispatcher is not None:
@@ -1200,6 +1244,7 @@ class PaperRuntime:
 
     def start_robot_monitor(
         self, dispatcher: Callable[[Callable[["PaperRuntime"], object]], object],
+        *, private_box_research_snapshot=None,
     ) -> None:
         """Bind the Robot command dispatcher and start ticking.
 
@@ -1211,6 +1256,17 @@ class PaperRuntime:
         """
         if self._robot_command_dispatcher is not None:
             raise RuntimeError("Robot command dispatcher is already bound")
+        # Piggyback the EXISTING canonical Robot-start owner call; no extra
+        # optional queue request, service, subscription or capture enablement.
+        if private_box_research_snapshot is not None:
+            try:
+                self.bind_robot_private_box_inspector(private_box_research_snapshot)
+            except Exception as error:
+                # Research can fail without preventing protective Robot startup.
+                LOGGER.warning(
+                    "Optional private Box inspector disabled: %s",
+                    type(error).__name__,
+                )
         self._robot_command_dispatcher = dispatcher
         self._robot_breakout_monitor.start()
 

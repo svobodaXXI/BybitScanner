@@ -1,5 +1,9 @@
 """Synthetic exact-host and private L2 receipt tests; no IO or trading."""
 import unittest
+from decimal import Decimal
+
+from terminal.application.robot_breakout_monitor import RobotBreakoutMonitor
+from terminal.domain.models import TradingAccountId
 from types import SimpleNamespace as NS
 
 from terminal.market_data.private_box_host_evidence import inspect_private_box_receipts
@@ -111,6 +115,117 @@ class PrivateBoxReceiptTests(unittest.TestCase):
                 NS(trade_id="t1", timestamp_ms=2000,
                    received_at_ms=received, sequence=9),)}}
             self.assertEqual(self.audit(store, bad).status, expected)
+
+    def test_stale_complete_looking_tape_is_not_fresh_evidence(self):
+        store, good = setup()
+        # Frames and prints are internally contiguous but were received long ago.
+        self.assertEqual(self.audit(store, good, now=5000).status, "UNKNOWN")
+
+    def test_robot_owned_private_inspector_start_stop_and_error_isolation(self):
+        events = []
+        monitor = RobotBreakoutMonitor(
+            lambda: None, TradingAccountId("paper"),
+            get_closed_candle=lambda _: None,
+            action_executor=object(),
+            tick_size_provider=lambda _: Decimal("0.01"),
+            clock_ms=lambda: 2100,
+            tick_interval_s=3600,
+        )
+        monitor.bind_private_box_inspector(
+            lambda identity: events.append(identity)
+            or self.audit(*setup()),
+        )
+        self.assertEqual(monitor.inspect_private_box("box-robot-123").status, "UNKNOWN")
+        self.assertEqual(events, [])
+        try:
+            monitor.start()
+            # Start alone cannot read a book, call the inspector, or trade.
+            self.assertEqual(events, [])
+            result = monitor.inspect_private_box("box-robot-123")
+            self.assertEqual(result.status, "RECEIPTS_OBSERVED_UNATTESTED")
+            self.assertFalse(result.source_complete)
+            self.assertFalse(result.trading_authorized)
+            self.assertEqual(events, ["box-robot-123"])
+            with self.assertRaises(RuntimeError):
+                monitor.bind_private_box_inspector(lambda _: None)
+        finally:
+            monitor.close()
+        self.assertEqual(monitor.inspect_private_box("box-robot-123").status, "UNKNOWN")
+        self.assertEqual(events, ["box-robot-123"])
+        with self.assertRaises(RuntimeError):
+            monitor.bind_private_box_inspector(lambda _: None)
+
+        broken = RobotBreakoutMonitor(
+            lambda: None, TradingAccountId("paper"),
+            get_closed_candle=lambda _: None,
+            action_executor=object(),
+            tick_size_provider=lambda _: Decimal("0.01"),
+            clock_ms=lambda: 2100, tick_interval_s=3600,
+        )
+        broken.bind_private_box_inspector(
+            lambda _: (_ for _ in ()).throw(RuntimeError("research failed")))
+        try:
+            broken.start()
+            self.assertEqual(broken.inspect_private_box("box-robot-123").status, "UNKNOWN")
+        finally:
+            broken.close()
+
+    def test_optional_private_box_binding_failure_does_not_block_robot_start(self):
+        from terminal.runtime.paper_runtime import PaperRuntime
+
+        started = []
+        runtime = PaperRuntime.__new__(PaperRuntime)
+        runtime._robot_command_dispatcher = None
+        runtime._robot_breakout_monitor = NS(
+            start=lambda: started.append("started"),
+        )
+        runtime.bind_robot_private_box_inspector = (
+            lambda _: (_ for _ in ()).throw(RuntimeError("optional research failure"))
+        )
+        dispatcher = lambda _: None
+        runtime.start_robot_monitor(
+            dispatcher, private_box_research_snapshot=lambda _: None,
+        )
+        self.assertEqual(started, ["started"])
+        self.assertIs(runtime._robot_command_dispatcher, dispatcher)
+
+    def test_private_box_durable_robot_stop_pause_and_reconciliation_are_inert(self):
+        from terminal.runtime.paper_runtime import PaperRuntime
+        from terminal.market_data.private_box_host_evidence import PrivateBoxReceiptEvidence
+
+        runtime = PaperRuntime.__new__(PaperRuntime)
+        runtime._paper_account_id = TradingAccountId("paper")
+        calls = []
+        valid = PrivateBoxReceiptEvidence("RECEIPTS_OBSERVED_UNATTESTED")
+        runtime._robot_breakout_monitor = NS(
+            inspect_private_box=lambda cid: calls.append(cid) or valid,
+        )
+        state = NS(mode="ROBOT_RUNNING", recovery_status="READY")
+        runtime.store = NS(
+            is_owned_by_current_thread=lambda: True,
+            get_robot_runtime_state=lambda _: state,
+        )
+        for mode, recovery in (
+            ("ROBOT_STOPPED", "ROBOT_STOPPED"),
+            ("ROBOT_RUNNING", "PAUSED"),
+            ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED"),
+            ("ROBOT_STOPPED", "RECONCILIATION_REQUIRED"),
+        ):
+            state.mode, state.recovery_status = mode, recovery
+            self.assertEqual(
+                runtime.inspect_robot_private_box_receipts("box-robot-123").status,
+                "UNKNOWN",
+            )
+        self.assertEqual(calls, [])
+        state.mode, state.recovery_status = "ROBOT_RUNNING", "READY"
+        self.assertIs(runtime.inspect_robot_private_box_receipts("box-robot-123"), valid)
+        self.assertEqual(calls, ["box-robot-123"])
+        runtime.store.is_owned_by_current_thread = lambda: False
+        self.assertEqual(
+            runtime.inspect_robot_private_box_receipts("box-robot-123").status,
+            "UNKNOWN",
+        )
+        self.assertEqual(calls, ["box-robot-123"])
 
     def test_missing_or_reset_tape_never_claims_reconstruction(self):
         store, good = setup()
