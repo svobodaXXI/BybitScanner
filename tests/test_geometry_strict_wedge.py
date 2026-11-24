@@ -77,28 +77,52 @@ class EarlyImpulseFrozenTest(unittest.TestCase):
         def identity(g):
             return None if g is None else [g.upper_line["anchor_index"],g.upper_line["second_index"],
                     g.lower_line["anchor_index"],g.lower_line["second_index"],g.start_index,g.end_index]
-        # Read-only trace of the actual engine, not a replacement selector.
-        trace = []
+        # Read-only native evaluation and exact selection-key components.
+        # Keep all existing gates; no alternative selector.
+        trace = {}
         native = engine.evaluate_candidate_pair
         def observe(u,l,*args,**kwargs):
             result = native(u,l,*args,**kwargs)
-            ul, ll = u["line"], l["line"]
-            if ul["anchor_index"] == 75 and ll["anchor_index"] == 78:
-                record = {"anchors":[75,ul["second_index"],78,ll["second_index"]],
-                          "geometry":identity(result)}
-                if result is not None:
-                    record.update(validation=result.validation.get("valid"),
-                                  local=engine._is_candidate_local(result,len(frame)-1),
-                                  boundary=engine._is_boundary_structurally_valid(result),
-                                  sequence=engine._is_anchor_sequence_valid(result),
-                                  fresh=engine._is_candidate_fresh(result,_freshness_predicate),
-                                  compression=result.compression)
-                trace.append(record)
+            if result is None:
+                return result
+            ident = identity(result)
+            if ident[0:4] not in ([75,128,78,189], [75,128,78,148],
+                                   [128,161,148,189]):
+                return result
+            pm = result.pair_metrics
+            fit = result.envelope_metrics["formation_body_fit"]
+            seq = pm["anchor_sequence"]
+            origin = seq["impulse_origin_index"]
+            start = seq["primary_anchor"]
+            terminal = float(frame.iloc[start].high)
+            trace[tuple(ident[:4])] = dict(
+                geometry=ident,
+                validation=result.validation.get("valid"),
+                local=engine._is_candidate_local(result,len(frame)-1),
+                boundary=engine._is_boundary_structurally_valid(result),
+                sequence=engine._is_anchor_sequence_valid(result),
+                fresh=engine._is_candidate_fresh(result,_freshness_predicate),
+                mode=pm["geometry_mode"],
+                wick_exception=pm.get("strict_wick_exception_index"),
+                body_breaches=engine._body_zone_breach_count(result),
+                body_indices={side:fit[side]["body_breach_indices"] for side in ("upper","lower")},
+                score=engine.rank_geometry(result),
+                origin=origin,
+                first_impulse=terminal-float(frame.iloc[origin].low),
+                preceding_context=pm.get("pre_pattern_impulse"),
+                first_wave=terminal-float(frame.iloc[seq["secondary_anchor"]].low),
+                compression=result.compression)
             return result
         with patch.object(engine, "evaluate_candidate_pair", side_effect=observe):
             winner=engine.analyze_geometry(highs,lows,len(frame)-1,frame,_freshness_predicate)
-        print("EIGEN_NATIVE",json.dumps({"original":old_seq,"manual":new_seq,
-              "early_adjacent_pairs":trace,"winner":identity(winner)},default=str,sort_keys=True))
+        # Assert the structural boundary of the reproduced defect rather
+        # than force the manually drawn non-adjacent lower anchor.
+        for anchors in ((75,128,78,189), (75,128,78,148)):
+            record = trace[anchors]
+            self.assertTrue(all(record[k] for k in ("validation","local","boundary","sequence","fresh")))
+        self.assertIn((128,161,148,189), trace)
+        print("EIGEN_SELECTION",json.dumps({"pairs":list(trace.values()),
+              "winner":identity(winner)},default=str,sort_keys=True))
 
 
 if __name__ == "__main__":
