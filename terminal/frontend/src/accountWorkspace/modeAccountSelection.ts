@@ -221,6 +221,43 @@ export function useModeAccountSelection() {
     return () => { live = false; if (timer !== undefined) window.clearTimeout(timer); };
   }, [mainId, mainProjection?.account_id]);
 
+  // Keep the selected read-only inventory fresh after reconnect. A writable
+  // session has separate order/confirmation generation fences; never poll it
+  // here and accidentally invalidate an in-flight manual action.
+  useEffect(() => {
+    if (!mainId || mainProjection?.account_id !== mainId || !mainProjection.read_only) return;
+    const previous = mainProjection;
+    let live = true;
+    let timer: number | undefined;
+    const refreshInventory = async () => {
+      if (!live || currentMainId.current !== mainId) return;
+      if (busy.current) {
+        timer = window.setTimeout(refreshInventory, 1000);
+        return;
+      }
+      try {
+        const next = await mainProjectionFor(mainId, true);
+        if (!live || currentMainId.current !== mainId) return;
+        if (busy.current) {
+          timer = window.setTimeout(refreshInventory, 1000);
+          return;
+        }
+        setMainProjection(current => current === previous ? next : current);
+      } catch {
+        if (!live || currentMainId.current !== mainId) return;
+        if (busy.current) {
+          timer = window.setTimeout(refreshInventory, 1000);
+          return;
+        }
+        // Existing reconnect effect handles the next attempt, without PAPER fallback.
+        setMainProjection(current => current === previous ? null : current);
+        setError("Selected MAIN account unavailable; reconnecting without PAPER fallback.");
+      }
+    };
+    timer = window.setTimeout(refreshInventory, 15_000);
+    return () => { live = false; if (timer !== undefined) window.clearTimeout(timer); };
+  }, [mainId, mainProjection]);
+
   const selectAccount = useCallback(async (mode: AccountMode, account: ModeAccountDescriptor) => {
     if (!ready || busy.current) throw new Error("account_switch_in_progress");
     if (mode === "AUTOPILOT" && account.id !== "paper")
