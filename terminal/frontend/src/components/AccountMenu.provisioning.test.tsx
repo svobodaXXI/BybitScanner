@@ -21,7 +21,7 @@ describe("manual MAIN account provisioning failures", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     const { unmount } = render(<AccountMenu open onToggle={vi.fn()} mode="TERMINAL" selectedAccountId="paper" />);
-    await screen.findByText("Current");
+    await screen.findByText("Текущий");
     fireEvent.click(screen.getByRole("button", { name: "+ Add New Account" }));
     fireEvent.click(screen.getByRole("button", { name: "Bybit MAIN · Real account" }));
     fireEvent.change(screen.getByLabelText("API Key"), { target: { value: "private-key" } });
@@ -43,7 +43,7 @@ describe("manual MAIN account provisioning failures", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     const { unmount } = render(<AccountMenu open onToggle={vi.fn()} mode="TERMINAL" selectedAccountId="paper" />);
-    await screen.findByText("Current");
+    await screen.findByText("Текущий");
     fireEvent.click(screen.getByRole("button", { name: "+ Add New Account" }));
     fireEvent.click(screen.getByRole("button", { name: "Bybit MAIN · Real account" }));
     fireEvent.click(screen.getByRole("button", { name: "Check MAIN connection (no keys)" }));
@@ -82,7 +82,7 @@ describe("manual MAIN account provisioning failures", () => {
       });
       vi.stubGlobal("fetch", fetchMock);
       const { unmount } = render(<AccountMenu open onToggle={vi.fn()} mode="TERMINAL" selectedAccountId="paper" />);
-      await screen.findByText("Current");
+      await screen.findByText("Текущий");
       fireEvent.click(screen.getByRole("button", { name: "+ Add New Account" }));
       fireEvent.click(screen.getByRole("button", { name: "Bybit MAIN · Real account" }));
       for (const [label, value] of [
