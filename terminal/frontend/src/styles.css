@@ -1619,6 +1619,8 @@ button {
 }
 .account-card span { color: #e0b862; font-size: 0.65rem; }
 .account-card.is-verified-current:not(.status-disconnected):not(.status-error):not(.status-reconciling) span { color: #70d49a; }
+.account-card .account-ready-status { color: #70d49a; }
+.account-card .account-robot-role { color: #a5b2bf; }
 .account-refresh-button { justify-self: start; cursor: pointer; }
 .account-menu .manual-main-account button:not(:disabled) {
   min-height: 2.75rem;
