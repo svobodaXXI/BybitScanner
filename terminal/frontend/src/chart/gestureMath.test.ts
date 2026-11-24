@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   calculateDirectionalPinch,
+  beginDirectionalPinch,
+  advanceDirectionalPinch,
   scaleRangeAroundAnchor,
   translateLogicalRangeByPixels,
   translatePriceRangeByPixels,
@@ -30,9 +32,54 @@ describe("directional pinch math", () => {
     expect(result.yLogDelta).toBeLessThan(0);
   });
 
-  it("ignores jitter and suppresses the dominated axis", () => {
+  it("ignores small independent axis jitter", () => {
     expect(calculateDirectionalPinch(100, 100, 102, 98).axes).toBe("NONE");
     expect(calculateDirectionalPinch(100, 100, 150, 104).axes).toBe("X");
+  });
+
+  it.each([1, -1])("does not reverse when fingers cross (orientation %s)", (sign) => {
+    let state = beginDirectionalPinch(0, sign * 100);
+    let previous = 1;
+    for (const separation of [90, 40, 8, 0, -8, -100, -300, -500]) {
+      const result = advanceDirectionalPinch(state, 0, sign * separation);
+      expect(result.yScale).toBeLessThanOrEqual(previous);
+      expect(result.xScale).toBe(1);
+      expect(result.yScale).toBeGreaterThanOrEqual(0.12 - 1e-12);
+      previous = result.yScale;
+      state = result.state;
+    }
+    expect(previous).toBeCloseTo(0.12);
+    const reversed = advanceDirectionalPinch(state, 0, sign * -490);
+    expect(reversed.yScale).toBeGreaterThan(previous);
+  });
+
+  it("has no initial jump with aligned fingers and locks the first deliberate direction", () => {
+    let state = beginDirectionalPinch(0, 2);
+    const rest = advanceDirectionalPinch(state, 0, 2);
+    expect(rest.axes).toBe("NONE");
+    expect(rest.yScale).toBe(1);
+    const spread = advanceDirectionalPinch(rest.state, 0, -18);
+    expect(spread.yScale).toBeGreaterThan(1);
+    const reverse = advanceDirectionalPinch(spread.state, 0, 12);
+    expect(reverse.yScale).toBeLessThan(1);
+  });
+
+  it("keeps the accumulated scale of one axis when the other becomes dominant", () => {
+    const first = advanceDirectionalPinch(beginDirectionalPinch(100, 100), 140, 100);
+    const second = advanceDirectionalPinch(first.state, 140, 250);
+    expect(second.axes).toBe("Y");
+    expect(second.xScale).toBe(first.xScale);
+    expect(second.yScale).toBeGreaterThan(first.yScale);
+    const back = advanceDirectionalPinch(second.state, 140, 100);
+    expect(back.yScale).toBeCloseTo(1);
+    expect(back.xScale).toBe(first.xScale);
+  });
+
+  it("returns the changed axis to its initial scale instead of leaving a stale viewport", () => {
+    const moved = advanceDirectionalPinch(beginDirectionalPinch(100, 100), 120, 100);
+    const back = advanceDirectionalPinch(moved.state, 100, 100);
+    expect(back.axes).toBe("X");
+    expect(back.xScale).toBeCloseTo(1);
   });
 
   it("keeps an anchor at the same normalized position", () => {
