@@ -7,6 +7,7 @@ This service never imports Robot, PAPER, admission, STOP/TAKE or private API.
 from __future__ import annotations
 
 import argparse
+import base64
 import importlib.util
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -17,9 +18,11 @@ from pathlib import Path
 import re
 from secrets import token_hex
 import threading
+import subprocess
 import sys
 from typing import Callable
 from urllib.parse import parse_qs, unquote, urlencode, urlsplit
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 import webbrowser
 
@@ -216,6 +219,64 @@ def run_local_simulation(
 
 
 
+def _windows_public_kline_response(url: str) -> bytes:
+    """One bounded Windows HTTPS GET, restricted to the public Bybit kline API."""
+    parts = urlsplit(url)
+    if (parts.scheme, parts.netloc, parts.path, parts.fragment) != (
+            "https", "api.bybit.com", "/v5/market/kline", ""):
+        raise ValueError("untrusted public market URL")
+    params = parse_qs(parts.query, strict_parsing=True)
+    if (set(params) != {"category", "symbol", "interval", "limit", "end"}
+            or any(len(values) != 1 for values in params.values())
+            or params["category"] != ["linear"] or params["interval"] != ["5"]
+            or not SYMBOL_RE.fullmatch(params["symbol"][0])
+            or not re.fullmatch(r"[0-9]{1,4}", params["limit"][0])
+            or not 1 <= int(params["limit"][0]) <= 1000
+            or not re.fullmatch(r"[0-9]{1,16}", params["end"][0])):
+        raise ValueError("invalid public market URL")
+    # Pass the validated URL as data, not executable shell text. No credentials,
+    # redirects, certificate overrides or exchange writes. Bound body and time.
+    script = r"""
+$ErrorActionPreference = 'Stop'
+$request = [Net.HttpWebRequest]::Create($env:BS_PUBLIC_KLINE_URL)
+$request.Method = 'GET'
+$request.AllowAutoRedirect = $false
+$request.Timeout = 30000
+$request.ReadWriteTimeout = 30000
+$request.Accept = 'application/json'
+$request.UserAgent = 'BybitScanner-Local-Research-Replay/1.0'
+$response = $request.GetResponse()
+try {
+    if ([int]$response.StatusCode -ne 200) { throw 'public_market_http_rejected' }
+    $stream = $response.GetResponseStream()
+    $buffer = New-Object byte[] 65536
+    $body = New-Object IO.MemoryStream
+    try {
+        while (($n = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+            if ($body.Length + $n -gt 2000000) { throw 'public_market_response_too_large' }
+            $body.Write($buffer, 0, $n)
+        }
+        [Console]::Write([Convert]::ToBase64String($body.ToArray()))
+    } finally {
+        $body.Dispose()
+        $stream.Dispose()
+    }
+} finally { $response.Dispose() }
+"""
+    env = os.environ.copy()
+    env["BS_PUBLIC_KLINE_URL"] = url
+    shell = Path(env["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"
+    encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    result = subprocess.run(
+        [str(shell), "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+        env=env, capture_output=True, check=True, timeout=40,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    if len(result.stdout) > ((MAX_RESPONSE_BYTES + 2) // 3) * 4:
+        raise ValueError("unexpectedly large public market response")
+    return base64.b64decode(result.stdout, validate=True)
+
+
 def fetch_public_klines(symbol: str, interval: str, limit: int, *, end_ms: int):
     """Public read-only exchange adapter; deliberately no signed/private APIs."""
     if not SYMBOL_RE.fullmatch(symbol) or interval != "5":
@@ -231,8 +292,18 @@ def fetch_public_klines(symbol: str, interval: str, limit: int, *, end_ms: int):
         headers={"User-Agent": "BybitScanner-Local-Research-Replay/1.0", "Accept": "application/json"},
         method="GET",
     )
-    with urlopen(request, timeout=12) as response:
-        raw = response.read(MAX_RESPONSE_BYTES + 1)
+    try:
+        with urlopen(request, timeout=12) as response:
+            raw = response.read(MAX_RESPONSE_BYTES + 1)
+    except (TimeoutError, ConnectionError, URLError) as exc:
+        # On the owner's Windows host urllib stalled while the same public
+        # endpoint returned valid data via PowerShell. Retry transport errors
+        # once through Windows HTTPS; never retry HTTP/TLS rejection.
+        reason = exc.reason if isinstance(exc, URLError) else exc
+        if (os.name != "nt" or isinstance(exc, HTTPError)
+                or not isinstance(reason, (TimeoutError, ConnectionError))):
+            raise
+        raw = _windows_public_kline_response(request.full_url)
     if len(raw) > MAX_RESPONSE_BYTES:
         raise ValueError("unexpectedly large public market response")
     payload = json.loads(raw)
