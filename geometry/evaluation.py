@@ -25,7 +25,9 @@ from .touches import analyze_touches
 from .validation import validate_geometry
 from .model import GeometryModel
 from .pair_metrics import calculate_pair_metrics
-from .envelope_metrics import calculate_envelope_metrics, evaluate_strict_wedge_wicks
+from .envelope_metrics import (
+    calculate_envelope_metrics, evaluate_strict_wedge_wicks, is_isolated_strict_wick,
+)
 from .pre_pattern import detect_pre_pattern_impulse
 
 def evaluate_candidate_pair(
@@ -97,10 +99,11 @@ def evaluate_candidate_pair(
     )
 
     # Strict containment is a construction condition, not a ranking penalty.
-    # The owner permits only a separately proven single-wick exception; that
-    # exception remains disabled until real supporting evidence is pinned.
+    # One independently supported, body-contained wick is a lower-quality
+    # exception. No tolerance for multiple crossings or a structural contact.
     # Falling = upper strict, rising = lower strict. Triangle stays unchanged.
     strict_side = None
+    strict_wick_exception_index = None
     upper_slope = upper_line.get("slope", 0)
     lower_slope = lower_line.get("slope", 0)
     if upper_slope > 0 and lower_slope > 0:
@@ -113,8 +116,16 @@ def evaluate_candidate_pair(
         strict_breaches = evaluate_strict_wedge_wicks(
             strict_line, candles, strict_side, end_index, current_index
         )
-        if strict_breaches is None or strict_breaches:
+        if strict_breaches is None or len(strict_breaches) > 1:
             return None
+        if strict_breaches:
+            index = strict_breaches[0]
+            points = upper_points if strict_side == "upper" else lower_points
+            if not is_isolated_strict_wick(
+                strict_line, candles, strict_side, index, end_index, points
+            ):
+                return None
+            strict_wick_exception_index = index
 
     #
     # Apex
@@ -179,6 +190,9 @@ def evaluate_candidate_pair(
 
     if pair_metrics is None:
         return None
+
+    if strict_wick_exception_index is not None:
+        pair_metrics["strict_wick_exception_index"] = strict_wick_exception_index
 
     pre_pattern_impulse = (
         detect_pre_pattern_impulse(

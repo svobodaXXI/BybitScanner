@@ -1177,6 +1177,42 @@ def evaluate_strict_wedge_wicks(line, candles, side, end_index, current_index):
         return None
 
 
+def is_isolated_strict_wick(line, candles, side, index, end_index, points):
+    """One interior wick, body contained, independently supported line.
+
+    The caller has already measured exactly one strict-side excursion.
+    Require the two actual line contacts and at least one additional
+    confirmed clean support from the native candidate. Never use the
+    anomalous candle as a contact or as the formation end. No new ATR or
+    price-distance threshold; support uses the existing candidate rule.
+    """
+    try:
+        start = line["anchor_index"]
+        second = line["second_index"]
+        if not start < index < end_index or index == second:
+            return False
+        row = candles.iloc[index]
+        o, c = float(row.open), float(row.close)
+        projected = line_value(line, index)
+        if not all(math.isfinite(v) and v > 0 for v in (o, c, projected)):
+            return False
+        body = max(o, c) if side == "upper" else min(o, c)
+        product = float(line["slope"]) * index
+        epsilon = 4 * (math.ulp(product) + math.ulp(float(line["intercept"]))
+                       + math.ulp(body) + math.ulp(projected))
+        delta = body - projected if side == "upper" else projected - body
+        if delta > epsilon:
+            return False
+        # Keep the structural pivot list intact. The exceptional wick may
+        # not itself be part of the candidate's confirmed support.
+        support = {p["index"] for p in points}
+        if index in support or not {start, second}.issubset(support):
+            return False
+        return len({i for i in support if start <= i <= end_index}) >= 3
+    except (KeyError, TypeError, ValueError, AttributeError, OverflowError, IndexError):
+        return False
+
+
 def evaluate_formation_body_fit(upper_line, lower_line, candles, end_index):
     """Body evidence for each boundary on its own primary-anchor..END interval.
 

@@ -133,5 +133,115 @@ class PonsStrictSupportCase(unittest.TestCase):
         self.assertEqual(geometry.end_index, 186)
 
 
+class SingleWickOwnerEvidence(unittest.TestCase):
+    def test_axl_manual_boundary_has_only_one_wick_not_body_crossing(self):
+        # Manual geometry evidence only, NOT a native signal replay.
+        f = json.loads((FIXTURE.parent / "AXLUSDT_5m_single_wick_20261107.json").read_text())
+        rows = f["candles"]
+        self.assertEqual(hashlib.sha256(json.dumps(rows, separators=(",", ":")).encode()).hexdigest(),
+                         f["ohlc_sha256"])
+        frame = pd.DataFrame(rows, columns=f["columns"]) / f["price_scale"]
+        offset = f["source_index_offset"]
+        a, b = (i-offset for i in f["corrected_upper"])
+        pa, pb = frame.iloc[a].high, frame.iloc[b].high
+        slope = (pb-pa)/(b-a)
+        line = dict(anchor_index=a, second_index=b, slope=slope, intercept=pa-slope*a)
+        outside = evaluate_strict_wedge_wicks(line, frame, "upper", b, len(frame)-1)
+        self.assertEqual([i+offset for i in outside], f["expected_strict_breach"])
+        i = outside[0]
+        self.assertLessEqual(max(frame.iloc[i].open, frame.iloc[i].close),
+                             slope*i+line["intercept"])
+        self.assertEqual(evaluate_strict_wedge_wicks(
+            dict(anchor_index=a, slope=(frame.iloc[i].high-pa)/(i-a),
+                 intercept=pa-(frame.iloc[i].high-pa)/(i-a)*a),
+            frame, "upper", b, len(frame)-1), [])
+        # Manual second contact is not a confirmed 3/3 pivot; do not claim
+        # automatic recovery or relax structural anchor confirmation.
+        highs, _ = find_pivots(frame.copy(), min_change=0)
+        self.assertNotIn(b, [p["index"] for p in highs])
+
+
+class SingleWickAcceptanceContract(unittest.TestCase):
+    """Controlled perturbations of the frozen native CLUSDT geometry.
+
+    The artificial wick is not a claimed historical owner annotation.
+    Re-run native pivot generation and keep the exact candidate anchors.
+    """
+    @classmethod
+    def setUpClass(cls):
+        StrictWedgeOwnerCase.setUpClass()
+        cls.frame = StrictWedgeOwnerCase.frame
+
+    def pair(self, frame):
+        highs, lows = find_pivots(frame.copy())
+        def pick(points, a, b):
+            matches = [c for c in build_candidate_lines(points)
+                       if (c["anchor_index"], c["second_index"]) == (a, b)]
+            self.assertEqual(len(matches), 1)
+            return matches[0]
+        upper, lower = pick(highs, 140, 189), pick(lows, 138, 178)
+        end = max(upper["points"][-1]["index"], lower["points"][-1]["index"])
+        breaches = evaluate_strict_wedge_wicks(lower["line"], frame, "lower", end, len(frame)-1)
+        result = evaluate_candidate_pair(upper, lower, highs=highs, lows=lows,
+                                         candles=frame, current_index=len(frame)-1)
+        return breaches, result
+
+    def test_isolated_wick_with_clean_support_is_lower_quality_candidate(self):
+        frame = self.frame.copy()
+        frame.loc[160, "low"] = 85.03
+        breaches, geometry = self.pair(frame)
+        self.assertEqual(breaches, [160])
+        self.assertIsNotNone(geometry, "single body-contained wick must not erase otherwise supported pair")
+        self.assertEqual(geometry.pair_metrics["strict_wick_exception_index"], 160)
+        self.assertEqual((geometry.lower_line["anchor_index"], geometry.lower_line["second_index"]),
+                         (138, 178))
+
+    def test_body_crossing_and_two_wicks_remain_rejected(self):
+        frame = self.frame.copy()
+        frame.loc[160, "low"] = 85.03
+        frame.loc[160, "open"] = 85.03
+        breaches, geometry = self.pair(frame)
+        self.assertEqual(breaches, [160])
+        self.assertIsNone(geometry)
+        frame = self.frame.copy()
+        frame.loc[160, "low"] = 85.03
+        frame.loc[161, "low"] = 85.06
+        breaches, geometry = self.pair(frame)
+        self.assertEqual(breaches, [160, 161])
+        self.assertIsNone(geometry)
+
+    def test_mirrored_single_wick_and_support_guard(self):
+        from geometry.envelope_metrics import is_isolated_strict_wick
+        frame = self.frame.copy()
+        frame.loc[160, "low"] = 85.03
+        _, g = self.pair(frame)
+        self.assertIsNotNone(g)
+        line = g.lower_line
+        points = g.candidate_points["lower"]
+        self.assertTrue(is_isolated_strict_wick(line, frame, "lower", 160, g.end_index, points))
+        self.assertFalse(is_isolated_strict_wick(line, frame, "lower", 160, g.end_index,
+                                                [p for p in points if p["index"] in (138,178)]))
+        self.assertFalse(is_isolated_strict_wick(line, frame, "lower", 160, g.end_index,
+                                                points + [{"index":160, "price":85.03}]))
+        ceiling = 200.
+        mirrored = frame.copy()
+        for key, source in (("open","open"),("close","close"),("high","low"),("low","high")):
+            mirrored[key] = ceiling-frame[source]
+        upper = {**line, "slope":-line["slope"], "intercept":ceiling-line["intercept"]}
+        self.assertEqual(evaluate_strict_wedge_wicks(upper, mirrored, "upper",
+                                                    g.end_index, len(frame)-1), [160])
+        self.assertTrue(is_isolated_strict_wick(upper, mirrored, "upper", 160, g.end_index, points))
+        mirrored.loc[160,"close"] = mirrored.loc[160,"high"]
+        self.assertFalse(is_isolated_strict_wick(upper, mirrored, "upper", 160, g.end_index, points))
+
+    def test_clean_candidate_beats_higher_score_single_wick(self):
+        from tests.test_geometry_candidate_selection_freshness import _StubGeometry, _select
+        clean = _StubGeometry("clean", 1., mode="CANONICAL")
+        anomaly = _StubGeometry("single_wick", 999., mode="CANONICAL")
+        anomaly.pair_metrics["strict_wick_exception_index"] = 160
+        self.assertIs(_select([anomaly, clean]), clean)
+        self.assertIs(_select([clean, anomaly]), clean)
+
+
 if __name__ == "__main__":
     unittest.main()
