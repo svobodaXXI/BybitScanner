@@ -73,7 +73,7 @@ it("keeps correction form left and all three quick actions bottom-right", async 
   ]);
   expect(within(left as HTMLElement).getByRole("textbox", { name: "Комментарий к исправлению" })).toBeInTheDocument();
   expect(within(left as HTMLElement).getByRole("button", { name: "Передать исправление" })).toBeInTheDocument();
-  expect(within(left as HTMLElement).getByRole("button", { name: "Забраковать сигнал" })).toBeInTheDocument();
+  expect(within(left as HTMLElement).getByRole("button", { name: "❌ Ошибочный сигнал" })).toBeInTheDocument();
   expect(within(bottom as HTMLElement).getAllByRole("button").map((button) => button.textContent)).toEqual([
     "Показать следующие свечи", "Актуальный график", "Создать новый сигнал",
   ]);
@@ -193,7 +193,7 @@ it("records rejection separately without publishing edited geometry or an altern
   };
   const view = render(<ChartPanel {...props} />);
   fireEvent.change(screen.getByRole("combobox", { name: "Правильный паттерн" }), { target: { value: "Triangle" } });
-  const reject = screen.getByRole("button", { name: "Забраковать сигнал" });
+  const reject = screen.getByRole("button", { name: "❌ Ошибочный сигнал" });
   fireEvent.click(reject);
   expect(await screen.findByRole("alert")).toHaveTextContent("Нет подтверждения");
   expect(screen.queryByText("Сигнал забракован")).toBeNull();
