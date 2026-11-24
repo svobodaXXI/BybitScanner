@@ -181,3 +181,87 @@ def inspect_private_box_receipts(
     return PrivateBoxReceiptEvidence("RECEIPTS_OBSERVED_UNATTESTED", **host,
                                      observed_book_frames=len(frames),
                                      observed_prints=len(eligible))
+
+
+class PrivateBoxCapture:
+    """One optional Box witness; called by the existing Robot lifecycle.
+
+    No scheduler, network subscription, file IO or trading authority. The
+    caller supplies the exact durable Robot readiness and canonical store.
+    A changed host/revision must obtain a fresh vendor snapshot.
+    """
+
+    def __init__(self, hub) -> None:
+        self._hub = hub
+        self._owner = object()
+        self._host: PrivateBoxReceiptEvidence | None = None
+        self._witness = None
+
+    def close(self) -> None:
+        host = self._host
+        if host is not None:
+            self._hub.end_protected_research_capture(
+                host.symbol, owner_token=self._owner,
+            )
+        self._host = None
+        self._witness = None
+
+    def sync(self, get_candidate, candidate_ids, *, robot_ready: bool,
+             observed_at_ms: int) -> PrivateBoxReceiptEvidence:
+        """Attach only to an already protected exact APPROVED Box host."""
+        if robot_ready is not True:
+            self.close()
+            return PrivateBoxReceiptEvidence("UNKNOWN")
+        try:
+            selected = None
+            for candidate_id in sorted(set(candidate_ids)):
+                # Reuse the exact identity/parent/approval checks. No
+                # book or tape access occurs during host selection.
+                host = inspect_private_box_receipts(
+                    get_candidate, lambda _symbol: None,
+                    candidate_id=candidate_id, observed_at_ms=observed_at_ms,
+                )
+                if host.status == "NO_RECEIPT":
+                    selected = host
+                    break
+            if selected != self._host:
+                self.close()
+            if selected is None:
+                return PrivateBoxReceiptEvidence("NO_PROVEN_HOST")
+            self._host = selected
+            self._witness = self._hub.begin_protected_research_capture(
+                selected.symbol, owner_token=self._owner,
+            )
+            return selected
+        except Exception:
+            self.close()
+            return PrivateBoxReceiptEvidence("UNKNOWN")
+
+    def observe(self, get_candidate, *, robot_ready: bool,
+                observed_at_ms: int) -> PrivateBoxReceiptEvidence:
+        """Read only our exact witness; never accept a replacement host."""
+        if robot_ready is not True:
+            self.close()
+            return PrivateBoxReceiptEvidence("UNKNOWN")
+        host = self._host
+        witness = self._witness
+        if host is None or witness is None:
+            return PrivateBoxReceiptEvidence("NO_RECEIPT")
+        try:
+            current = inspect_private_box_receipts(
+                get_candidate, lambda _symbol: None,
+                candidate_id=host.candidate_id, observed_at_ms=observed_at_ms,
+            )
+            if current != host:
+                self.close()
+                return PrivateBoxReceiptEvidence("UNKNOWN")
+            return inspect_private_box_receipts(
+                get_candidate,
+                lambda symbol: self._hub.private_protected_research_snapshot(
+                    symbol, expected_witness=witness,
+                ),
+                candidate_id=host.candidate_id, observed_at_ms=observed_at_ms,
+            )
+        except Exception:
+            self.close()
+            return PrivateBoxReceiptEvidence("UNKNOWN")
