@@ -165,7 +165,8 @@ def run_local_simulation(
             and status["wedge_risk_profile_present"]):
         raise ValueError("Локальный движок, pandas или профиль риска отсутствует")
     from research.simulator_v2.wedge_cli import (
-        MAX_MANIFEST_BYTES, parse_manifest, parse_utc_minute, run_from_time_machine_config,
+        MAX_MANIFEST_BYTES, parse_manifest, parse_utc_minute, parse_run_settings,
+        run_from_time_machine_config,
     )
     from research.simulator_v2.history import last_closed_m1_boundary_ms
     from research.local_replay_viewer.m1_preparation import prepare_m1_manifest
@@ -184,6 +185,7 @@ def run_local_simulation(
             or not isinstance(profile["scanner"], dict)
             or not isinstance(profile["risk"], dict)):
         raise ValueError("explicit local Wedge risk profile is required")
+    scanner_config, _ = parse_run_settings(profile)
     # Legacy imported archive remains read-only; new preparations return
     # a range manifest from the same validated daily provenance/cache.
     latest = last_closed_m1_boundary_ms()
@@ -204,7 +206,7 @@ def run_local_simulation(
         data_dir=SIM_DATA, symbol=request_data["symbol"],
         start_ms=parse_utc_minute(request_data["start_utc"]),
         end_inclusive_ms=parse_utc_minute(request_data["end_utc_inclusive"]),
-        window_bars=profile["scanner"]["window_bars"],
+        window_bars=scanner_config.window_bars,
         latest_closed_boundary_ms=latest, legacy_proofs=legacy_proofs,
     )
     # The original runner independently rechecks the manifest and each SHA.
