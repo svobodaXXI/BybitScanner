@@ -19,7 +19,8 @@ def build_strict_wedge_support_lines(highs, lows, upper, lower, candles, current
         ("lower", lows, local_lows, lower),
     ):
         structural = {p["index"] for p in pivots}
-        seen = {(c["anchor_index"], c["second_index"]) for c in existing}
+        seen = {(c["anchor_index"], c["second_index"]) for c in existing
+                if isinstance(c, dict) and "anchor_index" in c and "second_index" in c}
         # Only consider the missing geometric support, not a new START.
         # Short contacts still need the normal full support span.
         extra = []
@@ -41,11 +42,15 @@ def build_strict_wedge_support_lines(highs, lows, upper, lower, candles, current
     return result[0], result[1]
 
 
+def is_strict_wedge_support(candidate):
+    return isinstance(candidate, dict) and bool(candidate.get("strict_wedge_support"))
+
+
 def strict_support_pair_allowed(upper, lower):
-    if lower.get("strict_wedge_support") and upper.get("strict_wedge_support"):
+    if is_strict_wedge_support(lower) and is_strict_wedge_support(upper):
         return False
-    if upper.get("strict_wedge_support"):
-        return not lower.get("triangle_only") and lower["line"]["slope"] < 0
-    if lower.get("strict_wedge_support"):
-        return not upper.get("triangle_only") and upper["line"]["slope"] > 0
+    if is_strict_wedge_support(upper):
+        return isinstance(lower, dict) and not lower.get("triangle_only") and lower.get("line", {}).get("slope", 0) < 0
+    if is_strict_wedge_support(lower):
+        return isinstance(upper, dict) and not upper.get("triangle_only") and upper.get("line", {}).get("slope", 0) > 0
     return True

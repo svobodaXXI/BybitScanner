@@ -45,7 +45,9 @@ from .evaluation import (
 )
 
 from .touches import _atr_series
-from .wedge_boundaries import build_strict_wedge_support_lines, strict_support_pair_allowed
+from .wedge_boundaries import (
+    build_strict_wedge_support_lines, is_strict_wedge_support, strict_support_pair_allowed,
+)
 
 from .ranking import (
     rank_geometry
@@ -356,8 +358,8 @@ def analyze_geometry(
 
             if not strict_support_pair_allowed(upper_candidate, lower_candidate):
                 continue
-            if (upper_candidate.get("strict_wedge_support") or
-                    lower_candidate.get("strict_wedge_support")) and not anchor_order_possible(
+            if (is_strict_wedge_support(upper_candidate) or
+                    is_strict_wedge_support(lower_candidate)) and not anchor_order_possible(
                         upper_candidate["line"], lower_candidate["line"], highs, lows):
                 continue
 
