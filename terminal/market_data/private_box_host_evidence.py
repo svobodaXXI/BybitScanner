@@ -156,6 +156,7 @@ def inspect_private_box_receipts(
         return PrivateBoxReceiptEvidence("NO_RECEIPT", **host)
     seen = set()
     last = None
+    last_received = None
     for item in eligible:
         try:
             received = item.received_at_ms
@@ -168,8 +169,14 @@ def inspect_private_box_receipts(
                 return PrivateBoxReceiptEvidence("UNKNOWN", **host)
             seen.add(trade_id)
             last = stamp, seq
+            last_received = received
         except (AttributeError, TypeError):
             return PrivateBoxReceiptEvidence("UNKNOWN", **host)
+    # A historically coherent but now stale tape is not a current host receipt.
+    if (prior is None or last_received is None
+            or observed_at_ms - prior[4] > max_quote_age_ms
+            or observed_at_ms - last_received > max_quote_age_ms):
+        return PrivateBoxReceiptEvidence("UNKNOWN", **host)
     # Raw receipt fragments do not prove a gap-free publicTrade stream or fill.
     return PrivateBoxReceiptEvidence("RECEIPTS_OBSERVED_UNATTESTED", **host,
                                      observed_book_frames=len(frames),
