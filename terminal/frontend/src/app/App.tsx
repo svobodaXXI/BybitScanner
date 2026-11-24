@@ -30,6 +30,7 @@ import { isEditorReviewPattern, matchesStoredGeometryReview, type GeometryReview
 import type { Candle } from "../contracts/marketData";
 import type { PaperOpenPosition } from "../contracts/trading";
 import type { RobotTradeMarker } from "../chart/robotTradeMarkers";
+import { useMainExecutionHistory } from "../accountWorkspace/manualMainReadProjection";
 import { parseRobotPositionOrigin, type RobotPositionOrigin } from "../autopilot/robotPositionOrigin";
 import { useRobotSignalGeometry } from "../autopilot/useRobotSignalGeometry";
 import { RobotExecutionJournal } from "../components/RobotExecutionJournal";
@@ -514,6 +515,13 @@ export function App() {
     };
   }, [mode, activeRobotTradeId, robotPosition?.symbol]);
 
+  const mainChartAccountId = mode === "TERMINAL" && !accountWorkspace.switching
+    && accountProjection?.provider === "BYBIT" && accountProjection.environment === "MAINNET"
+    && ["READY", "READ_ONLY"].includes(accountProjection.status)
+    ? accountProjection.account_id : null;
+  const mainChartPosition = mainChartAccountId !== null
+    ? projectLiveProtectionPosition(accountProjection, tradingSymbol) : null;
+  const mainExecutionHistory = useMainExecutionHistory(mainChartAccountId, tradingSymbol);
   const liveProtectionPosition = liveProtectionAllowed
     ? projectLiveProtectionPosition(accountProjection, tradingSymbol)
     : null;
@@ -1795,7 +1803,10 @@ export function App() {
           }}
           onTakeEdit={beginTakeEdit}
           onTakeDelete={() => deleteProtection("TAKE")}
-          averageEntryPrice={mode === "TERMINAL" && protectionPositionSide !== "Flat" || mode === "AUTOPILOT" && robotPosition ? protectionAverageEntry : null}
+          averageEntryPrice={mainChartAccountId !== null ? mainChartPosition?.averageEntry ?? null
+            : mode === "TERMINAL" && protectionPositionSide !== "Flat" || mode === "AUTOPILOT" && robotPosition ? protectionAverageEntry : null}
+          mainTradeMarkers={mainChartAccountId !== null ? mainExecutionHistory.markers : []}
+          mainHistoryStatus={mainChartAccountId !== null ? mainExecutionHistory.status : undefined}
           readOnly={mode === "AUTOPILOT"}
           positionFooter={mode === "AUTOPILOT" ? (
             <RobotExecutionJournal
