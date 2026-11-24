@@ -212,7 +212,7 @@ export function ChartPanel({
   robotTradeMarkers?: readonly RobotTradeMarker[];
   /** Account-scoped MAIN factual executions; display does not grant trading rights. */
   mainTradeMarkers?: readonly RobotTradeMarker[];
-  mainHistoryStatus?: "loading" | "ready" | "unavailable";
+  mainHistoryStatus?: "loading" | "ready" | "stale" | "unavailable";
   editorMode?: boolean;
   /** Read-only source geometry; only supplied from a verified signal snapshot. */
   referenceDrawings?: readonly DrawingObject[];
@@ -1346,10 +1346,11 @@ export function ChartPanel({
         })()}
         {!editorMode && !readOnly && mainHistoryStatus && (
           <output aria-live="polite" style={{ position: "absolute", left: 4, bottom: 32,
-            zIndex: 5, fontSize: 10, color: mainHistoryStatus === "unavailable" ? "#ffdcaa" : "#8996a3",
+            zIndex: 5, fontSize: 10, color: mainHistoryStatus === "unavailable" || mainHistoryStatus === "stale" ? "#ffdcaa" : "#8996a3",
             background: "var(--chart-bg)", pointerEvents: "none" }}>
             {mainHistoryStatus === "ready" ? "MAIN: исполнения за 7 суток"
-              : mainHistoryStatus === "loading" ? "MAIN: загрузка исполнений…" : "MAIN: исполнения недоступны"}
+              : mainHistoryStatus === "loading" ? "MAIN: загрузка исполнений…"
+              : mainHistoryStatus === "stale" ? "MAIN: сохранённые исполнения, обновление недоступно" : "MAIN: исполнения недоступны"}
           </output>
         )}
         {robotMarkerShapes.length > 0 ? (

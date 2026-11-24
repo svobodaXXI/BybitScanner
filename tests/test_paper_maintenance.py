@@ -3990,6 +3990,83 @@ def test_monolith_no_stage_update_restores_frontend_without_stop(
     assert "READY: already installed exact release and frontend restored" in capsys.readouterr().out
 
 
+
+def test_active_paper_same_sha_frontend_recovery_has_no_stop_or_restart(
+    tmp_path, monkeypatch, capsys,
+):
+    from tools import paper_maintenance as maintenance
+    from tools import vps_terminal_frontend_publish as publish
+    from tools import vps_release_identity as identity
+
+    sha = "a" * 40
+    root = tmp_path / "installed"
+    root.mkdir()
+    bundle = tmp_path / "sealed-dist"
+    done = {"frontend": False}
+    calls = []
+    monkeypatch.setattr(maintenance, "REPO", root)
+    monkeypatch.setattr(maintenance, "_prepare_approved_editor_stage", lambda *_a: None)
+    monkeypatch.setattr(maintenance, "_installed_frontend_exact_receipt",
+                        lambda *_a: done["frontend"])
+    monkeypatch.setattr(maintenance, "_verified_installed_frontend_stage",
+                        lambda *_a: tmp_path / "trusted-stage")
+    monkeypatch.setattr(maintenance, "_prepare_editor_frontend_bundle",
+                        lambda *_a, **_kw: bundle)
+    monkeypatch.setattr(identity, "verify_release", lambda *_a: sha)
+    monkeypatch.setattr(maintenance, "_paper_full_readiness",
+                        lambda **_kw: "READY: PAPER_AUTO / Robot / protection")
+    monkeypatch.setattr(publish, "inspect_bundle",
+                        lambda b, s: calls.append(("inspect", b, s)))
+    def publish_once(s, **kw):
+        calls.append(("publish", s, kw["bundle"]))
+        done["frontend"] = True
+        return "FRONTEND_READY: exact"
+    monkeypatch.setattr(publish, "publish_frontend", publish_once)
+    monkeypatch.setattr(maintenance, "resume_installed_release",
+                        lambda *_a, **_kw: pytest.fail("must not resume live PAPER"))
+    monkeypatch.setattr(maintenance, "RuntimeShutdown",
+                        lambda **_kw: pytest.fail("must not STOP live PAPER"))
+    monkeypatch.setattr(maintenance, "start_installed_paper_from_editor",
+                        lambda *_a, **_kw: pytest.fail("must not START live PAPER"))
+    monkeypatch.setattr(maintenance, "deploy_staged_editor_only",
+                        lambda *_a, **_kw: pytest.fail("must not deploy Gitless release"))
+    assert maintenance.main([sha, "--action", "update-and-start"]) == 0
+    assert calls == [("inspect", bundle, sha), ("publish", sha, bundle)]
+    assert "active PAPER preserved" in capsys.readouterr().out
+
+
+def test_active_paper_same_sha_frontend_publish_failure_preserves_runtime(
+    tmp_path, monkeypatch, capsys,
+):
+    from tools import paper_maintenance as maintenance
+    from tools import vps_terminal_frontend_publish as publish
+    from tools import vps_release_identity as identity
+
+    sha = "a" * 40
+    root = tmp_path / "installed"
+    root.mkdir()
+    monkeypatch.setattr(maintenance, "REPO", root)
+    monkeypatch.setattr(maintenance, "_prepare_approved_editor_stage", lambda *_a: None)
+    monkeypatch.setattr(maintenance, "_installed_frontend_exact_receipt", lambda *_a: False)
+    monkeypatch.setattr(maintenance, "_verified_installed_frontend_stage",
+                        lambda *_a: tmp_path / "trusted-stage")
+    monkeypatch.setattr(maintenance, "_prepare_editor_frontend_bundle",
+                        lambda *_a, **_kw: tmp_path / "sealed-dist")
+    monkeypatch.setattr(identity, "verify_release", lambda *_a: sha)
+    monkeypatch.setattr(maintenance, "_paper_full_readiness",
+                        lambda **_kw: "READY: PAPER_AUTO / Robot / protection")
+    monkeypatch.setattr(publish, "inspect_bundle", lambda *_a: None)
+    monkeypatch.setattr(publish, "publish_frontend",
+                        lambda *_a, **_kw: (_ for _ in ()).throw(
+                            publish.FrontendPublishBlocked("index changed")))
+    monkeypatch.setattr(maintenance, "resume_installed_release",
+                        lambda *_a, **_kw: pytest.fail("must not resume live PAPER"))
+    monkeypatch.setattr(maintenance, "RuntimeShutdown",
+                        lambda **_kw: pytest.fail("must not STOP live PAPER"))
+    assert maintenance.main([sha, "--action", "update-and-start"]) == 2
+    assert "BLOCKED: active_PAPER_frontend_publication" in capsys.readouterr().out
+
+
 def test_monolith_no_stage_update_does_not_claim_complete_without_frontend(
     monkeypatch, capsys,
 ):

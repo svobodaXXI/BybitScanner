@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { completeHourlyCandles, nextClosedCandleCursor, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations, visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy, type ReplayDocument } from "./replayModel";
+import { replayPricePrecision, completeHourlyCandles, nextClosedCandleCursor, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations, visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy, type ReplayDocument } from "./replayModel";
 
 describe("native local Wedge and Ikigai M5 observation boundaries", () => {
   const t = Date.UTC(2026, 10, 8);
@@ -1228,5 +1228,25 @@ describe("standalone SIMULATION viewer contract", () => {
       events: doc.events.map((e, i) => i === 0
         ? { ...e, candle: { ...e.candle!, end_ms: e.time_ms + 300000 } } : e),
     })).toThrow(/закрытая свеча/);
+  });
+});
+
+describe("replay candle price scale precision", () => {
+  const bar = (open: number, high = open, low = open, close = open) => ({
+    start_ms: 0, end_ms: 300000, open, high, low, close, volume: 1,
+  });
+  it("distinguishes low-priced OHLC rather than rounding to cents", () => {
+    const candles = [bar(0.08119, 0.08122, 0.08117, 0.0812)];
+    const before = JSON.stringify(candles);
+    const precision = replayPricePrecision(candles);
+    expect(precision).toBe(5);
+    expect(candles[0].open.toFixed(precision)).toBe("0.08119");
+    expect(JSON.stringify(candles)).toBe(before);
+  });
+  it("handles tiny scientific notation, normal prices, and empty/rewound data", () => {
+    expect(replayPricePrecision([bar(0.000000123)])).toBe(9);
+    expect(replayPricePrecision([bar(64000.5)])).toBe(2);
+    expect(replayPricePrecision([])).toBe(2);
+    expect(replayPricePrecision([bar(0.08119), bar(1.234567)])).toBe(6);
   });
 });

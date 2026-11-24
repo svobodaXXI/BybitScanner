@@ -12,6 +12,21 @@ export type ReplayCandle = {
   close: number;
   volume: number;
 };
+/** Display resolution of revealed candle prices, NOT exchange tick-size authority.
+ * Candle numbers have no guaranteed trailing zeros or instrument metadata.
+ * Use the native price format, not execution VWAP precision or trading rules.
+ */
+export function replayPricePrecision(candles: readonly ReplayCandle[]): number {
+  let precision = 2;
+  for (const candle of candles) {
+    for (const price of [candle.open, candle.high, candle.low, candle.close]) {
+      if (!Number.isFinite(price) || price <= 0) continue;
+      const [mantissa, exponent = "0"] = price.toString().split("e");
+      precision = Math.max(precision, (mantissa.split(".")[1]?.length ?? 0) - Number(exponent));
+    }
+  }
+  return Math.min(12, precision);
+}
 /** True closed H1 OHLCV bars aggregated from twelve contiguous public Bybit M5 bars.
  * Partial H1 hours and gaps are never painted: the 12th M5 close is required.
  * This is candle aggregation, not changing the chart's visual zoom.

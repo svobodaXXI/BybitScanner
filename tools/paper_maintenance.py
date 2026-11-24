@@ -1629,7 +1629,6 @@ def _paper_full_readiness(*, root: Path, env_file: Path | None, readiness=None,
             if not readiness():
                 raise ValueError("Robot readiness rejected")
         else:
-            import sqlite3
             from tools.stop_robot_runtime import _database_path
             db = _database_path(root, _environment(env_file))
             with sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True) as conn:
@@ -3451,6 +3450,35 @@ def main(argv=None) -> int:
                       + str(exc).replace(chr(10), " ")[:160]
                       + "; no STOP, restart or PAPER START")
                 return 2
+            # Recovery of an already installed exact-SHA UI does not need to
+            # interrupt a proven healthy PAPER owner. This is NOT permission to
+            # publish frontend sources from a newer commit or a second release.
+            active_paper = _paper_full_readiness(
+                root=REPO, env_file=args.env_file, target=args.sha,
+                require_gitless_telegram=True,
+            )
+            if active_paper.startswith("READY:"):
+                from tools.vps_terminal_frontend_publish import (
+                    FrontendPublishBlocked, inspect_bundle, publish_frontend,
+                )
+                try:
+                    inspect_bundle(bundle, args.sha)
+                    published = publish_frontend(
+                        args.sha, bundle=bundle, root=REPO,
+                    )
+                except (FrontendPublishBlocked, OSError, ValueError, UnicodeError) as exc:
+                    print("BLOCKED: active_PAPER_frontend_publication:"
+                          + type(exc).__name__ + "; no STOP or restart")
+                    return 2
+                if (not published.startswith("FRONTEND_READY:")
+                        or not _installed_frontend_exact_receipt(args.sha)):
+                    print("BLOCKED: active_PAPER_frontend_postcondition_unproven;"
+                          " no STOP or restart")
+                    return 2
+                print("READY: active PAPER preserved; exact installed frontend"
+                      " restored without STOP")
+                return 0
+            # Otherwise keep the original protected EDITOR_ONLY-only recovery.
             if main([args.sha, "--env-file", str(args.env_file),
                      "--resume-installed-editor-only"]) != 0:
                 return 2
