@@ -30,6 +30,17 @@ describe("Telegram Robot execution marker parity", () => {
     expect(TELEGRAM_SELL_COLOR).toBe("#d50000");
   });
 
+  it("supports seconds and daily candle intervals without projecting through gaps", () => {
+    const t = 1800000000000;
+    const bars = [0, 15000, 45000].map(delta => ({
+      time: new Date(t + delta).toISOString(), open: 1, high: 2, low: 0.5, close: 1.5,
+    }));
+    const marker = { time_ms: t + 16000, price: "1.234", side: "Buy" as const, filled: true };
+    expect(visibleRobotTradeMarkers([marker], bars, "15s")[0]?.logical).toBe(1);
+    expect(visibleRobotTradeMarkers([{ ...marker, time_ms: t + 31000 }], bars, "15s")).toEqual([]);
+    expect(visibleRobotTradeMarkers([{ ...marker, time_ms: t + 1000 }], bars.slice(0,1), "1d")[0]?.logical).toBe(0);
+  });
+
   it("never moves executions outside real candles or substitutes OHLC prices", () => {
     const t = 1800000000000;
     expect(visibleRobotTradeMarkers([
