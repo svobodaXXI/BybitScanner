@@ -58,6 +58,7 @@ export function ModePanel({
                   onToggle={props.onAccountToggle ?? (() => {})}
                   workspaceProjection={props.accountWorkspaceProjection ?? null}
                   mode={props.onModeAccountSelect ? "AUTOPILOT" : undefined} selectedAccountId={props.modeAccountId}
+                  otherWorkspaceAccountId={props.otherWorkspaceAccountId}
                   onSelectAccount={props.onModeAccountSelect}
                   modeAccountError={props.modeAccountError} />}
               />
@@ -67,6 +68,7 @@ export function ModePanel({
               workspaceProjection: props.accountWorkspaceProjection ?? null,
               mode: props.onModeAccountSelect ? "AUTOPILOT" : undefined,
               selectedAccountId: props.modeAccountId,
+              otherWorkspaceAccountId: props.otherWorkspaceAccountId,
               onSelectAccount: props.onModeAccountSelect,
               modeAccountError: props.modeAccountError,
             }}
