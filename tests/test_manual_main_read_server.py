@@ -20,6 +20,16 @@ from terminal.runtime.manual_main_read_server import (
 class FakeMainAccounts:
     def __init__(self):
         self.refreshed = []
+        self.selected = None
+
+    def terminal_preference(self):
+        return self.selected
+
+    def save_terminal_preference(self, account_id):
+        if account_id not in ("paper", "bybit-abc"):
+            raise LookupError()
+        self.selected = account_id
+        return account_id
 
     def catalog(self):
         return {"accounts": [{"id": "bybit-abc", "display_name": "MAIN",
@@ -87,6 +97,22 @@ class MainReadGatewayTests(unittest.TestCase):
         status, health, _ = self.request("/api/manual-main/health")
         self.assertEqual((status, health["trading_enabled"]), (200, False))
 
+    def test_terminal_preference_is_owner_origin_scoped_and_does_not_refresh(self):
+        route = "/api/manual-main/terminal-preference"
+        self.assertIsNone(self.request(route)[1]["account_id"])
+        body = b'{"account_id":"bybit-abc"}'
+        self.assertEqual(self.request(route, method="POST", body=body)[0], 403)
+        def save(payload):
+            return self.request_with_origin(payload, route=route)
+        self.assertEqual(save(body)[0], 200)
+        self.assertEqual(self.request(route)[1]["account_id"], "bybit-abc")
+        self.assertEqual(save(b'{"account_id":"bybit-missing"}')[0], 404)
+        self.assertEqual(save(b'{"account_id":"paper","mode":"AUTOPILOT"}')[0], 400)
+        self.assertEqual(self.request(route)[1]["account_id"], "bybit-abc")
+        self.assertEqual(save(b'{"account_id":"paper"}')[0], 200)
+        self.assertEqual(self.request(route)[1]["account_id"], "paper")
+        self.assertEqual(self.app.refreshed, [])
+
     def test_execution_history_get_only_and_validated_scope(self):
         route = "/api/manual-main/accounts/bybit-abc/executions"
         status, payload, headers = self.request(route + "?symbol=BTCUSDT")
@@ -139,8 +165,8 @@ class MainReadGatewayTests(unittest.TestCase):
             self.assertNotEqual(status, 201)
             self.assertNotIn("private-secret", str(result))
 
-    def request_with_origin(self, body):
-        req = Request(self.url + "/api/manual-main/accounts", data=body, method="POST",
+    def request_with_origin(self, body, *, route="/api/manual-main/accounts"):
+        req = Request(self.url + route, data=body, method="POST",
                       headers={"Content-Type": "application/json",
                                "Origin": "https://127.0.0.1:" + str(self.server.server_address[1])})
         try:
