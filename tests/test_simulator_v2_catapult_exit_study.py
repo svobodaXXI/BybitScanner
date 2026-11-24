@@ -75,8 +75,9 @@ class CatapultHypothesisMechanics(unittest.TestCase):
         self.assertEqual(result.action, "HOLD")
 
     def test_profitable_fade_reduces_only_part_with_costs_both_directions(self):
-        for direction, price, best in (
-            ("LONG", "101", "101.5"), ("SHORT", "99", "98.5"),
+        for direction, price, best, expected_net_for_partial in (
+            ("LONG", "101", "101.5", "0.3892"),
+            ("SHORT", "99", "98.5", "0.3908"),
         ):
             with self.subTest(direction=direction):
                 result = evaluate_exit(
@@ -88,7 +89,7 @@ class CatapultHypothesisMechanics(unittest.TestCase):
                 )
                 self.assertEqual(result.action, "PARTIAL_EXIT_PREVIEW")
                 self.assertEqual(result.fraction_to_close, D("0.25"))
-                self.assertGreater(result.estimated_net_if_exited, 0)
+                self.assertEqual(result.estimated_net_if_exited, D(expected_net_for_partial))
                 self.assertIsNone(result.unrounded_stop_preview)
 
     def test_negative_mark_versus_fees_never_pretends_profitable_partial(self):
