@@ -7,6 +7,8 @@ on:
       - "geometry/evaluation.py"
       - "geometry/engine.py"
       - "geometry/wedge_boundaries.py"
+      - "geometry/control_anchor.py"
+      - "tests/test_geometry_control_anchor.py"
       - "tests/test_geometry_formation_fit.py"
       - "geometry/envelope_metrics.py"
       - "tests/test_geometry_strict_wedge_owner.py"
@@ -40,3 +42,5 @@ jobs:
         run: python -m unittest -v tests.test_geometry_strict_wedge_owner
       - name: Verify frozen eleven-case formation fit and selection
         run: python -m unittest -v tests.test_geometry_formation_fit
+      - name: Verify dynamic control anchor tick sequences
+        run: python -m unittest -v tests.test_geometry_control_anchor
