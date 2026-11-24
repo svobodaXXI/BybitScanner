@@ -6,7 +6,11 @@ owner store and protected MarketDataHub witness. No trade authorization.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import json
+import os
+import tempfile
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import Callable
 
 from terminal.market_data.research_l2_rest_anchor import _vendor_id
@@ -181,3 +185,156 @@ def inspect_private_box_receipts(
     return PrivateBoxReceiptEvidence("RECEIPTS_OBSERVED_UNATTESTED", **host,
                                      observed_book_frames=len(frames),
                                      observed_prints=len(eligible))
+
+
+class PrivateBoxCapture:
+    """One optional Box witness; called by the existing Robot lifecycle.
+
+    No scheduler, network subscription, file IO or trading authority. The
+    caller supplies the exact durable Robot readiness and canonical store.
+    A changed host/revision must obtain a fresh vendor snapshot.
+    """
+
+    def __init__(self, hub) -> None:
+        self._hub = hub
+        self._owner = object()
+        self._host: PrivateBoxReceiptEvidence | None = None
+        self._witness = None
+
+    def close(self) -> None:
+        host = self._host
+        if host is not None:
+            self._hub.end_protected_research_capture(
+                host.symbol, owner_token=self._owner,
+            )
+        self._host = None
+        self._witness = None
+
+    def sync(self, get_candidate, candidate_ids, *, robot_ready: bool,
+             observed_at_ms: int) -> PrivateBoxReceiptEvidence:
+        """Attach only to an already protected exact APPROVED Box host."""
+        if robot_ready is not True:
+            self.close()
+            return PrivateBoxReceiptEvidence("UNKNOWN")
+        try:
+            selected = None
+            for candidate_id in sorted(set(candidate_ids)):
+                # Reuse the exact identity/parent/approval checks. No
+                # book or tape access occurs during host selection.
+                host = inspect_private_box_receipts(
+                    get_candidate, lambda _symbol: None,
+                    candidate_id=candidate_id, observed_at_ms=observed_at_ms,
+                )
+                if host.status == "NO_RECEIPT":
+                    selected = host
+                    break
+            if selected != self._host:
+                self.close()
+            if selected is None:
+                return PrivateBoxReceiptEvidence("NO_PROVEN_HOST")
+            self._host = selected
+            self._witness = self._hub.begin_protected_research_capture(
+                selected.symbol, owner_token=self._owner,
+            )
+            return selected
+        except Exception:
+            self.close()
+            return PrivateBoxReceiptEvidence("UNKNOWN")
+
+    def observe(self, get_candidate, *, robot_ready: bool,
+                observed_at_ms: int, save=None, observation_clock=None) -> PrivateBoxReceiptEvidence:
+        """Read only our exact witness; never accept a replacement host."""
+        if robot_ready is not True:
+            self.close()
+            return PrivateBoxReceiptEvidence("UNKNOWN")
+        host = self._host
+        witness = self._witness
+        if host is None or witness is None:
+            return PrivateBoxReceiptEvidence("NO_RECEIPT")
+        try:
+            current = inspect_private_box_receipts(
+                get_candidate, lambda _symbol: None,
+                candidate_id=host.candidate_id, observed_at_ms=observed_at_ms,
+            )
+            if current != host:
+                self.close()
+                return PrivateBoxReceiptEvidence("UNKNOWN")
+            detached = self._hub.private_protected_research_snapshot(
+                host.symbol, expected_witness=witness,
+            )
+            # Timestamp the completed detached read, not its start: ingress
+            # may advance while copying. Future receipts remain rejected.
+            if observation_clock is not None:
+                observed_at_ms = observation_clock()
+            result = inspect_private_box_receipts(
+                get_candidate, lambda symbol: detached if symbol == host.symbol else None,
+                candidate_id=host.candidate_id, observed_at_ms=observed_at_ms,
+            )
+            # Never persist a different revision that raced host selection.
+            current = inspect_private_box_receipts(
+                get_candidate, lambda _symbol: None,
+                candidate_id=host.candidate_id, observed_at_ms=observed_at_ms,
+            )
+            if (current != host
+                    or result.candidate_id != host.candidate_id
+                    or result.state_revision != host.state_revision
+                    or result.snapshot_sha256 != host.snapshot_sha256):
+                self.close()
+                return PrivateBoxReceiptEvidence("UNKNOWN")
+            if save is not None and result.status == "RECEIPTS_OBSERVED_UNATTESTED":
+                # Pass the SAME detached source used for validation, never
+                # a second snapshot or a different candidate's older prints.
+                book, trades = detached["book"], detached["trades"]
+                save(result, {
+                    "book": book,
+                    "trades": {**trades, "prints": tuple(
+                        item for item in trades["prints"]
+                        if type(getattr(item, "received_at_ms", None)) is int
+                        and item.received_at_ms >= host.approved_at_ms
+                    )},
+                })
+            return result
+        except Exception:
+            self.close()
+            return PrivateBoxReceiptEvidence("UNKNOWN")
+
+
+def save_first_private_box_receipt(path: Path, result: PrivateBoxReceiptEvidence,
+                                   detached: dict, *, allow_write) -> bool:
+    """Retain ONE bounded owner-private sample, never overwrite prior evidence.
+
+    This is a local diagnostic file, not a journal or public reporting path.
+    A later owner-controlled export is separate. No completeness claim.
+    """
+    if (result.status != "RECEIPTS_OBSERVED_UNATTESTED"
+            or result.source_complete or result.trading_authorized
+            or path.exists() or not allow_write()):
+        return False
+    book, trades = detached["book"], detached["trades"]
+    payload = json.dumps({
+        "schema": "PAPER_BOX_PRIVATE_RECEIPT_V1",
+        "host": asdict(result),
+        "book": book,
+        "trades": {**trades, "prints": [asdict(p) for p in trades["prints"]]},
+        "source_complete": False,
+        "trading_authorized": False,
+    }, default=str, separators=(",", ":")).encode("utf-8")
+    if len(payload) > 8 * 1024 * 1024:
+        return False
+    temporary = None
+    try:
+        # NamedTemporaryFile has owner-only permissions. Same-directory link
+        # atomically publishes the finished file WITHOUT replacing a sample.
+        with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as output:
+            temporary = Path(output.name)
+            output.write(payload)
+        if not allow_write():
+            return False
+        try:
+            os.link(temporary, path)
+        except FileExistsError:
+            return False
+        return True
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)

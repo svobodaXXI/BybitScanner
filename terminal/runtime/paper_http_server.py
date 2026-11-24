@@ -1536,7 +1536,8 @@ class SerializedPaperRuntime:
                     raise RuntimeError("protection ingress pending during shutdown proof")
                 self._shutdown_sealed = True
 
-    def start_robot_monitor(self, *, private_box_research_snapshot=None) -> None:
+    def start_robot_monitor(self, *, private_box_research_snapshot=None,
+                            private_box_capture=None) -> None:
         """Bind self.call as the owned PaperRuntime's Robot command dispatcher
         and start RobotBreakoutMonitor's background thread.
 
@@ -1547,6 +1548,7 @@ class SerializedPaperRuntime:
         """
         self.call(lambda runtime: runtime.start_robot_monitor(
             self.call, private_box_research_snapshot=private_box_research_snapshot,
+            private_box_capture=private_box_capture,
         ))
 
     def enqueue_book_update(self, book_update_id: str) -> None:
@@ -5615,8 +5617,14 @@ def main() -> None:
                 ))
         # One canonical Robot-start request also binds optional PRIVATE Box
         # inspection; no extra owner RPC, capture, subscription or public API.
+        from terminal.market_data.private_box_host_evidence import PrivateBoxCapture
+        # Owner-authorized (#1253) ONE private sample. Lifecycle is the existing
+        # PAPER Robot monitor; no extra process, subscription or start command.
+        # Source changes have no effect until separately authorized installation.
         runtime.start_robot_monitor(
             private_box_research_snapshot=hub.private_protected_research_snapshot,
+            private_box_capture=(PrivateBoxCapture(hub),
+                                 database_path.with_suffix(".box-l2-private.json")),
         )
         if pattern_flow_observer is not None:
             pattern_flow_observer.start()

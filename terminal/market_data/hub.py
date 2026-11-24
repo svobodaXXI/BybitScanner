@@ -222,6 +222,7 @@ class _ProtectedResearchCapture:
     Overflow and reconnect invalidate the whole witness, not just its oldest row.
     """
     context: SymbolContext
+    owner_token: object | None = field(default=None, repr=False)
     capture_book: bool = field(default=True, init=False)
     book_frames: deque[tuple[int, dict]] = field(
         default_factory=lambda: deque(maxlen=1024),
@@ -444,7 +445,7 @@ class MarketDataHub:
         return passive
 
     def begin_protected_research_capture(
-        self, symbol: str,
+        self, symbol: str, *, owner_token: object | None = None,
     ) -> _ProtectedResearchCapture | None:
         """Attach only to an already subscribed protected SymbolContext.
 
@@ -458,23 +459,27 @@ class MarketDataHub:
                 return None
             existing = self._protected_research
             if existing is not None:
-                return existing if existing.context is full else None
-            witness = _ProtectedResearchCapture(full)
+                return existing if (existing.context is full
+                                    and existing.owner_token is owner_token) else None
+            witness = _ProtectedResearchCapture(full, owner_token=owner_token)
             self._protected_research = witness
             return witness
 
-    def end_protected_research_capture(self, symbol: str) -> bool:
-        """Release research bytes only; protected subscriptions keep running."""
+    def end_protected_research_capture(
+        self, symbol: str, *, owner_token: object | None = None,
+    ) -> bool:
+        """Release only the caller's witness, never a protected subscription."""
         with self._lock:
             witness = self._protected_research
-            if witness is None or witness.context.symbol != symbol:
+            if (witness is None or witness.context.symbol != symbol
+                    or witness.owner_token is not owner_token):
                 return False
             self._protected_research = None
             witness.close()
             return True
 
     def private_protected_research_snapshot(
-        self, symbol: str,
+        self, symbol: str, *, expected_witness: _ProtectedResearchCapture | None = None,
     ) -> dict[str, object] | None:
         """Private in-process read ONLY of an already-active protected witness.
 
@@ -486,6 +491,7 @@ class MarketDataHub:
             witness = self._protected_research
             context = self._contexts.get(symbol)
             if (witness is None or context is None
+                    or (expected_witness is not None and witness is not expected_witness)
                     or witness.context is not context or self._stop.is_set()):
                 return None
             generation = context.generation

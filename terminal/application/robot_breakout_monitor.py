@@ -25,6 +25,7 @@ from __future__ import annotations
 import hashlib
 from contextlib import contextmanager
 import threading
+import time
 from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Callable, Mapping, Protocol
@@ -292,6 +293,8 @@ class RobotBreakoutMonitor:
         self._get_pattern_flow_evidence = get_pattern_flow_evidence
         # Optional PRIVATE research audit; no active poll, subscription or order path.
         self._private_box_inspector: Callable[[str], object] | None = None
+        self._private_box_capture = None
+        self._private_box_epoch = None
         # Resting entry LIMITs become fill-capable the moment they are durable, so
         # protection coverage for the symbol must already be listening. Without a
         # bound arm this monitor never creates a resting entry LIMIT (fail closed).
@@ -350,6 +353,73 @@ class RobotBreakoutMonitor:
         if not callable(inspector):
             raise TypeError("private Box inspector must be callable")
         self._private_box_inspector = inspector
+
+    def bind_private_box_capture(self, capture, path) -> None:
+        """Only the existing PAPER monitor may own the optional capture."""
+        if (self._started or self._stop.is_set()
+                or self._private_box_capture is not None
+                or self._account_id.value != "paper"):
+            raise RuntimeError("private Box capture must bind before PAPER Robot start")
+        self._private_box_capture = (capture, path)
+
+    def _private_box_capture_pass(self) -> None:
+        """Bounded observation outside the trading tick and PAPER owner thread."""
+        from terminal.market_data.private_box_host_evidence import save_first_private_box_receipt
+
+        capture, path = self._private_box_capture
+        try:
+            if path.exists():
+                capture.close()
+                return
+            store = self._store()
+
+            def ready_epoch():
+                if self._stop.is_set():
+                    return None
+                state = store.get_robot_runtime_state(self._account_id)
+                if (state is None or state.mode != "ROBOT_RUNNING"
+                        or state.recovery_status != "READY"):
+                    return None
+                return state.version
+
+            epoch = ready_epoch()
+            if epoch != self._private_box_epoch:
+                capture.close()
+                self._private_box_epoch = epoch
+            if epoch is None or path.exists():
+                capture.close()
+                return
+            ids = tuple(record.candidate_id for record in
+                        store.load_robot_candidates_by_status(self._account_id, ("APPROVED",))
+                        if record.candidate_id.startswith("box-robot-"))
+            capture.sync(store.get_robot_candidate, ids,
+                         robot_ready=ready_epoch() == epoch, observed_at_ms=self._now_ms())
+
+            def save(result, detached):
+                def still_authorized():
+                    if ready_epoch() != epoch:
+                        return False
+                    record = store.get_robot_candidate(result.candidate_id)
+                    return (record is not None and record.status == "APPROVED"
+                            and record.state_revision == result.state_revision
+                            and record.snapshot_sha256 == result.snapshot_sha256)
+
+                save_first_private_box_receipt(
+                    path, result, detached, allow_write=still_authorized,
+                )
+
+            capture.observe(store.get_robot_candidate,
+                            robot_ready=ready_epoch() == epoch,
+                            observed_at_ms=self._now_ms(), save=save,
+                            observation_clock=self._now_ms)
+            if path.exists() or ready_epoch() != epoch:
+                capture.close()
+        except Exception:
+            # Optional observation must not stall or quarantine a candidate.
+            try:
+                capture.close()
+            except Exception:
+                pass
 
     def inspect_private_box(self, candidate_id: str):
         """Owner-thread private request only; never called by the trading tick."""
@@ -420,7 +490,15 @@ class RobotBreakoutMonitor:
 
     def _run(self) -> None:
         try:
-            while not self._stop.wait(self._tick_interval_s):
+            next_tick = time.monotonic() + self._tick_interval_s
+            while not self._stop.wait(
+                self._tick_interval_s if self._private_box_capture is None
+                else max(0.0, min(1.0, next_tick - time.monotonic()))
+            ):
+                if (self._private_box_capture is not None
+                        and time.monotonic() < next_tick):
+                    self._private_box_capture_pass()
+                    continue
                 try:
                     self.tick()
                 except Exception as error:
@@ -428,7 +506,13 @@ class RobotBreakoutMonitor:
                         "[ROBOT BREAKOUT MONITOR LOOP ERROR] "
                         f"error={error}"
                     )
+                next_tick = time.monotonic() + self._tick_interval_s
         finally:
+            if self._private_box_capture is not None:
+                try:
+                    self._private_box_capture[0].close()
+                except Exception:
+                    pass
             self._close_local_store()
 
     @contextmanager

@@ -1,12 +1,17 @@
 """Synthetic exact-host and private L2 receipt tests; no IO or trading."""
 import unittest
+import json
+import tempfile
+from pathlib import Path
 from decimal import Decimal
 
 from terminal.application.robot_breakout_monitor import RobotBreakoutMonitor
 from terminal.domain.models import TradingAccountId
 from types import SimpleNamespace as NS
 
-from terminal.market_data.private_box_host_evidence import inspect_private_box_receipts
+from terminal.market_data.private_box_host_evidence import (
+    PrivateBoxCapture, inspect_private_box_receipts, save_first_private_box_receipt,
+)
 
 
 def setup():
@@ -235,6 +240,199 @@ class PrivateBoxReceiptTests(unittest.TestCase):
                                 "RECEIPTS_OBSERVED_UNATTESTED")
         bad = {**good, "book": {**good["book"], "active": False}}
         self.assertEqual(self.audit(store, bad).status, "UNKNOWN")
+
+
+class PrivateBoxCaptureTests(unittest.TestCase):
+    def test_exact_host_rotation_and_robot_stop(self):
+        store, data = setup()
+        calls = []
+        token = None
+        witness = None
+
+        def begin(symbol, *, owner_token):
+            nonlocal token, witness
+            calls.append(("begin", symbol))
+            if witness is None:
+                token, witness = owner_token, object()
+            self.assertIs(owner_token, token)
+            return witness
+
+        def end(symbol, *, owner_token):
+            nonlocal witness
+            calls.append(("end", symbol))
+            self.assertIs(owner_token, token)
+            witness = None
+            return True
+
+        def snapshot(symbol, *, expected_witness):
+            self.assertIs(expected_witness, witness)
+            return data
+
+        capture = PrivateBoxCapture(NS(
+            begin_protected_research_capture=begin,
+            end_protected_research_capture=end,
+            private_protected_research_snapshot=snapshot,
+        ))
+        ids = ("box-robot-123",)
+        self.assertEqual(capture.sync(store.get, ids, robot_ready=False,
+                                      observed_at_ms=2100).status, "UNKNOWN")
+        self.assertEqual(calls, [])
+        self.assertEqual(capture.sync(store.get, ids, robot_ready=True,
+                                      observed_at_ms=2100).status, "NO_RECEIPT")
+        self.assertEqual(capture.observe(store.get, robot_ready=True,
+                                         observed_at_ms=2100).status,
+                         "RECEIPTS_OBSERVED_UNATTESTED")
+        store[ids[0]].state_revision = 2
+        self.assertEqual(capture.observe(store.get, robot_ready=True,
+                                         observed_at_ms=2100).status, "UNKNOWN")
+        self.assertEqual(calls, [("begin", "BTCUSDT"), ("end", "BTCUSDT")])
+        capture.sync(store.get, ids, robot_ready=True, observed_at_ms=2100)
+        capture.sync(store.get, ids, robot_ready=False, observed_at_ms=2100)
+        self.assertEqual(calls[-2:], [("begin", "BTCUSDT"), ("end", "BTCUSDT")])
+        capture.close()
+        self.assertEqual(len(calls), 4)
+
+    def test_missing_context_and_invalid_host_do_not_subscribe(self):
+        store, _ = setup()
+        calls = []
+        capture = PrivateBoxCapture(NS(
+            begin_protected_research_capture=lambda symbol, **_k: calls.append(symbol),
+            end_protected_research_capture=lambda *_a, **_k: False,
+        ))
+        self.assertEqual(capture.sync(store.get, ("box-robot-other",),
+                                      robot_ready=True, observed_at_ms=2100).status,
+                         "NO_PROVEN_HOST")
+        self.assertEqual(calls, [])
+        capture.sync(store.get, ("box-robot-123",),
+                     robot_ready=True, observed_at_ms=2100)
+        self.assertEqual(calls, ["BTCUSDT"])
+        self.assertEqual(capture.observe(store.get, robot_ready=True,
+                                         observed_at_ms=2100).status, "NO_RECEIPT")
+        capture.close()
+
+
+    def test_only_validated_detached_receipts_reach_private_sink(self):
+        store, data = setup()
+        witness = object()
+        snapshots = []
+        saved = []
+        old = NS(trade_id="old", timestamp_ms=900,
+                 received_at_ms=950, sequence=1)
+        data["trades"]["prints"] = (old, *data["trades"]["prints"])
+
+        def snapshot(symbol, *, expected_witness):
+            snapshots.append(symbol)
+            self.assertIs(expected_witness, witness)
+            return data
+
+        capture = PrivateBoxCapture(NS(
+            begin_protected_research_capture=lambda *_a, **_k: witness,
+            end_protected_research_capture=lambda *_a, **_k: True,
+            private_protected_research_snapshot=snapshot,
+        ))
+        capture.sync(store.get, ("box-robot-123",),
+                     robot_ready=True, observed_at_ms=2100)
+        result = capture.observe(store.get, robot_ready=True,
+                                 observed_at_ms=2100,
+                                 save=lambda *args: saved.append(args))
+        self.assertEqual(result.status, "RECEIPTS_OBSERVED_UNATTESTED")
+        self.assertEqual(snapshots, ["BTCUSDT"])
+        self.assertEqual(len(saved), 1)
+        self.assertIs(saved[0][1]["book"], data["book"])
+        self.assertEqual(saved[0][1]["trades"]["prints"],
+                         (data["trades"]["prints"][1],))
+        self.assertFalse(saved[0][0].trading_authorized)
+        self.assertFalse(saved[0][0].source_complete)
+        capture.observe(store.get, robot_ready=False, observed_at_ms=2100,
+                        save=lambda *args: saved.append(args))
+        self.assertEqual(len(saved), 1)
+
+
+    def test_private_sink_is_single_sample_and_never_overwrites(self):
+        from terminal.market_data.impulse_observation import ObservedPrint
+
+        store, data = setup()
+        data["trades"]["prints"] = (ObservedPrint(
+            "t1", 2000, 9, "Buy", Decimal("100"), Decimal("1"), 2002,
+        ),)
+        result = inspect_private_box_receipts(
+            store.get, lambda _: data, candidate_id="box-robot-123",
+            observed_at_ms=2100,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "private.json"
+            self.assertFalse(save_first_private_box_receipt(
+                path, result, data, allow_write=lambda: False))
+            self.assertFalse(path.exists())
+            self.assertTrue(save_first_private_box_receipt(
+                path, result, data, allow_write=lambda: True))
+            original = path.read_bytes()
+            parsed = json.loads(original)
+            self.assertFalse(parsed["source_complete"])
+            self.assertFalse(parsed["trading_authorized"])
+            self.assertEqual(parsed["trades"]["prints"][0]["received_at_ms"], 2002)
+            self.assertFalse(save_first_private_box_receipt(
+                path, result, data, allow_write=lambda: True))
+            self.assertEqual(path.read_bytes(), original)
+
+
+    def test_monitor_capture_pass_respects_durable_epoch_and_never_trades(self):
+        store, data = setup()
+        state = NS(mode="ROBOT_RUNNING", recovery_status="READY", version=1)
+        calls = []
+        capture = NS(
+            close=lambda: calls.append("close"),
+            sync=lambda *a, **k: calls.append(("sync", k["robot_ready"])),
+            observe=lambda *a, **k: calls.append(("observe", k["robot_ready"])),
+        )
+        db = NS(
+            get_robot_runtime_state=lambda _: state,
+            load_robot_candidates_by_status=lambda *_: (store["box-robot-123"],),
+            get_robot_candidate=store.get,
+        )
+        monitor = RobotBreakoutMonitor(
+            lambda: db, TradingAccountId("paper"),
+            get_closed_candle=lambda _: None, action_executor=object(),
+            tick_size_provider=lambda _: Decimal("0.01"), clock_ms=lambda: 2100,
+            tick_interval_s=3600,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "private.json"
+            monitor.bind_private_box_capture(capture, path)
+            monitor._private_box_capture_pass()
+            self.assertEqual(calls, ["close", ("sync", True), ("observe", True)])
+            calls.clear()
+            state.recovery_status = "PAUSED"
+            monitor._private_box_capture_pass()
+            self.assertTrue(calls)
+            self.assertEqual(set(calls), {"close"})
+            calls.clear()
+            state.mode = "ROBOT_STOPPED"
+            monitor._private_box_capture_pass()
+            self.assertEqual(set(calls), {"close"})
+            calls.clear()
+            state.mode, state.recovery_status, state.version = "ROBOT_RUNNING", "READY", 2
+            monitor._private_box_capture_pass()
+            self.assertEqual(calls, ["close", ("sync", True), ("observe", True)])
+            calls.clear()
+            path.write_text("existing", encoding="utf-8")
+            monitor._private_box_capture_pass()
+            self.assertEqual(calls, ["close"])
+            self.assertEqual(path.read_text(encoding="utf-8"), "existing")
+
+    def test_observation_clock_follows_detached_read(self):
+        store, data = setup()
+        capture = PrivateBoxCapture(NS(
+            begin_protected_research_capture=lambda *_a, **_k: object(),
+            end_protected_research_capture=lambda *_a, **_k: True,
+            private_protected_research_snapshot=lambda *_a, **_k: data,
+        ))
+        capture.sync(store.get, ("box-robot-123",),
+                     robot_ready=True, observed_at_ms=2000)
+        result = capture.observe(store.get, robot_ready=True,
+                                 observed_at_ms=2000,
+                                 observation_clock=lambda: 2100)
+        self.assertEqual(result.status, "RECEIPTS_OBSERVED_UNATTESTED")
 
 
 if __name__ == "__main__":
