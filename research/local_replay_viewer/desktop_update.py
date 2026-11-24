@@ -130,12 +130,16 @@ def find_asset(kind: str, *, opener=urlopen) -> ReleaseAsset:
     if (not isinstance(ref_object, dict) or ref_object.get("type") != "commit"
             or ref_object.get("sha") != sha):
         raise UpdateBlocked("release_tag_commit_mismatch")
-    comparison = _json(API + "/compare/" + sha + "..." + head
-                       + COMPARE_SUMMARY_PAGE, opener=opener)
-    if (not isinstance(comparison, dict)
-            or comparison.get("status") not in ("ahead", "identical")
-            or comparison.get("behind_by") != 0):
-        raise UpdateBlocked("desktop_release_not_ancestor_of_stable")
+    # Equality of the verified tag commit and stable head already proves
+    # ancestry. Avoid an unnecessary Compare response (which can time out
+    # during body reads even after HTTP 200).
+    if sha != head:
+        comparison = _json(API + "/compare/" + sha + "..." + head
+                           + COMPARE_SUMMARY_PAGE, opener=opener)
+        if (not isinstance(comparison, dict)
+                or comparison.get("status") != "ahead"
+                or comparison.get("behind_by") != 0):
+            raise UpdateBlocked("desktop_release_not_ancestor_of_stable")
     assets = release.get("assets")
     if not isinstance(assets, list) or len(assets) > 30:
         raise UpdateBlocked("release_assets_invalid")
