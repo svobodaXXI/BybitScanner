@@ -483,3 +483,78 @@ def test_desktop_zip_imports_scoring_without_production_config(tmp_path, monkeyp
         [sys.executable, "-I", "-B", "-c", script],
         check=True, capture_output=True, text=True, timeout=15,
     )
+
+
+def _shortcut_release(root, sha):
+    app = root / sha / "MachineTime"
+    app.mkdir(parents=True)
+    launcher = app / "START_LOCAL.cmd"
+    launcher.write_text("@echo off")
+    (app / "desktop-build-sha.txt").write_text(sha)
+    return launcher
+
+
+def _shortcut_metadata(launcher):
+    return {"path": "owner.lnk", "target": str(launcher),
+            "workdir": str(launcher.parent), "arguments": ""}
+
+
+def test_simulator_shortcut_advances_only_verified_forward_release(tmp_path, monkeypatch):
+    from research.local_replay_viewer import simulator_self_update as sim
+    root = tmp_path / "releases"
+    old = _shortcut_release(root, "a" * 40)
+    new = _shortcut_release(root, "b" * 40)
+    before, after = _shortcut_metadata(old), _shortcut_metadata(new)
+    link = Mock(side_effect=[before, after])
+    forward = Mock()
+    monkeypatch.setattr(sim, "_owner_shortcut", link)
+    monkeypatch.setattr(sim, "require_forward_update", forward)
+    sim._advance_owner_shortcut(new, root)
+    forward.assert_called_once_with("a" * 40, "b" * 40)
+    assert link.call_args.kwargs == {"expected": before, "launcher": new}
+    assert old.is_file() and new.is_file()
+
+
+@pytest.mark.parametrize("failure", ["custom", "foreign", "downgrade", "already"])
+def test_simulator_shortcut_never_overwrites_unproven_target(tmp_path, monkeypatch, failure):
+    from research.local_replay_viewer import simulator_self_update as sim
+    root = tmp_path / "releases"
+    old = _shortcut_release(root, "a" * 40)
+    new = _shortcut_release(root, "b" * 40)
+    before = _shortcut_metadata(old)
+    if failure == "custom":
+        before["arguments"] = "--owner"
+    elif failure == "foreign":
+        before = _shortcut_metadata(_shortcut_release(tmp_path / "other", "c" * 40))
+    elif failure == "already":
+        before = _shortcut_metadata(new)
+    link = Mock(return_value=before)
+    forward = Mock(side_effect=updates.UpdateBlocked("desktop_downgrade_or_diverged"))
+    monkeypatch.setattr(sim, "_owner_shortcut", link)
+    monkeypatch.setattr(sim, "require_forward_update", forward)
+    if failure == "already":
+        sim._advance_owner_shortcut(new, root)
+    else:
+        with pytest.raises(updates.UpdateBlocked):
+            sim._advance_owner_shortcut(new, root)
+    link.assert_called_once_with()
+
+
+@pytest.mark.parametrize("identity", [False, True])
+def test_simulator_relaunch_checks_running_identity_before_shortcut(
+        tmp_path, monkeypatch, identity):
+    from research.local_replay_viewer import simulator_self_update as sim
+    new = _shortcut_release(tmp_path, "b" * 40)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setattr(sim, "_verified_launch_path", Mock())
+    monkeypatch.setattr(sim.socket, "create_connection", Mock(side_effect=OSError))
+    launch = Mock()
+    wait = Mock(return_value=identity)
+    advance = Mock()
+    monkeypatch.setattr(sim, "launch_new_simulator", launch)
+    monkeypatch.setattr(sim, "_wait_for_release_identity", wait)
+    monkeypatch.setattr(sim, "_advance_owner_shortcut", advance)
+    assert sim._relaunch_after_port_closes(new, 48765) == (0 if identity else 2)
+    launch.assert_called_once_with(new)
+    wait.assert_called_once_with(new, 48765)
+    assert advance.call_count == int(identity)
