@@ -290,6 +290,8 @@ class RobotBreakoutMonitor:
             raise ValueError("L-shape impulse PAPER gate must be explicit bool")
         self._impulse_l_shape_paper_enabled = impulse_l_shape_paper_enabled
         self._get_pattern_flow_evidence = get_pattern_flow_evidence
+        # Optional PRIVATE research audit; no active poll, subscription or order path.
+        self._private_box_inspector: Callable[[str], object] | None = None
         # Resting entry LIMITs become fill-capable the moment they are durable, so
         # protection coverage for the symbol must already be listening. Without a
         # bound arm this monitor never creates a resting entry LIMIT (fail closed).
@@ -340,6 +342,31 @@ class RobotBreakoutMonitor:
             raise TypeError("pattern flow observer must be callable")
         self._get_pattern_flow_evidence = observer
 
+    def bind_private_box_inspector(self, inspector: Callable[[str], object]) -> None:
+        """Attach an on-demand read-only audit to this Robot's lifecycle."""
+        if (self._started or self._stop.is_set()
+                or self._private_box_inspector is not None):
+            raise RuntimeError("private Box inspector must bind before Robot start")
+        if not callable(inspector):
+            raise TypeError("private Box inspector must be callable")
+        self._private_box_inspector = inspector
+
+    def inspect_private_box(self, candidate_id: str):
+        """Owner-thread private request only; never called by the trading tick."""
+        from terminal.market_data.private_box_host_evidence import PrivateBoxReceiptEvidence
+
+        inspector = self._private_box_inspector
+        if not self._started or self._stop.is_set() or inspector is None:
+            return PrivateBoxReceiptEvidence("UNKNOWN")
+        try:
+            evidence = inspector(candidate_id)
+        except Exception:
+            return PrivateBoxReceiptEvidence("UNKNOWN")
+        if (not isinstance(evidence, PrivateBoxReceiptEvidence)
+                or evidence.source_complete or evidence.trading_authorized):
+            return PrivateBoxReceiptEvidence("UNKNOWN")
+        return evidence
+
     def _pattern_flow_allows_entry(self, record: RobotCandidateRecord) -> bool:
         """Fail closed at an unowned entry boundary when PAPER flow is enabled.
 
@@ -379,6 +406,8 @@ class RobotBreakoutMonitor:
 
     def close(self) -> None:
         self._stop.set()
+        # Release the only research callback when the canonical Robot stops.
+        self._private_box_inspector = None
         if self._started and self._thread is not threading.current_thread():
             self._thread.join(timeout=5)
         self._close_local_store()
