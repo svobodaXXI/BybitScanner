@@ -96,6 +96,7 @@ export function ModePanel({
   onAccountToggle = () => {},
   accountWorkspaceProjection = null,
   modeAccountId = null,
+  otherWorkspaceAccountId = null,
   onModeAccountSelect,
   modeAccountError = null,
   mutationsAllowed = true,
@@ -153,6 +154,7 @@ export function ModePanel({
   onAccountToggle?: () => void;
   accountWorkspaceProjection?: AccountWorkspaceProjection | null;
   modeAccountId?: string | null;
+  otherWorkspaceAccountId?: string | null;
   onModeAccountSelect?: (mode: AccountMode, account: ModeAccountDescriptor) => Promise<void>;
   modeAccountError?: string | null;
   mutationsAllowed?: boolean;
@@ -1218,6 +1220,7 @@ export function ModePanel({
                 workspaceProjection: accountWorkspaceProjection,
                 mode: onModeAccountSelect ? "TERMINAL" : undefined,
                 selectedAccountId: modeAccountId,
+                otherWorkspaceAccountId,
                 onSelectAccount: onModeAccountSelect,
                 modeAccountError,
               }}
@@ -1364,6 +1367,7 @@ export function ModePanel({
                   workspaceProjection={accountWorkspaceProjection}
                   mode={onModeAccountSelect ? "TERMINAL" : undefined}
                   selectedAccountId={modeAccountId}
+                  otherWorkspaceAccountId={otherWorkspaceAccountId}
                   onSelectAccount={onModeAccountSelect}
                   modeAccountError={modeAccountError}
                   onActiveAccountChange={setActiveAccountLabel}
