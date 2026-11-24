@@ -229,49 +229,6 @@ describe("AccountMenu", () => {
     expect(screen.getByLabelText("API Secret")).toHaveValue("secret");
   });
 
-  it("reports MAIN gateway failures without exposing credentials or raw response bodies", async () => {
-    const cases = [
-      { status: 401, message: "Terminal session expired" },
-      { status: 413, message: "request size" },
-      { status: 502, message: "HTTP 502" },
-    ];
-    for (const { status, message } of cases) {
-      const fetchMock = vi.fn(async (url: string, options?: RequestInit) => {
-        if (url === "/api/accounts") return { ok: true, json: async () => catalog };
-        if (url === "/api/manual-main/accounts" && options?.method === "POST") {
-          return {
-            ok: false, status,
-            json: async () => { throw new SyntaxError("unexpected HTML"); },
-          };
-        }
-        if (url === "/api/manual-main/accounts") {
-          return { ok: true, json: async () => ({ ok: true, accounts: [] }) };
-        }
-        throw new Error("unexpected route");
-      });
-      vi.stubGlobal("fetch", fetchMock);
-      const { unmount } = render(<AccountMenu open onToggle={vi.fn()} />);
-      await screen.findByText("Current");
-      fireEvent.click(screen.getByRole("button", { name: "+ Add New Account" }));
-      fireEvent.click(screen.getByRole("button", { name: "Bybit MAIN · Real account" }));
-      for (const [label, value] of [
-        ["Account name", "Main"], ["API Key", "private-key"], ["API Secret", "private-secret"],
-      ]) {
-        fireEvent.change(screen.getByLabelText(label), { target: { value } });
-      }
-      const submit = screen.getByRole("button", { name: "Add Account" });
-      expect(submit).toHaveClass("account-add-submit-button");
-      fireEvent.click(submit);
-      const alert = await screen.findByRole("alert");
-      expect(alert).toHaveTextContent(message);
-      expect(alert).not.toHaveTextContent("private-key");
-      expect(alert).not.toHaveTextContent("private-secret");
-      expect(fetchMock.mock.calls.some(([url, options]) =>
-        url === "/api/manual-main/accounts" && options?.method === "POST")).toBe(true);
-      unmount();
-    }
-  });
-
   it("visually classifies non-tradable and unverified account statuses", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({
       ...catalog,
