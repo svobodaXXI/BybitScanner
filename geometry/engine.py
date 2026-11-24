@@ -243,7 +243,7 @@ def _preserve_corrective_episode(candidates, candles):
         seq = pm.get("anchor_sequence") or {}
         family = seq.get("family")
         side = {"falling": "high", "rising": "low"}.get(family)
-        if side is None or seq.get("primary_side") != side or not seq.get("valid"):
+        if side is None or not seq.get("valid"):
             continue
         strict = g.upper_line if side == "high" else g.lower_line
         opposite = g.lower_line if side == "high" else g.upper_line

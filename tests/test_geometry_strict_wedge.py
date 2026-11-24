@@ -145,7 +145,7 @@ class CorrectiveEpisodeOwnershipControls(unittest.TestCase):
                 def item(origin,start,second,contact,end=20,exception=False,fresh=True,opposite_end=None):
                     strict = dict(anchor_index=start,second_index=contact)
                     opposite = dict(anchor_index=second,second_index=end if opposite_end is None else opposite_end)
-                    seq = dict(family=family,primary_side=side,valid=True,impulse_origin_index=origin,
+                    seq = dict(family=family,valid=True,impulse_origin_index=origin,
                                primary_anchor=start,secondary_anchor=second)
                     g = SimpleNamespace(pair_metrics={"anchor_sequence":seq},end_index=end,
                         upper_line=strict if side=="high" else opposite,
