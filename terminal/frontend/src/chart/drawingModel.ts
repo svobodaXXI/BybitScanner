@@ -28,6 +28,8 @@ export interface DrawingObject {
   hidden: boolean;
   /** Only for read-only projected overlays; original Scanner reference stays dashed. */
   referenceStroke?: "solid" | "dashed";
+  /** Price-only historical Fibonacci grid in a current-candle reference layer. */
+  referenceExtendRight?: true;
 }
 export interface DrawingDocument {
   version: 1;
