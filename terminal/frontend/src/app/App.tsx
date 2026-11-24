@@ -578,7 +578,10 @@ export function App() {
   useEffect(() => {
     const oneWvUsdt = accountProjection?.one_wv_usdt ?? currentPaperState?.one_wv_usdt ?? null;
     if (!accountProjection || !oneWvUsdt || !isValidSelectedVolume(oneWvUsdt)) return;
-    const workspaceKey = `${accountProjection.account_id}:${accountProjection.session_generation}:${tradingSymbol}`;
+    // MAIN refresh_generation is snapshot freshness, not a new user sizing workspace.
+    const workspaceKey = accountProjection.provider === "BYBIT"
+      ? `MAIN:${accountProjection.account_id}:${tradingSymbol}`
+      : `${accountProjection.account_id}:${accountProjection.session_generation}:${tradingSymbol}`;
     if (selectedVolumeWorkspaceKey.current === workspaceKey) return;
     selectedVolumeWorkspaceKey.current = workspaceKey;
     setSelectedVolumes({ Buy: oneWvUsdt, Sell: oneWvUsdt });
