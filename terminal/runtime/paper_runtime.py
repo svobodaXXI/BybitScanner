@@ -1217,10 +1217,22 @@ class PaperRuntime:
         self._robot_breakout_monitor.bind_private_box_inspector(inspect)
 
     def inspect_robot_private_box_receipts(self, candidate_id: str):
-        """Private owner-thread research call; not exposed by an HTTP route."""
+        """Private owner-thread research call; not exposed by an HTTP route.
+
+        The monitor thread may remain alive after durable Robot STOP. Require
+        actual (ROBOT_RUNNING, READY) before reading any optional L2 witness;
+        PAUSED, STOPPED or reconciliation are not research-authorized states.
+        """
         from terminal.market_data.private_box_host_evidence import PrivateBoxReceiptEvidence
 
         if not self.store.is_owned_by_current_thread():
+            return PrivateBoxReceiptEvidence("UNKNOWN")
+        try:
+            runtime = self.store.get_robot_runtime_state(self._paper_account_id)
+            if (runtime is None or runtime.mode != ROBOT_RUNNING
+                    or runtime.recovery_status != READY):
+                return PrivateBoxReceiptEvidence("UNKNOWN")
+        except Exception:
             return PrivateBoxReceiptEvidence("UNKNOWN")
         return self._robot_breakout_monitor.inspect_private_box(candidate_id)
 
