@@ -41,10 +41,9 @@ jobs:
         run: python -m unittest -v tests.test_geometry_triangle_local_anchors tests.test_broadening_detector
       - name: Verify strict wedge owner case
         run: python -m unittest -v tests.test_geometry_strict_wedge_owner
-      - name: Verify frozen eleven-case formation fit and selection
-        run: python -m unittest -v tests.test_geometry_formation_fit
-      - name: Verify frozen strict wedge boundary
-        run: python -m unittest -v tests.test_geometry_strict_wedge
-
-      - name: Verify owner triangle outer ray evidence
-        run: python -m unittest -v tests.test_geometry_triangle_outer_ray
+      - name: Verify owner geometry and historical selection together
+        run: >-
+          python -m unittest -v
+          tests.test_geometry_triangle_outer_ray
+          tests.test_geometry_strict_wedge
+          tests.test_geometry_formation_fit
