@@ -73,7 +73,9 @@ it("keeps correction form left and all three quick actions bottom-right", async 
   ]);
   expect(within(left as HTMLElement).getByRole("textbox", { name: "Комментарий к исправлению" })).toBeInTheDocument();
   expect(within(left as HTMLElement).getByRole("button", { name: "Передать исправление" })).toBeInTheDocument();
-  expect(within(left as HTMLElement).getByRole("button", { name: "❌ Ошибочный сигнал" })).toBeInTheDocument();
+  const reject = screen.getByRole("button", { name: "❌ Ошибочный сигнал" });
+  expect(view.container.querySelector(".editor-review-layout > .editor-reject-signal")).toBe(reject);
+  expect(within(left as HTMLElement).queryByRole("button", { name: "❌ Ошибочный сигнал" })).toBeNull();
   expect(within(bottom as HTMLElement).getAllByRole("button").map((button) => button.textContent)).toEqual([
     "Показать следующие свечи", "Актуальный график", "Создать новый сигнал",
   ]);
@@ -91,6 +93,7 @@ it("keeps correction form left and all three quick actions bottom-right", async 
   expect(within(newPattern).queryByRole("option", { name: "Двойная вершина / дно" })).toBeNull();
   expect(screen.getByRole("combobox", { name: "Направление движения графика" })).toBeInTheDocument();
   expect(within(bottom as HTMLElement).queryByRole("button", { name: "Создать новый сигнал" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "❌ Ошибочный сигнал" })).toBeNull();
 });
 
 it("restores Telegram source lines locally with Undo but never invokes review save", () => {
@@ -112,6 +115,7 @@ it("restores Telegram source lines locally with Undo but never invokes review sa
     onSaveGeometryReview={onSaveGeometryReview} />);
   const restore = screen.getByRole("button", { name: "Вернуть исходную геометрию" });
   expect(view.container.querySelector(".editor-review-layout > .editor-restore-original")).toBe(restore);
+  expect(restore.nextElementSibling).toBe(screen.getByRole("button", { name: "❌ Ошибочный сигнал" }));
   expect(screen.getByRole("button", { name: "Undo drawing" })).toBeDisabled();
   fireEvent.click(restore);
   expect(onSaveGeometryReview).not.toHaveBeenCalled();
