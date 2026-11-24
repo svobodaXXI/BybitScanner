@@ -73,6 +73,9 @@ it("keeps correction form left and all three quick actions bottom-right", async 
   ]);
   expect(within(left as HTMLElement).getByRole("textbox", { name: "Комментарий к исправлению" })).toBeInTheDocument();
   expect(within(left as HTMLElement).getByRole("button", { name: "Передать исправление" })).toBeInTheDocument();
+  const reject = screen.getByRole("button", { name: "❌ Ошибочный сигнал" });
+  expect(view.container.querySelector(".editor-review-layout > .editor-reject-signal")).toBe(reject);
+  expect(within(left as HTMLElement).queryByRole("button", { name: "❌ Ошибочный сигнал" })).toBeNull();
   expect(within(bottom as HTMLElement).getAllByRole("button").map((button) => button.textContent)).toEqual([
     "Показать следующие свечи", "Актуальный график", "Создать новый сигнал",
   ]);
@@ -90,6 +93,7 @@ it("keeps correction form left and all three quick actions bottom-right", async 
   expect(within(newPattern).queryByRole("option", { name: "Двойная вершина / дно" })).toBeNull();
   expect(screen.getByRole("combobox", { name: "Направление движения графика" })).toBeInTheDocument();
   expect(within(bottom as HTMLElement).queryByRole("button", { name: "Создать новый сигнал" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "❌ Ошибочный сигнал" })).toBeNull();
 });
 
 it("restores Telegram source lines locally with Undo but never invokes review save", () => {
@@ -111,6 +115,7 @@ it("restores Telegram source lines locally with Undo but never invokes review sa
     onSaveGeometryReview={onSaveGeometryReview} />);
   const restore = screen.getByRole("button", { name: "Вернуть исходную геометрию" });
   expect(view.container.querySelector(".editor-review-layout > .editor-restore-original")).toBe(restore);
+  expect(restore.nextElementSibling).toBe(screen.getByRole("button", { name: "❌ Ошибочный сигнал" }));
   expect(screen.getByRole("button", { name: "Undo drawing" })).toBeDisabled();
   fireEvent.click(restore);
   expect(onSaveGeometryReview).not.toHaveBeenCalled();
@@ -168,4 +173,45 @@ it("blocks correction submission until the next-candle request finishes, then sa
     ] }],
   }));
   expect(await screen.findByText("Исправление сохранено")).toBeInTheDocument();
+});
+
+
+it("records rejection separately without publishing edited geometry or an alternative pattern", async () => {
+  const onSaveGeometryReview = vi.fn()
+    .mockRejectedValueOnce(new Error("Нет подтверждения"))
+    .mockResolvedValueOnce({ reviewId: "saved-rejection", label: "FALSE_POSITIVE" });
+  const source = {
+    id: "source-ray", type: "ray" as const,
+    anchors: [{ logical: 0, price: 100 }, { logical: 1, price: 110 }],
+    style: { color: "#8195aa", lineWidth: 1.5 }, locked: true, hidden: false,
+  };
+  const corrected = { ...source, id: "editable:source-ray", locked: false,
+    anchors: [{ logical: 0, price: 100 }, { logical: 1, price: 112 }] };
+  const candles = ["2026-11-22T07:00:00Z", "2026-11-22T07:05:00Z"].map(time =>
+    ({ time, open: 100, high: 115, low: 98, close: 105 }));
+  const props = {
+    candles, tickSize: null, editorMode: true, signalIdentity: "rejected-signal",
+    originalPattern: "Rising Wedge", snapshotRevision: "a".repeat(64),
+    barsSha256: "b".repeat(64), referenceDrawings: [source], editableSeedDrawings: [corrected],
+    onSaveGeometryReview,
+  };
+  const view = render(<ChartPanel {...props} />);
+  fireEvent.change(screen.getByRole("combobox", { name: "Правильный паттерн" }), { target: { value: "Triangle" } });
+  const reject = screen.getByRole("button", { name: "❌ Ошибочный сигнал" });
+  fireEvent.click(reject);
+  expect(await screen.findByRole("alert")).toHaveTextContent("Нет подтверждения");
+  expect(screen.queryByText("Сигнал забракован")).toBeNull();
+  expect(reject).toBeEnabled();
+  fireEvent.click(reject);
+  expect(await screen.findByText("Сигнал забракован")).toBeInTheDocument();
+  expect(onSaveGeometryReview).toHaveBeenCalledTimes(2);
+  const payload = onSaveGeometryReview.mock.calls[0][0];
+  expect(payload).toMatchObject({ signal_id: props.signalIdentity, snapshot_revision: props.snapshotRevision,
+    bars_sha256: props.barsSha256, label: "FALSE_POSITIVE", corrected_boundaries: [], note: "" });
+  expect(payload).not.toHaveProperty("corrected_pattern");
+  expect(onSaveGeometryReview.mock.calls[1][0]).toEqual(payload);
+  view.unmount();
+  render(<ChartPanel {...props} savedReviewLabel="FALSE_POSITIVE" />);
+  expect(screen.getByText("Сигнал забракован")).toBeInTheDocument();
+  expect(onSaveGeometryReview).toHaveBeenCalledTimes(2);
 });

@@ -54,7 +54,7 @@ import {
   TELEGRAM_BUY_COLOR, TELEGRAM_SELL_COLOR,
   visibleRobotTradeMarkers, tradeTrianglePoints, type RobotTradeMarker,
 } from "../chart/robotTradeMarkers";
-import { EDITOR_REVIEW_PATTERNS, buildEditorGeometryReview, isEditorReviewPattern, isValidCachedEditorDraft, type GeometryReviewDraft } from "../geometryFeedback/geometryReviewDraft";
+import { EDITOR_REVIEW_PATTERNS, buildEditorGeometryReview, buildGeometryReviewDraft, isEditorReviewPattern, isValidCachedEditorDraft, type GeometryReviewDraft } from "../geometryFeedback/geometryReviewDraft";
 import { initialSourceGeometryRange } from "../geometryFeedback/signalChartBridge";
 import { buildOwnerChartDraftV3, buildOwnerSignalDraft, type OwnerChartDraftV3, type OwnerChartPatternV3, type OwnerChartMovement, type OwnerWedgeSubtype, type OwnerSignalDraft } from "../geometryFeedback/ownerSignalDraft";
 import type { MarketSide, PaperLimitOrder } from "../contracts/trading";
@@ -315,6 +315,7 @@ export function ChartPanel({
   const [reviewNote, setReviewNote] = useState(savedReviewNote ?? "");
   const [reviewPending, setReviewPending] = useState(false);
   const [reviewStatus, setReviewStatus] = useState("");
+  const [lastSavedReviewLabel, setLastSavedReviewLabel] = useState(savedReviewLabel);
   const reviewEditSequence = useRef(0);
   const [reviewDirty, setReviewDirty] = useState(() =>
     Boolean(editorMode && signalIdentity && (
@@ -339,31 +340,41 @@ export function ChartPanel({
     if (previous !== current && current !== null && !newSignalMode) markReviewEdited();
   }, [retrospectiveContext?.asOfMs, newSignalMode, markReviewEdited]);
   const submitToken = useRef<{ content: string; key: string } | null>(null);
-  const saveCorrection = async () => {
+  const saveCorrection = async (reject = false) => {
     if (newSignalMode) return;
     if (!editorMode || !signalIdentity || !snapshotRevision || !barsSha256 || !onSaveGeometryReview || reviewPending || extensionPending) return;
     try {
-      if (!correctPattern.trim()) throw new Error("Выберите правильный паттерн");
-      const patternChanged = correctPattern !== (originalPattern ?? "");
-      if (patternChanged && !isEditorReviewPattern(correctPattern))
-        throw new Error("Неподдерживаемый правильный паттерн");
-      const geometryChanged = referenceDrawings.some((reference) => {
-        const editable = drawings.find((line) => line.id === `editable:${reference.id}`);
-        return !editable || JSON.stringify(reference.anchors) !== JSON.stringify(editable.anchors);
-      });
-      const label: GeometryReviewDraft["label"] = geometryChanged ? "GEOMETRY_CORRECTED"
-        : patternChanged ? "PATTERN_CORRECTED"
-          : savedReviewLabel === "FALSE_POSITIVE" || savedReviewLabel === "UNCERTAIN"
-            ? savedReviewLabel : "CONFIRMED";
-      const draft = buildEditorGeometryReview({
+      const identity = {
         signalId: signalIdentity, snapshotRevision, barsSha256,
-        label, correctedPattern: patternChanged
-          ? correctPattern as GeometryReviewDraft["corrected_pattern"] : undefined,
         frozenCandles: candles,
-        referenceDrawings, editableDrawings: drawings,
         contextAsOfMs: retrospectiveContext?.asOfMs,
         contextBarsSha256: retrospectiveContext?.barsSha256,
-      });
+      };
+      let draft: GeometryReviewDraft;
+      if (reject) {
+        if (!referenceDrawings.length) throw new Error("Исходная геометрия недоступна");
+        // Rejection labels the immutable Scanner signal, not the local drawing
+        // draft. Neither an alternative pattern nor repaired lines are needed.
+        draft = buildGeometryReviewDraft({ ...identity, label: "FALSE_POSITIVE", drawings: [] });
+      } else {
+        if (!correctPattern.trim()) throw new Error("Выберите правильный паттерн");
+        const patternChanged = correctPattern !== (originalPattern ?? "");
+        if (patternChanged && !isEditorReviewPattern(correctPattern))
+          throw new Error("Неподдерживаемый правильный паттерн");
+        const geometryChanged = referenceDrawings.some((reference) => {
+          const editable = drawings.find((line) => line.id === `editable:${reference.id}`);
+          return !editable || JSON.stringify(reference.anchors) !== JSON.stringify(editable.anchors);
+        });
+        const label: GeometryReviewDraft["label"] = geometryChanged ? "GEOMETRY_CORRECTED"
+          : patternChanged ? "PATTERN_CORRECTED"
+            : lastSavedReviewLabel === "FALSE_POSITIVE" || lastSavedReviewLabel === "UNCERTAIN"
+              ? lastSavedReviewLabel : "CONFIRMED";
+        draft = buildEditorGeometryReview({
+          ...identity, label, correctedPattern: patternChanged
+            ? correctPattern as GeometryReviewDraft["corrected_pattern"] : undefined,
+          referenceDrawings, editableDrawings: drawings,
+        });
+      }
       const note = reviewNote.trim();
       const content = JSON.stringify({ ...draft, note });
       if (submitToken.current?.content !== content) {
@@ -372,13 +383,14 @@ export function ChartPanel({
       }
       const submittedSequence = reviewEditSequence.current;
       setReviewPending(true);
-      setReviewStatus("Сохранение исправления…");
+      setReviewStatus(reject ? "Сохранение браковки…" : "Сохранение исправления…");
       await onSaveGeometryReview({
         ...draft, note, idempotency_key: submitToken.current.key,
       });
+      setLastSavedReviewLabel(draft.label);
       if (submittedSequence === reviewEditSequence.current) {
         setReviewDirty(false);
-        setReviewStatus(label === "CONFIRMED" ? "" : "Исправление сохранено");
+        setReviewStatus(draft.label === "CONFIRMED" || draft.label === "FALSE_POSITIVE" ? "" : "Исправление сохранено");
       } else {
         setReviewDirty(true);
         setReviewStatus("");
@@ -1196,6 +1208,14 @@ export function ChartPanel({
               onClick={() => void saveCorrection()}>
               {reviewPending ? "Сохранение…" : reviewStatus.startsWith("Не удалось сохранить:") ? "Не удалось сохранить" : "Передать исправление"}
             </button>
+            {lastSavedReviewLabel === "FALSE_POSITIVE" && (
+              <output className="editor-review-success" role="status" aria-live="polite">
+                Сигнал забракован
+              </output>
+            )}
+            {reviewStatus.startsWith("Не удалось сохранить:") && (
+              <output className="editor-owner-signal-error-detail" role="alert">{reviewStatus}</output>
+            )}
             {reviewStatus === "Исправление сохранено" && !reviewDirty && (
               <output className="editor-review-success" role="status" aria-live="polite">
                 Исправление сохранено
@@ -1237,6 +1257,13 @@ export function ChartPanel({
                 disabled={reviewPending || proposalPending}
                 onClick={restoreOriginalGeometry}>
                 Вернуть исходную геометрию
+              </button>
+            )}
+            {!ownerChartMode && !newSignalMode && signalIdentity && (
+              <button type="button" className="editor-reject-signal"
+                disabled={extensionPending || reviewPending || !snapshotRevision || !barsSha256 || !onSaveGeometryReview || !referenceDrawings.length}
+                onClick={() => void saveCorrection(true)}>
+                ❌ Ошибочный сигнал
               </button>
             )}
           </div>
