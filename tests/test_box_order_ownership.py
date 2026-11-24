@@ -61,6 +61,33 @@ class BoxOrderOwnershipTests(unittest.TestCase):
     def proof(self):
         return self.store.prove_box_owned_position(self.plan.candidate_id)
 
+    def test_box_quarantine_proof_on_query_only_snapshot(self):
+        # An unresolved Box EXIT-0 marker must be visible to a read-only
+        # observer, without acquiring the PAPER writer lock or changing risk.
+        robot, _ = self.store.handoff_box_plan_to_robot(
+            self.plan.candidate_id, symbol=Symbol("BTCUSDT"),
+            expected_snapshot_sha256=self.plan.snapshot_sha256,
+            approved_at_ms=4001,
+        )
+        marked = self.store.save_robot_candidate_state(
+            robot.candidate_id, status="INVALIDATED",
+            robot_state={"execution": {"box_emergency_close_intent": {
+                "slot": 0, "symbol": "BTCUSDT", "order_id": "stop",
+                "quantity": "1", "side": "Sell",
+            }}},
+            expected_revision=robot.state_revision, updated_at_ms=4002,
+        )
+        expected = {"BTCUSDT": (marked.candidate_id,)}
+        self.assertEqual(self.store.robot_account_quarantines(self.account), expected)
+        with SQLiteStore.open_reader(self.path) as reader:
+            self.assertEqual(reader._connection.execute("PRAGMA query_only").fetchone()[0], 1)
+            self.assertEqual(
+                reader.prove_box_owned_position(self.plan.candidate_id).remaining_quantity,
+                D("0"),
+            )
+            with reader.read_snapshot():
+                self.assertEqual(reader.robot_account_quarantines(self.account), expected)
+
     def _latched_stop_with_abandoned_exit_zero(self):
         from terminal.domain.models import CommandId
         self.fill("entry-fill-shadow", "entry-1", OrderSide.BUY,
