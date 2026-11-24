@@ -181,8 +181,10 @@ export function DrawingOverlay({
       } else if (drawing.type === "fibonacci") {
         const firstPrice = drawing.anchors[0].price;
         const secondPrice = drawing.anchors[1]?.price ?? firstPrice;
-        const left = Math.min(a.x, b.x);
-        const width = Math.abs(b.x - a.x);
+        const extendReference = isReference && drawing.referenceExtendRight === true;
+        const left = extendReference ? Math.max(0, Math.min(a.x, b.x)) : Math.min(a.x, b.x);
+        const right = extendReference ? rect.width : Math.max(a.x, b.x);
+        const width = Math.max(0, right - left);
         for (const [index, band] of fibonacciBands(firstPrice, secondPrice).entries()) {
           const fromY = coordinates.priceToY(band.from.price);
           const toY = coordinates.priceToY(band.to.price);
@@ -198,8 +200,8 @@ export function DrawingOverlay({
         )) {
           const y = coordinates.priceToY(item.price);
           if (y === null) continue;
-          ctx.moveTo(Math.min(a.x, b.x), y);
-          ctx.lineTo(Math.max(a.x, b.x), y);
+          ctx.moveTo(left, y);
+          ctx.lineTo(left + width, y);
           ctx.fillText(
             fibonacciLabel(item.level, item.price, priceFormatter),
             left + 4,
