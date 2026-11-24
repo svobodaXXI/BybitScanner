@@ -32,11 +32,16 @@ describe("workspace bootstrap versus confirmed symbol activation", () => {
       ok: boolean;
       json: () => Promise<unknown>;
     }) => void;
-    vi.stubGlobal("fetch", vi.fn(() => new Promise((resolve) => {
+    let bootstrapSignal: AbortSignal | null | undefined;
+    vi.stubGlobal("fetch", vi.fn((_url: string, options: RequestInit) => new Promise((resolve) => {
+      bootstrapSignal = options.signal;
       resolveFetch = resolve;
     })));
     const view = renderHook(() => useMarketData());
     act(() => setMarketSymbol("ETHUSDT", 101));
+    // The old startup request is deliberately unresolved at this point.
+    expect(bootstrapSignal?.aborted).toBe(true);
+    expect(mocks.start).toHaveBeenCalledOnce();
     await act(async () => {
       resolveFetch({ ok: true, json: async () => ({
         ok: true, workspace: { active_symbol: "ONGUSDT", active_generation: 1 },
