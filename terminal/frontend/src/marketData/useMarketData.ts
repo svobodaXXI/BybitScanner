@@ -13,15 +13,26 @@ type WorkspaceStateResponse = {
 // A confirmed workspace activation outranks an older in-flight bootstrap GET.
 // Otherwise a slow /workspace/state response can undo a Telegram deep-link ACK.
 let confirmedSymbolIntentRevision = 0;
+let finishPendingBootstrap: (() => void) | null = null;
 export const setMarketSymbol = (symbol: string, generation?: number) => {
   confirmedSymbolIntentRevision += 1;
   marketDataStore.setSymbol(symbol, generation);
+  // A validated activation ACK supplies the same symbol/generation authority
+  // as bootstrap. Do not wait for the now superseded state request.
+  if (Number.isInteger(generation) && Number(generation) > 0) finishPendingBootstrap?.();
 };
 
 export function useMarketData() {
   useEffect(() => {
     const controller = new AbortController();
     const bootstrapRevision = confirmedSymbolIntentRevision;
+    const finish = () => {
+      if (controller.signal.aborted) return;
+      if (finishPendingBootstrap === finish) finishPendingBootstrap = null;
+      controller.abort();
+      marketDataStore.start();
+    };
+    finishPendingBootstrap = finish;
 
     const start = async () => {
       try {
@@ -32,7 +43,8 @@ export function useMarketData() {
         const symbol = payload.workspace?.active_symbol;
         const generation = payload.workspace?.active_generation;
         if (
-          response.ok
+          !controller.signal.aborted
+          && response.ok
           && payload.ok
           && typeof symbol === "string"
           && symbol.trim()
@@ -46,12 +58,13 @@ export function useMarketData() {
         if (controller.signal.aborted) return;
       }
 
-      if (!controller.signal.aborted) marketDataStore.start();
+      finish();
     };
 
     void start();
 
     return () => {
+      if (finishPendingBootstrap === finish) finishPendingBootstrap = null;
       controller.abort();
       marketDataStore.dispose();
     };
