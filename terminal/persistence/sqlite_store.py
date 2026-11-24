@@ -5175,6 +5175,14 @@ class SQLiteStore:
 
     def prove_box_owned_position(self, candidate_id: str):
         """Read one consistent journal/ownership/position view; no runtime action."""
+        if self._connection.execute("PRAGMA query_only").fetchone()[0]:
+            # A reader may already hold its WAL snapshot (e.g. quarantine checks).
+            # Never open BEGIN IMMEDIATE or nest another BEGIN on that connection.
+            if self._connection.in_transaction:
+                return self._prove_box_owned_position(candidate_id)
+            with self.read_snapshot():
+                return self._prove_box_owned_position(candidate_id)
+        # Preserve the exclusive single-writer proof used by PAPER execution.
         with self._transaction():
             return self._prove_box_owned_position(candidate_id)
 
