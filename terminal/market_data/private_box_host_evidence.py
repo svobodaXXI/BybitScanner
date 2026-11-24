@@ -6,7 +6,11 @@ owner store and protected MarketDataHub witness. No trade authorization.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import json
+import os
+import tempfile
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import Callable
 
 from terminal.market_data.research_l2_rest_anchor import _vendor_id
@@ -295,3 +299,44 @@ class PrivateBoxCapture:
         except Exception:
             self.close()
             return PrivateBoxReceiptEvidence("UNKNOWN")
+
+
+def save_first_private_box_receipt(path: Path, result: PrivateBoxReceiptEvidence,
+                                   detached: dict, *, allow_write) -> bool:
+    """Retain ONE bounded owner-private sample, never overwrite prior evidence.
+
+    This is a local diagnostic file, not a journal or public reporting path.
+    A later owner-controlled export is separate. No completeness claim.
+    """
+    if (result.status != "RECEIPTS_OBSERVED_UNATTESTED"
+            or result.source_complete or result.trading_authorized
+            or path.exists() or not allow_write()):
+        return False
+    book, trades = detached["book"], detached["trades"]
+    payload = json.dumps({
+        "schema": "PAPER_BOX_PRIVATE_RECEIPT_V1",
+        "host": asdict(result),
+        "book": book,
+        "trades": {**trades, "prints": [asdict(p) for p in trades["prints"]]},
+        "source_complete": False,
+        "trading_authorized": False,
+    }, default=str, separators=(",", ":")).encode("utf-8")
+    if len(payload) > 8 * 1024 * 1024:
+        return False
+    temporary = None
+    try:
+        # NamedTemporaryFile has owner-only permissions. Same-directory link
+        # atomically publishes the finished file WITHOUT replacing a sample.
+        with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as output:
+            temporary = Path(output.name)
+            output.write(payload)
+        if not allow_write():
+            return False
+        try:
+            os.link(temporary, path)
+        except FileExistsError:
+            return False
+        return True
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
