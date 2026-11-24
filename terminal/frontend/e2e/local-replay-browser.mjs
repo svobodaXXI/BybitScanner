@@ -942,6 +942,7 @@ try {
   autoPrepareM1 = true;
   const postsBeforeAuto = posted.length;
   await page.goto(localUrl + "#locator=" + secondEpisodeId, { waitUntil: "networkidle" });
+  await page.reload({ waitUntil: "networkidle" });
   await page.getByRole("status", { name: "PAPER факты сделки" }).waitFor();
   const autoSetup = page.getByRole("region", { name: "Настройка стратегий и периода" });
   await autoSetup.getByRole("button", { name: "Снять все" }).click();
@@ -949,6 +950,7 @@ try {
   await autoSetup.getByRole("button", { name: "Применить" }).click();
   assert.equal(posted.length, postsBeforeAuto, "PAPER facts cannot request virtual M1 trades");
   await page.goto(localUrl, { waitUntil: "networkidle" });
+  await page.reload({ waitUntil: "networkidle" });
   await autoSetup.getByRole("button", { name: "Снять все" }).click();
   await autoSetup.getByRole("checkbox", { name: "Клинья" }).check();
   await autoSetup.getByRole("textbox", { name: "Координаты прогона" })
