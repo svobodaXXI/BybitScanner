@@ -161,14 +161,28 @@ class ConfirmedNonStrictHullEvidence(unittest.TestCase):
             local=engine._is_candidate_local(direct,len(frame)-1),
             fresh=engine._is_candidate_fresh(direct,_freshness_predicate),end=direct.end_index)
         native_calls=[]
+        comparison=[]
         native=engine.evaluate_candidate_pair
         def trace(u,l,*args,**kwargs):
-            if [u["anchor_index"],u["second_index"],l["anchor_index"],l["second_index"]]==f["corrected_anchors"]:
+            anchors=[u["anchor_index"],u["second_index"],l["anchor_index"],l["second_index"]]
+            g=native(u,l,*args,**kwargs)
+            if anchors==f["corrected_anchors"]:
                 native_calls.append(True)
-            return native(u,l,*args,**kwargs)
+            if g is not None and anchors in (f["corrected_anchors"],f["original_anchors"]):
+                from geometry.envelope_metrics import evaluate_strict_wedge_wicks
+                seq=g.pair_metrics.get("anchor_sequence")
+                comparison.append(dict(anchors=anchors,sequence=seq,
+                    mode=g.pair_metrics.get("geometry_mode"),
+                    score=engine.rank_geometry(g),body_breaches=engine._body_zone_breach_count(g),
+                    strict_wick_exception=g.pair_metrics.get("strict_wick_exception_index"),
+                    wicks={side:evaluate_strict_wedge_wicks(getattr(g,side+"_line"),frame,side,
+                        g.end_index,len(frame)-1) for side in ("upper","lower")},
+                    fresh=engine._is_candidate_fresh(g,_freshness_predicate),
+                    validation=g.validation.get("valid"),end=g.end_index))
+            return g
         with patch.object(engine,"evaluate_candidate_pair",side_effect=trace):
             winner=engine.analyze_geometry(highs,lows,len(frame)-1,frame,_freshness_predicate)
-        print("USUAL_NATIVE",json.dumps(dict(direct=observed,native_calls=len(native_calls),
+        print("USUAL_NATIVE",json.dumps(dict(direct=observed,native_calls=len(native_calls),comparison=comparison,
             winner=None if winner is None else [winner.upper_line["anchor_index"],
                 winner.upper_line["second_index"],winner.lower_line["anchor_index"],
                 winner.lower_line["second_index"],winner.start_index,winner.end_index]),default=str,sort_keys=True))

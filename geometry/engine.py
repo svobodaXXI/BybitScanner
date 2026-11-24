@@ -564,6 +564,16 @@ def analyze_geometry(
                 else 0
             )
 
+            # A newly recovered two-contact edge is a fresh formation
+            # alternative only. Do not introduce new stale diagnostics into
+            # the legacy fallback pool (INJ frozen control).
+            if (upper_candidate.get("wedge_hull_support")
+                    if isinstance(upper_candidate, dict) else False) or (
+                    lower_candidate.get("wedge_hull_support")
+                    if isinstance(lower_candidate, dict) else False):
+                if not _is_candidate_fresh(geometry, freshness_predicate):
+                    continue
+
             ranked_candidates.append(
                 {
                     "geometry":
