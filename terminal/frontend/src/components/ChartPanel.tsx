@@ -40,7 +40,9 @@ import {
   replaceSeriesDataPreservingViewport,
 } from "../chart/followLatest";
 import {
-  calculateDirectionalPinch,
+  beginDirectionalPinch,
+  advanceDirectionalPinch,
+  type DirectionalPinchState,
   scaleRangeAroundAnchor,
   translateLogicalRangeByPixels,
   translatePriceRangeByPixels,
@@ -85,8 +87,7 @@ type Gesture =
   | {
       type: "pinch";
       ids: [number, number];
-      dx: number;
-      dy: number;
+      pinch: DirectionalPinchState;
       logical: number;
       price: number;
       xRange: LogicalRange;
@@ -770,8 +771,7 @@ export function ChartPanel({
       gesture.current = {
         type: "pinch",
         ids: [id1, id2],
-        dx: Math.abs(b.x - a.x),
-        dy: Math.abs(b.y - a.y),
+        pinch: beginDirectionalPinch(b.x - a.x, b.y - a.y),
         logical,
         price,
         xRange,
@@ -823,7 +823,12 @@ export function ChartPanel({
     event.currentTarget.setPointerCapture(event.pointerId);
     if (pointers.current.size === 2) {
       clearCrosshairTimer();
+      // A queued single-finger pan must not overwrite the new pinch viewport.
+      panBatcherRef.current?.cancel();
       touchCrosshair.current.state = { mode: "IDLE" };
+      touchCrosshair.current.pointerId = null;
+      touchCrosshair.current.last = null;
+      gesture.current = null;
       beginPinch();
       return;
     }
@@ -918,12 +923,8 @@ export function ChartPanel({
       const a = pointers.current.get(g.ids[0]),
         b = pointers.current.get(g.ids[1]);
       if (!a || !b) return;
-      const d = calculateDirectionalPinch(
-        g.dx,
-        g.dy,
-        Math.abs(b.x - a.x),
-        Math.abs(b.y - a.y),
-      );
+      const d = advanceDirectionalPinch(g.pinch, b.x - a.x, b.y - a.y);
+      g.pinch = d.state;
       if (d.axes === "X" || d.axes === "XY") {
         chart
           .timeScale()
