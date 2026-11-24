@@ -219,5 +219,52 @@ class ExistingTradeSourceAdapterTest(unittest.TestCase):
         self.assertEqual(result.status,"EVIDENCE_UNAVAILABLE")
 
 
+class FrozenPrintPrefixTest(unittest.TestCase):
+    def fixture(self):
+        from decimal import Decimal
+        from terminal.market_data.impulse_observation import ObservedPrint
+        tf = 300000
+        snapshot = {
+            "schema_version":1, "signal_id":"candidate", "symbol":"TESTUSDT",
+            "timeframe":"5",
+            "bars":[{"open_time_ms":t, "open":110., "high":112.,
+                     "low":105., "close":108.} for t in (0,tf)],
+            "boundaries":[{"boundary_id":"upper","kind":"ray","anchors":[
+                {"bar_open_time_ms":0,"price":112.},
+                {"bar_open_time_ms":tf,"price":112.}]}],
+        }
+        def tick(id, at, seq, price):
+            return ObservedPrint(id, at, seq, "Sell", Decimal(price), Decimal("1"), at+1)
+        a,b,c = (tick("a",2*tf+1,1,"108"), tick("b",2*tf+2,2,"99.99"),
+                 tick("c",2*tf+3,3,"150"))
+        return snapshot,(a,b,c),dict(candidate_id="candidate",symbol="TESTUSDT",
+            timeframe="5",closed_known_at_ms=(tf,2*tf),
+            observed_from_ms=2*tf,source_valid=True)
+
+    def test_target_print_prefix_does_not_see_later_price(self):
+        from terminal.market_data.wedge_control_source import build_wedge_print_prefix
+        from copy import deepcopy
+        snapshot,prints,args=self.fixture()
+        original=deepcopy(snapshot)
+        result=build_wedge_print_prefix(snapshot,current_prints=prints,trade=prints[1],**args)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.as_of_trade_id,"b")
+        self.assertEqual(tuple(result.frame.iloc[-1][["open","high","low","close"]]),
+                         (108.,108.,99.99,99.99))
+        self.assertEqual(snapshot,original)
+
+    def test_unproved_prefix_and_wrong_identity_do_not_construct(self):
+        from terminal.market_data.wedge_control_source import build_wedge_print_prefix
+        snapshot,prints,args=self.fixture()
+        for patch in ({"observed_from_ms":600001},{"source_valid":False},
+                      {"candidate_id":"wrong"},{"closed_known_at_ms":(300000,900000)}):
+            self.assertIsNone(build_wedge_print_prefix(snapshot,current_prints=prints,
+                trade=prints[1],**{**args,**patch}))
+        self.assertIsNone(build_wedge_print_prefix(snapshot,current_prints=prints[:1],
+            trade=prints[1],**args))
+        self.assertIsNone(build_wedge_print_prefix(snapshot,current_prints=(prints[1],prints[0]),
+            trade=prints[0],**args))
+
+
 if __name__ == "__main__":
     unittest.main()
