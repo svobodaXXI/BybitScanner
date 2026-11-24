@@ -13,6 +13,7 @@ User=bybitscanner
 Group=bybitscanner
 WorkingDirectory=/opt/BybitScanner
 Environment=BYBITSCANNER_MAIN_STATE_DIR=/var/lib/bybitscanner-manual-main
+LoadCredentialEncrypted=bybitscanner-main-store-key:/etc/bybitscanner/main-store-key.cred
 StateDirectory=bybitscanner-manual-main
 StateDirectoryMode=0700
 ExecStart=/opt/BybitScanner/venv/bin/python -m terminal.runtime.manual_main_read_server

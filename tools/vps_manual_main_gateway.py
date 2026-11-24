@@ -18,6 +18,7 @@ from urllib.request import urlopen
 
 from tools.vps_gitless_release_activate import _atomic_file
 from tools.vps_release_identity import verify_release
+from tools.vps_main_store_key import KEY_NAME, KEY_PATH, verify_main_store_key
 
 UNIT = "bybitscanner-manual-main-read.service"
 UNIT_DIR = Path("/etc/systemd/system")
@@ -183,6 +184,15 @@ def inspect_authenticated_site(
     nginx_dir: Path = NGINX_DIR, uid: int = 0,
 ) -> tuple[Path, bytes, bytes]:
     """Read-only attestation. The caller must perform this *before* STOP."""
+    # Before any canonical STOP, attest the already-prepared sealed key for
+    # releases whose MAIN service requires it. Never create/replace keys here.
+    unit_source = root / "deploy/systemd" / UNIT
+    marker = f"LoadCredentialEncrypted={KEY_NAME}:{KEY_PATH}".encode()
+    if unit_source.is_file() and marker in unit_source.read_bytes():
+        try:
+            verify_main_store_key()
+        except (OSError, ValueError) as exc:
+            raise MainGatewayBlocked("main_store_key_preflight_unproven") from exc
     route = _route_from_source(root)
     bridge = _simulator_bridge_from_source(root)
     dump = _command(["nginx", "-T"], run=run)
