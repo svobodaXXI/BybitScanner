@@ -4,7 +4,7 @@ import { manualMainReadProjection } from "./manualMainReadProjection";
 const main = (account_id = "bybit-a") => ({
   account_id, environment: "MAINNET", status: "READY",
   refresh_generation: 2, wallet_balance_usdt: "100",
-  total_equity_usdt: "105", available_balance_usdt: "91",
+  total_equity_usdt: "105", available_balance_usdt: "91", one_wv_usdt: "5",
   positions: [{ account_id, symbol: "BTCUSDT", side: "LONG", size: "1" }],
   orders: [{ account_id, symbol: "BTCUSDT" }],
 });
@@ -19,6 +19,13 @@ describe("manual MAIN account inventory boundary", () => {
       market: false, limit: false, stop: false, take: false, full_close: false,
     });
     expect(result?.paper_state).toBeNull();
+  });
+
+  it("carries only authoritative MAIN sizing defaults, without deriving from equity or PAPER", () => {
+    expect(manualMainReadProjection("bybit-a", main())?.one_wv_usdt).toBe("5");
+    for (const value of [undefined, null, "0", "-1", "5.25", "NaN", 5]) {
+      expect(manualMainReadProjection("bybit-a", { ...main(), one_wv_usdt: value })?.one_wv_usdt).toBeNull();
+    }
   });
 
   it("enables MAIN manual controls only for a READY authenticated trading gateway snapshot", () => {
