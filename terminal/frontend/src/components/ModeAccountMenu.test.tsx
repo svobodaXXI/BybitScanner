@@ -94,11 +94,17 @@ describe("mode-specific account selector", () => {
     const paperCard = screen.getByText("Paper / Virtual").closest("article");
     const mainCard = screen.getByLabelText("Manual MAIN account");
     expect(paperCard).toHaveClass("is-verified-current");
+    expect(paperCard).toHaveTextContent("PAPER · READY");
+    expect(paperCard).not.toHaveTextContent("PAPER · PAPER");
+    expect(paperCard).not.toHaveTextContent("Robot account");
     expect(mainCard).not.toHaveClass("is-current");
     rerender(<AccountMenu open onToggle={onToggle} mode="TERMINAL"
       selectedAccountId={main.id} onSelectAccount={onSelectAccount} workspaceProjection={mainProjection} />);
     expect(mainCard).toHaveClass("is-verified-current");
     expect(paperCard).not.toHaveClass("is-current");
+    expect(paperCard).toHaveTextContent("Robot account");
+    expect(paperCard).not.toHaveTextContent("Current");
+    expect(paperCard?.querySelector(".account-ready-status")).toHaveTextContent("READY");
     expect(container.querySelectorAll('[aria-current="true"]')).toHaveLength(1);
     expect(screen.getAllByText("Current")).toHaveLength(1);
     rerender(<AccountMenu open onToggle={onToggle} mode="TERMINAL"
@@ -109,6 +115,7 @@ describe("mode-specific account selector", () => {
     rerender(<AccountMenu open onToggle={onToggle} mode="AUTOPILOT"
       selectedAccountId="paper" onSelectAccount={onSelectAccount} workspaceProjection={projection} />);
     expect(paperCard).toHaveClass("is-verified-current");
+    expect(paperCard).not.toHaveTextContent("Robot account");
     expect(screen.queryByLabelText("Manual MAIN account")).not.toBeInTheDocument();
     expect(container.querySelectorAll('[aria-current="true"]')).toHaveLength(1);
     expect(onSelectAccount).not.toHaveBeenCalled();
