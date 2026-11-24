@@ -271,6 +271,19 @@ describe("PAPER mixed-controller cohorts match canonical Diary scope", () => {
     }
   });
 
+  it("replays manual open and increase, then Robot increase and close", () => {
+    const rows = [
+      { ...open, controller: "MANUAL" },
+      increase,
+      { ...increase, execution_id: "exec-robot-add", order_id: "order-robot-add",
+        controller: "ROBOT", occurred_at_ms: increase.occurred_at_ms + 1000 },
+      { ...close, allocated_quantity: "4" },
+    ];
+    const facts = parsePaperEpisodeFacts(mixed(rows));
+    expect(facts.execution_allocations).toEqual(rows);
+    expect(matchPaperFactsToMarket(facts, market()).markers).toHaveLength(4);
+  });
+
   it("accepts manual partial reduction or increase without changing the source executions", () => {
     for (const mid of [reduce, increase]) {
       const rows = [open, mid, { ...close,
