@@ -1608,11 +1608,17 @@ button {
 .account-card.status-reconciling small { color: #e0b862; }
 .account-card {
   padding: 0.65rem;
-  border: 1px solid #3c7757;
+  border: 1px solid #394653;
   border-radius: 0.35rem;
+  background: #171d24;
+}
+.account-card.is-current { border-color: #8c7138; background: #252014; }
+.account-card.is-verified-current:not(.status-disconnected):not(.status-error):not(.status-reconciling) {
+  border-color: #3c7757;
   background: #14231c;
 }
-.account-card span { color: #70d49a; font-size: 0.65rem; }
+.account-card span { color: #e0b862; font-size: 0.65rem; }
+.account-card.is-verified-current:not(.status-disconnected):not(.status-error):not(.status-reconciling) span { color: #70d49a; }
 .account-refresh-button { justify-self: start; cursor: pointer; }
 .account-menu .manual-main-account button:not(:disabled) {
   min-height: 2.75rem;
