@@ -430,7 +430,7 @@ export function AccountMenu({
               </article>
             ))}
             {mode !== "AUTOPILOT" && manualMain.map((account) => (
-              <article className="account-card mainnet" key={account.id} aria-label="Manual MAIN account">
+              <article className={`account-card mainnet manual-main-account status-${account.status.toLowerCase()}`} key={account.id} aria-label="Manual MAIN account">
                 <strong>{account.display_name}</strong>
                 <small>BYBIT · MAINNET · {account.status} · Separate MAIN service</small>
                 <small>{workspaceProjection?.account_id === account.id && workspaceProjection.read_only === false
@@ -456,7 +456,7 @@ export function AccountMenu({
                     } catch {
                       setRefreshError((current) => ({ ...current, [account.id]: "MAIN refresh failed." }));
                     } finally { setRefreshingAccount(null); }
-                  })()}>Refresh MAIN</button>
+                  })()}>{refreshingAccount === account.id ? "Refreshing MAIN…" : "Refresh MAIN"}</button>
               </article>
             ))}
             {mainInventoryError ? <small role="alert">{mainInventoryError}</small> : null}
