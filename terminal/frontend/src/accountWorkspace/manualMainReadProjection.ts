@@ -33,6 +33,8 @@ export function manualMainReadProjection(
     session_generation: data.refresh_generation,
     projection_generation: data.refresh_generation,
     wallet_balance_usdt: data.wallet_balance_usdt,
+    one_wv_usdt: typeof data.one_wv_usdt === "string" && /^[1-9][0-9]*$/.test(data.one_wv_usdt)
+      && Number.isFinite(Number(data.one_wv_usdt)) ? data.one_wv_usdt : null,
     total_equity_usdt: data.total_equity_usdt,
     available_balance_usdt: data.available_balance_usdt,
     positions: data.positions as Array<Record<string, unknown>>,
