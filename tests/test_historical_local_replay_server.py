@@ -55,6 +55,47 @@ class PublicKlineTests(unittest.TestCase):
         self.assertNotIn("sign", parsed.query)
         self.assertEqual(timeout, 12)
 
+    def test_windows_transient_read_timeout_reuses_same_validated_public_query(self):
+        class BrokenResponse:
+            def __enter__(self): return self
+            def __exit__(self, *_): pass
+            def read(self, _size): raise TimeoutError("read timed out")
+        raw = json.dumps({"retCode": 0, "result": {"list": [
+            ["300000", "100", "110", "95", "102", "3.4", "0"]
+        ]}}).encode()
+        with patch.object(local.os, "name", "nt"), \
+                patch.object(local, "urlopen", return_value=BrokenResponse()), \
+                patch.object(local, "_windows_public_kline_response", return_value=raw) as fallback:
+            records = local.fetch_public_klines("BTCUSDT", "5", 1, end_ms=599999)
+        self.assertEqual(records[0]["time"], "300000")
+        fallback.assert_called_once_with(
+            local.BYBIT_PUBLIC_KLINE + "?category=linear&symbol=BTCUSDT&interval=5&limit=1&end=599999")
+
+    def test_windows_does_not_retry_http_or_certificate_rejection(self):
+        from urllib.error import HTTPError, URLError
+        from ssl import SSLCertVerificationError
+        for exc in (
+            HTTPError(local.BYBIT_PUBLIC_KLINE, 403, "Forbidden", None, None),
+            URLError(SSLCertVerificationError("certificate verification failed")),
+        ):
+            with patch.object(local.os, "name", "nt"), \
+                    patch.object(local, "urlopen", side_effect=exc), \
+                    patch.object(local, "_windows_public_kline_response") as fallback:
+                with self.assertRaises(type(exc)):
+                    local.fetch_public_klines("BTCUSDT", "5", 1, end_ms=599999)
+                fallback.assert_not_called()
+
+    def test_windows_public_fallback_refuses_noncanonical_urls(self):
+        for url in (
+            "https://example.org/v5/market/kline",
+            local.BYBIT_PUBLIC_KLINE + "?category=linear&symbol=BTCUSDT&interval=5&limit=1&end=599999&api_key=secret",
+            local.BYBIT_PUBLIC_KLINE + "?category=linear&symbol=BTCUSDT&interval=5&limit=1001&end=599999",
+        ):
+            with patch.object(local.subprocess, "run") as run:
+                with self.assertRaises(ValueError):
+                    local._windows_public_kline_response(url)
+                run.assert_not_called()
+
     def test_api_failure_does_not_create_fake_data(self):
         class Response:
             def __enter__(self): return self
