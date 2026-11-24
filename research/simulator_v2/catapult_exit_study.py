@@ -196,7 +196,7 @@ def evaluate_exit(
         if projected_net > 0:
             return ExitProposal("PARTIAL_EXIT_PREVIEW",
                                 "fading but projected net-positive",
-                                estimated_net_if_exited=projected_net,
+                                estimated_net_if_exited=projected_net * settings.partial_fraction,
                                 fraction_to_close=settings.partial_fraction)
         return ExitProposal("FULL_EXIT_PREVIEW",
                             "adverse flow or no timely followthrough",
