@@ -308,5 +308,42 @@ class PrivateBoxCaptureTests(unittest.TestCase):
         capture.close()
 
 
+    def test_only_validated_detached_receipts_reach_private_sink(self):
+        store, data = setup()
+        witness = object()
+        snapshots = []
+        saved = []
+        old = NS(trade_id="old", timestamp_ms=900,
+                 received_at_ms=950, sequence=1)
+        data["trades"]["prints"] = (old, *data["trades"]["prints"])
+
+        def snapshot(symbol, *, expected_witness):
+            snapshots.append(symbol)
+            self.assertIs(expected_witness, witness)
+            return data
+
+        capture = PrivateBoxCapture(NS(
+            begin_protected_research_capture=lambda *_a, **_k: witness,
+            end_protected_research_capture=lambda *_a, **_k: True,
+            private_protected_research_snapshot=snapshot,
+        ))
+        capture.sync(store.get, ("box-robot-123",),
+                     robot_ready=True, observed_at_ms=2100)
+        result = capture.observe(store.get, robot_ready=True,
+                                 observed_at_ms=2100,
+                                 save=lambda *args: saved.append(args))
+        self.assertEqual(result.status, "RECEIPTS_OBSERVED_UNATTESTED")
+        self.assertEqual(snapshots, ["BTCUSDT"])
+        self.assertEqual(len(saved), 1)
+        self.assertIs(saved[0][1]["book"], data["book"])
+        self.assertEqual(saved[0][1]["trades"]["prints"],
+                         (data["trades"]["prints"][1],))
+        self.assertFalse(saved[0][0].trading_authorized)
+        self.assertFalse(saved[0][0].source_complete)
+        capture.observe(store.get, robot_ready=False, observed_at_ms=2100,
+                        save=lambda *args: saved.append(args))
+        self.assertEqual(len(saved), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
