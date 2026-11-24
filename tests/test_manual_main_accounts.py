@@ -1,5 +1,8 @@
 """Boundary tests for independent manual MAIN account inventory (#930)."""
 import unittest
+import tempfile
+from pathlib import Path
+from terminal.persistence.mode_account_preference import ModeAccountPreferenceStore
 from decimal import Decimal
 from terminal.domain.models import TradingAccountId, Category, OrderSide, ExecutionId
 from types import SimpleNamespace
@@ -208,6 +211,33 @@ class ManualMainAccountsTests(unittest.TestCase):
         with self.assertRaises(MalformedResponse):
             adapter.list_executions("BTCUSDT", trade_only=True)
         self.assertEqual(len(http.calls), 20)
+
+    def test_terminal_preference_survives_restart_without_connecting_or_activating(self):
+        record = StoredBybitAccount("bybit-a", "MAIN", "MAINNET", "key", "secret", True)
+        self.c = FakeCredentials((record,))
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "terminal.preference.json"
+            def runtime():
+                return ManualMainAccounts(self.c, self.snap, validator=self.v,
+                                          terminal_preferences=ModeAccountPreferenceStore(path))
+            app = runtime()
+            self.assertIsNone(app.terminal_preference())
+            self.assertEqual(app.save_terminal_preference(record.id), record.id)
+            restored = runtime()
+            self.assertEqual(restored.terminal_preference(), record.id)
+            self.assertEqual(restored.catalog()["accounts"][0]["status"], "DISCONNECTED")
+            with self.assertRaises(LookupError):
+                restored.save_terminal_preference("bybit-unknown")
+            self.assertEqual(restored.terminal_preference(), record.id)
+            with patch("terminal.persistence.mode_account_preference.os.replace", side_effect=OSError):
+                with self.assertRaises(RuntimeError):
+                    restored.save_terminal_preference("paper")
+            self.assertEqual(runtime().terminal_preference(), record.id)
+            restored.save_terminal_preference("paper")
+            self.assertEqual(runtime().terminal_preference(), "paper")
+            self.assertIsNone(ModeAccountPreferenceStore(path).load("AUTOPILOT"))
+            self.assertEqual(self.v.calls, 0)
+            self.assertEqual(self.c.saves, [])
 
     def test_existing_credentials_are_registered_without_network_or_paper(self):
         record = StoredBybitAccount(
