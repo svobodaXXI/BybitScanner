@@ -7,7 +7,9 @@ remain separate decisions; it is not a second instance of PaperRuntime.
 from __future__ import annotations
 
 import hmac
-from threading import RLock
+import logging
+import time
+from threading import RLock, get_ident
 from uuid import uuid4
 
 from terminal.application.live_account_reconciliation import LiveAccountReconciler
@@ -20,6 +22,15 @@ from terminal.exchange.bybit_account_validation import BybitAccountValidator
 from terminal.exchange.bybit_v5_adapter import BybitCredentials, BybitV5ReadAdapter
 from terminal.persistence.credential_store import CredentialStore, StoredBybitAccount
 from terminal.persistence.live_account_store import LiveAccountProjectionStore
+
+
+_LOG = logging.getLogger(__name__)
+
+
+def _provision_stage(stage: str, start: float) -> None:
+    # Fixed internal stage names only; never exception messages, keys, names or IDs.
+    _LOG.warning("MAIN_PROVISION stage=%s thread=%d elapsed_ms=%d",
+                 stage, get_ident(), int((time.monotonic() - start) * 1000))
 
 
 class ManualMainAccountError(RuntimeError):
@@ -94,20 +105,35 @@ class ManualMainAccounts:
         api_key, api_secret = api_key.strip(), api_secret.strip()
         if len(display_name) > 64:
             raise ValueError("invalid_main_account_name")
+        started = time.monotonic()
+        _provision_stage("WAIT_LOCK", started)
         with self._lock:
+            _provision_stage("LOCK_ACQUIRED", started)
             for existing in self._stored:
                 if hmac.compare_digest(existing.api_key, api_key):
                     if not hmac.compare_digest(existing.api_secret, api_secret):
                         raise ManualMainAccountError("duplicate_api_key")
                     return {"account_id": existing.id, "created": False}
-            validated = self._validator.validate(BybitCredentials(api_key, api_secret))
+            _provision_stage("VALIDATION_BEGIN", started)
+            try:
+                validated = self._validator.validate(BybitCredentials(api_key, api_secret))
+            except Exception:
+                _provision_stage("VALIDATION_FAILED", started)
+                raise
+            _provision_stage("VALIDATION_RETURNED", started)
             if validated.environment != "MAINNET":
                 raise ManualMainAccountError("manual_main_requires_mainnet")
             account = StoredBybitAccount(
                 "bybit-" + uuid4().hex, display_name, "MAINNET",
                 api_key, api_secret, validated.read_only,
             )
-            self._credentials.save(tuple((*self._stored, account)))
+            _provision_stage("STORAGE_BEGIN", started)
+            try:
+                self._credentials.save(tuple((*self._stored, account)))
+            except Exception:
+                _provision_stage("STORAGE_FAILED", started)
+                raise
+            _provision_stage("STORAGE_RETURNED", started)
             self._stored.append(account)
             if self._manager is None:
                 self._initialize_accounts()
@@ -117,6 +143,7 @@ class ManualMainAccounts:
                     TradingAccountProvider.BYBIT, TradingAccountEnvironment.MAINNET,
                     TradingAccountStatus.DISCONNECTED,
                 ))
+            _provision_stage("REGISTERED", started)
             return {"account_id": account.id, "created": True}
 
     def refresh(self, account_id: str) -> dict[str, object]:
