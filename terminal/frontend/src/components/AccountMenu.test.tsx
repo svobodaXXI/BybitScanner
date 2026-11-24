@@ -144,12 +144,14 @@ describe("AccountMenu", () => {
     expect(screen.getByRole("img", { name: "Current account golden key" }).closest("article"))
       .toHaveTextContent("Paper / Virtual");
     expect(document.querySelectorAll(".account-switch-key")).toHaveLength(1);
-    fireEvent.click(screen.getByRole("button", { name: "+ Add account" }));
+    fireEvent.click(screen.getByRole("button", { name: "+ Add new" }));
+    fireEvent.click(screen.getByRole("button", { name: "Bybit MAIN · Real account" }));
     fireEvent.change(screen.getByLabelText("API Secret"), { target: { value: "never-store-me" } });
     expect(screen.getByLabelText("API Secret")).toHaveAttribute("type", "password");
     expect(screen.getByRole("button", { name: "Add account" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Close add account" }));
-    fireEvent.click(screen.getByRole("button", { name: "+ Add account" }));
+    fireEvent.click(screen.getByRole("button", { name: "+ Add new" }));
+    fireEvent.click(screen.getByRole("button", { name: "Bybit MAIN · Real account" }));
     expect(screen.getByLabelText("API Secret")).toHaveValue("");
     rerender(<AccountMenu open={false} onToggle={vi.fn()} />);
   });
@@ -199,7 +201,8 @@ describe("AccountMenu", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<AccountMenu open onToggle={vi.fn()} />);
     await screen.findByText("Current");
-    fireEvent.click(screen.getByRole("button", { name: "+ Add account" }));
+    fireEvent.click(screen.getByRole("button", { name: "+ Add new" }));
+    fireEvent.click(screen.getByRole("button", { name: "Bybit MAIN · Real account" }));
     fireEvent.change(screen.getByLabelText("Account name"), { target: { value: "Main" } });
     fireEvent.change(screen.getByLabelText("API Key"), { target: { value: "key" } });
     fireEvent.change(screen.getByLabelText("API Secret"), { target: { value: "secret" } });
@@ -216,7 +219,8 @@ describe("AccountMenu", () => {
       .mockResolvedValueOnce({ ok: false, json: async () => ({ ok: false, error: "bybit_validation_failed" }) }));
     render(<AccountMenu open onToggle={vi.fn()} />);
     await screen.findByText("Current");
-    fireEvent.click(screen.getByRole("button", { name: "+ Add account" }));
+    fireEvent.click(screen.getByRole("button", { name: "+ Add new" }));
+    fireEvent.click(screen.getByRole("button", { name: "Bybit MAIN · Real account" }));
     for (const [label, value] of [["Account name", "Main"], ["API Key", "key"], ["API Secret", "secret"]]) {
       fireEvent.change(screen.getByLabelText(label), { target: { value } });
     }
