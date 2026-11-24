@@ -163,5 +163,61 @@ class ControlBoundaryConstructionTest(unittest.TestCase):
         self.assertEqual(self.select(q,a,f,o).status, "EVIDENCE_UNAVAILABLE")
 
 
+class ExistingTradeSourceAdapterTest(unittest.TestCase):
+    def fixture(self):
+        import pandas as pd
+        from decimal import Decimal
+        from terminal.market_data.impulse_observation import ObservedPrint
+        interval = 300000
+        times = [i*interval for i in range(16)]
+        highs = [110,111,112,120,113,112,111,110,116,111,110,109,108,107,106,105]
+        lows = [v-2 for v in highs]
+        lows[-1] = 99.
+        frame = pd.DataFrame({"time":times,"high":highs,"low":lows,
+                              "open":[v-1 for v in highs],"close":[v-1 for v in highs]})
+        frame.loc[15,"close"] = 99.
+        at = times[-1]+1000
+        trade = ObservedPrint("exact-print", at, 8, "Sell", Decimal("99"), Decimal("1"), at+1)
+        state = initialize_control_anchor("episode", "falling", "100")
+        state,_ = observe_trade(state, trade_id="breakout", timestamp_ms=times[-1]+100,
+                                sequence=7, price="121", breakout_observed=True,
+                                confirmed_anchors=[], source_valid=True)
+        known = [i+interval for i in times[:-1]]
+        return state,trade,frame,known
+
+    def test_existing_print_and_closed_pivot_confirmation(self):
+        from terminal.market_data.wedge_control_source import observe_wedge_print
+        state,trade,frame,known = self.fixture()
+        result = observe_wedge_print(state,trade,frame,timeframe="5",episode_start=0,
+                                     opposite_line={"slope":-.1,"intercept":100.},
+                                     closed_known_at_ms=known,prefix_as_of_trade_id=trade.trade_id,
+                                     breakout_observed=False,source_valid=True)
+        self.assertIsNotNone(result.request)
+        self.assertEqual(result.request.control_anchor.index, 8)
+        self.assertEqual(result.request.control_anchor.known_at_ms, 12*300000)
+        self.assertEqual(result.request.timestamp_ms, trade.timestamp_ms)
+        self.assertEqual(result.state.extreme, "99")
+        # A request is not successful revision/trading authority.
+        self.assertIsNotNone(result.boundary)
+
+    def test_reject_later_frame_gap_and_unproved_visibility(self):
+        from terminal.market_data.wedge_control_source import observe_wedge_print
+        state,trade,frame,known = self.fixture()
+        args = dict(timeframe="5",episode_start=0,
+                    opposite_line={"slope":-.1,"intercept":100.},
+                    closed_known_at_ms=known,prefix_as_of_trade_id=trade.trade_id,
+                    breakout_observed=False,source_valid=True)
+        for overrides in ({"prefix_as_of_trade_id":"later"},
+                          {"source_valid":False},
+                          {"closed_known_at_ms":known[:-1]+[trade.received_at_ms+1]}):
+            result = observe_wedge_print(state,trade,frame,**{**args,**overrides})
+            self.assertEqual(result.status,"EVIDENCE_UNAVAILABLE")
+            self.assertEqual(result.state,state)
+            self.assertIsNone(result.request)
+        gapped = frame.drop(index=4).reset_index(drop=True)
+        result = observe_wedge_print(state,trade,gapped,**{**args,"closed_known_at_ms":known[:-1]})
+        self.assertEqual(result.status,"EVIDENCE_UNAVAILABLE")
+
+
 if __name__ == "__main__":
     unittest.main()
