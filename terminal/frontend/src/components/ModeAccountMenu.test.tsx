@@ -75,7 +75,7 @@ describe("mode-specific account selector", () => {
     resolveRefresh();
     await waitFor(() => expect(screen.getByRole("button", { name: "Refresh MAIN" })).toBeEnabled());
     expect(screen.getByLabelText("Manual MAIN account")).toHaveClass("status-read_only");
-    expect(screen.getByText("Current")).toBeInTheDocument();
+    expect(screen.getByText("Текущий")).toBeInTheDocument();
     expect(onSelectAccount).not.toHaveBeenCalled();
     expect(fetchMock.mock.calls.filter(([, options]) => options?.method === "POST")).toEqual([
       ["/api/manual-main/accounts/bybit-test/refresh", { method: "POST" }],
@@ -96,39 +96,43 @@ describe("mode-specific account selector", () => {
     expect(paperCard).toHaveClass("is-verified-current");
     expect(paperCard).toHaveTextContent("PAPER · READY");
     expect(paperCard).not.toHaveTextContent("PAPER · PAPER");
-    expect(paperCard).not.toHaveTextContent("Robot account");
+    expect(paperCard).not.toHaveTextContent("Подключён к Роботу");
     expect(mainCard).not.toHaveClass("is-current");
     rerender(<AccountMenu open onToggle={onToggle} mode="TERMINAL"
-      selectedAccountId={main.id} onSelectAccount={onSelectAccount} workspaceProjection={mainProjection} />);
+      selectedAccountId={main.id} otherWorkspaceAccountId="paper" onSelectAccount={onSelectAccount} workspaceProjection={mainProjection} />);
     expect(mainCard).toHaveClass("is-verified-current");
     expect(paperCard).not.toHaveClass("is-current");
-    expect(paperCard).toHaveTextContent("Robot account");
-    expect(paperCard).not.toHaveTextContent("Current");
+    expect(paperCard).toHaveTextContent("Подключён к Роботу");
+    expect(paperCard).not.toHaveTextContent("Текущий");
     expect(paperCard?.querySelector(".account-ready-status")).toHaveTextContent("READY");
+    expect(paperCard?.querySelector(".account-role-connected")).toHaveTextContent("Подключён к Роботу");
+    expect(container.querySelector(".account-card")).toBe(mainCard);
     expect(container.querySelectorAll('[aria-current="true"]')).toHaveLength(1);
-    expect(screen.getAllByText("Current")).toHaveLength(1);
+    expect(screen.getAllByText("Текущий")).toHaveLength(1);
     rerender(<AccountMenu open onToggle={onToggle} mode="TERMINAL"
-      selectedAccountId={main.id} onSelectAccount={onSelectAccount} workspaceProjection={null} />);
+      selectedAccountId={main.id} otherWorkspaceAccountId="paper" onSelectAccount={onSelectAccount} workspaceProjection={null} />);
     expect(mainCard).toHaveClass("is-current");
     expect(mainCard).not.toHaveClass("is-verified-current");
     expect(paperCard).not.toHaveClass("is-current");
     rerender(<AccountMenu open onToggle={onToggle} mode="AUTOPILOT"
-      selectedAccountId="paper" onSelectAccount={onSelectAccount} workspaceProjection={projection} />);
+      selectedAccountId="paper" otherWorkspaceAccountId={main.id} onSelectAccount={onSelectAccount} workspaceProjection={projection} />);
     expect(paperCard).toHaveClass("is-verified-current");
-    expect(paperCard).not.toHaveTextContent("Robot account");
-    expect(screen.queryByLabelText("Manual MAIN account")).not.toBeInTheDocument();
+    expect(paperCard).not.toHaveTextContent("Подключён к Роботу");
+    expect(screen.getByLabelText("Manual MAIN account")).toHaveTextContent("Подключён к Терминалу");
+    expect(container.querySelector(".account-card")).toBe(paperCard);
+    expect(screen.queryByRole("button", { name: /Select MAIN|Refresh MAIN|All MAIN positions/ })).not.toBeInTheDocument();
     expect(container.querySelectorAll('[aria-current="true"]')).toHaveLength(1);
     expect(onSelectAccount).not.toHaveBeenCalled();
     expect(fetchMock.mock.calls.every(([url]) => !String(url).includes("/activate"))).toBe(true);
   });
 
-  it("AUTOPILOT offers only PAPER, no MAIN account or provisioning", async () => {
+  it("AUTOPILOT shows MAIN for information only, without MAIN controls or provisioning", async () => {
     mockCatalog();
     render(<AccountMenu open onToggle={vi.fn()} mode="AUTOPILOT"
       selectedAccountId="paper" onSelectAccount={vi.fn()} workspaceProjection={projection} />);
     await screen.findByRole("dialog", { name: "Accounts" });
     expect(screen.getByText("Paper / Virtual")).toBeInTheDocument();
-    expect(screen.queryByText("My MAIN")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Select MAIN|Add New Account/ })).not.toBeInTheDocument();
+    expect(await screen.findByText("My MAIN")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Select MAIN|Refresh MAIN|All MAIN positions|Add New Account/ })).not.toBeInTheDocument();
   });
 });
