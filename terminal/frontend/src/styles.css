@@ -1622,6 +1622,7 @@ button {
 .account-card .account-ready-status { color: #70d49a; }
 .account-card .account-robot-role { color: #a5b2bf; }
 .account-card .account-role-connected { color: #70d49a; }
+.account-card.is-verified-current .account-robot-role:not(.account-role-connected) { color: #a5b2bf; }
 .account-card.manual-main-account:not(.is-current) { cursor: default; }
 .account-refresh-button { justify-self: start; cursor: pointer; }
 .account-menu .manual-main-account button:not(:disabled) {
