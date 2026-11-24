@@ -6,7 +6,7 @@ import "./DiaryOverlay.css";
 
 export type DiarySection = "FINREZ" | "PATTERNS" | "DEALS" | "TRADES" | "SETUPS" | "STATISTICS" | "MIRROR";
 export type DiaryAccountMenuProps = Pick<ComponentProps<typeof AccountMenu>,
-  "workspaceProjection" | "mode" | "selectedAccountId" | "onSelectAccount" | "modeAccountError">;
+  "workspaceProjection" | "mode" | "selectedAccountId" | "otherWorkspaceAccountId" | "onSelectAccount" | "modeAccountError">;
 type FinrezPeriod = "DAY" | "WEEK" | "MONTH" | "YEAR" | "ALL" | "CUSTOM";
 type FinrezDateRange = { from: string; to: string };
 
