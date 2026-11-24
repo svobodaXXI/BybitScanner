@@ -39,7 +39,7 @@ class VerifiedCacheTests(unittest.TestCase):
     def test_partial_coverage_downloads_only_missing_span(self):
         fetched = []
         def upstream(symbol, interval, limit, *, end_ms):
-            fetched.append(end_ms)
+            fetched.append((end_ms, limit))
             return [row(i) for i in range(6) if row(i)["time"] <= end_ms][::-1][:limit]
         with TemporaryDirectory() as tmp:
             folder = Path(tmp)
@@ -48,9 +48,27 @@ class VerifiedCacheTests(unittest.TestCase):
             fetched.clear()
             complete_history_fetch(symbol="BTCUSDT", start_ms=START, end_ms=START+6*STEP,
                                    directory=folder, upstream_fetch=upstream)
-            self.assertEqual(fetched, [START+6*STEP-1])
+            self.assertEqual(fetched, [(START+6*STEP-1, 4)])
             complete_history_fetch(symbol="BTCUSDT", start_ms=START, end_ms=START+6*STEP,
                  directory=folder, upstream_fetch=lambda *a, **k: self.fail("repeat fetch"))
+
+    def test_missing_interior_gaps_and_tail_request_only_uncovered_bars(self):
+        calls = []
+        def upstream(symbol, interval, limit, *, end_ms):
+            calls.append((end_ms, limit))
+            last = (end_ms - START) // STEP
+            return [row(i) for i in range(last, last - limit, -1)]
+        with TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            for lo, hi in [(0, 2), (4, 6)]:
+                complete_history_fetch(symbol="BTCUSDT", start_ms=START+lo*STEP,
+                    end_ms=START+hi*STEP, directory=folder, upstream_fetch=upstream)
+            calls.clear()
+            complete_history_fetch(symbol="BTCUSDT", start_ms=START, end_ms=START+7*STEP,
+                directory=folder, upstream_fetch=upstream)
+            self.assertEqual(calls, [(START+4*STEP-1, 2), (START+7*STEP-1, 1)])
+            complete_history_fetch(symbol="BTCUSDT", start_ms=START, end_ms=START+7*STEP,
+                directory=folder, upstream_fetch=lambda *a, **k: self.fail("repeated Apply fetched again"))
 
     def test_unavailable_missing_candles_never_publish_completion(self):
         with TemporaryDirectory() as tmp:
