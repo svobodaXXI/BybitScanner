@@ -508,6 +508,9 @@ def analyze_geometry(
                     "mode_priority":
                         mode_priority,
 
+                    "strict_wick_exception":
+                        pair_metrics.get("strict_wick_exception_index") is not None,
+
                     "body_breaches":
                         _body_zone_breach_count(
                             geometry
@@ -532,7 +535,8 @@ def analyze_geometry(
     # unfiltered pool is kept so downstream detection keeps reporting the
     # same geometry with detected=False instead of losing it entirely.
     #
-    # Order: CANONICAL first (unchanged), then fewer own-anchor..END body breaches,
+    # Order: CANONICAL first (unchanged), then prefer no strict-side exception,
+    # then fewer own-anchor..END body breaches,
     # then the existing geometry_score. Scores are not recalculated.
     #
 
@@ -553,6 +557,7 @@ def analyze_geometry(
             eligible_candidates,
             key=lambda candidate: (
                 candidate["mode_priority"],
+                not candidate["strict_wick_exception"],
                 -candidate["body_breaches"],
                 candidate["score"]
             )

@@ -210,6 +210,30 @@ class SingleWickAcceptanceContract(unittest.TestCase):
         self.assertEqual(breaches, [160, 161])
         self.assertIsNone(geometry)
 
+    def test_mirrored_single_wick_and_support_guard(self):
+        from geometry.envelope_metrics import is_isolated_strict_wick
+        frame = self.frame.copy()
+        frame.loc[160, "low"] = 85.03
+        _, g = self.pair(frame)
+        self.assertIsNotNone(g)
+        line = g.lower_line
+        points = g.candidate_points["lower"]
+        self.assertTrue(is_isolated_strict_wick(line, frame, "lower", 160, g.end_index, points))
+        self.assertFalse(is_isolated_strict_wick(line, frame, "lower", 160, g.end_index,
+                                                [p for p in points if p["index"] in (138,178)]))
+        self.assertFalse(is_isolated_strict_wick(line, frame, "lower", 160, g.end_index,
+                                                points + [{"index":160, "price":85.03}]))
+        ceiling = 200.
+        mirrored = frame.copy()
+        for key, source in (("open","open"),("close","close"),("high","low"),("low","high")):
+            mirrored[key] = ceiling-frame[source]
+        upper = {**line, "slope":-line["slope"], "intercept":ceiling-line["intercept"]}
+        self.assertEqual(evaluate_strict_wedge_wicks(upper, mirrored, "upper",
+                                                    g.end_index, len(frame)-1), [160])
+        self.assertTrue(is_isolated_strict_wick(upper, mirrored, "upper", 160, g.end_index, points))
+        mirrored.loc[160,"close"] = mirrored.loc[160,"high"]
+        self.assertFalse(is_isolated_strict_wick(upper, mirrored, "upper", 160, g.end_index, points))
+
     def test_clean_candidate_beats_higher_score_single_wick(self):
         from tests.test_geometry_candidate_selection_freshness import _StubGeometry, _select
         clean = _StubGeometry("clean", 1., mode="CANONICAL")
