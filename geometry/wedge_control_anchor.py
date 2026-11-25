@@ -252,10 +252,100 @@ def load_control_anchor_seed(record, *, directory=None):
             "prefix_as_of_ms": cutoff, "candles": frame,
             "established_pivots": [established[i] for i in sorted(established)],
             "original_strict_line": dict(geometry[strict_side+"_line"]),
+            "original_opposite_line": dict(geometry[("lower" if strict_side == "upper" else "upper")+"_line"]),
         }
     except (AttributeError, KeyError, TypeError, ValueError, IndexError,
             InvalidOperation, OverflowError):
         return None
+
+
+def validate_revision_pairs(*, family, episode_start, original_opposite_line,
+                            proposed_lines, candles):
+    """Revalidate exact proposed contacts in the native wedge pair engine.
+
+    The last row is the event-time partial candle, never a confirmed
+    right-side pivot. Preserve the original opposite ray and START; do
+    not rank a different formation or substitute an unrelated boundary.
+    Only clean, canonical, still-converging pairs are returned.
+    """
+    import math
+    from pivots import find_pivots
+    from .candidate import build_candidate_lines
+    from .evaluation import evaluate_candidate_pair
+    from .engine import _is_candidate_local, _is_boundary_structurally_valid, _is_anchor_sequence_valid
+    from .wedge_boundaries import (
+        build_strict_wedge_support_lines, build_wedge_hull_support_lines,
+        strict_support_pair_allowed, wedge_hull_pair_allowed,
+    )
+
+    def identity(line):
+        return tuple(line[k] for k in (
+            "anchor_index", "anchor_price", "second_index", "second_price",
+            "slope", "intercept",
+        ))
+
+    try:
+        if family not in ("falling", "rising") or not proposed_lines or len(candles) < 2:
+            return []
+        current = len(candles)-1
+        if type(episode_start) is not int or not 0 <= episode_start < current:
+            return []
+        strict_side = "upper" if family == "falling" else "lower"
+        proposed = {identity(line) for line in proposed_lines
+                    if evaluate_strict_wedge_wicks(line, candles, strict_side,
+                                                   current, current) == []}
+        if not proposed:
+            return []
+        opposite = identity(original_opposite_line)
+        frame = candles.copy()
+        for col in ("open", "high", "low", "close"):
+            frame[col] = frame[col].astype(float)
+        closed = frame.iloc[:-1].copy()
+        highs, lows = find_pivots(closed.copy())
+        upper = build_candidate_lines(highs)
+        lower = build_candidate_lines(lows)
+        su, sl = build_strict_wedge_support_lines(
+            highs, lows, upper, lower, closed, len(closed)-1,
+        )
+        hu, hl = build_wedge_hull_support_lines(
+            highs, lows, upper, lower, closed, len(closed)-1,
+        )
+        upper, lower = upper+su+hu, lower+sl+hl
+        if family == "falling":
+            upper = [c for c in upper if identity(c["line"]) in proposed]
+            lower = [c for c in lower if identity(c["line"]) == opposite]
+        else:
+            lower = [c for c in lower if identity(c["line"]) in proposed]
+            upper = [c for c in upper if identity(c["line"]) == opposite]
+        accepted = []
+        for u in upper:
+            for l in lower:
+                if not strict_support_pair_allowed(u, l):
+                    continue
+                if not wedge_hull_pair_allowed(u, l, highs, lows, frame, current):
+                    continue
+                g = evaluate_candidate_pair(u, l, highs=highs, lows=lows,
+                                            current_index=current, candles=frame)
+                if g is None or g.start_index != episode_start:
+                    continue
+                metrics = g.pair_metrics
+                if (not g.validation.get("valid") or not _is_candidate_local(g, current)
+                        or not _is_boundary_structurally_valid(g)
+                        or not _is_anchor_sequence_valid(g)
+                        or metrics.get("geometry_mode") != "CANONICAL"
+                        or metrics.get("anchor_sequence", {}).get("family") != family
+                        or not metrics.get("true_converging")
+                        or metrics.get("strict_wick_exception_index") is not None
+                        or not g.apex or not math.isfinite(g.apex["index"])
+                        or not math.isfinite(g.apex["price"])
+                        or g.apex["index"] <= current or g.apex["price"] <= 0):
+                    continue
+                accepted.append(g.to_dict())
+        return accepted
+    except (AttributeError, KeyError, TypeError, ValueError, IndexError,
+            ArithmeticError):
+        return []
+
 
 class ControlAnchorObservation:
     """Stateful non-executing consumer of one existing publicTrade inbox.
@@ -353,7 +443,12 @@ class ControlAnchorObservation:
             event_time_ms=ms, established_pivots=self.pivots.values(),
             candles=pd.DataFrame(self.rows),
         )
-        return dict(result, candidate_id=self.seed["candidate_id"],
+        pairs = validate_revision_pairs(
+            family=self.family, episode_start=self.seed["episode_start"],
+            original_opposite_line=self.seed.get("original_opposite_line"),
+            proposed_lines=result["lines"], candles=pd.DataFrame(self.rows),
+        )
+        return dict(result, validated_pairs=pairs, candidate_id=self.seed["candidate_id"],
                     source_trade_id=p.trade_id, received_at_ms=p.received_at_ms,
                     previous_extreme=str(old), previous_strict_line=dict(self.line))
 
@@ -382,4 +477,3 @@ class ControlAnchorObservation:
             self.valid = False
             return ()
         return tuple(proposals)
-

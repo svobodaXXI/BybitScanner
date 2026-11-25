@@ -198,9 +198,44 @@ class WedgeControlAnchorTest(unittest.TestCase):
         self.assertEqual(result["previous_extreme"], "69.99")
         self.assertEqual(result["source_trade_id"], "new")
         self.assertEqual(result["previous_strict_line"], line)
+        self.assertEqual(result["validated_pairs"], [])  # no proven opposite ray
         self.assertEqual(len(frame), 5)
         self.assertEqual(push("new",360004,"69.98"), ())
         source.mark_gap()
         self.assertEqual(push("gap",360005,"69.97"), ())
         self.assertFalse(track.valid)
 
+
+
+    def test_pair_gate_preserves_native_start_and_opposite_ray(self):
+        import json
+        from pathlib import Path
+        from geometry.wedge_control_anchor import validate_revision_pairs
+        from geometry.candidate import build_candidate_lines
+        from geometry.wedge_boundaries import build_strict_wedge_support_lines
+        from pivots import find_pivots
+
+        fixture = Path(__file__).parent / "fixtures/geometry_formation_fit/historical_cases.json"
+        case = json.loads(fixture.read_text(encoding="utf-8"))["cases"]["PONS"]
+        frame = pd.DataFrame(case["candles"], columns=["time","open","high","low","close","volume"])
+        # Treat the last row as partial; no confirmation uses its OHLC.
+        closed = frame.iloc[:-1].copy()
+        highs, lows = find_pivots(closed.copy())
+        upper, lower = build_candidate_lines(highs), build_candidate_lines(lows)
+        extra, _ = build_strict_wedge_support_lines(highs, lows, upper, lower, closed, len(closed)-1)
+        line = next(c["line"] for c in upper+extra
+                    if (c["anchor_index"], c["second_index"]) == (143,167))
+        opposite = next(c["line"] for c in lower
+                        if (c["anchor_index"], c["second_index"]) == (145,186))
+        kwargs = dict(family="falling", episode_start=143,
+                      original_opposite_line=opposite, proposed_lines=[line], candles=frame)
+        # This historical control may already be beyond the live revision
+        # boundary; never promote it just because native historical fit exists.
+        self.assertEqual(validate_revision_pairs(**dict(kwargs, episode_start=144)), [])
+        self.assertEqual(validate_revision_pairs(**dict(kwargs, original_opposite_line=None)), [])
+        self.assertEqual(validate_revision_pairs(**dict(kwargs, family="rising")), [])
+        self.assertEqual(validate_revision_pairs(**dict(kwargs, proposed_lines=[])), [])
+        for geometry in validate_revision_pairs(**kwargs):
+            self.assertEqual(geometry["start_index"], 143)
+            self.assertEqual(geometry["lower_line"]["anchor_index"], 145)
+            self.assertGreater(geometry["apex"]["index"], len(frame)-1)
