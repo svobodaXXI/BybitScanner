@@ -3854,13 +3854,29 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 LOGGER.exception("Geometry feedback lookup failed")
                 self._json_response(503, {"ok": False, "error": "geometry_review_unavailable"})
                 return
-            self._json_response(200, {
+            meta = load_original_signal([ids[0]]) or {}
+            digest = source_revision(snapshot)
+            response = {
                 "ok": True, "snapshot": snapshot,
-                "original_pattern": (load_original_signal([ids[0]]) or {}).get("pattern"),
-                "snapshot_revision": source_revision(snapshot),
+                "original_pattern": meta.get("pattern"),
+                "snapshot_revision": digest,
                 "bars_sha256": bars_digest(snapshot),
                 "latest_review": review,
-            })
+            }
+            side = {"Falling Wedge": "LONG", "Rising Wedge": "SHORT"}.get(meta.get("pattern"))
+            path = getattr(self.server, "diary_source_db_path", None)
+            if (path is not None and side is not None
+                    and meta.get("candidate_id") == ids[0]
+                    and meta.get("geometry_sha256") == digest
+                    and meta.get("symbol") == snapshot.get("symbol")):
+                from terminal.diary.episode_context import project_source_wedge_revisions
+                revisions = project_source_wedge_revisions(
+                    path, {"signal_id": ids[0], "sha256": digest, "snapshot": snapshot},
+                    symbol=snapshot["symbol"], side=side, through_ms=int(time.time()*1000),
+                )
+                if revisions is not None:
+                    response["geometry_revisions"] = revisions
+            self._json_response(200, response)
             return
 
         if parsed.path == "/api/workspace/account":

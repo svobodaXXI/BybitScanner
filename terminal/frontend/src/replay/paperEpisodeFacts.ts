@@ -331,7 +331,7 @@ function parseCandidateGeometry(
   return { pattern, timeframe, signal_time_ms: signalTime, geometry };
 }
 
-function parseGeometryRevisions(
+export function parseGeometryRevisions(
   raw: unknown, original: PaperOriginalGeometry | undefined, side: unknown, closed: number,
 ): GeometryRevisionObservation[] {
   const payload = object(raw);

@@ -358,27 +358,35 @@ def project_wedge_revision_history(database_path, projection):
     fill, or inferred Robot lifecycle action. Missing/invalid evidence never
     suppresses the independently verified execution facts.
     """
+    if (projection.get("account_id") != "paper"
+            or projection.get("owner") != "ROBOT"
+            or projection.get("cohort") != "ROBOT"):
+        return None
+    original = (projection.get("candidate_geometry") or {}).get("geometry")
+    if original is None:
+        original = (projection.get("setup_context") or {}).get("original_geometry")
+    return project_source_wedge_revisions(
+        database_path, original, symbol=projection.get("symbol"),
+        side=projection.get("side"), through_ms=projection.get("closed_at_ms"),
+    )
+
+
+def project_source_wedge_revisions(database_path, original, *, symbol, side, through_ms):
+    """Same observational history for exact archive and authorized owner chart."""
     from geometry.wedge_revision_journal import load_revisions
     from decimal import Decimal
     import sqlite3
 
     try:
-        if (projection.get("account_id") != "paper"
-                or projection.get("owner") != "ROBOT"
-                or projection.get("cohort") != "ROBOT"):
-            return None
-        original = (projection.get("candidate_geometry") or {}).get("geometry")
-        if original is None:
-            original = (projection.get("setup_context") or {}).get("original_geometry")
-        if not isinstance(original, dict):
+        if not isinstance(original, dict) or type(through_ms) is not int:
             return None
         source = original["snapshot"]
         candidate_id, digest = original["signal_id"], original["sha256"]
         if (source["signal_id"] != candidate_id
-                or source["symbol"] != projection["symbol"]):
+                or source["symbol"] != symbol):
             return None
         interval = {"1": 60000, "5": 300000}.get(source["timeframe"])
-        family = {"LONG": "falling", "SHORT": "rising"}.get(projection["side"])
+        family = {"LONG": "falling", "SHORT": "rising"}.get(side)
         if interval is None or family is None:
             return None
         seed = {"candidate_id": candidate_id, "source_geometry_sha256": digest}
@@ -411,7 +419,7 @@ def project_wedge_revision_history(database_path, projection):
             if (record["revision"] != n or record["event"] != "Паттерн перестроен"
                     or record["candidate_id"] != candidate_id
                     or record["source_geometry_sha256"] != digest
-                    or record["symbol"] != projection["symbol"]
+                    or record["symbol"] != symbol
                     or record["family"] != family or record["timeframe_ms"] != interval
                     or type(at) is not int or at < prior_ms
                     or record["episode_start_ms"] != first_bar+record["episode_start"]*interval
@@ -423,7 +431,7 @@ def project_wedge_revision_history(database_path, projection):
             current = anchors(record["strict_line"])
             if current == previous or current[0] != previous[0] or current[-1]["bar_open_time_ms"] >= at:
                 return None
-            if at > projection["closed_at_ms"]:
+            if at > through_ms:
                 break
             events.append({
                 **record,

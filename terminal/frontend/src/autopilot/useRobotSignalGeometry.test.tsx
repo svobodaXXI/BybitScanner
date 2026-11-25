@@ -82,3 +82,27 @@ describe("selected Robot source geometry", () => {
     view.unmount();
   });
 });
+
+
+it("displays a proven revision as solid with its immediate predecessor dashed", async () => {
+  const old = {boundary_id:"upper",kind:"ray",anchors:[
+    {bar_open_time_ms:first,price:104},{bar_open_time_ms:second,price:102}]};
+  const current = {...old,anchors:[old.anchors[0],{bar_open_time_ms:second,price:103}]};
+  const digest = "a".repeat(64);
+  const body = {...archive,snapshot_revision:digest,
+    snapshot:{...archive.snapshot,boundaries:[old]},
+    geometry_revisions:{schema:"BYBITSCANNER_WEDGE_GEOMETRY_REVISIONS_V1",
+      source:"ROBOT_OBSERVED_PUBLIC_TRADES",coverage:"LOCAL_OBSERVATION_NOT_COMPLETE_EXCHANGE_TAPE",
+      candidate_id:origin.candidate_id,source_geometry_sha256:digest,events:[{
+        revision:1,event:"Паттерн перестроен",candidate_id:origin.candidate_id,
+        source_geometry_sha256:digest,family:"falling",event_time_ms:second+1,
+        source_trade_id:"trade-1",reason:"CONTROL_CONTACT",previous_extreme:"98",trigger_price:"97.99",
+        previous_boundary:old,current_boundary:current,
+      }]}};
+  vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify(body),{status:200})));
+  const view=renderHook(()=>useRobotSignalGeometry(args));
+  await waitFor(()=>expect(view.result.current.drawings).toHaveLength(2));
+  expect(view.result.current.drawings?.map(d=>d.referenceStroke)).toEqual(["solid","dashed"]);
+  expect(view.result.current.revisions).toHaveLength(1);
+  view.unmount();
+});
