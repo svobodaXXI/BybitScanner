@@ -57,7 +57,11 @@ class TriangleOuterRayEvidence(unittest.TestCase):
         from geometry.triangle_boundaries import build_closed_wick_triangle_pairs
         from geometry.evaluation import evaluate_candidate_pair
         from wedge.detector import detect_structure
-        from unittest.mock import patch
+        self.assertIsNotNone(observed)
+        self.assertEqual(observed["anchors"],f["corrected_anchors"])
+        self.assertEqual(observed["start"],155)
+        self.assertEqual(observed["end"],196)
+        self.assertTrue(detect_structure(winner,candles=frame)["detected"])
         pairs=build_closed_wick_triangle_pairs(highs,lows,frame,len(frame)-1,max_span=round(len(frame)*engine.GEOMETRY_MAX_STRUCTURE_SPAN_RATIO))
         anchors=lambda u,l:[u["anchor_index"],u["second_index"],l["anchor_index"],l["second_index"]]
         correct=[(u,l) for u,l in pairs if anchors(u,l)==f["corrected_anchors"]]
@@ -65,6 +69,9 @@ class TriangleOuterRayEvidence(unittest.TestCase):
         u,l=correct[0]
         self.assertEqual(u["points"][-1]["contact_kind"],"CLOSED_WICK_NOT_CONFIRMED_PIVOT")
         self.assertEqual(l["points"][-1]["contact_kind"],"CLOSED_WICK_NOT_CONFIRMED_PIVOT")
+        for candidate in (u,l):
+            self.assertGreater(candidate["line"]["confirmation_error_percent"],0)
+            self.assertGreater(candidate["line"]["error_max"],0)
         direct=evaluate_candidate_pair(u,l,highs=highs,lows=lows,current_index=len(frame)-1,candles=frame)
         self.assertIsNotNone(direct)
         print("PENGSTOCK_WICK_DIRECT",json.dumps(dict(validation=direct.validation,

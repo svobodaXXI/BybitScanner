@@ -236,7 +236,7 @@ def build_closed_wick_triangle_pairs(highs, lows, candles, current_index, max_sp
     if (candles is None or current_index is None or current_index < 0
             or current_index >= len(candles) or not {"high", "low"}.issubset(candles.columns)):
         return []
-    from .candidate import DEFAULT_TOLERANCE_PERCENT
+    from .candidate import DEFAULT_TOLERANCE_PERCENT, _error_percent, _calculate_absolute_errors
     from .trendline import fit_anchor_trendline
     from .envelope_metrics import evaluate_strict_wedge_wicks
 
@@ -272,16 +272,21 @@ def build_closed_wick_triangle_pairs(highs, lows, candles, current_index, max_sp
         line = fit_anchor_trendline([anchor,contact])
         if line is None:
             return None
-        support = [p for p in prior if
-            abs(float(p["price"])-calculate_price(line,p["index"])) /
-                abs(float(p["price"]))*100 <= DEFAULT_TOLERANCE_PERCENT]
+        errors = [(p, _error_percent(float(p["price"]), calculate_price(line,p["index"])))
+                  for p in prior]
+        if any(error is None for _,error in errors):
+            return None
+        support = [p for p,error in errors if error <= DEFAULT_TOLERANCE_PERCENT]
         if not support:
             return None
         candidate_points = [anchor,*support,contact]
         confirmations = len(support)  # do not count the wick as a confirmed pivot
+        absolute_errors = _calculate_absolute_errors(line,candidate_points)
         line.update(points=len(candidate_points), confirmations=confirmations,
+                    error_mean=sum(absolute_errors)/len(absolute_errors),
+                    error_max=max(absolute_errors),
                     structure_span=offset, support_ratio=confirmations/len(prior),
-                    confirmation_error_percent=0.0,
+                    confirmation_error_percent=sum(error for _,error in errors)/len(errors),
                     contact_kind=contact["contact_kind"])
         if evaluate_strict_wedge_wicks(line,prefix,
                 "upper" if side=="high" else "lower",current_index,current_index) != []:
