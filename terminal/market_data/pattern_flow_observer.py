@@ -297,6 +297,9 @@ class PatternFlowObserver:
         self._wedge_capture_path = wedge_capture_path
         # Private opt-in recorder only: no certified flow or Robot advice.
         self._capture_only = capture_only
+        # Same owner-approved dual opt-in as the canonical PAPER entry.
+        # Capture-only and legacy source-only modes retain their old ordering.
+        self._prioritize_early_wedge = not capture_only and impulse_early_paper_enabled()
         self._capture_host_key: tuple[str, int, int, str] | None = None
 
     def _release_flow_probe(self, symbol: str) -> None:
@@ -357,8 +360,16 @@ class PatternFlowObserver:
             }
             if phase not in warmable[pattern]:
                 continue
+            breakout_ms = (
+                canonical_host_breakout_known_at_ms(record)
+                if self._prioritize_early_wedge
+                and pattern in ("Falling Wedge", "Rising Wedge")
+                and phase == "WAITING_RETEST" else None
+            )
+            early = breakout_ms is not None and breakout_ms <= self._clock()
             score = (
-                -1 if _open_wedge_flow_scope(record)
+                -2 if _open_wedge_flow_scope(record)
+                else -1 if early
                 else 0 if existing_pattern_entry_scope(record) is not None else 1,
                 str(record.candidate_id),
             )
