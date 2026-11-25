@@ -1888,6 +1888,26 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
             {"create_stop", "create_take"},
         )
 
+    def test_impulse_missing_receipt_and_rr_rejection_are_distinguishable(self):
+        import robot_entry_limit
+        host, proof = self._setup_impulse_early_wedge_owner()
+        record = self.store.get_robot_candidate(host.candidate_id)
+        original = record.state_revision
+        with patch.object(self.monitor, "_get_pattern_flow_evidence", return_value=None):
+            with redirect_stdout(io.StringIO()) as output:
+                self.assertFalse(self.monitor._advance_impulse_early_limit(record))
+        self.assertIn("reason=FLOW_RECEIPT_MISSING", output.getvalue())
+        with patch.object(self.monitor, "_get_pattern_flow_evidence", return_value=proof):
+            with patch.object(robot_entry_limit, "build_post_breakout_wedge_impulse_limit_research",
+                              side_effect=robot_entry_limit.RobotEntryLimitError(
+                                  "after-fee Wedge RR below post-fill owner floor")):
+                with redirect_stdout(io.StringIO()) as output:
+                    self.assertFalse(self.monitor._advance_impulse_early_limit(record))
+        self.assertIn("reason=NET_RR_BELOW_FLOOR", output.getvalue())
+        self.assertEqual(self.store.get_robot_candidate(host.candidate_id).state_revision, original)
+        self.assertFalse(self.executor.limit_calls)
+        self.assertFalse(self.executor.protection_calls)
+
     def test_impulse_early_limit_executes_once_and_uses_native_stop_take(self):
         host, proof = self._setup_impulse_early_wedge_owner()
         self.assertEqual(self.monitor.tick(), ("candidate-1",))
