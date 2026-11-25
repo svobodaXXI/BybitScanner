@@ -18,6 +18,7 @@ def trade(direction="LONG", **overrides):
         protective_stop=D("99") if direction == "LONG" else D("101"),
         remaining_qty=D("2"), entry_fee_for_remaining=D("0.12"),
         protection_confirmed=True,
+        initial_stop=D("99") if direction == "LONG" else D("101"),
     )
     vals.update(overrides)
     return FrozenTrade(**vals)
@@ -125,6 +126,38 @@ class CatapultHypothesisMechanics(unittest.TestCase):
                 )
                 self.assertFalse(result.trading_authorized)
 
+    def test_trailing_threshold_uses_frozen_r_after_stop_tightens(self):
+        for direction, stop, mark in (
+            ("LONG", "99.8", "100.5"), ("SHORT", "100.2", "99.5"),
+        ):
+            with self.subTest(direction=direction):
+                result = evaluate_exit(
+                    trade(direction, protective_stop=D(stop)),
+                    receipt(direction, mark_price=D(mark),
+                            best_price_since_fill=D(mark),
+                            directional_print_delta_usdt=D("100")),
+                    settings(),
+                )
+                self.assertEqual(result.action, "HOLD")
+                self.assertIsNone(result.unrounded_stop_preview)
+
+    def test_profit_locked_stop_allows_safe_subsequent_trailing(self):
+        for direction, stop, mark, expected in (
+            ("LONG", "102", "103", "102.5"),
+            ("SHORT", "98", "97", "97.5"),
+        ):
+            with self.subTest(direction=direction):
+                result = evaluate_exit(
+                    trade(direction, protective_stop=D(stop)),
+                    receipt(direction, mark_price=D(mark),
+                            best_price_since_fill=D(mark),
+                            directional_print_delta_usdt=D("100")),
+                    settings(),
+                )
+                self.assertEqual(result.action, "TRAIL_TIGHTEN_PREVIEW")
+                self.assertEqual(result.unrounded_stop_preview, D(expected))
+                self.assertFalse(result.trading_authorized)
+
     def test_no_widening_proposal_when_trailing_gap_too_large(self):
         result = evaluate_exit(
             trade(), receipt(mark_price=D("102"),
@@ -206,7 +239,13 @@ class CatapultHypothesisMechanics(unittest.TestCase):
         with self.assertRaises(ValueError):
             settings(exit_fee_rate=D("NaN"))
         with self.assertRaises(ValueError):
-            trade(protective_stop=D("101"))
+            trade(initial_stop=None)
+        with self.assertRaises(ValueError):
+            trade(initial_stop=D("101"))
+        with self.assertRaises(ValueError):
+            trade(protective_stop=D("98.9"))
+        with self.assertRaises(ValueError):
+            trade("SHORT", protective_stop=D("101.1"))
         with self.assertRaises(ValueError):
             trade(regime="UNKNOWN")
 
