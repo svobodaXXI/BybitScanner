@@ -1908,6 +1908,76 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertFalse(self.executor.limit_calls)
         self.assertFalse(self.executor.protection_calls)
 
+    def test_synthetic_source_parity_to_native_protected_wedge_fill(self):
+        """Drive real source certification, host binding and native entry together.
+
+        The market transport and fills are synthetic; the observer constructs
+        the receipt itself, and the existing monitor and PAPER store own entry.
+        No injected pre-certified evidence reaches the monitor.
+        """
+        from dataclasses import replace
+        from terminal.market_data.pattern_flow_observer import PatternFlowObserver
+        from tests.test_robot_pattern_flow_observer import _Context, _REST
+        from tests.test_robot_pattern_flow_source import PatternFlowSourceTests
+
+        host, _unused = self._setup_impulse_early_wedge_owner()
+        closed = self.clock.value // 60_000 * 60_000
+        self.clock.value = closed + 5_000
+        observed, recent, previous, current = PatternFlowSourceTests.source(close_ms=closed)
+        observed["symbol"] = SYMBOL
+        for row in recent["result"]["list"]:
+            row["symbol"] = SYMBOL
+        for kline in (previous, current):
+            kline["result"]["symbol"] = SYMBOL
+        context = _Context(observed)
+        context.symbol = SYMBOL
+        rest = _REST(recent, previous, current)
+        observer = PatternFlowObserver(
+            SimpleNamespace(list_contexts=lambda: (context,)), rest, "unused",
+            clock_ms=self.clock,
+            get_candidates=lambda: self.store.load_robot_candidates_by_status(
+                ACCOUNT_ID, ("APPROVED", "OPEN"),
+            ),
+        )
+        initial_book = self.monitor._get_market_book(SYMBOL)
+        self.monitor._get_market_book = lambda _: replace(
+            initial_book, received_at_ms=self.clock.value - 50,
+        )
+        self.monitor._get_pattern_flow_evidence = None
+        self.monitor.bind_pattern_flow_observer(observer.get)
+        try:
+            self.assertIsNone(observer.get(host))
+            self.assertFalse(self.monitor._advance_impulse_early_limit(host))
+            self.assertEqual(self.executor.limit_calls, [])
+            with patch.object(PatternFlowSourceTests, "CLOSE", closed):
+                self.assertEqual(observer.once(), 1)
+            self.assertEqual(len(rest.requests), 3)
+            receipt = observer.get(host)
+            self.assertIsNotNone(receipt)
+            self.assertEqual(receipt.candidate_id, host.candidate_id)
+            self.assertEqual(receipt.state_revision, host.state_revision)
+            self.assertEqual(receipt.source_kind, "BYBIT_TRIPLE_CLOSED_M1_CERTIFIED")
+            self.assertEqual(self.monitor.tick(), (host.candidate_id,))
+            owned = self.store.get_robot_candidate(host.candidate_id)
+            self.assertEqual(owned.robot_state["phase"], "WAITING_RETEST")
+            execution = owned.robot_state["execution"]
+            self.assertEqual(execution["entry_mode"], "IMPULSE_EARLY_LIMIT")
+            self.assertEqual(len(self.executor.limit_calls), 1)
+            self.executor.fill_resting_limit(
+                execution["limit_order_id"], SYMBOL, OrderSide.BUY,
+                Decimal("1"), Decimal("99.1"),
+            )
+            self.monitor.process_authoritative_fill(SYMBOL)
+            opened = self.store.get_robot_candidate(host.candidate_id)
+            self.assertEqual(opened.status, "OPEN")
+            self.assertEqual(
+                {name for name, _ in self.executor.protection_calls},
+                {"create_stop", "create_take"},
+            )
+            self.assertEqual(len(self.executor.limit_calls), 1)
+        finally:
+            observer.close()
+
     def test_impulse_early_limit_executes_once_and_uses_native_stop_take(self):
         host, proof = self._setup_impulse_early_wedge_owner()
         self.assertEqual(self.monitor.tick(), ("candidate-1",))
