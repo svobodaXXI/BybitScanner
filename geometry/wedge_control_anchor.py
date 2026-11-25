@@ -75,3 +75,89 @@ def propose_control_boundary(*, family, episode_start, first_strict_index,
     if fallback:
         return dict(result, status="OUTER_ENVELOPE", lines=fallback)
     return result
+
+def propose_control_boundary_from_print(
+    *, family, episode_start, first_strict_index, established_pivots,
+    candles, timeframe_ms, prefix_as_of_ms, observed_print,
+):
+    """Evaluate one already-validated publicTrade print in native TF coordinates.
+
+    The caller supplies an event-ordered, gap-free *local candle prefix*
+    before this print, including any earlier prints in the active candle.
+    This does not certify complete exchange coverage or publish geometry.
+    Derive point 2 from that prefix, never from a completed future candle
+    or a caller-provided extreme. Process a new candle on its first print;
+    process a further extreme in the same candle without waiting for close.
+    """
+    from numbers import Integral
+    import pandas as pd
+
+    unavailable = {"status": "REBUILD_UNAVAILABLE", "lines": []}
+    try:
+        event_ms = observed_print.timestamp_ms
+        receipt_ms = observed_print.received_at_ms
+        trade_id = observed_print.trade_id
+        price = Decimal(str(observed_print.price))
+        if (family not in ("falling", "rising")
+                or timeframe_ms not in (60_000, 300_000)
+                or type(prefix_as_of_ms) is not int
+                or type(event_ms) is not int or type(receipt_ms) is not int
+                or not 0 < prefix_as_of_ms <= event_ms
+                or receipt_ms <= 0 or not isinstance(trade_id, str) or not trade_id
+                or not price.is_finite() or price <= 0
+                or type(episode_start) is not int
+                or type(first_strict_index) is not int
+                or not 0 <= episode_start <= first_strict_index < len(candles)):
+            return unavailable
+        opens = list(candles["open_time_ms"])
+        if any(not isinstance(t, Integral) or isinstance(t, bool)
+               or t <= 0 or t % timeframe_ms for t in opens):
+            return unavailable
+        if any(b - a != timeframe_ms for a, b in zip(opens, opens[1:])):
+            return unavailable
+        event_open = event_ms // timeframe_ms * timeframe_ms
+        last_open = int(opens[-1])
+        if (not last_open <= prefix_as_of_ms <= last_open + timeframe_ms
+                or event_open not in (last_open, last_open + timeframe_ms)):
+            return unavailable
+        extreme_column = "low" if family == "falling" else "high"
+        prior = [Decimal(str(v)) for v in candles[extreme_column].iloc[episode_start:]]
+        if not all(v.is_finite() and v > 0 for v in prior):
+            return unavailable
+        old = min(prior) if family == "falling" else max(prior)
+        if not (price < old if family == "falling" else price > old):
+            return {"status": "UNCHANGED", "lines": []}
+
+        # Only the actual prefix plus this print may influence wick tests.
+        # Keep the frozen caller-owned candle frame untouched.
+        columns = ["open_time_ms", "open", "high", "low", "close"]
+        if event_open == last_open:
+            row = candles.iloc[-1]
+            high, low, opening = (
+                Decimal(str(row[name])) for name in ("high", "low", "open")
+            )
+            if not all(v.is_finite() and v > 0 for v in (high, low, opening)):
+                return unavailable
+            if not low <= opening <= high:
+                return unavailable
+            base = candles[columns].iloc[:-1]
+            row = [event_open, opening, max(high, price), min(low, price), price]
+        else:
+            base = candles[columns]
+            row = [event_open, price, price, price, price]
+        event_prefix = pd.concat(
+            [base, pd.DataFrame([row], columns=columns)], ignore_index=True,
+        )
+        result = propose_control_boundary(
+            family=family, episode_start=episode_start,
+            first_strict_index=first_strict_index, previous_extreme=old,
+            trade_price=price, event_index=len(event_prefix)-1,
+            event_time_ms=event_ms, established_pivots=established_pivots,
+            candles=event_prefix,
+        )
+        return dict(result, source_trade_id=trade_id, received_at_ms=receipt_ms,
+                    previous_extreme=str(old), source_bar_open_ms=event_open)
+    except (AttributeError, KeyError, IndexError, TypeError, ValueError,
+            InvalidOperation, OverflowError):
+        return unavailable
+
