@@ -3155,6 +3155,10 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 )
                 if candidate_geometry is not None:
                     projection["candidate_geometry"] = candidate_geometry
+                from terminal.diary.episode_context import project_wedge_revision_history
+                revisions = project_wedge_revision_history(self.server.diary_source_db_path, projection)
+                if revisions is not None:
+                    projection["geometry_revisions"] = revisions
             except EpisodeFactsSourceChanged:
                 self._json_response(409, {"ok": False, "error": "episode_facts_source_changed"})
                 return
@@ -3566,6 +3570,10 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 )
                 if candidate_geometry is not None:
                     projection["candidate_geometry"] = candidate_geometry
+                from terminal.diary.episode_context import project_wedge_revision_history
+                revisions = project_wedge_revision_history(self.server.diary_source_db_path, projection)
+                if revisions is not None:
+                    projection["geometry_revisions"] = revisions
             except EpisodeFactsSourceChanged:
                 self._json_response(409, {"ok": False, "error": "episode_facts_source_changed"})
                 return

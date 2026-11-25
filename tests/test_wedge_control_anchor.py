@@ -379,6 +379,32 @@ class WedgeControlAnchorTest(unittest.TestCase):
             self.assertFalse(track.broken)
             self.assertEqual(feed(source, track, "lower", cutoff+3, "0.5809"), ())
             self.assertEqual(load_revisions(db, seed), [record])
+            from terminal.diary.episode_context import project_wedge_revision_history
+            def boundary(side, line):
+                return dict(boundary_id=side, kind="ray", anchors=[
+                    dict(bar_open_time_ms=int(frame.open_time_ms.iloc[line[index]]),
+                         price=line[price])
+                    for index, price in (("anchor_index","anchor_price"),
+                                         ("second_index","second_price"))])
+            archive = dict(signal_id=seed["candidate_id"], sha256=seed["source_geometry_sha256"],
+                snapshot=dict(signal_id=seed["candidate_id"], symbol="PONSUSDT", timeframe="5",
+                    bars=frame[["open_time_ms"]].to_dict("records"),
+                    boundaries=[boundary("upper",seed["original_strict_line"]),
+                                boundary("lower",seed["original_opposite_line"])]))
+            projection = dict(account_id="paper", owner="ROBOT", cohort="ROBOT",
+                              symbol="PONSUSDT", side="LONG", closed_at_ms=cutoff+10,
+                              candidate_geometry=dict(geometry=archive))
+            exported = project_wedge_revision_history(db,projection)
+            self.assertIsNotNone(exported)
+            event, = exported["events"]
+            self.assertEqual(event["event"],"Паттерн перестроен")
+            self.assertEqual(event["current_boundary"]["anchors"][1]["bar_open_time_ms"],
+                             int(frame.open_time_ms.iloc[167]))
+            self.assertEqual(event["previous_boundary"]["anchors"][1]["bar_open_time_ms"],
+                             int(frame.open_time_ms.iloc[178]))
+            self.assertIsNone(project_wedge_revision_history(db,dict(projection,closed_at_ms=cutoff+1)))
+            self.assertIsNone(project_wedge_revision_history(db,dict(projection,side="SHORT")))
+            self.assertIsNone(project_wedge_revision_history(db,dict(projection,cohort="MANUAL")))
             # Restart from original immutable prefix: exact replay, not an
             # assumption of continuous coverage or silent current-ray restore.
             source2, replay = start(db)

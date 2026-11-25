@@ -349,3 +349,95 @@ def project_exact_candidate_archive_geometry(snapshot, projection, d2_context):
         return None
     return {"verified_signal": proof, "signal_time_ms": signal_time_ms,
             "geometry": geometry}
+
+
+def project_wedge_revision_history(database_path, projection):
+    """Expose recorded geometry events on the existing exact episode facts path.
+
+    This is observational geometry, not a D2 strategy decision, simulated
+    fill, or inferred Robot lifecycle action. Missing/invalid evidence never
+    suppresses the independently verified execution facts.
+    """
+    from geometry.wedge_revision_journal import load_revisions
+    from decimal import Decimal
+    import sqlite3
+
+    try:
+        if (projection.get("account_id") != "paper"
+                or projection.get("owner") != "ROBOT"
+                or projection.get("cohort") != "ROBOT"):
+            return None
+        original = (projection.get("candidate_geometry") or {}).get("geometry")
+        if original is None:
+            original = (projection.get("setup_context") or {}).get("original_geometry")
+        if not isinstance(original, dict):
+            return None
+        source = original["snapshot"]
+        candidate_id, digest = original["signal_id"], original["sha256"]
+        if (source["signal_id"] != candidate_id
+                or source["symbol"] != projection["symbol"]):
+            return None
+        interval = {"1": 60000, "5": 300000}.get(source["timeframe"])
+        family = {"LONG": "falling", "SHORT": "rising"}.get(projection["side"])
+        if interval is None or family is None:
+            return None
+        seed = {"candidate_id": candidate_id, "source_geometry_sha256": digest}
+        records = load_revisions(database_path, seed)
+        if not records:
+            return None
+        strict = "upper" if family == "falling" else "lower"
+        opposite = "lower" if strict == "upper" else "upper"
+        boundaries = {b["boundary_id"]: b for b in source["boundaries"]}
+        if any(boundaries[side]["kind"] != "ray" for side in (strict, opposite)):
+            return None
+        first_bar = source["bars"][0]["open_time_ms"]
+
+        def anchors(line):
+            a, b = line["anchor_index"], line["second_index"]
+            p, q = Decimal(str(line["anchor_price"])), Decimal(str(line["second_price"]))
+            if (type(a) is not int or type(b) is not int or not 0 <= a < b
+                    or not p.is_finite() or not q.is_finite() or min(p,q) <= 0):
+                raise ValueError("invalid revision anchors")
+            return [{"bar_open_time_ms": first_bar+i*interval, "price": float(price)}
+                    for i,price in ((a,p),(b,q))]
+
+        previous = boundaries[strict]["anchors"]
+        opposite_anchors = boundaries[opposite]["anchors"]
+        prior_ms = -1
+        previous_control = None
+        events = []
+        for n, record in enumerate(records, 1):
+            at = record["event_time_ms"]
+            if (record["revision"] != n or record["event"] != "Паттерн перестроен"
+                    or record["candidate_id"] != candidate_id
+                    or record["source_geometry_sha256"] != digest
+                    or record["symbol"] != projection["symbol"]
+                    or record["family"] != family or record["timeframe_ms"] != interval
+                    or type(at) is not int or at < prior_ms
+                    or record["episode_start_ms"] != first_bar+record["episode_start"]*interval
+                    or anchors(record["previous_strict_line"]) != previous
+                    or anchors(record["opposite_line"]) != opposite_anchors
+                    or (previous_control is not None
+                        and record["previous_control_anchor"] != previous_control)):
+                return None
+            current = anchors(record["strict_line"])
+            if current == previous or current[0] != previous[0] or current[-1]["bar_open_time_ms"] >= at:
+                return None
+            if at > projection["closed_at_ms"]:
+                break
+            events.append({
+                **record,
+                "previous_boundary": {"boundary_id": strict, "kind": "ray", "anchors": previous},
+                "current_boundary": {"boundary_id": strict, "kind": "ray", "anchors": current},
+            })
+            previous, prior_ms = current, at
+            previous_control = record["control_anchor"]
+        if not events:
+            return None
+        return {"schema": "BYBITSCANNER_WEDGE_GEOMETRY_REVISIONS_V1",
+                "source": "ROBOT_OBSERVED_PUBLIC_TRADES",
+                "coverage": "LOCAL_OBSERVATION_NOT_COMPLETE_EXCHANGE_TAPE",
+                "candidate_id": candidate_id, "source_geometry_sha256": digest,
+                "events": events}
+    except (OSError, sqlite3.Error, ValueError, TypeError, KeyError, IndexError, ArithmeticError):
+        return None
