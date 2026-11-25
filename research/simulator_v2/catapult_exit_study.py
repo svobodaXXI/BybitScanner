@@ -77,6 +77,10 @@ class MarketReceipt:
     # Independent observed price provenance; absent historical receipt => INSUFFICIENT.
     price_event_ms: int | None = None
     price_received_ms: int | None = None
+    # Only needed for a structure-triggered exit. Fresh L2/prints do not
+    # prove when a distinct structural invalidation became known to Robot.
+    structure_event_ms: int | None = None
+    structure_received_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -180,6 +184,17 @@ def evaluate_exit(
             or not receipt.directional_print_delta_usdt.is_finite()
             or type(receipt.structure_invalidated) is not bool):
         return insufficient("invalid flow or structure evidence")
+
+    if receipt.structure_invalidated:
+        # A mere True flag is not causal proof of a new structure failure.
+        # Require independent event and host-receipt times, both after fill
+        # and no older than the same as-of decision freshness gate.
+        event, received = receipt.structure_event_ms, receipt.structure_received_ms
+        if (type(event) is not int or type(received) is not int
+                or event < trade.filled_at_ms or received < event
+                or received > receipt.decision_at_ms
+                or receipt.decision_at_ms - received > settings.max_data_age_ms):
+            return insufficient("structure invalidation receipt unproven")
 
     sign = Decimal(1 if trade.direction == "LONG" else -1)
     if sign * (receipt.best_price_since_fill - trade.entry_price) < 0:
