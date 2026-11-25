@@ -74,19 +74,20 @@ assert flat.HERE / "paper-episode-facts" == nested.HERE / "paper-episode-facts"
                            cwd=root, check=True, timeout=15)
             self.assertFalse((nested / "simulator-v2-data").exists())
 
-    def test_default_relay_transport_ignores_ambient_proxy_and_keeps_tls(self):
+    def test_default_relay_transport_honors_configured_proxy_and_keeps_tls(self):
         with patch.dict("os.environ", {"https_proxy": "http://127.0.0.1:1"}):
-            opener = agent._direct_https_opener()
-        self.assertFalse(any(isinstance(h, ProxyHandler) and h.proxies
-                             for h in opener.handlers))
+            opener = agent._relay_https_opener()
+        self.assertTrue(any(isinstance(h, ProxyHandler) and
+                            h.proxies.get("https") == "http://127.0.0.1:1"
+                            for h in opener.handlers))
         self.assertTrue(any(isinstance(h, agent._NoRedirect)
                             for h in opener.handlers))
         self.assertTrue(any(isinstance(h, HTTPSHandler)
                             for h in opener.handlers))
 
-    def test_send_uses_direct_transport_without_injected_opener(self):
+    def test_send_uses_configured_transport_without_injected_opener(self):
         opener = MockOpener([{"ok": True, "state": "IDLE"}])
-        with patch.object(agent, "_direct_https_opener", return_value=opener) as factory:
+        with patch.object(agent, "_relay_https_opener", return_value=opener) as factory:
             self.assertEqual(agent._send(self.config, path="/api/diary/simulator-bridge/poll"),
                              {"ok": True, "state": "IDLE"})
         factory.assert_called_once_with()
