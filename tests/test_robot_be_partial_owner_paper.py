@@ -851,6 +851,74 @@ class RobotBeShortOwnerPaperTests(unittest.TestCase):
         ).robot_state["execution"]["wedge_be_partial_intent"]
         self.assertTrue(intent["reduce_only_required"])
 
+    def test_short_partial_then_native_stop_accounts_all_fills_once(self):
+        """Synthetic SHORT partial -> fee-aware STOP -> FLAT, canonical Diary PnL."""
+        from tests.test_robot_paper_acceptance import _event_book
+
+        before = len(self.runtime.store.load_executions_for_symbol(
+            self.account, self.symbol,
+        ))
+        self.assertEqual(self._partial().status, CommandResultStatus.COMPLETED)
+        reconciled = self.runtime._robot_wedge_be_reconcile_partial(
+            self.candidate_id, book=self._book(), worst_case_slippage_ticks=2,
+        )
+        self.assertEqual(reconciled.status, CommandResultStatus.COMPLETED)
+        protection = self.runtime.store.get_protection_projection(self.key)
+        self.assertLess(protection.stop_loss, Decimal("64500"))
+        self.assertGreater(protection.stop_loss, Decimal("63700.5"))
+        self.assertEqual(protection.take_profit, Decimal("63400"))
+
+        # The next book crosses the amended SHORT STOP; only the remainder
+        # closes. A repeated source event must not double-book fills or fees.
+        crossing = _event_book(
+            self.symbol.value, bid=protection.stop_loss,
+            ask=protection.stop_loss + Decimal("0.5"),
+        )
+        event_id = "short-partial-then-native-stop"
+        outcome = self.runtime.evaluate_robot_protection_crossing(
+            self.symbol.value, crossing, event_id=event_id,
+            received_at_ms=crossing.received_at_ms,
+        )
+        self.assertIsNotNone(outcome)
+        self.assertEqual(outcome.status, "RESOLVED")
+        trade = self.runtime.store.get_robot_trade(self.trade_id)
+        self.assertEqual(trade.exit_reason, "STOP")
+        self.assertIsNotNone(trade.exit_time_ms)
+        position = self.runtime.store.get_position_projection(self.key)
+        self.assertEqual(position.quantity.value, Decimal("0"))
+        self.assertEqual(position.side.value, "Flat")
+        fills = self.runtime.store.load_executions_for_symbol(
+            self.account, self.symbol,
+        )
+        self.assertEqual(len(fills), before + 2)
+        self.assertEqual(
+            sum((fill.quantity.value for fill in fills[1:]), Decimal("0")),
+            self.initial_quantity,
+        )
+        expected_gross = sum(
+            ((trade.average_entry - fill.price.value) * fill.quantity.value
+             for fill in fills[1:]), Decimal("0"),
+        )
+        expected_fees = sum((fill.fee for fill in fills), Decimal("0"))
+        self.assertEqual(trade.realized_pnl_usdt, expected_gross)
+        self.assertEqual(trade.fees_costs_usdt, expected_fees)
+        self.assertEqual(
+            trade.realized_pnl_pct,
+            (expected_gross - expected_fees)
+            / (trade.entry_quantity * trade.average_entry) * Decimal("100"),
+        )
+        repeated = self.runtime.evaluate_robot_protection_crossing(
+            self.symbol.value, crossing, event_id=event_id,
+            received_at_ms=crossing.received_at_ms,
+        )
+        self.assertIsNone(repeated)
+        self.assertEqual(
+            len(self.runtime.store.load_executions_for_symbol(
+                self.account, self.symbol,
+            )),
+            before + 2,
+        )
+
     def test_short_retraced_quote_does_not_latch_or_execute(self):
         # Closed M1 low crossed +2R, but the current executable ask did not.
         before = len(self.runtime.store.load_executions())
