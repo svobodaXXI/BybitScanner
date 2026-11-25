@@ -1,5 +1,6 @@
 /** Read-only contract for SIMULATION event logs, independent of PAPER and order APIs. */
 import syntheticDmiFixture from "./syntheticDmiFixture.json";
+import { isReplayUsdtSymbol } from "./runSetup";
 export type ReplayKind =
   "CANDLE_CLOSED" | "WEDGE_ACCEPTED" | "WEDGE_BREAKOUT" | "WEDGE_RETEST" |
   "ENTRY_SIGNAL" | "ENTRY_FILLED" | "EXIT_FILLED";
@@ -284,7 +285,7 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
     object.demo === true ||
     object.market_data_source !== "BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M" ||
     typeof object.symbol !== "string" ||
-    !/^[A-Z0-9]{3,30}USDT$/.test(object.symbol) ||
+    !isReplayUsdtSymbol(object.symbol) ||
     object.timeframe !== "5m"
   )) {
     throw new Error("Торговый прогон без подтверждённой рыночной идентичности");
