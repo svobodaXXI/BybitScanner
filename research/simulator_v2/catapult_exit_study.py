@@ -35,6 +35,8 @@ class FrozenTrade:
     remaining_qty: Decimal
     entry_fee_for_remaining: Decimal
     protection_confirmed: bool
+    # Initial structural risk is immutable; protective_stop may tighten beyond entry.
+    initial_stop: Decimal | None = None
 
     def __post_init__(self) -> None:
         if (not self.trade_id or self.direction not in ("LONG", "SHORT")
@@ -44,11 +46,14 @@ class FrozenTrade:
         for name in ("entry_price", "protective_stop", "remaining_qty"):
             _decimal(getattr(self, name), name, positive=True)
         _decimal(self.entry_fee_for_remaining, "entry_fee_for_remaining")
+        _decimal(self.initial_stop, "initial_stop", positive=True)
         if self.entry_fee_for_remaining < 0:
             raise ValueError("negative entry fee")
-        if ((self.direction == "LONG" and self.protective_stop >= self.entry_price)
-                or (self.direction == "SHORT" and self.protective_stop <= self.entry_price)):
-            raise ValueError("original STOP must be risk-reducing relative to entry")
+        sign = Decimal(1 if self.direction == "LONG" else -1)
+        if sign * (self.entry_price - self.initial_stop) <= 0:
+            raise ValueError("original STOP must be adverse relative to entry")
+        if sign * (self.protective_stop - self.initial_stop) < 0:
+            raise ValueError("current STOP must not widen frozen initial risk")
 
 
 @dataclass(frozen=True)
@@ -181,7 +186,7 @@ def evaluate_exit(
         return insufficient("no causal favorable-price history")
     if sign * (receipt.best_price_since_fill - receipt.mark_price) < 0:
         return insufficient("favorable-price history excludes current price")
-    risk = abs(trade.entry_price - trade.protective_stop)
+    risk = abs(trade.entry_price - trade.initial_stop)
     favorable_r = sign * (receipt.best_price_since_fill - trade.entry_price) / risk
     qty = trade.remaining_qty
     projected_net = (
