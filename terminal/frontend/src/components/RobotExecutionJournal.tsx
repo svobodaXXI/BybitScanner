@@ -37,7 +37,7 @@ export function RobotExecutionJournal({ selectedTradeId, markers, revisions = []
       <strong>События на графике <small>МСК · исполнения, заявки и наблюдения геометрии Robot</small></strong>
       {!selectedTradeId ? <p>Выберите открытую позицию робота.</p>
         : markers === null && !events.length ? <p>Данные исполнений недоступны.</p>
-          : events.length === 0 ? <p>Подтверждённых событий пока нет.</p>
+          : events.length === 0 ? <p>Подтверждённых исполнений пока нет.</p>
             : <ol>
                 {events.slice(-16).map(event => (
                   <li key={event.key}>
