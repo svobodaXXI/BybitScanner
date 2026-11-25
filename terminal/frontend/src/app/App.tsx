@@ -15,11 +15,13 @@ import {
   type DomViewportGeometry,
   recommendedLadderCenter,
 } from "../marketData/domProjection";
-import type { ChartTimeframe } from "../marketData/timeframes";
+import { BYBIT_INTERVAL_BY_TIMEFRAME, type ChartTimeframe } from "../marketData/timeframes";
+import { marketDataStore } from "../marketData/marketDataStore";
 import { setMarketSymbol, setMarketTimeframe, useMarketData } from "../marketData/useMarketData";
 import { marketApiRoutes } from "../marketData/apiRoutes";
 import {
   requestWorkspaceActivation,
+  matchesNavigationSnapshot, navigationTimingText, type WorkspaceNavigationTiming,
   type WorkspaceSemanticFailure,
 } from "../marketData/workspaceSwitch";
 import { TelegramMiniAppBridge } from "../telegram/TelegramMiniAppBridge";
@@ -277,6 +279,8 @@ export function App() {
   const [instruments, setInstruments] = useState<string[]>([]);
   const [workspaceSwitchError, setWorkspaceSwitchError] = useState<WorkspaceSemanticFailure | null>(null);
   const workspaceSwitchAttempt = useRef(0);
+  const navigationTiming = useRef<WorkspaceNavigationTiming | null>(null);
+  const [navigationTimingOutput, setNavigationTimingOutput] = useState<string | null>(null);
   const [positionSide, setPositionSide] = useState<"Long" | "Short" | "Flat">("Flat");
   const [positionAverageEntry, setPositionAverageEntry] = useState<number | null>(null);
   const [selectedVolumes, setSelectedVolumes] = useState({ Buy: "", Sell: "" });
@@ -309,6 +313,32 @@ export function App() {
   );
   const market = useMarketData();
   const tradingSymbol = market.book.symbol;
+  // Observe the already-accepted market snapshot, not an unvalidated socket event.
+  useEffect(() => marketDataStore.subscribe(() => {
+    const timing = navigationTiming.current;
+    if (!timing || timing.snapshotAt !== undefined || !matchesNavigationSnapshot(timing, marketDataStore.getSnapshot())) return;
+    timing.snapshotAt = performance.now();
+    setNavigationTimingOutput(navigationTimingText(timing));
+  }), []);
+  useEffect(() => {
+    const timing = navigationTiming.current;
+    if (mode !== "TERMINAL" || !timing || timing.snapshotAt === undefined
+        || !matchesNavigationSnapshot(timing, marketDataStore.getSnapshot())
+        || tradingSymbol !== timing.symbol || market.workspace?.generation !== timing.ack?.generation
+        || market.workspace?.interval !== timing.interval || BYBIT_INTERVAL_BY_TIMEFRAME[timeframe] !== timing.interval) return;
+    // Two frame callbacks after React committed the matching chart props.
+    // This is a frame opportunity, not a claim of physical screen paint.
+    let secondFrame = 0;
+    const firstFrame = requestAnimationFrame(() => {
+      secondFrame = requestAnimationFrame(() => {
+        if (navigationTiming.current !== timing) return;
+        const text = navigationTimingText(timing, performance.now());
+        navigationTiming.current = null;
+        setNavigationTimingOutput(text);
+      });
+    });
+    return () => { cancelAnimationFrame(firstFrame); cancelAnimationFrame(secondFrame); };
+  }, [mode, timeframe, tradingSymbol, market.workspace?.generation, market.workspace?.interval, navigationTimingOutput]);
   // Keep verified Scanner source rays and saved Editor corrections in the
   // current-candle view of the SAME linked signal/symbol/timeframe. Never
   // reinterpret a source pivot using a nearby candle or another ticker.
@@ -552,15 +582,29 @@ export function App() {
       .catch(() => {});
     return () => controller.abort();
   }, []);
-  const switchWorkspaceSymbol = useCallback(async (nextSymbol: string) => {
+  const switchWorkspaceSymbol = useCallback(async (nextSymbol: string, measureMainPosition = false) => {
     // Even a switch back to the currently visible symbol invalidates a pending
     // older request, whose delayed ACK must not select a stale signal.
     const attempt = ++workspaceSwitchAttempt.current;
+    navigationTiming.current = null;
+    setNavigationTimingOutput(null);
     if (nextSymbol === tradingSymbol) return;
+    const timing: WorkspaceNavigationTiming | null = measureMainPosition ? {
+      symbol: nextSymbol.trim().toUpperCase(), interval: BYBIT_INTERVAL_BY_TIMEFRAME[timeframe],
+      startedAt: performance.now(),
+    } : null;
+    if (timing) {
+      navigationTiming.current = timing;
+      setNavigationTimingOutput(navigationTimingText(timing));
+    }
     const result = await requestWorkspaceActivation(nextSymbol, marketApiRoutes.workspaceSymbol);
     if (attempt !== workspaceSwitchAttempt.current) return;
     if (!result.ok) {
       setWorkspaceSwitchError(result.error);
+      if (timing && navigationTiming.current === timing) {
+        navigationTiming.current = null;
+        setNavigationTimingOutput(`${timing.symbol} · ошибка ACK через ${Math.round(performance.now() - timing.startedAt)} мс`);
+      }
       return;
     }
     setWorkspaceSwitchError(null);
@@ -572,8 +616,12 @@ export function App() {
     setLadderCenterPrice(null);
     setPositionSide("Flat");
     setPositionAverageEntry(null);
+    if (timing && navigationTiming.current === timing) {
+      timing.ack = { generation: result.generation, at: performance.now() };
+      setNavigationTimingOutput(navigationTimingText(timing));
+    }
     setMarketSymbol(result.symbol, result.generation);
-  }, [tradingSymbol]);
+  }, [tradingSymbol, timeframe]);
   const lastAppliedLaunchSearch = useRef<string | null>(null);
   useEffect(() => {
     if (!launchLink || lastAppliedLaunchSearch.current === launchSearch) return;
@@ -751,6 +799,8 @@ export function App() {
   }, [takeDraft]);
 
   const changeTimeframe = (next: ChartTimeframe) => {
+    navigationTiming.current = null;
+    setNavigationTimingOutput(null);
     setTimeframe(next);
     setMarketTimeframe(next);
   };
@@ -1491,6 +1541,15 @@ export function App() {
           {workspaceSwitchError.message}
         </output>
       )}
+      {mode === "TERMINAL" && navigationTimingOutput && (
+        <output aria-live="polite" role="status" data-testid="main-position-navigation-timing">
+          {navigationTimingOutput}
+          <button type="button" aria-label="Скрыть замер перехода" onClick={() => {
+            navigationTiming.current = null;
+            setNavigationTimingOutput(null);
+          }}>×</button>
+        </output>
+      )}
       {limitSubmissionFeedback && (
         <output aria-live="polite" role="status">
           {limitSubmissionFeedback}
@@ -1959,7 +2018,8 @@ export function App() {
             setProtectionSettings(null);
             dismissTakeDraft();
           }}
-          onWorkspaceSymbolSelect={switchWorkspaceSymbol}
+          onWorkspaceSymbolSelect={(nextSymbol) => void switchWorkspaceSymbol(nextSymbol,
+            mode === "TERMINAL" && accountProjection?.provider === "BYBIT" && accountProjection.environment === "MAINNET") }
           accountOpen={accountOpen}
           onAccountToggle={() => setAccountOpen((open) => !open)}
           accountWorkspaceProjection={accountProjection}

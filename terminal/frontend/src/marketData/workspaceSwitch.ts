@@ -1,3 +1,5 @@
+import type { MarketDataSnapshot } from "../contracts/marketData";
+
 export interface WorkspaceSemanticFailure {
   code: string;
   stage: string;
@@ -88,4 +90,35 @@ export async function requestWorkspaceActivation(
       error: boundaryFailure(normalized, "Workspace activation request failed"),
     };
   }
+}
+
+/** Local, read-only navigation timing; never used as market/trading authority. */
+export interface WorkspaceNavigationTiming {
+  symbol: string;
+  interval: string;
+  startedAt: number;
+  ack?: { generation: number; at: number };
+  snapshotAt?: number;
+}
+
+export function matchesNavigationSnapshot(
+  timing: WorkspaceNavigationTiming, snapshot: MarketDataSnapshot,
+): boolean {
+  const authority = snapshot.workspace;
+  return timing.ack !== undefined && authority !== undefined
+    && authority.generation === timing.ack.generation
+    && authority.symbol === timing.symbol && authority.interval === timing.interval
+    && snapshot.book.symbol === timing.symbol
+    && snapshot.source === "LIVE_NORMALIZED" && snapshot.candles.length > 0;
+}
+
+export function navigationTimingText(timing: WorkspaceNavigationTiming, frameAt?: number): string {
+  const ms = (value: number) => Math.max(0, Math.round(value));
+  const prefix = `${timing.symbol} · ${timing.interval}`;
+  if (!timing.ack) return `${prefix} · ожидание ACK`;
+  const ack = `${prefix} · ACK ${ms(timing.ack.at - timing.startedAt)} мс`;
+  if (timing.snapshotAt === undefined) return `${ack} · ожидание снимка`;
+  const data = `${ack} · снимок +${ms(timing.snapshotAt - timing.ack.at)} мс`;
+  if (frameAt === undefined) return `${data} · ожидание кадра`;
+  return `${data} · кадр +${ms(frameAt - timing.snapshotAt)} мс · всего ${ms(frameAt - timing.startedAt)} мс`;
 }
