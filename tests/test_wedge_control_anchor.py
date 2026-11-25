@@ -111,3 +111,51 @@ class WedgeControlAnchorTest(unittest.TestCase):
         self.assertEqual(evaluate(active, "69.98", 360002, 359999)["status"],
                          "REBUILD_UNAVAILABLE")
 
+    def test_seed_uses_exact_archived_native_geometry(self):
+        from tempfile import TemporaryDirectory
+        from types import SimpleNamespace
+        from signal_archive import record_original_signal
+        from geometry.wedge_control_anchor import load_control_anchor_seed
+        from geometry.trendline import fit_anchor_trendline
+
+        highs = [90,92,94,100,92,90,91,96,88,86,87,92,84,82,81,80]
+        bars = [{"open_time_ms": (i+1)*300000, "open": h-10,
+                 "high": h, "low": h-20, "close": h-10}
+                for i,h in enumerate(highs)]
+        upper = fit_anchor_trendline([{"index": i, "price": highs[i]}
+                                      for i in (3,7)])
+        lower = fit_anchor_trendline([{"index": i, "price": highs[i]-20}
+                                      for i in (5,9)])
+        geometry = {"upper_line": upper, "lower_line": lower,
+                    "start_index": 3, "end_index": 11, "current_index": 15}
+        source = {"schema_version": 1, "signal_id": "seed", "symbol": "TESTUSDT",
+                  "timeframe": "5", "bars": bars, "boundaries": []}
+        for side, indices, column in (("upper",(3,7),"high"),("lower",(5,9),"low")):
+            source["boundaries"].append({
+                "boundary_id": side, "kind": "ray",
+                "anchors": [{"bar_open_time_ms": bars[i]["open_time_ms"],
+                             "price": bars[i][column]} for i in indices],
+            })
+        record = SimpleNamespace(candidate_id="seed", symbol=SimpleNamespace(value="TESTUSDT"),
+            signal_snapshot={"symbol": "TESTUSDT", "timeframe": "5",
+                             "pattern": "Falling Wedge", "geometry": geometry})
+        with TemporaryDirectory() as directory:
+            self.assertTrue(record_original_signal(
+                "seed", symbol="TESTUSDT", timeframe="5", pattern="Falling Wedge",
+                text="test", image_bytes=b"test", geometry_snapshot=source, directory=directory,
+            ))
+            seed = load_control_anchor_seed(record, directory=directory)
+            self.assertIsNotNone(seed)
+            self.assertEqual(seed["episode_start"], 3)
+            self.assertEqual(seed["first_strict_index"], 3)
+            self.assertEqual(seed["established_pivots"][-1]["index"], 11)
+            self.assertEqual(seed["prefix_as_of_ms"], 5100000)
+            self.assertEqual(len(seed["candles"]), 16)
+            record.signal_snapshot["geometry"] = dict(geometry, current_index=16)
+            self.assertIsNone(load_control_anchor_seed(record, directory=directory))
+            record.signal_snapshot["geometry"] = dict(geometry, start_index=4)
+            self.assertIsNone(load_control_anchor_seed(record, directory=directory))
+            record.signal_snapshot["geometry"] = geometry
+            record.candidate_id = "another"
+            self.assertIsNone(load_control_anchor_seed(record, directory=directory))
+

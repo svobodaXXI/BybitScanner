@@ -161,3 +161,99 @@ def propose_control_boundary_from_print(
             InvalidOperation, OverflowError):
         return unavailable
 
+def load_control_anchor_seed(record, *, directory=None):
+    """Restore an observation seed from the exact immutable native signal.
+
+    No substitution of Robot's projected M1 geometry, current chart candles,
+    or guessed START. The returned prefix ends at the Scanner decision bar.
+    Its pivots are established as of that closed-bar cutoff, not guessed
+    historical confirmation times. Missing or inconsistent evidence is not
+    a new signal and must not authorize a revision.
+    """
+    import pandas as pd
+    from signal_archive import load_frozen_signal_geometry
+    from signal_geometry_snapshot import validate_snapshot
+    from pivots import find_pivots
+    from .triangle_boundaries import local_alternation_pivots
+
+    try:
+        signal = record.signal_snapshot
+        candidate_id = record.candidate_id
+        symbol = record.symbol.value
+        family = {"Falling Wedge": "falling", "Rising Wedge": "rising"}.get(
+            signal.get("pattern")
+        )
+        if family is None or signal.get("symbol") != symbol:
+            return None
+        timeframe = str(signal.get("timeframe", ""))
+        interval = {"1": 60_000, "5": 300_000}.get(timeframe)
+        if interval is None:
+            return None
+        source = load_frozen_signal_geometry(candidate_id, directory=directory)
+        if source is None:
+            return None
+        _, digest = validate_snapshot(
+            source, candidate_id=candidate_id, symbol=symbol, timeframe=timeframe,
+        )
+        geometry = signal["geometry"]
+        current, start, end = (geometry[k] for k in
+                               ("current_index", "start_index", "end_index"))
+        if (any(type(i) is not int for i in (current, start, end))
+                or not 0 <= start < end <= current < len(source["bars"])):
+            return None
+        bars = source["bars"][:current+1]
+        times = [bar["open_time_ms"] for bar in bars]
+        if (any(t <= 0 or t % interval for t in times)
+                or any(b-a != interval for a, b in zip(times, times[1:]))):
+            return None
+        cutoff = times[-1] + interval
+        boundaries = {b["boundary_id"]: b for b in source["boundaries"]}
+        first_indices = []
+        for side in ("upper", "lower"):
+            line = geometry[side+"_line"]
+            boundary = boundaries[side]
+            first, second = line["anchor_index"], line["second_index"]
+            if (line.get("model") != "anchor" or boundary["kind"] != "ray"
+                    or type(first) is not int or type(second) is not int
+                    or not start <= first < second <= end):
+                return None
+            wick = "high" if side == "upper" else "low"
+            for index, field, point in zip(
+                (first, second), ("anchor_price", "second_price"), boundary["anchors"],
+            ):
+                price = Decimal(str(line[field]))
+                if (point["bar_open_time_ms"] != times[index]
+                        or price != Decimal(str(point["price"]))
+                        or price != Decimal(str(bars[index][wick]))):
+                    return None
+            first_indices.append(first)
+        if min(first_indices) != start:
+            return None
+        strict_side = "upper" if family == "falling" else "lower"
+        strict_index = geometry[strict_side+"_line"]["anchor_index"]
+        strict_second = geometry[strict_side+"_line"]["second_index"]
+        frame = pd.DataFrame(bars)
+        # Same global and local confirmed-pivot sources as wedge construction.
+        global_highs, global_lows = find_pivots(frame.copy())
+        local_highs, local_lows = local_alternation_pivots(frame, current)
+        pivots = (global_highs + local_highs if family == "falling"
+                  else global_lows + local_lows)
+        established = {
+            p["index"]: {"index": p["index"], "price": float(p["price"]),
+                         "known_at_ms": cutoff}
+            for p in pivots if strict_index <= p["index"] <= current
+        }
+        if not {strict_index, strict_second}.issubset(established):
+            return None
+        return {
+            "candidate_id": candidate_id, "symbol": symbol, "family": family,
+            "timeframe_ms": interval, "source_geometry_sha256": digest,
+            "episode_start": start, "first_strict_index": strict_index,
+            "prefix_as_of_ms": cutoff, "candles": frame,
+            "established_pivots": [established[i] for i in sorted(established)],
+            "original_strict_line": dict(geometry[strict_side+"_line"]),
+        }
+    except (AttributeError, KeyError, TypeError, ValueError, IndexError,
+            InvalidOperation, OverflowError):
+        return None
+
