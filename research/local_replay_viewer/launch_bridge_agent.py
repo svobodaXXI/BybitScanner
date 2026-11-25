@@ -78,17 +78,22 @@ class _NoRedirect(HTTPRedirectHandler):
 
 
 def _direct_https_opener():
-    """Keep the paired relay independent of ambient proxy settings.
-
-    Default HTTPS certificate and hostname verification remain enabled.
-    Redirects are refused so device credentials cannot follow another origin.
-    """
+    """Explicit direct transport for isolated loopback diagnostics."""
     return build_opener(ProxyHandler({}), _NoRedirect())
+
+
+def _relay_https_opener():
+    """Use the owner's configured HTTPS route (including Windows proxy).
+
+    HTTPS still verifies the certificate and hostname end to end. No
+    redirects or fallback/replay of a possibly consumed pairing request.
+    """
+    return build_opener(ProxyHandler(), _NoRedirect())
 
 
 def _send(config: dict[str, str], *, path: str, body: dict | None = None,
           opener=None) -> dict:
-    client = opener or _direct_https_opener()
+    client = opener or _relay_https_opener()
     headers = {
         "X-BybitScanner-Simulator-Device-Token": config["token"],
         "Cache-Control": "no-store",
@@ -117,7 +122,7 @@ def _verified_facts(config: dict[str, str], *, request_id: str, episode_id: str,
                     owner: str, revision: int, opener=None) -> bytes:
     """Fetch only the owner-queued, device-bound episode; never an arbitrary API URL."""
     from research.local_replay_viewer.paper_episode_local_store import MAX_BYTES
-    client = opener or _direct_https_opener()
+    client = opener or _relay_https_opener()
     request = Request(
         config["origin"] + "/api/diary/simulator-bridge/facts?" + urlencode({
             "device_id": config["device_id"], "request_id": request_id,
@@ -265,7 +270,7 @@ def claim_one_time_pairing_code(device_id: str, code: str, *, opener=None) -> No
         },
         method="POST",
     )
-    client = opener or _direct_https_opener()
+    client = opener or _relay_https_opener()
     with client.open(request, timeout=5) as response:
         if response.status != 200:
             raise AgentConfigError("pair_code_claim_http_not_ok")
