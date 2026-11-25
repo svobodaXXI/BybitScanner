@@ -239,3 +239,52 @@ class WedgeControlAnchorTest(unittest.TestCase):
             self.assertEqual(geometry["start_index"], 143)
             self.assertEqual(geometry["lower_line"]["anchor_index"], 145)
             self.assertGreater(geometry["apex"]["index"], len(frame)-1)
+
+    def test_positive_native_revision_at_new_tick_before_apex(self):
+        """Frozen PONS prefix plus one synthetic trade, NOT historical replay."""
+        import json
+        from pathlib import Path
+        from geometry.wedge_control_anchor import validate_revision_pairs
+        from geometry.trendline import fit_anchor_trendline
+        from geometry.triangle_boundaries import local_alternation_pivots
+        from pivots import find_pivots
+
+        fixture = Path(__file__).parent / "fixtures/geometry_formation_fit/historical_cases.json"
+        case = json.loads(fixture.read_text(encoding="utf-8"))["cases"]["PONS"]
+        closed = pd.DataFrame(case["candles"][:190],
+                              columns=["time","open","high","low","close","volume"])
+        self.assertEqual(float(closed.low.iloc[143:].min()), 0.5811)
+        # Only source bars <=189 and a new synthetic trade are visible.
+        price = 0.5810
+        event_ms = int(closed.iloc[-1]["time"]) + 300000
+        event = pd.DataFrame([dict(time=event_ms, open=price, high=price,
+                                   low=price, close=price, volume=1)])
+        frame = pd.concat([closed, event], ignore_index=True)
+        highs, _ = find_pivots(closed.copy())
+        local_highs, _ = local_alternation_pivots(closed, len(closed)-1)
+        points = {p["index"]: {"index": p["index"], "price": float(p["price"]),
+                                "known_at_ms": event_ms}
+                  for p in highs+local_highs if p["index"] >= 143}
+        proposal = propose_control_boundary(
+            family="falling", episode_start=143, first_strict_index=143,
+            previous_extreme="0.5811", trade_price="0.5810", event_index=190,
+            event_time_ms=event_ms, established_pivots=list(points.values()), candles=frame,
+        )
+        self.assertEqual(proposal["control_anchor"]["index"], 178)
+        self.assertEqual(proposal["status"], "OUTER_ENVELOPE")
+        opposite = fit_anchor_trendline([
+            {"index": i, "price": float(closed.low.iloc[i])} for i in (145,186)
+        ])
+        pairs = validate_revision_pairs(
+            family="falling", episode_start=143, original_opposite_line=opposite,
+            proposed_lines=proposal["lines"], candles=frame,
+        )
+        matches = [g for g in pairs if g["upper_line"]["second_index"] == 167]
+        self.assertTrue(matches, "clean outer-envelope revision must pass native pair gates")
+        g = matches[0]
+        self.assertEqual(g["start_index"], 143)
+        self.assertEqual(g["lower_line"]["anchor_index"], 145)
+        self.assertEqual(g["lower_line"]["second_index"], 186)
+        self.assertGreater(g["apex"]["index"], 190)
+        self.assertTrue(g["validation"]["valid"])
+        self.assertTrue(g["pair_metrics"]["true_converging"])
