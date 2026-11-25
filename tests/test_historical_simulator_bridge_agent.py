@@ -75,8 +75,9 @@ assert flat.HERE / "paper-episode-facts" == nested.HERE / "paper-episode-facts"
             self.assertFalse((nested / "simulator-v2-data").exists())
 
     def test_default_relay_transport_honors_configured_proxy_and_keeps_tls(self):
+        from types import SimpleNamespace
         with patch.dict("os.environ", {"https_proxy": "http://127.0.0.1:1"}), \
-                patch.object(agent, "os", __import__("types").SimpleNamespace(name="posix")):
+                patch.object(agent, "os", SimpleNamespace(name="posix")):
             opener = agent._relay_https_opener()
         self.assertTrue(any(isinstance(h, ProxyHandler) and
                             h.proxies.get("https") == "http://127.0.0.1:1"
@@ -101,7 +102,7 @@ assert flat.HERE / "paper-episode-facts" == nested.HERE / "paper-episode-facts"
             return SimpleNamespace(returncode=0, stdout=json.dumps({
                 "status": status, "body": base64.b64encode(data).decode(),
             }).encode())
-        with patch.dict("os.environ", {"SystemRoot": "C:/Windows"}), \\
+        with patch.dict("os.environ", {"SystemRoot": "C:/Windows"}), \
                 patch.object(agent.subprocess, "run", return_value=reply(200, b'{"ok":true}')) as run:
             with agent._WindowsRelayOpener().open(request, 5) as response:
                 self.assertEqual(response.read(), b'{"ok":true}')
