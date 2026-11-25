@@ -29,8 +29,57 @@ def _call(base: str, path: str, *, body=None, token="", origin=""):
         return error.code, json.load(error)
 
 
-@pytest.mark.parametrize("linked", [True, False])
-def test_episode_bridge_exact_device_and_revision(tmp_path: Path, monkeypatch, linked):
+@pytest.fixture
+def connect_proxy():
+    """An actual loopback CONNECT tunnel, restricted to the test TLS server."""
+    import select
+    import socket
+    import socketserver
+
+    seen = []
+    allowed = []
+
+    class Tunnel(socketserver.StreamRequestHandler):
+        def handle(self):
+            self.connection.settimeout(5)
+            line = self.rfile.readline(1024).decode("ascii").strip()
+            headers = []
+            while True:
+                header = self.rfile.readline(1024)
+                if header in (b"\r\n", b"\n", b""):
+                    break
+                headers.append(header.lower())
+            method, target, version = line.split()
+            assert method == "CONNECT" and target == allowed[0]
+            assert not any(b"x-bybitscanner-simulator-device-token" in h for h in headers)
+            seen.append(target)
+            host, port = target.rsplit(":", 1)
+            with socket.create_connection((host, int(port)), timeout=5) as upstream:
+                self.connection.sendall(b"HTTP/1.1 200 Connection established\r\n\r\n")
+                while True:
+                    readable, _, _ = select.select([self.connection, upstream], [], [], 5)
+                    if not readable:
+                        return
+                    for src in readable:
+                        data = src.recv(65536)
+                        if not data:
+                            return
+                        dst = upstream if src is self.connection else self.connection
+                        dst.sendall(data)
+
+    with socketserver.ThreadingTCPServer(("127.0.0.1", 0), Tunnel) as proxy:
+        proxy.daemon_threads = True
+        thread = threading.Thread(target=proxy.serve_forever, daemon=True)
+        thread.start()
+        try:
+            yield f"http://127.0.0.1:{proxy.server_address[1]}", allowed, seen
+        finally:
+            proxy.shutdown()
+            thread.join(timeout=3)
+
+
+@pytest.mark.parametrize("linked,tls_pairing", [(True, False), (False, False), (True, "direct"), (True, "proxy")])
+def test_episode_bridge_exact_device_and_revision(tmp_path: Path, monkeypatch, linked, tls_pairing, connect_proxy):
     episode = "te_" + "a" * 24
     origin = "https://statistics.example.test"
     token = "a" * 64
@@ -98,11 +147,116 @@ def test_episode_bridge_exact_device_and_revision(tmp_path: Path, monkeypatch, l
     server.simulator_launch_relay = relay
     server.diary_source_db_path = source
     server.diary_setup_store_path = tmp_path / "missing-d2.sqlite3"
+    if tls_pairing:
+        import ssl
+        import subprocess
+        cert, key = tmp_path / "test-cert.pem", tmp_path / "test-key.pem"
+        subprocess.run([
+            "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+            "-keyout", str(key), "-out", str(cert), "-days", "1",
+            "-subj", "/CN=localhost", "-addext", "subjectAltName=IP:127.0.0.1",
+        ], check=True, capture_output=True, timeout=15)
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(cert, key)
+        server.socket = context.wrap_socket(server.socket, server_side=True)
+        origin = f"https://127.0.0.1:{server.server_address[1]}"
+        relay.origin = origin
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    base = f"http://127.0.0.1:{server.server_address[1]}"
+    base = origin if tls_pairing else f"http://127.0.0.1:{server.server_address[1]}"
     bridge = "/api/diary/simulator-bridge/"
     try:
+        if tls_pairing:
+            # Actual HTTPS client/backend, one-time code, device poll, local
+            # same-origin claim, immutable store and ACK. Only financial data
+            # projection (above) and Windows process registration/open are test doubles.
+            import ssl
+            from urllib.error import URLError
+            from research.local_replay_viewer import launch_bridge_agent as agent
+            from research.local_replay_viewer.paper_episode_local_store import load_episode
+            from research.local_replay_viewer.server import handler_factory
+
+            app = tmp_path / "MachineTime"
+            app.mkdir()
+            (app / "trusted-statistics-origin.txt").write_text(origin + "\n", encoding="ascii")
+            monkeypatch.setattr(agent, "HERE", app)
+            monkeypatch.setattr(agent, "CONFIG_PATH", app / "simulator-v2-data" / "launch-bridge.json")
+            proxy_url, allowed, seen = connect_proxy
+            allowed.append(origin.removeprefix("https://"))
+            # Exercise both the direct path and the same configured HTTPS proxy
+            # mechanism used by the Windows owner's networking environment.
+            for name in ("HTTPS_PROXY", "https_proxy"):
+                monkeypatch.setenv(name, proxy_url)
+            for name in ("NO_PROXY", "no_proxy"):
+                monkeypatch.setenv(name, "" if tls_pairing == "proxy" else "*")
+            # Reject an untrusted test certificate on the selected transport.
+            with pytest.raises(URLError) as untrusted:
+                agent._relay_https_opener().open(base + bridge + "poll?device_id=owner-pc&viewer_running=0", timeout=3)
+            assert isinstance(untrusted.value.reason, ssl.SSLCertVerificationError)
+            assert agent.read_config() is None
+            # Trust only the ephemeral loopback test certificate; no disabled TLS.
+            monkeypatch.setenv("SSL_CERT_FILE", str(cert))
+            # Owner-side request uses the real direct HTTPS transport too.
+            def owner_call(route, payload):
+                req = Request(base + bridge + route, data=json.dumps(payload).encode(),
+                              headers={"Origin": origin, "Sec-Fetch-Site": "same-origin",
+                                       "Content-Type": "application/json"})
+                with agent._direct_https_opener().open(req, timeout=3) as reply:
+                    return json.load(reply)
+
+            issued = owner_call("pair-code", {"device_id": "owner-pc"})
+            assert issued["ok"] and len(issued["code"]) == 24 and "token" not in issued
+            registered = []
+            monkeypatch.setattr(agent, "install_if_configured", lambda: registered.append(True) or True)
+            monkeypatch.setattr(agent, "viewer_is_running", lambda: True)
+            local = ThreadingHTTPServer(("127.0.0.1", 0), handler_factory())
+            local_thread = threading.Thread(target=local.serve_forever, daemon=True)
+            local_thread.start()
+            local_origin = f"http://127.0.0.1:{local.server_address[1]}"
+            try:
+                def local_claim(code):
+                    req = Request(local_origin + "/local-replay/pair-claim",
+                                  data=json.dumps({"device_id": "owner-pc", "code": code}).encode(),
+                                  headers={"Origin": local_origin, "X-Local-Pair-Code": "explicit-click",
+                                           "Content-Type": "application/json"})
+                    return agent._direct_https_opener().open(req, timeout=5)
+                with local_claim(issued["code"]) as reply:
+                    assert json.load(reply) == {"configuration_saved": True}
+                config = agent.read_config()
+                assert config == {"origin": origin, "device_id": "owner-pc", "token": other}
+                assert registered == [True]
+                saved = agent.CONFIG_PATH.read_bytes()
+                with pytest.raises(HTTPError) as repeat:
+                    local_claim(issued["code"])
+                assert repeat.value.code == 409
+                assert agent.CONFIG_PATH.read_bytes() == saved
+                # Real authenticated heartbeat and owner job, actual fact retrieval
+                # and cache, then ACK. The callback asserts store-before-open.
+                assert agent.poll_once(config) == "IDLE"
+                queued = owner_call("request", {"episode_id": episode, "owner": "ROBOT",
+                                               "source_revision": 9})
+                assert queued["state"] == "QUEUED"
+                opened = []
+                def launch(episode_id):
+                    assert episode_id == episode
+                    record = json.loads(load_episode(app / "paper-episode-facts", episode_id))
+                    assert record["source_revision"] == 9
+                    assert record["setup_context"]["original_geometry"]["signal_id"] == "archived-exact-candidate"
+                    opened.append(episode_id)
+                assert agent.poll_once(config, launch=launch) == "OPEN_REQUESTED"
+                assert opened == [episode]
+                assert owner_call("status", {"request_id": queued["request_id"]})["state"] == "LAUNCHED"
+                assert agent.poll_once(config) == "IDLE"
+                assert [kind for kind, *_ in calls] == ["read", "project", "d2", "geometry"]
+                assert not source.exists()
+                assert len(seen) >= 7 if tls_pairing == "proxy" else not seen
+                print("PAIR_TLS_CLAIM_PERSIST_FACTS_ACK_OK", tls_pairing)
+            finally:
+                local.shutdown()
+                local.server_close()
+                local_thread.join(timeout=3)
+            return
+
         # Authentication and exact request fields are checked before PAPER reads.
         assert _call(base, bridge + "poll?device_id=owner-laptop&viewer_running=1", token=token)[0] == 200
         assert _call(base, bridge + "poll?device_id=owner-pc&viewer_running=0", token=other)[0] == 200
