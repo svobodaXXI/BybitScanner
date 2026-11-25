@@ -719,6 +719,12 @@ class PatternFlowObserver:
             self._attempted = {k for k in self._attempted if k[2] >= closed - 60_000}
             self._attempted.add(key)
             attempts += 1
+            def outcome(reason: str) -> None:
+                # One attempt per candidate/revision/window, fixed codes only.
+                LOGGER.warning(
+                    "ROBOT_IMPULSE_SOURCE candidate_id=%s revision=%s reason=%s",
+                    record.candidate_id, record.state_revision, reason,
+                )
             context = contexts[record.symbol.value]
             # This method is available on real PublicTradeObservation, and
             # only when this opt-in observer was explicitly created. Never
@@ -730,12 +736,14 @@ class PatternFlowObserver:
                 enable_window()
             if (context.trades_subscription_state != "SUBSCRIBED"
                     or context.trade_bootstrap_complete is not True):
+                outcome("SUBSCRIPTION_NOT_READY")
                 continue
             before = context.impulse_observation.snapshot()
             # Hub SymbolContext.generation is not the publicTrade cursor.
             # Only PublicTradeObservation's own before/after generation
             # comparison proves absence of a reconnect during REST reads.
             if before.get("invalid_frames") != 0:
+                outcome("INVALID_FRAMES")
                 continue
             # Without BOTH closed-minute prints, independent parity cannot
             # succeed. Avoid network calls and ingress pressure entirely.
@@ -745,6 +753,7 @@ class PatternFlowObserver:
                                for p in prints)
                     or not any(closed - 60_000 <= p.timestamp_ms < closed
                                for p in prints)):
+                outcome("TWO_CLOSED_MINUTES_MISSING")
                 continue
             try:
                 recent = self._json("/v5/market/recent-trade", params={
@@ -773,6 +782,7 @@ class PatternFlowObserver:
                         or after.get("generation") != before.get("generation")
                         or after.get("invalid_frames") != before.get("invalid_frames")
                         or original != observed):
+                    outcome("SOURCE_CHANGED_DURING_CERTIFICATION")
                     continue
                 # OPEN Wedge needs certified FADING facts, not a fresh
                 # standalone acceleration/entry signal.
@@ -783,11 +793,13 @@ class PatternFlowObserver:
                     source_only=open_wedge,
                 )
                 if result is None:
+                    outcome("CERTIFICATE_OR_DIRECTION_REJECTED")
                     continue
                 source = result["flow_source"]
                 observed_flow = result["flow_observation"]
                 transition = observed_flow["transition"]
                 if not isinstance(transition, FlowTransition):
+                    outcome("TRANSITION_UNPROVEN")
                     continue
                 receipt = CandidateBoundFlowEvidence(
                     candidate_id=record.candidate_id,
@@ -813,8 +825,10 @@ class PatternFlowObserver:
                         receipt, context.impulse_observation,
                         before["generation"],
                     )
+                outcome("CERTIFIED")
                 return 1
             except Exception as error:
+                outcome("SOURCE_ATTEMPT_ERROR")
                 LOGGER.warning(
                     "Pattern flow read-only source unavailable: %s",
                     type(error).__name__,
