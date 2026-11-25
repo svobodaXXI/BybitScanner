@@ -352,12 +352,13 @@ class ControlAnchorObservation:
 
     The caller must establish the source-to-seed coverage boundary before
     construction. Neither an inbox attachment nor consecutive candle times
-    prove that coverage. This object produces proposals, never revisions,
-    journal success events, admission decisions or changes to frozen rays.
-    After a source gap it must be discarded and explicitly reseeded.
+    prove that coverage. With a journal path this object commits observational
+    revisions only; otherwise it produces proposals. It never changes the
+    frozen signal or trade authority. After a gap, discard and reseed;
+    existing history requires exact source-time replay, not blind resume.
     """
 
-    def __init__(self, seed, source, inbox, epoch):
+    def __init__(self, seed, source, inbox, epoch, *, journal_database_path=None):
         self.seed = seed
         self.source = source
         self.inbox = inbox
@@ -370,6 +371,15 @@ class ControlAnchorObservation:
         self.line = dict(seed["original_strict_line"])
         self.broken = False
         self.valid = True
+        self.journal_database_path = journal_database_path
+        self.control_anchor = self.pivots.get(self.line['second_index'])
+        self.replay_history = []
+        if journal_database_path is not None:
+            from .wedge_revision_journal import load_revisions
+            if self.control_anchor is None:
+                raise ValueError('missing original control anchor')
+            self.replay_history = load_revisions(journal_database_path, seed)
+        self.revision = 0
         col = "low" if self.family == "falling" else "high"
         values = [Decimal(str(r[col])) for r in self.rows[seed["episode_start"]:]]
         self.extreme = min(values) if self.family == "falling" else max(values)
@@ -452,8 +462,51 @@ class ControlAnchorObservation:
                     source_trade_id=p.trade_id, received_at_ms=p.received_at_ms,
                     previous_extreme=str(old), previous_strict_line=dict(self.line))
 
+    def _publish(self, proposal):
+        """Select only among validated alternatives and persist before advancing."""
+        from types import SimpleNamespace
+        from .ranking import rank_geometry
+        from .wedge_revision_journal import append_revision, _line
+        import sqlite3
+
+        pairs = proposal["validated_pairs"]
+        if not pairs:
+            return dict(proposal, revision_outcome="REBUILD_UNAVAILABLE")
+        strict = "upper_line" if self.family == "falling" else "lower_line"
+        try:
+            geometry = max(pairs, key=lambda g: (
+                rank_geometry(SimpleNamespace(**g)), g[strict]["second_index"],
+            ))
+            if _line(self.line) == _line(geometry[strict]):
+                return dict(proposal, revision_outcome="UNCHANGED_RAY")
+            if not self._current():
+                raise ValueError("source epoch lost")
+            if self.revision < len(self.replay_history):
+                expected = self.replay_history[self.revision]
+                if (proposal["source_trade_id"] != expected["source_trade_id"]
+                        or _line(geometry[strict]) != expected["strict_line"]):
+                    raise ValueError("unproven revision replay")
+            record, created = append_revision(
+                self.journal_database_path, self.seed, proposal, geometry,
+                previous_control_anchor=self.control_anchor,
+                previous_strict_line=self.line,
+            )
+            if (record is None or record["revision"] != self.revision+1
+                    or (self.revision < len(self.replay_history)
+                        and record != self.replay_history[self.revision])):
+                raise ValueError("revision sequence conflict")
+        except (ValueError, KeyError, TypeError, ArithmeticError, OSError, sqlite3.Error):
+            self.valid = False
+            return dict(proposal, revision_outcome="JOURNAL_BLOCKED")
+        self.line = dict(geometry[strict])
+        self.control_anchor = dict(proposal["control_anchor"])
+        self.revision = record["revision"]
+        self.broken = False
+        return dict(proposal, revision_outcome="RECORDED" if created else "REPLAYED",
+                    revision_record=record)
+
     def consume(self):
-        """Consume one fresh batch; reject all its proposals if epoch is lost."""
+        """Consume fresh batches in order; never publish across a known gap."""
         from queue import Empty
 
         if not self._current():
@@ -468,12 +521,27 @@ class ControlAnchorObservation:
             return ()
         proposals = []
         for p in prints:
+            if not self._current():
+                self.valid = False
+                break
+            if (self.revision < len(self.replay_history)
+                    and p.timestamp_ms > self.replay_history[self.revision]["event_time_ms"]):
+                self.valid = False
+                break
             proposal = self._advance(p)
             if not self.valid:
-                return ()
+                break
             if proposal is not None:
+                if self.journal_database_path is not None:
+                    proposal = self._publish(proposal)
                 proposals.append(proposal)
+                if not self.valid:
+                    break
         if not self._current():
             self.valid = False
-            return ()
+        # Durable events before a gap remain real; non-published proposals
+        # from an invalidated batch must not escape as usable geometry.
+        if not self.valid:
+            return tuple(p for p in proposals if "revision_record" in p
+                         or p.get("revision_outcome") == "JOURNAL_BLOCKED")
         return tuple(proposals)

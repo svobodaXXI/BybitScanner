@@ -321,3 +321,79 @@ class WedgeControlAnchorTest(unittest.TestCase):
             self.assertFalse(db.exists())  # PAPER DB never opened by this writer.
             self.assertEqual(seed["original_strict_line"]["second_index"], 178)
             self.assertEqual(load_revisions(db, seed), [record])
+
+    def test_observation_publishes_and_replays_actual_revision(self):
+        import json
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from queue import Queue
+        from geometry.wedge_control_anchor import ControlAnchorObservation
+        from geometry.wedge_revision_journal import load_revisions
+        from geometry.trendline import fit_anchor_trendline
+        from geometry.triangle_boundaries import local_alternation_pivots
+        from terminal.market_data.impulse_observation import PublicTradeObservation
+        from pivots import find_pivots
+
+        fixture = Path(__file__).parent / "fixtures/geometry_formation_fit/historical_cases.json"
+        rows = json.loads(fixture.read_text(encoding="utf-8"))["cases"]["PONS"]["candles"][:190]
+        frame = pd.DataFrame(rows, columns=["open_time_ms","open","high","low","close","volume"])
+        cutoff = int(frame.open_time_ms.iloc[-1]) + 300000
+        highs, _ = find_pivots(frame.copy())
+        local, _ = local_alternation_pivots(frame, len(frame)-1)
+        points = {p["index"]: dict(index=p["index"], price=float(p["price"]), known_at_ms=cutoff)
+                  for p in highs+local if p["index"] >= 143}
+        def ray(col, a, b):
+            return fit_anchor_trendline([dict(index=i, price=float(frame[col].iloc[i]))
+                                         for i in (a,b)])
+        seed = dict(candidate_id="pons-observe", source_geometry_sha256="b"*64,
+                    symbol="PONSUSDT", timeframe_ms=300000, family="falling",
+                    episode_start=143, first_strict_index=143, prefix_as_of_ms=cutoff,
+                    candles=frame, established_pivots=list(points.values()),
+                    original_strict_line=ray("high",143,178),
+                    original_opposite_line=ray("low",145,186))
+
+        def start(db):
+            source = PublicTradeObservation("PONSUSDT")
+            inbox = Queue(maxsize=4)
+            track = ControlAnchorObservation(seed, source, inbox, source.attach_print_inbox(inbox),
+                                             journal_database_path=db)
+            return source, track
+
+        def feed(source, track, identity, at, price):
+            self.assertTrue(source.observe({"topic":"publicTrade.PONSUSDT", "data":[{
+                "s":"PONSUSDT", "i":identity, "T":at, "S":"Sell",
+                "p":price, "v":"1", "seq":at,
+            }]}, received_at_ms=at+1))
+            return track.consume()
+
+        with TemporaryDirectory() as directory:
+            db = Path(directory)/"paper.sqlite3"
+            source, track = start(db)
+            self.assertEqual(feed(source, track, "break", cutoff+1, "0.5935"), ())
+            result, = feed(source, track, "new-low", cutoff+2, "0.5810")
+            self.assertEqual(result["revision_outcome"], "RECORDED")
+            record = result["revision_record"]
+            self.assertEqual(record["revision"], 1)
+            self.assertEqual(record["strict_line"]["second_index"], 167)
+            self.assertEqual(track.line["second_index"], 167)
+            self.assertFalse(track.broken)
+            self.assertEqual(feed(source, track, "lower", cutoff+3, "0.5809"), ())
+            self.assertEqual(load_revisions(db, seed), [record])
+            # Restart from original immutable prefix: exact replay, not an
+            # assumption of continuous coverage or silent current-ray restore.
+            source2, replay = start(db)
+            self.assertEqual(feed(source2, replay, "break", cutoff+1, "0.5935"), ())
+            result2, = feed(source2, replay, "new-low", cutoff+2, "0.5810")
+            self.assertEqual(result2["revision_outcome"], "REPLAYED")
+            self.assertEqual(result2["revision_record"], record)
+            self.assertEqual(load_revisions(db, seed), [record])
+            self.assertEqual(replay.line["second_index"], 167)
+            source2.mark_gap()
+            self.assertEqual(feed(source2, replay, "gap", cutoff+4, "0.5808"), ())
+            self.assertFalse(replay.valid)
+            self.assertEqual(load_revisions(db, seed), [record])
+            # Jumping past the historical trigger cannot silently resume.
+            source3, skipped = start(db)
+            self.assertEqual(feed(source3, skipped, "skip", cutoff+4, "0.5808"), ())
+            self.assertFalse(skipped.valid)
+            self.assertEqual(load_revisions(db, seed), [record])
