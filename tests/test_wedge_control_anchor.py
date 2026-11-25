@@ -159,3 +159,48 @@ class WedgeControlAnchorTest(unittest.TestCase):
             record.candidate_id = "another"
             self.assertIsNone(load_control_anchor_seed(record, directory=directory))
 
+    def test_inbox_observation_breakout_then_new_extreme_and_gap(self):
+        from queue import Queue
+        from terminal.market_data.impulse_observation import PublicTradeObservation
+        from geometry.wedge_control_anchor import ControlAnchorObservation
+        from geometry.trendline import fit_anchor_trendline
+
+        highs = [100., 97., 94., 91., 92.]
+        frame = pd.DataFrame({
+            "open_time_ms": [60_000*i for i in range(1, 6)],
+            "open": [75.]*5, "high": highs, "low": [70.]*5, "close": [75.]*5,
+        })
+        points = [{"index": i, "price": highs[i], "known_at_ms": 360000}
+                  for i in (0,2,4)]
+        line = fit_anchor_trendline(points[:2])
+        seed = {"candidate_id": "host", "family": "falling", "episode_start": 0,
+                "first_strict_index": 0, "prefix_as_of_ms": 360000,
+                "timeframe_ms": 60000, "candles": frame,
+                "established_pivots": points, "original_strict_line": line}
+        source = PublicTradeObservation("TESTUSDT")
+        inbox = Queue(maxsize=4)
+        track = ControlAnchorObservation(seed, source, inbox, source.attach_print_inbox(inbox))
+
+        def push(identity, time, price):
+            self.assertTrue(source.observe({
+                "topic": "publicTrade.TESTUSDT", "data": [{
+                    "s": "TESTUSDT", "i": identity, "T": time,
+                    "S": "Sell", "p": price, "v": "1", "seq": time,
+                }],
+            }, received_at_ms=time+1))
+            return track.consume()
+
+        self.assertEqual(push("before",360001,"69.99"), ())
+        self.assertEqual(push("break",360002,"88"), ())
+        self.assertEqual(push("equal",360003,"69.99"), ())
+        result, = push("new",360004,"69.98")
+        self.assertEqual(result["status"], "CONTROL_CONTACT")
+        self.assertEqual(result["previous_extreme"], "69.99")
+        self.assertEqual(result["source_trade_id"], "new")
+        self.assertEqual(result["previous_strict_line"], line)
+        self.assertEqual(len(frame), 5)
+        self.assertEqual(push("new",360004,"69.98"), ())
+        source.mark_gap()
+        self.assertEqual(push("gap",360005,"69.97"), ())
+        self.assertFalse(track.valid)
+

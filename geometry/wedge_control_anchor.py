@@ -257,3 +257,129 @@ def load_control_anchor_seed(record, *, directory=None):
             InvalidOperation, OverflowError):
         return None
 
+class ControlAnchorObservation:
+    """Stateful non-executing consumer of one existing publicTrade inbox.
+
+    The caller must establish the source-to-seed coverage boundary before
+    construction. Neither an inbox attachment nor consecutive candle times
+    prove that coverage. This object produces proposals, never revisions,
+    journal success events, admission decisions or changes to frozen rays.
+    After a source gap it must be discarded and explicitly reseeded.
+    """
+
+    def __init__(self, seed, source, inbox, epoch):
+        self.seed = seed
+        self.source = source
+        self.inbox = inbox
+        self.generation, self.invalid_frames = epoch
+        self.rows = seed["candles"].to_dict("records")
+        self.pivots = {p["index"]: dict(p) for p in seed["established_pivots"]}
+        self.cutoff = seed["prefix_as_of_ms"]
+        self.interval = seed["timeframe_ms"]
+        self.family = seed["family"]
+        self.line = dict(seed["original_strict_line"])
+        self.broken = False
+        self.valid = True
+        col = "low" if self.family == "falling" else "high"
+        values = [Decimal(str(r[col])) for r in self.rows[seed["episode_start"]:]]
+        self.extreme = min(values) if self.family == "falling" else max(values)
+
+    def _current(self):
+        return self.valid and self.source.print_inbox_current(
+            self.inbox, self.generation, self.invalid_frames,
+        )
+
+    def _confirm_closed_pivots(self, cutoff):
+        import pandas as pd
+        from pivots import find_pivots
+        from .triangle_boundaries import local_alternation_pivots
+
+        frame = pd.DataFrame(self.rows)
+        highs, lows = find_pivots(frame.copy())
+        local_highs, local_lows = local_alternation_pivots(frame, len(frame)-1)
+        points = highs + local_highs if self.family == "falling" else lows + local_lows
+        for p in points:
+            i = p["index"]
+            if i >= self.seed["first_strict_index"] and i not in self.pivots:
+                self.pivots[i] = {"index": i, "price": float(p["price"]),
+                                  "known_at_ms": cutoff}
+
+    def _advance(self, p):
+        import pandas as pd
+
+        ms, price = p.timestamp_ms, p.price
+        if (type(ms) is not int or ms < self.cutoff
+                or type(p.received_at_ms) is not int or p.received_at_ms <= 0
+                or not price.is_finite() or price <= 0):
+            self.valid = False
+            return None
+        bar_open = ms // self.interval * self.interval
+        previous_open = self.rows[-1]["open_time_ms"]
+        if bar_open == previous_open + self.interval:
+            if len(self.rows) >= 2000:
+                self.valid = False
+                return None
+            self._confirm_closed_pivots(bar_open)
+            self.rows.append(dict(open_time_ms=bar_open, open=price,
+                                  high=price, low=price, close=price))
+        elif bar_open == previous_open and self.cutoff < previous_open + self.interval:
+            row = self.rows[-1]
+            row["high"] = max(Decimal(str(row["high"])), price)
+            row["low"] = min(Decimal(str(row["low"])), price)
+            row["close"] = price
+        else:
+            self.valid = False
+            return None
+        index = len(self.rows)-1
+        projected = (Decimal(str(self.line["anchor_price"]))
+                     + Decimal(str(self.line["second_price"] - self.line["anchor_price"]))
+                     * Decimal(index-self.line["anchor_index"])
+                     / Decimal(self.line["second_index"]-self.line["anchor_index"]))
+        already_broken = self.broken
+        if (price > projected if self.family == "falling" else price < projected):
+            self.broken = True
+        old = self.extreme
+        new_extreme = price < old if self.family == "falling" else price > old
+        self.cutoff = ms
+        if not new_extreme:
+            return None
+        self.extreme = price  # advance even if rebuild is impossible
+        if not already_broken:
+            return None  # line break alone or pre-breakout extreme is not a trigger
+        result = propose_control_boundary(
+            family=self.family, episode_start=self.seed["episode_start"],
+            first_strict_index=self.seed["first_strict_index"],
+            previous_extreme=old, trade_price=price, event_index=index,
+            event_time_ms=ms, established_pivots=self.pivots.values(),
+            candles=pd.DataFrame(self.rows),
+        )
+        return dict(result, candidate_id=self.seed["candidate_id"],
+                    source_trade_id=p.trade_id, received_at_ms=p.received_at_ms,
+                    previous_extreme=str(old), previous_strict_line=dict(self.line))
+
+    def consume(self):
+        """Consume one fresh batch; reject all its proposals if epoch is lost."""
+        from queue import Empty
+
+        if not self._current():
+            self.valid = False
+            return ()
+        try:
+            gen, bad, prints = self.inbox.get_nowait()
+        except Empty:
+            return ()
+        if (gen, bad) != (self.generation, self.invalid_frames):
+            self.valid = False
+            return ()
+        proposals = []
+        for p in prints:
+            proposal = self._advance(p)
+            if not self.valid:
+                return ()
+            if proposal is not None:
+                proposals.append(proposal)
+        if not self._current():
+            self.valid = False
+            return ()
+        return tuple(proposals)
+
