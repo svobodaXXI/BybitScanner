@@ -19,6 +19,40 @@ def trade(identity="id1", timestamp=1000, side="Buy", price="100", qty="2", symb
 
 
 class PublicTradeObservationTests(unittest.TestCase):
+    def test_optional_print_inbox_delivers_only_new_validated_prints(self):
+        from queue import Queue, Empty
+        source = PublicTradeObservation("BTCUSDT")
+        inbox = Queue(maxsize=2)
+        generation, invalid = source.attach_print_inbox(inbox)
+        self.assertTrue(source.observe(frame(trade()), received_at_ms=1010))
+        self.assertTrue(source.observe(frame(trade()), received_at_ms=1011))
+        gen, bad, prints = inbox.get_nowait()
+        self.assertEqual((gen, bad), (generation, invalid))
+        self.assertEqual([(p.trade_id, p.received_at_ms) for p in prints], [("id1", 1010)])
+        with self.assertRaises(Empty):
+            inbox.get_nowait()
+        self.assertTrue(source.print_inbox_current(inbox, generation, invalid))
+        self.assertFalse(source.observe(frame(trade("invalid", 1002, side="UNKNOWN"))))
+        self.assertFalse(source.print_inbox_current(inbox, generation, invalid))
+        source.mark_gap()
+        self.assertFalse(source.print_inbox_current(inbox, generation, invalid))
+        source.detach_print_inbox(inbox)
+        self.assertFalse(source.print_inbox_current(inbox, 1, 0))
+
+    def test_print_inbox_overflow_fences_geometry_without_losing_ingress(self):
+        from queue import Queue
+        source = PublicTradeObservation("BTCUSDT")
+        inbox = Queue(maxsize=1)
+        gen, bad = source.attach_print_inbox(inbox)
+        self.assertTrue(source.observe(frame(trade())))
+        self.assertTrue(source.observe(frame(trade("next", 1001))))
+        self.assertFalse(source.print_inbox_current(inbox, gen, bad))
+        self.assertEqual(source.snapshot()["observed_prints"], 2)
+        self.assertEqual(source.snapshot()["invalid_frames"], 0)
+        self.assertTrue(source.observe(frame(trade("third", 1002))))
+        self.assertEqual(source.snapshot()["observed_prints"], 3)
+        self.assertEqual(inbox.qsize(), 1)
+
     def test_actual_taker_side_and_notional_read_only(self):
         o = PublicTradeObservation("BTCUSDT")
         self.assertTrue(o.observe(frame(trade(), trade("id2", 1001, "Sell", "99", "3"))))

@@ -10,6 +10,7 @@ from collections import deque
 from dataclasses import dataclass, field, replace
 from decimal import Decimal, InvalidOperation
 from threading import Lock
+from queue import Queue, Full
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +53,38 @@ class PublicTradeObservation:
         self._frames = 0
         self._invalid_frames = 0
         self._gap = True  # startup/subscription history is unproven
+        self._print_inbox: Queue | None = None
+
+    def attach_print_inbox(self, inbox: Queue) -> tuple[int, int]:
+        """Optional non-executing consumer of fresh accepted ingress batches.
+
+        The caller owns a bounded, initially empty queue and establishes its
+        own source-time seed. Attaching is not evidence of source completeness.
+        One inbox per observation; no callbacks, IO or capacity waits on the socket.
+        """
+        if type(inbox) is not Queue or inbox.maxsize <= 0 or not inbox.empty():
+            raise ValueError("expected an empty bounded Queue")
+        with self._lock:
+            if self._print_inbox is not None:
+                raise RuntimeError("print inbox already attached")
+            self._print_inbox = inbox
+            return self._generation, self._invalid_frames
+
+    def detach_print_inbox(self, inbox: Queue) -> None:
+        with self._lock:
+            if self._print_inbox is inbox:
+                self._print_inbox = None
+
+    def print_inbox_current(self, inbox: Queue, generation: int, invalid_frames: int) -> bool:
+        """Fence proposals on the same attachment and source epoch.
+
+        False after disconnect, malformed ingress, overflow or replacement.
+        Never changes the existing flow-certification state.
+        """
+        with self._lock:
+            return (self._print_inbox is inbox
+                    and self._generation == generation
+                    and self._invalid_frames == invalid_frames)
 
     def enable_certification_buffer(self) -> bool:
         """Opt-in only: one bounded two-closed-minute exact-print window.
@@ -172,6 +205,15 @@ class PublicTradeObservation:
             self._last_ms = timestamp
             self._last_sequence = sequence
             self._frames += 1
+            if pending and self._print_inbox is not None:
+                try:
+                    self._print_inbox.put_nowait(
+                        (self._generation, self._invalid_frames, tuple(pending.values()))
+                    )
+                except Full:
+                    # Never block protection/market ingress or silently skip
+                    # a geometry batch. Reattachment requires explicit reseed.
+                    self._print_inbox = None
             return True
 
     def snapshot(self) -> dict:
