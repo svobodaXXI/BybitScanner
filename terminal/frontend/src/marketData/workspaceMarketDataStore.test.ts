@@ -78,6 +78,44 @@ describe("multiplexed Workspace market-data store", () => {
     store.dispose();
   });
 
+  it("allows only one fast reconnect before the new symbol's first snapshot", () => {
+    vi.useFakeTimers();
+    const sockets: FakeSocket[] = [];
+    const store = new BackendWorkspaceMarketDataStore((url) => {
+      const socket = new FakeSocket(url);
+      sockets.push(socket);
+      return socket as unknown as WebSocket;
+    });
+    store.start();
+    sockets[0].message(snapshotEvent());
+    store.setSymbol("BTCUSDT", 8);
+    sockets[1].disconnect();
+    vi.advanceTimersByTime(249);
+    expect(sockets).toHaveLength(2);
+    vi.advanceTimersByTime(1);
+    expect(sockets).toHaveLength(3);
+    expect(sockets[2].url).toContain("symbol=BTCUSDT");
+    expect(sockets[2].url).not.toContain("stream_id=");
+    expect(store.getSnapshot().book.symbol).toBe("ONGUSDT");
+    sockets[2].disconnect();
+    vi.advanceTimersByTime(999);
+    expect(sockets).toHaveLength(3);
+    vi.advanceTimersByTime(1);
+    expect(sockets).toHaveLength(4);
+    sockets[3].message({
+      ...snapshotEvent(), symbol: "BTCUSDT", workspace_generation: 8,
+      stream_id: "stream-btc",
+    });
+    expect(store.getSnapshot().book.symbol).toBe("BTCUSDT");
+    sockets[3].disconnect();
+    vi.advanceTimersByTime(999);
+    expect(sockets).toHaveLength(4);
+    vi.advanceTimersByTime(1);
+    expect(sockets).toHaveLength(5);
+    expect(sockets[4].url).toContain("stream_id=stream-btc");
+    store.dispose();
+  });
+
   it("cannot promote a candidate snapshot with a generation other than its ACK", () => {
     const sockets: FakeSocket[] = [];
     const store = new BackendWorkspaceMarketDataStore((url) => {
