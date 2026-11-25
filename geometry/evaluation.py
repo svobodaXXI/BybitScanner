@@ -194,6 +194,10 @@ def evaluate_candidate_pair(
     if strict_wick_exception_index is not None:
         pair_metrics["strict_wick_exception_index"] = strict_wick_exception_index
 
+    hull_side = upper_candidate.get("wedge_hull_support") or lower_candidate.get("wedge_hull_support")
+    if hull_side:
+        pair_metrics["wedge_hull_support"] = hull_side
+
     pre_pattern_impulse = (
         detect_pre_pattern_impulse(
             candles,

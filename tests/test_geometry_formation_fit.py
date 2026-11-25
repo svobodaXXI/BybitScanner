@@ -67,6 +67,32 @@ class HistoricalFormationFitTest(unittest.TestCase):
                 # INJ and XRP already returned None; their archived triangle
                 # lines are historical evidence, not current admitted pairs.
                 if name in ("INJ", "XRP"):
+                    if geometry is not None:
+                        frame = self.frames[name]
+                        highs, lows = find_pivots(frame.copy())
+                        with patch.object(engine, "build_wedge_hull_support_lines", return_value=([], [])), contextlib.redirect_stdout(io.StringIO()):
+                            baseline = engine.analyze_geometry(highs, lows, len(frame)-1, frame, _freshness_predicate)
+                        seq = geometry.pair_metrics["anchor_sequence"]
+                        fit = geometry.envelope_metrics["formation_body_fit"]
+                        result = detect_structure(geometry, candles=frame)
+                        print("HULL_REGRESSION", json.dumps(dict(
+                            symbol=name, baseline=identity(baseline),
+                            selected=identity(geometry),
+                            anchors=seq,
+                            slopes=[geometry.upper_line["slope"], geometry.lower_line["slope"]],
+                            contacts=[geometry.upper_line["confirmations"], geometry.lower_line["confirmations"]],
+                            strict_wicks={side:evaluate_strict_wedge_wicks(
+                                getattr(geometry, side+"_line"),frame,side,geometry.end_index,len(frame)-1)
+                                for side in ("upper","lower")},
+                            fit={side:fit[side]["body_breach_indices"] for side in ("upper","lower")},
+                            fresh=_freshness_predicate(geometry.start_index,geometry.end_index,
+                                geometry.apex["index"],geometry.current_index),
+                            apex=geometry.apex, compression=geometry.compression,
+                            detected=result.get("detected"), detection=result,
+                            historical_reference=case["disputed_reference"]["geometry"]["anchors"],
+                            highs=[(p["index"],p["price"]) for p in highs],
+                            lows=[(p["index"],p["price"]) for p in lows]
+                        ),default=str,sort_keys=True))
                     self.assertIsNone(geometry)
                     continue
                 if name in ("WLD", "AAVE"):

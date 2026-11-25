@@ -47,6 +47,7 @@ from .evaluation import (
 from .touches import _atr_series
 from .wedge_boundaries import (
     build_strict_wedge_support_lines, is_strict_wedge_support, strict_support_pair_allowed,
+    build_wedge_hull_support_lines, wedge_hull_pair_allowed, prefer_recovered_wedge_hulls,
 )
 
 from .ranking import (
@@ -383,9 +384,12 @@ def analyze_geometry(
     strict_upper, strict_lower = build_strict_wedge_support_lines(
         highs, lows, upper_candidates, lower_candidates, candles, current_index
     )
-    upper_candidates = upper_candidates + triangle_upper + strict_upper
+    hull_upper, hull_lower = build_wedge_hull_support_lines(
+        highs, lows, upper_candidates, lower_candidates, candles, current_index
+    )
+    upper_candidates = upper_candidates + triangle_upper + strict_upper + hull_upper
 
-    lower_candidates = lower_candidates + triangle_lower + strict_lower
+    lower_candidates = lower_candidates + triangle_lower + strict_lower + hull_lower
 
     if (
         not upper_candidates
@@ -414,6 +418,9 @@ def analyze_geometry(
         for lower_candidate in lower_candidates:
 
             if not strict_support_pair_allowed(upper_candidate, lower_candidate):
+                continue
+            if not wedge_hull_pair_allowed(upper_candidate, lower_candidate,
+                                           highs, lows, candles, current_index):
                 continue
             if (is_strict_wedge_support(upper_candidate) or
                     is_strict_wedge_support(lower_candidate)) and not anchor_order_possible(
@@ -557,6 +564,13 @@ def analyze_geometry(
                 else 0
             )
 
+            # A newly recovered two-contact edge is a fresh formation
+            # alternative only. Do not introduce new stale diagnostics into
+            # the legacy fallback pool (INJ frozen control).
+            if pair_metrics.get("wedge_hull_support") and not _is_candidate_fresh(
+                    geometry, freshness_predicate):
+                continue
+
             ranked_candidates.append(
                 {
                     "geometry":
@@ -608,6 +622,7 @@ def analyze_geometry(
     else:
         # Resolve proven same-episode ownership before comparing fit quality.
         eligible_candidates = _preserve_corrective_episode(eligible_candidates, candles)
+        eligible_candidates = prefer_recovered_wedge_hulls(eligible_candidates, candles)
 
     best_geometry = None
 
