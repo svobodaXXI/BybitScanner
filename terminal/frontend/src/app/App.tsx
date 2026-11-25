@@ -332,7 +332,8 @@ export function App() {
     const firstFrame = requestAnimationFrame(() => {
       secondFrame = requestAnimationFrame(() => {
         if (navigationTiming.current !== timing) return;
-        const text = navigationTimingText(timing, performance.now());
+        const transport = marketDataStore.getNavigationTransportTiming?.();
+        const text = navigationTimingText(timing, performance.now()) + (transport ? ` · ${transport}` : "");
         navigationTiming.current = null;
         setNavigationTimingOutput(text);
       });
