@@ -61,6 +61,13 @@ export type PaperD2Context =
     decision_scope: "D2_OBSERVATIONS_NOT_ROBOT_RUNTIME_LOG";
   };
 
+export type PaperCandidateGeometry = {
+  pattern: string;
+  timeframe: string;
+  signal_time_ms: number;
+  geometry: PaperOriginalGeometry;
+};
+
 export type PaperEpisodeFacts = {
   schema: "BYBITSCANNER_CLOSED_EPISODE_FACTS_V1";
   namespace: "PAPER_READ_ONLY";
@@ -78,6 +85,7 @@ export type PaperEpisodeFacts = {
   pnl_usdt: string;
   execution_allocations: PaperAllocation[];
   setup_context?: PaperD2Context;
+  candidate_geometry?: PaperCandidateGeometry;
 };
 
 export type PaperMarker = {
@@ -128,12 +136,12 @@ function d2Text(value: unknown, label: string): string {
 
 function parseOriginalGeometry(
   raw: unknown, setup: { setup_id: string; symbol: string; timeframe: string },
-  openedAt: number,
+  openedAt: number, linkageBasis = "D2_SETUP_ID_EQUALS_ARCHIVED_CANDIDATE_ID",
 ): PaperOriginalGeometry {
   const record = object(raw);
   if (record.schema !== "BYBITSCANNER_ARCHIVED_SIGNAL_GEOMETRY_V1"
       || record.source !== "ORIGINAL_TELEGRAM_SIGNAL_ARCHIVE"
-      || record.linkage_basis !== "D2_SETUP_ID_EQUALS_ARCHIVED_CANDIDATE_ID"
+      || record.linkage_basis !== linkageBasis
       || record.integrity !== "LOCAL_ARCHIVE_HASH_ONLY_NOT_CRYPTOGRAPHIC_PROOF"
       || record.signal_id !== setup.setup_id
       || typeof record.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(record.sha256))
@@ -285,6 +293,32 @@ function parseD2Context(
   };
 }
 
+function parseCandidateGeometry(
+  source: unknown, facts: Record<string, unknown>, opened: number,
+  d2: PaperD2Context | undefined,
+): PaperCandidateGeometry {
+  const record = object(source);
+  const proof = object(record.verified_signal);
+  if (facts.owner !== "ROBOT" || facts.cohort !== "ROBOT" ||
+      !d2 || !["D2_STORE_ABSENT", "NO_EXACT_EPISODE_LINK"].includes(d2.status) ||
+      proof.status !== "PROVEN" || proof.trade_episode_id !== facts.trade_episode_id ||
+      proof.source_revision !== facts.source_revision ||
+      proof.provenance !== "DURABLE_ROBOT_TRADE_METADATA_NOT_ORIGINAL_GEOMETRY" ||
+      !["EXACT_WEDGE_CANDIDATE_ENTRY_ORDER_EXECUTION_EPISODE",
+        "EXACT_ROBOT_CANDIDATE_ENTRY_ORDER_EXECUTION_EPISODE"].includes(proof.evidence_scope as string))
+    throw new Error("Архив не связан с точной сделкой Робота");
+  const candidate = d2Text(proof.candidate_id, "candidate_id");
+  const pattern = d2Text(proof.pattern, "pattern");
+  const timeframe = d2Text(proof.source_timeframe, "source_timeframe");
+  const signalTime = time(record.signal_time_ms, "signal_time_ms");
+  const geometry = parseOriginalGeometry(record.geometry, {
+    setup_id: candidate, symbol: facts.symbol as string, timeframe,
+  }, opened, "EXACT_ROBOT_CANDIDATE_ENTRY_ORDER_EXECUTION_EPISODE");
+  if (signalTime > geometry.sent_at_ms)
+    throw new Error("Время сигнала противоречит исходному архиву");
+  return { pattern, timeframe, signal_time_ms: signalTime, geometry };
+}
+
 /** Own immutable facts only; no remote requests, persistence or exchange access. */
 export function parsePaperEpisodeFacts(input: unknown): PaperEpisodeFacts {
   const f = object(input);
@@ -368,6 +402,8 @@ export function parsePaperEpisodeFacts(input: unknown): PaperEpisodeFacts {
       || (f.cohort === "JOINT_MANAGEMENT" && !joint))
     throw new Error("Источник управления противоречит исполнениям");
 
+  const d2 = f.setup_context !== undefined
+    ? parseD2Context(f.setup_context, f.symbol, f.side, first.controller, opened) : undefined;
   return {
     schema: "BYBITSCANNER_CLOSED_EPISODE_FACTS_V1", namespace: "PAPER_READ_ONLY",
     account_id: "paper", owner: f.owner, cohort: f.cohort as PaperEpisodeFacts["cohort"],
@@ -375,8 +411,9 @@ export function parsePaperEpisodeFacts(input: unknown): PaperEpisodeFacts {
     symbol: f.symbol, side: f.side, opened_at_ms: opened, closed_at_ms: closed,
     realized_price_pnl_usdt: realized, known_execution_fees_usdt: fees,
     pnl_usdt: pnl, execution_allocations: allocations,
-    ...(f.setup_context !== undefined ? {
-      setup_context: parseD2Context(f.setup_context, f.symbol, f.side, first.controller, opened),
+    ...(d2 ? { setup_context: d2 } : {}),
+    ...(f.candidate_geometry !== undefined ? {
+      candidate_geometry: parseCandidateGeometry(f.candidate_geometry, f, opened, d2),
     } : {}),
   };
 }

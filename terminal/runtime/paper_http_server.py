@@ -58,6 +58,7 @@ from terminal.domain.models import Price, Quantity, Symbol, TradingAccountId
 from terminal.diary.models import DiaryEnvironment
 from terminal.diary.episode_context import (
     attach_verified_original_geometry, project_episode_d2_context_read_only,
+    project_exact_candidate_archive_geometry,
 )
 from terminal.diary.presentation import project_trade_episode_list
 from terminal.diary.service import TradeEpisodeReadService
@@ -3127,7 +3128,9 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 self._json_response(404, {"ok": False, "error": "episode_fact_request_unavailable"})
                 return
             try:
-                snapshot = load_paper_source_snapshot(self.server.diary_source_db_path)
+                snapshot = load_paper_source_snapshot(
+                    self.server.diary_source_db_path, include_wedge_evidence=True,
+                )
                 projection = project_paper_closed_episode_facts(
                     snapshot, account_id="paper", owner=owner,
                     trade_episode_id=episode_id, source_revision=revision,
@@ -3146,6 +3149,11 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                     d2_context, symbol=projection["symbol"],
                     opened_at_ms=projection["opened_at_ms"],
                 )
+                candidate_geometry = project_exact_candidate_archive_geometry(
+                    snapshot, projection, d2_context,
+                )
+                if candidate_geometry is not None:
+                    projection["candidate_geometry"] = candidate_geometry
             except EpisodeFactsSourceChanged:
                 self._json_response(409, {"ok": False, "error": "episode_facts_source_changed"})
                 return
@@ -3505,7 +3513,9 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 self._json_response(400, {"ok": False, "error": "episode_facts_identity_invalid"})
                 return
             try:
-                snapshot = load_paper_source_snapshot(self.server.diary_source_db_path)
+                snapshot = load_paper_source_snapshot(
+                    self.server.diary_source_db_path, include_wedge_evidence=not market_context,
+                )
                 project_episode = (project_paper_closed_episode_market_locator if market_context
                                    else project_paper_closed_episode_facts)
                 projection = project_episode(
@@ -3550,6 +3560,11 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                     d2_context, symbol=projection["symbol"],
                     opened_at_ms=projection["opened_at_ms"],
                 )
+                candidate_geometry = project_exact_candidate_archive_geometry(
+                    snapshot, projection, d2_context,
+                )
+                if candidate_geometry is not None:
+                    projection["candidate_geometry"] = candidate_geometry
             except EpisodeFactsSourceChanged:
                 self._json_response(409, {"ok": False, "error": "episode_facts_source_changed"})
                 return

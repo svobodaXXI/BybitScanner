@@ -41,7 +41,8 @@ def test_episode_bridge_exact_device_and_revision(tmp_path: Path, monkeypatch, l
     calls = []
     snapshot = object()
 
-    def load(path):
+    def load(path, *, include_wedge_evidence=False):
+        assert include_wedge_evidence is True
         calls.append(("read", path))
         return snapshot
 
@@ -176,3 +177,53 @@ def test_episode_bridge_malformed_scope_fails_closed():
             pass
         else:
             raise AssertionError("Malformed scope was accepted")
+
+
+def test_exact_candidate_archive_preserves_d2_absence_and_rejects_conflicts(monkeypatch):
+    from types import SimpleNamespace
+    from terminal.diary import episode_context, wedge_lineage
+    import signal_archive
+    import signal_geometry_snapshot
+
+    episode = "te_" + "a" * 24
+    trade = {"trading_account_id": "paper", "candidate_id": "candidate-42",
+             "symbol": "BTCUSDT", "direction": "SHORT", "pattern": "Rising Wedge",
+             "source_timeframe": "5m", "signal_time_ms": 100}
+    snapshot = SimpleNamespace(source_revision=9, wedge_evidence={"trades": [trade]})
+    projection = {"account_id": "paper", "owner": "ROBOT", "cohort": "ROBOT",
+                  "source_revision": 9, "trade_episode_id": episode, "symbol": "BTCUSDT",
+                  "side": "SHORT", "opened_at_ms": 300, "execution_allocations": [{}, {}]}
+    proof = {"status": "PROVEN", "trade_episode_id": episode, "source_revision": 9,
+             "candidate_id": "candidate-42", "pattern": "Rising Wedge",
+             "source_timeframe": "5m",
+             "evidence_scope": "EXACT_WEDGE_CANDIDATE_ENTRY_ORDER_EXECUTION_EPISODE",
+             "provenance": "DURABLE_ROBOT_TRADE_METADATA_NOT_ORIGINAL_GEOMETRY"}
+    def attach(actual, report):
+        assert actual is snapshot
+        assert report["closed_episodes"][0]["execution_count"] == 2
+        return {**report, "closed_episodes": [{**report["closed_episodes"][0],
+                                                "verified_signal": proof}]}
+    monkeypatch.setattr(wedge_lineage, "attach_verified_wedge_signals", attach)
+    meta = {"candidate_id": "candidate-42", "symbol": "BTCUSDT", "timeframe": "5m",
+            "pattern": "Rising Wedge", "sent_at_ms": 200, "geometry_sha256": "a" * 64}
+    frozen = {"bars": [{"open_time_ms": 90}], "boundaries": [{"boundary_id": "original"}]}
+    monkeypatch.setattr(signal_archive, "load_original_signal", lambda ids: meta if ids == ["candidate-42"] else None)
+    monkeypatch.setattr(signal_archive, "load_frozen_signal_geometry", lambda candidate: frozen)
+    monkeypatch.setattr(signal_geometry_snapshot, "validate_snapshot", lambda *args, **kwargs: (frozen, "a" * 64))
+    d2 = {"status": "D2_STORE_ABSENT", "geometry_status": "NOT_EXPORTED"}
+    project = episode_context.project_exact_candidate_archive_geometry
+    result = project(snapshot, projection, d2)
+    assert result["geometry"]["snapshot"] is frozen
+    assert result["geometry"]["linkage_basis"] == "EXACT_ROBOT_CANDIDATE_ENTRY_ORDER_EXECUTION_EPISODE"
+    assert d2 == {"status": "D2_STORE_ABSENT", "geometry_status": "NOT_EXPORTED"}
+    assert project(snapshot, projection, {"status": "CONFLICTING_D2_LINK"}) is None
+    assert project(snapshot, {**projection, "source_revision": 8}, d2) is None
+    assert project(snapshot, {**projection, "cohort": "JOINT_MANAGEMENT"}, d2) is None
+    for key, invalid in [("pattern", "Falling Wedge"), ("timeframe", "1m"),
+                         ("sent_at_ms", 99), ("sent_at_ms", 301), ("geometry_sha256", "b" * 64)]:
+        prior = meta[key]
+        meta[key] = invalid
+        assert project(snapshot, projection, d2) is None
+        meta[key] = prior
+    snapshot.wedge_evidence["trades"].append(trade)
+    assert project(snapshot, projection, d2) is None

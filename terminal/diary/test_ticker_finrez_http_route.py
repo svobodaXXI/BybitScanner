@@ -176,7 +176,8 @@ def test_episode_facts_route_rejects_invalid_scope_and_exports_only_one_selected
     episode_id = "te_" + "a" * 24
     absent_id = "te_" + "b" * 24
 
-    def read_source(path):
+    def read_source(path, *, include_wedge_evidence=False):
+        assert include_wedge_evidence is True
         calls.append(("source", path))
         return snapshot
 
@@ -311,7 +312,11 @@ def test_episode_candles_route_proves_exact_scope_before_public_read(tmp_path: P
                 "bars": [{"open_time_ms": 600_000, "open": 100, "high": 101, "low": 99, "close": 100}],
                 "last_open_ms": 600_000, "complete_through_close": False}
 
-    monkeypatch.setattr(paper_http_server, "load_paper_source_snapshot", lambda path: object())
+    def read_market_source(path, *, include_wedge_evidence=False):
+        assert include_wedge_evidence is False
+        return object()
+
+    monkeypatch.setattr(paper_http_server, "load_paper_source_snapshot", read_market_source)
     monkeypatch.setattr(paper_http_server, "project_paper_closed_episode_market_locator", project)
     monkeypatch.setattr(retrospective_signal_bars, "fetch_closed_episode_market_window", fetch)
     server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
