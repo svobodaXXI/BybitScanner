@@ -5275,7 +5275,7 @@ class SQLiteStore:
         successor = self._box_latched_stop_shadow_owner(source_candidate_id)
         return bool(successor and successor["order_id"] == order_id.value)
 
-    def _prove_box_owned_position(self, candidate_id: str):
+    def _prove_box_owned_position(self, candidate_id: str, *, terminal_exit_at_ms=None):
         from terminal.paper.box_ownership import BoxOwnershipError, prove_box_exposure
 
         candidate = self._box_ownership_candidate(candidate_id)
@@ -5301,6 +5301,7 @@ class SQLiteStore:
             candidate, baseline, ownership,
             self.load_executions_for_symbol(candidate.trading_account_id, candidate.symbol),
             self.get_position_projection(key),
+            terminal_exit_at_ms=terminal_exit_at_ms,
         )
 
     def save_box_plan_only(
@@ -5971,6 +5972,9 @@ class SQLiteStore:
         never dispatches or repairs an order, nor opens account admission.
         Terminal candidate status alone is insufficient to erase UNKNOWN.
         """
+        if not self._connection.in_transaction:
+            with self.read_snapshot():
+                return self._box_emergency_intent_terminal_proven(account, symbol, candidate_id, intent)
         candidate = self.get_robot_candidate(candidate_id)
         if (
             candidate is None or candidate.trading_account_id != account
@@ -5990,17 +5994,13 @@ class SQLiteStore:
         ):
             return False
         order_id = str(intent["order_id"])
+        ownership = self.load_box_order_ownership(source_id)
+        owned_ids = {item.order_id.value for item in ownership}
         owned_exit = [
-            item for item in self.load_box_order_ownership(source_id)
+            item for item in ownership
             if item.role == "EXIT" and item.slot == 0 and item.order_id.value == order_id
         ]
         if len(owned_exit) != 1:
-            return False
-        proof = self.prove_box_owned_position(source_id)
-        if not (
-            proof.entry_quantity > 0 and proof.exit_quantity == proof.entry_quantity
-            and proof.remaining_quantity == 0 and proof.last_execution_at_ms is not None
-        ):
             return False
         fills = self.load_executions_for_order(account, OrderId(order_id))
         try:
@@ -6012,18 +6012,24 @@ class SQLiteStore:
             and len(fills) == 1 and fills[0].symbol == symbol
             and fills[0].dedup_key.trading_account_id == account
             and fills[0].quantity.value == quantity
-            and fills[0].exchange_timestamp_ms == proof.last_execution_at_ms
+            and fills[0].dedup_key.category is Category.LINEAR
             and fills[0].side.value == intent.get("side")
+        ):
+            return False
+        exit_at = fills[0].exchange_timestamp_ms
+        proof = self._prove_box_owned_position(source_id, terminal_exit_at_ms=exit_at)
+        if not (
+            proof.entry_quantity > 0 and proof.exit_quantity == proof.entry_quantity
+            and proof.remaining_quantity == 0 and proof.last_execution_at_ms == exit_at
         ):
             return False
         position = self.get_position_projection(PositionKey(
             account, Category.LINEAR, symbol, 0,
         ))
         if not (
-            position is not None and position.side is PositionSide.FLAT
-            and position.quantity.value == 0 and position.sync_state == "synced"
+            position is not None and position.sync_state == "synced"
             and position.version == proof.position_version
-            and position.updated_at_ms >= proof.last_execution_at_ms
+            and position.updated_at_ms >= exit_at
         ):
             return False
         trade = self.get_robot_trade("robot-trade-" + candidate_id)
@@ -6038,15 +6044,34 @@ class SQLiteStore:
         elif trade is not None:
             # APPROVED->INVALIDATED follows a proven FLAT with no OPEN trade.
             return False
+        # Current unrelated lifecycles must not resurrect a settled marker.
+        # Old, owned or chronologically ambiguous working evidence still fences.
+        settled_at = max(exit_at, candidate.updated_at_ms)
+        active_limits = self.load_active_paper_limits(account, symbol)
+        later_limit_ids = {
+            item.order_id.value for item in active_limits
+            if item.created_at_ms > settled_at and item.order_id.value not in owned_ids
+        }
         return not (
-            self.load_active_robot_candidates_for_symbol(account, symbol)
-            or self.load_active_paper_limits(account, symbol)
-            or self.load_active_robot_entry_orders(account, symbol)
+            any(item.candidate_id == candidate_id
+                or item.signal_snapshot.get("source_box_candidate_id") == source_id
+                or item.approved_at_ms is None or item.approved_at_ms <= settled_at
+                for item in self.load_active_robot_candidates_for_symbol(account, symbol))
+            or any(item.order_id.value not in later_limit_ids for item in active_limits)
+            or any(oid not in later_limit_ids
+                   for oid in self.load_active_robot_entry_orders(account, symbol))
             or any(item.trading_account_id == account and item.symbol == symbol
+                   and (item.created_at_ms <= settled_at
+                        or item.command_id.value == intent.get("command_id")
+                        or item.order_link_id == intent.get("order_link_id")
+                        or (item.exchange_order_id is not None
+                            and item.exchange_order_id.value in owned_ids))
                    for item in self.load_unfinished_commands())
             or any(item.symbol == symbol for item in
                    self.load_unresolved_paper_protection_obligations(account))
-            or any(item.symbol == symbol for item in self.load_open_robot_trades(account))
+            or any(item.symbol == symbol and (
+                       item.candidate_id == candidate_id or item.entry_time_ms <= settled_at
+                   ) for item in self.load_open_robot_trades(account))
         )
 
     def robot_account_quarantines(
