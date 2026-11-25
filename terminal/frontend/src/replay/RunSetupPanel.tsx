@@ -4,7 +4,7 @@ import { streamWedge } from "./streamWedge";
 import {
   ALL_SELECTABLE, MIRROR_OPTIONS, OTHER_OPTIONS, WEDGE_IDS,
   clearAll, isAllSelected, onlyWedges, presetEndInclusive, adjustInclusiveWindow,
-  parseRunCoordinates, formatRunDuration, formatRunCoordinates,
+  parseRunCoordinates, formatRunDuration, formatRunCoordinates, isReplayUsdtSymbol,
   selectAll, toggleMirror, toggleStrategy, toggleWedges,
   verifiedPatternSelection, verifiedPatternLabel, validateInclusiveWindow,
   makeWedgeRunRequest, parseWedgeStatus, runnableWedgeSelection,
@@ -202,7 +202,7 @@ export function RunSetupPanel({
       const coords = value.trim() ? parseRunCoordinates(value) :
         { symbol, start_utc: start, end_utc_inclusive: end };
       const ticker = coords.symbol.trim().toUpperCase();
-      if (!/^[A-Z0-9]{2,25}USDT$/.test(ticker))
+      if (!isReplayUsdtSymbol(ticker))
         throw new Error("Укажите один USDT-тикер");
       const window = validateInclusiveWindow(coords.start_utc, coords.end_utc_inclusive);
       if (window.minutes > 90 * 1440) throw new Error("Максимальный прогон — 90 дней");
