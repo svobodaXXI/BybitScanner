@@ -88,6 +88,8 @@ describe("PAPER episode facts are display-only, never SIMULATION fills", () => {
       const history = parseReplayDocument(market(symbol));
       expect(facts.symbol).toBe(symbol);
       expect(history.symbol).toBe(symbol);
+      expect(parseReplayDocument({ ...market(symbol), mode: "STRATEGY",
+        market_data_source: "BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M" }).symbol).toBe(symbol);
       expect(matchPaperFactsToMarket(facts, history).markers).toHaveLength(2);
       const start = "2026-10-01T00:00", end = "2026-10-01T23:59";
       expect(parseRunCoordinates(symbol + " | " + start + " | " + end).symbol).toBe(symbol);
@@ -102,7 +104,9 @@ describe("PAPER episode facts are display-only, never SIMULATION fills", () => {
     for (const symbol of ["USDT", "SUSDC", "S/USDT", "sUSDT", "SUSDT\n", "A".repeat(27) + "USDT"]) {
       expect(isReplayUsdtSymbol(symbol)).toBe(false);
       expect(() => parsePaperEpisodeFacts({ ...source, symbol })).toThrow();
-      expect(() => parseReplayDocument(market(symbol))).toThrow();
+      // Generic MARKET_ONLY archives retain their existing broader contract.
+      expect(() => parseReplayDocument({ ...market(symbol), mode: "STRATEGY",
+        market_data_source: "BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M" })).toThrow();
     }
     const facts = parsePaperEpisodeFacts({ ...source, symbol: "SUSDT" });
     expect(matchPaperFactsToMarket(facts, parseReplayDocument(market("WUSDT"))).status).toBe("WAIT_MARKET");
