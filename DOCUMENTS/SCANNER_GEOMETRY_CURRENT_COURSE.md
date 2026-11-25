@@ -63,6 +63,19 @@ rules belong to the owning specification; do not extrapolate one pattern's
 constraints to another. A Robot trade's actual exit requires execution
 evidence, not only an observed price touch.
 
+## Triangle closed-wick outer contacts — bounded proposal 2026-11-25
+
+Triangle Compression only: confirmed structural A/B/C remain mandatory. For
+a paired outer-envelope candidate with independent confirmed forward
+support on each side, a later wick of an already closed candle may be a
+geometric ray contact without being a confirmed pivot. Keep the exact
+first anchors, use the tight enclosing slope, retain separate contact
+provenance, and apply all existing locality, sequence, validation and
+freshness gates. No future candles, no change to wedge control anchors,
+global pivot lists, thresholds or trading logic. PENGSTOCKUSDT M5 frozen
+public OHLC is the initial test; exact historical decision unavailable.
+This proposal is not accepted or authorized for deployment by this text.
+
 ## Universal wedge anchor rule — OWNER AUTHORITY
 
 **For EVERY wedge:** preceding directional impulse → **first anchor is the

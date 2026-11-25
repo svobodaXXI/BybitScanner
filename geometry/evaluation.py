@@ -191,6 +191,9 @@ def evaluate_candidate_pair(
     if pair_metrics is None:
         return None
 
+    if upper_candidate.get("triangle_closed_wick") and lower_candidate.get("triangle_closed_wick"):
+        pair_metrics["triangle_closed_wick"] = True
+
     if strict_wick_exception_index is not None:
         pair_metrics["strict_wick_exception_index"] = strict_wick_exception_index
 

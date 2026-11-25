@@ -57,6 +57,7 @@ from .ranking import (
 from .triangle_boundaries import (
     anchor_order_possible,
     build_triangle_only_lines,
+    build_closed_wick_triangle_pairs,
     is_triangle_only
 )
 
@@ -387,9 +388,14 @@ def analyze_geometry(
     hull_upper, hull_lower = build_wedge_hull_support_lines(
         highs, lows, upper_candidates, lower_candidates, candles, current_index
     )
-    upper_candidates = upper_candidates + triangle_upper + strict_upper + hull_upper
+    wick_pairs = build_closed_wick_triangle_pairs(
+        highs,lows,candles,current_index,
+        max_span=(round((current_index+1)*GEOMETRY_MAX_STRUCTURE_SPAN_RATIO)
+                  if current_index is not None else None),
+    )
+    upper_candidates = upper_candidates + triangle_upper + strict_upper + hull_upper + [u for u,l in wick_pairs]
 
-    lower_candidates = lower_candidates + triangle_lower + strict_lower + hull_lower
+    lower_candidates = lower_candidates + triangle_lower + strict_lower + hull_lower + [l for u,l in wick_pairs]
 
     if (
         not upper_candidates
@@ -416,6 +422,13 @@ def analyze_geometry(
     for upper_candidate in upper_candidates:
 
         for lower_candidate in lower_candidates:
+
+            upper_episode = (upper_candidate.get("triangle_wick_episode")
+                             if isinstance(upper_candidate, dict) else None)
+            lower_episode = (lower_candidate.get("triangle_wick_episode")
+                             if isinstance(lower_candidate, dict) else None)
+            if upper_episode != lower_episode:
+                continue
 
             if not strict_support_pair_allowed(upper_candidate, lower_candidate):
                 continue
@@ -567,7 +580,7 @@ def analyze_geometry(
             # A newly recovered two-contact edge is a fresh formation
             # alternative only. Do not introduce new stale diagnostics into
             # the legacy fallback pool (INJ frozen control).
-            if pair_metrics.get("wedge_hull_support") and not _is_candidate_fresh(
+            if (pair_metrics.get("wedge_hull_support") or pair_metrics.get("triangle_closed_wick")) and not _is_candidate_fresh(
                     geometry, freshness_predicate):
                 continue
 
