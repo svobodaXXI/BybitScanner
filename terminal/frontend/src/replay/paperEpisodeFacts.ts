@@ -3,6 +3,7 @@
  * This is a strict local display-only adapter. Uploaded JSON is not signed.
  */
 import type { ReplayCandle, ReplayDocument } from "./replayModel";
+import { isReplayUsdtSymbol } from "./runSetup";
 
 export type PaperAllocation = {
   execution_id: string;
@@ -408,7 +409,7 @@ export function parsePaperEpisodeFacts(input: unknown): PaperEpisodeFacts {
     throw new Error("Категория управления не соответствует владельцу");
   if (typeof f.trade_episode_id !== "string" || !/^te_[a-f0-9]{24}$/.test(f.trade_episode_id))
     throw new Error("Недостоверный ID эпизода");
-  if (typeof f.symbol !== "string" || !/^[A-Z0-9]{3,30}USDT$/.test(f.symbol))
+  if (!isReplayUsdtSymbol(f.symbol))
     throw new Error("Неверный тикер эпизода");
   if (f.side !== "LONG" && f.side !== "SHORT")
     throw new Error("Неизвестное направление эпизода");
