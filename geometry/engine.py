@@ -423,7 +423,11 @@ def analyze_geometry(
 
         for lower_candidate in lower_candidates:
 
-            if upper_candidate.get("triangle_wick_episode") != lower_candidate.get("triangle_wick_episode"):
+            upper_episode = (upper_candidate.get("triangle_wick_episode")
+                             if isinstance(upper_candidate, dict) else None)
+            lower_episode = (lower_candidate.get("triangle_wick_episode")
+                             if isinstance(lower_candidate, dict) else None)
+            if upper_episode != lower_episode:
                 continue
 
             if not strict_support_pair_allowed(upper_candidate, lower_candidate):
