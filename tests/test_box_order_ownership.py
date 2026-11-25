@@ -94,6 +94,48 @@ class BoxOrderOwnershipTests(unittest.TestCase):
             self.assertEqual(reader.robot_account_quarantines(self.account), {})
             self.assertFalse(reader._connection.in_transaction)
 
+        # Same symbol later trades, including a new open position, cannot
+        # resurrect the settled historical emergency marker.
+        self.fill("later-buy", "unrelated-buy", OrderSide.BUY,
+                  "1", "95", "1", "95", 7000)
+        with SQLiteStore.open_reader(self.path) as reader:
+            self.assertEqual(reader.robot_account_quarantines(self.account), {})
+        # The ordinary live proof must still reject foreign executions.
+        with self.assertRaisesRegex(BoxOwnershipError, "foreign execution"):
+            self.proof()
+        self.fill("later-sell", "unrelated-sell", OrderSide.SELL,
+                  "1", "96", "0", None, 8000)
+        with self.store.autopilot_decision_transaction():
+            self.assertEqual(self.store.robot_account_quarantines(self.account), {})
+        # A later execution of an OLD owned order is not unrelated history.
+        self.fill("late-owned", "entry-2", OrderSide.BUY,
+                  "1", "93", "1", "93", 9000)
+        with self.assertRaisesRegex(BoxOwnershipError, "owned execution after terminal"):
+            self.store.robot_account_quarantines(self.account)
+
+    def test_terminal_box_marker_does_not_ignore_foreign_prefix(self):
+        robot, _ = self.store.handoff_box_plan_to_robot(
+            self.plan.candidate_id, symbol=self.key.symbol,
+            expected_snapshot_sha256=self.plan.snapshot_sha256, approved_at_ms=4001,
+        )
+        self.store.save_robot_candidate_state(
+            robot.candidate_id, status="INVALIDATED",
+            robot_state={"execution": {"box_emergency_close_intent": {
+                "slot": 0, "symbol": self.key.symbol.value, "order_id": "stop",
+                "quantity": "2", "side": "Sell",
+            }}}, expected_revision=robot.state_revision, updated_at_ms=5001,
+        )
+        self.fill("owned-entry", "entry-1", OrderSide.BUY,
+                  "2", "94", "2", "94", 5000)
+        self.fill("foreign-buy", "foreign-entry", OrderSide.BUY,
+                  "1", "94", "3", "94", 5100)
+        self.fill("foreign-sell", "foreign-exit", OrderSide.SELL,
+                  "1", "94", "2", "94", 5200)
+        self.fill("owned-exit", "stop", OrderSide.SELL,
+                  "2", "90", "0", None, 6000)
+        with self.assertRaisesRegex(BoxOwnershipError, "foreign execution"):
+            self.store.robot_account_quarantines(self.account)
+
     def _latched_stop_with_abandoned_exit_zero(self):
         from terminal.domain.models import CommandId
         self.fill("entry-fill-shadow", "entry-1", OrderSide.BUY,
