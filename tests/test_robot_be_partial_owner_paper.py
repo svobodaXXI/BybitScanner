@@ -158,6 +158,125 @@ def _assert_synthetic_catapult_preview_then_explicit_owner_close(case, direction
                      Decimal("0"))
 
 
+def _assert_paired_native_exit_economics(case, direction):
+    """Same frozen synthetic lot; independent PAPER baseline STOP/TAKE vs exit.
+
+    This is scenario sensitivity, NOT a causal historical backtest or a
+    production CATAPULT_FULL dispatch. No market/venue receipts are implied.
+    """
+    import sqlite3
+
+    from terminal.api.models import ClientActionId, CloseAllCommandRequest
+    from tests.test_robot_paper_acceptance import _event_book
+    from tests.test_terminal_paper_runtime import (
+        MutableBookProvider, _runtime_with_provider,
+    )
+
+    original = case.runtime.store.get_robot_trade(case.trade_id)
+    original_position = case.runtime.store.get_position_projection(case.key)
+    entry_fills = case.runtime.store.load_executions_for_symbol(
+        case.account, case.symbol,
+    )
+    case.assertEqual(len(entry_fills), 1)
+    case.assertIsNone(original.exit_time_ms)
+    case.assertGreater(original_position.quantity.value, Decimal("0"))
+
+    # Fixed, synthetic hypothetical price paths. Each restored fork starts
+    # with exactly the same entry fill, original stop, take, and coverage.
+    branch_prices = {
+        "STOP": (
+            (Decimal("63999.5"), Decimal("64000"))
+            if direction == "LONG" else
+            (Decimal("64500"), Decimal("64500.5"))
+        ),
+        "TAKE": (
+            (Decimal("65300"), Decimal("65300.5"))
+            if direction == "LONG" else
+            (Decimal("63399.5"), Decimal("63400"))
+        ),
+    }
+    results = {}
+    with tempfile.TemporaryDirectory() as folder:
+        for leg, (bid, ask) in branch_prices.items():
+            db = Path(folder) / (leg.lower() + ".sqlite3")
+            # SQLite's online backup captures a consistent pre-exit snapshot;
+            # simple filesystem copying would miss uncheckpointed WAL writes.
+            with sqlite3.connect(case.db) as src, sqlite3.connect(db) as dst:
+                src.backup(dst)
+            live_book = _crossing_book(case.symbol.value, bid=bid, ask=ask)
+            provider = MutableBookProvider(case.symbol.value, live_book)
+            fork = _runtime_with_provider(db, provider)
+            try:
+                before_fills = fork.store.load_executions_for_symbol(
+                    case.account, case.symbol,
+                )
+                case.assertEqual(before_fills, entry_fills)
+                frozen = fork.store.get_robot_trade(case.trade_id)
+                case.assertEqual(frozen.stop_price, original.stop_price)
+                case.assertEqual(frozen.take_price, original.take_price)
+                crossing = _event_book(
+                    case.symbol.value, bid=bid, ask=ask,
+                )
+                outcome = fork.evaluate_robot_protection_crossing(
+                    case.symbol.value, crossing,
+                    event_id="paired-" + direction + "-" + leg,
+                    received_at_ms=crossing.received_at_ms,
+                )
+                case.assertIsNotNone(outcome)
+                case.assertEqual(outcome.status, "RESOLVED")
+                case.assertEqual(outcome.winning_leg, leg)
+                final = fork.store.get_robot_trade(case.trade_id)
+                case.assertEqual(final.exit_reason, leg)
+                case.assertIsNotNone(final.exit_time_ms)
+                after = fork.store.get_position_projection(case.key)
+                case.assertEqual(after.quantity.value, Decimal("0"))
+                case.assertEqual(after.side.value, "Flat")
+                fills = fork.store.load_executions_for_symbol(
+                    case.account, case.symbol,
+                )
+                case.assertEqual(len(fills), 2)
+                case.assertEqual(fills[1].quantity.value,
+                                 original_position.quantity.value)
+                total_fees = sum((x.fee for x in fills), Decimal("0"))
+                case.assertEqual(final.fees_costs_usdt, total_fees)
+                case.assertGreater(final.fees_costs_usdt, Decimal("0"))
+                results[leg] = final.realized_pnl_usdt - total_fees
+            finally:
+                fork.close()
+
+    # The owner's existing TEST-ONLY manual close simulates a hypothetical
+    # immediate liquidation. Never turn the research preview into an order.
+    request = CloseAllCommandRequest(
+        ClientActionId("paired-explicit-owner-close-" + direction.lower()),
+    )
+    closed = case.runtime.robot_close_all(request)
+    case.assertEqual(len(closed.results), 1)
+    case.assertEqual(closed.results[0].status, CommandResultStatus.COMPLETED)
+    final = case.runtime.store.get_robot_trade(case.trade_id)
+    case.assertEqual(final.exit_reason, "MANUAL")
+    case.assertIsNotNone(final.exit_time_ms)
+    position = case.runtime.store.get_position_projection(case.key)
+    case.assertEqual(position.quantity.value, Decimal("0"))
+    case.assertEqual(position.side.value, "Flat")
+    fills = case.runtime.store.load_executions_for_symbol(
+        case.account, case.symbol,
+    )
+    case.assertEqual(len(fills), 2)
+    total_fees = sum((x.fee for x in fills), Decimal("0"))
+    case.assertEqual(final.fees_costs_usdt, total_fees)
+    results["EARLY_EXIT"] = final.realized_pnl_usdt - total_fees
+
+    # The same early exit helps if price subsequently hits STOP, but loses
+    # the potential upside if the original untouched TAKE would have filled.
+    case.assertLess(results["STOP"], results["EARLY_EXIT"])
+    case.assertLess(results["EARLY_EXIT"], results["TAKE"])
+    case.assertEqual(
+        len(case.runtime.store.load_executions_for_symbol(
+            case.account, case.symbol,
+        )), 2,
+    )
+
+
 class RobotBePartialOwnerPaperTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -422,6 +541,9 @@ class RobotBePartialOwnerPaperTests(unittest.TestCase):
                     )
                     projection = self.runtime.store.get_protection_projection(self.key)
                     self.assertEqual(projection.stop_loss, Decimal("64000"))
+
+    def test_paired_native_paper_stop_vs_early_exit_vs_take_long(self):
+        _assert_paired_native_exit_economics(self, "LONG")
 
     def test_synthetic_full_exit_preview_then_explicit_paper_owner_close_long(self):
         _assert_synthetic_catapult_preview_then_explicit_owner_close(self, "LONG")
@@ -954,6 +1076,9 @@ class RobotBeShortOwnerPaperTests(unittest.TestCase):
             "low": 63650, "close": 63700,
         } if symbol == self.symbol.value else None
         return monitor
+
+    def test_paired_native_paper_stop_vs_early_exit_vs_take_short(self):
+        _assert_paired_native_exit_economics(self, "SHORT")
 
     def test_synthetic_full_exit_preview_then_explicit_paper_owner_close_short(self):
         _assert_synthetic_catapult_preview_then_explicit_owner_close(self, "SHORT")
