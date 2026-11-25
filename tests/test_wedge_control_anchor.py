@@ -288,3 +288,36 @@ class WedgeControlAnchorTest(unittest.TestCase):
         self.assertGreater(g["apex"]["index"], 190)
         self.assertTrue(g["validation"]["valid"])
         self.assertTrue(g["pair_metrics"]["true_converging"])
+
+        # Persist the actual accepted pair, without changing the frozen source.
+        from tempfile import TemporaryDirectory
+        from geometry.wedge_revision_journal import append_revision, load_revisions
+
+        original = fit_anchor_trendline([
+            {"index": i, "price": float(closed.high.iloc[i])} for i in (143,178)
+        ])
+        seed = {"candidate_id": "pons-control", "source_geometry_sha256": "a"*64,
+                "symbol": "PONSUSDT", "timeframe_ms": 300000, "family": "falling",
+                "episode_start": 143, "original_strict_line": original,
+                "original_opposite_line": opposite,
+                "candles": closed.rename(columns={"time":"open_time_ms"})}
+        proposal.update(validated_pairs=pairs, source_trade_id="synthetic-190",
+                        candidate_id="pons-control", received_at_ms=event_ms+1,
+                        previous_extreme="0.5811")
+        old_control = dict(points[178])
+        with TemporaryDirectory() as directory:
+            db = Path(directory)/"paper.sqlite3"
+            self.assertEqual(load_revisions(db, seed), [])
+            args = dict(previous_control_anchor=old_control, previous_strict_line=original)
+            record, created = append_revision(db, seed, proposal, g, **args)
+            self.assertTrue(created)
+            self.assertEqual(record["revision"], 1)
+            self.assertEqual(record["event"], "Паттерн перестроен")
+            self.assertEqual(record["strict_line"]["second_index"], 167)
+            self.assertEqual(load_revisions(db, seed), [record])
+            self.assertEqual(append_revision(db, seed, proposal, g, **args), (record, False))
+            with self.assertRaises(ValueError):
+                append_revision(db, seed, dict(proposal, received_at_ms=event_ms+2), g, **args)
+            self.assertFalse(db.exists())  # PAPER DB never opened by this writer.
+            self.assertEqual(seed["original_strict_line"]["second_index"], 178)
+            self.assertEqual(load_revisions(db, seed), [record])
