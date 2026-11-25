@@ -648,6 +648,76 @@ class ObserverTests(unittest.TestCase):
                     self.assertEqual(hub.list_flow_contexts(), ())
                     hub.close()
 
+    def test_dual_opt_in_prioritizes_proven_early_wedge_without_displacing_open(self):
+        """One passive lease must not be lost to lexical pre-breakout order."""
+        from robot_entry_flow_evidence import canonical_host_breakout_known_at_ms
+
+        now = PatternFlowSourceTests.CLOSE + 5_000
+        early = _candidate(phase="WAITING_RETEST")
+        early.candidate_id = "z-early"
+        early.signal_snapshot = {
+            "pattern": "Falling Wedge",
+            "geometry": {
+                "upper_line": {"slope": -1, "intercept": 200},
+                "lower_line": {"slope": -0.5, "intercept": 145},
+                "apex": {"index": 110, "valid_intersection": True},
+                "current_index": 100,
+            },
+            "scanner_geometry_cursor": {
+                "version": "1.0", "timeframe": "1",
+                "geometry_index": 100,
+                "source_candle_time_ms": PatternFlowSourceTests.CLOSE - 120_000,
+            },
+        }
+        early.robot_state = {
+            "state_version": "1.0", "pattern": "Falling Wedge",
+            "phase": "WAITING_RETEST", "direction": "LONG",
+            "geometry_cursor": 101, "breakout_index": 101,
+            "retest_index": None,
+        }
+        self.assertEqual(canonical_host_breakout_known_at_ms(early),
+                         PatternFlowSourceTests.CLOSE)
+        warm = _candidate(phase="WAITING_BREAKOUT")
+        warm.candidate_id = "a-warm"
+        warm.symbol.value = "ETHUSDT"
+        retest = _candidate()
+        retest.candidate_id = "b-retest"
+        retest.symbol.value = "SOLUSDT"
+        opened = _candidate(phase="OPEN")
+        opened.status = "OPEN"
+        opened.candidate_id = "c-open"
+        opened.symbol.value = "XRPUSDT"
+
+        for flags, candidates, expected in (
+            ({PATTERN_FLOW_PAPER_OPT_IN: "1"}, (warm, early, retest), "SOLUSDT"),
+            ({PATTERN_FLOW_PAPER_OPT_IN: "1"}, (warm, early), "ETHUSDT"),
+            ({PATTERN_FLOW_PAPER_OPT_IN: "1", IMPULSE_EARLY_PAPER_OPT_IN: "1"},
+             (warm, early, retest), "BTCUSDT"),
+            ({PATTERN_FLOW_PAPER_OPT_IN: "1", IMPULSE_EARLY_PAPER_OPT_IN: "1"},
+             (warm, early, retest, opened), "XRPUSDT"),
+        ):
+            with self.subTest(flags=flags, expected=expected):
+                calls = []
+                def subscribe(symbol):
+                    calls.append(("subscribe", symbol))
+                    return object()
+                hub = SimpleNamespace(
+                    subscribe_flow_only=subscribe,
+                    release_flow_only=lambda symbol: calls.append(("release", symbol)),
+                )
+                with patch.dict(os.environ, flags, clear=True):
+                    observer = PatternFlowObserver(
+                        hub, _REST(None, None, None), "unused",
+                        clock_ms=lambda: now, get_candidates=lambda: candidates,
+                    )
+                try:
+                    observer._sync_flow_probe(candidates)
+                    self.assertEqual(calls, [("subscribe", expected)])
+                    self.assertEqual(observer._receipts, {})
+                finally:
+                    observer.close()
+                self.assertEqual(calls[-1], ("release", expected))
+
     def test_unknown_or_terminal_patterns_never_warm_trade_subscription(self):
         from terminal.market_data.hub import MarketDataHub
         from tests.test_terminal_market_data_hub import _Registry, _context
