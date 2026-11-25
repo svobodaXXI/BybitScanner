@@ -1075,18 +1075,28 @@ class RobotBreakoutMonitor:
                 or execution.get("limit_order_id")
                 or execution.get("late_market_intent")):
             return False
-        if not self._read_admission_gate()[0]:
+        def rejected(reason: str) -> bool:
+            # Fixed diagnostic codes only; never print source payloads,
+            # exception text or account credentials. No new state writes.
+            print(f"[ROBOT IMPULSE ENTRY] candidate_id={record.candidate_id} "
+                  f"revision={record.state_revision} reason={reason}")
             return False
+
+        if not self._read_admission_gate()[0]:
+            return rejected("ADMISSION_CLOSED")
         if (self._active_other_owner_candidate_ids(record)
                 or self._pre_entry_block_reason(record) is not None):
-            return False
+            return rejected("OWNER_OR_PRE_ENTRY_BLOCK")
+        stage = "FLOW_PROVIDER_ERROR"
         try:
             receipt = self._get_pattern_flow_evidence(record)
             if receipt is None:
-                return False
+                return rejected("FLOW_RECEIPT_MISSING")
+            stage = "BOOK_PROVIDER_ERROR"
             book = self._get_market_book(record.symbol.value)
             if book is None:
-                return False
+                return rejected("BOOK_MISSING")
+            stage = "QUOTE_REJECTED"
             build_quote = (
                 robot_entry_limit.build_post_breakout_wedge_impulse_limit_research
                 if wedge else
@@ -1101,11 +1111,26 @@ class RobotBreakoutMonitor:
             frozen = robot_entry_limit.freeze_post_breakout_impulse_quote(
                 quote, receipt,
             )
+        except robot_entry_limit.RobotEntryLimitError as error:
+            # Classify only exact known messages; never leak dynamic details.
+            quote_reasons = {
+                "original Wedge breakout is unproven": "BREAKOUT_UNPROVEN",
+                "candidate-bound directional flow not certified": "FLOW_NOT_CERTIFIED",
+                "fresh executable two-sided book is not proven": "BOOK_NOT_READY",
+                "book source clock is invalid": "BOOK_CLOCK_INVALID",
+                "book price is not executable at the tick": "BOOK_PRICE_INVALID",
+                "Wedge apex reached before impulse entry": "APEX_REACHED",
+                "price no longer outside pattern realization boundary": "PRICE_INSIDE_BOUNDARY",
+                "after-fee Wedge RR below post-fill owner floor": "NET_RR_BELOW_FLOOR",
+                "Wedge protective loss is not computable": "RISK_UNPROVEN",
+            }
+            return rejected(quote_reasons.get(str(error), stage)
+                            if stage == "QUOTE_REJECTED" else stage)
         except Exception:
             # No exception from optional market evidence grants an entry.
-            return False
+            return rejected(stage)
         if not self._arm_entry_coverage(record.symbol.value):
-            return False
+            return rejected("PROTECTION_COVERAGE_UNAVAILABLE")
         durable = dict(execution)
         durable["entry_mode"] = IMPULSE_EARLY_LIMIT_ENTRY_MODE
         durable["impulse_entry_intent"] = frozen
