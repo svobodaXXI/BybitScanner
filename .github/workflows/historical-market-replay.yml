@@ -99,7 +99,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/machine-time/analyzer"
           cp ../../analyzer/__init__.py ../../analyzer/scoring.py "$RUNNER_TEMP/machine-time/analyzer/"
           cp ../../pivots.py ../../confirmation.py ../../scanner_geometry_cursor.py "$RUNNER_TEMP/machine-time/"
-          cp ../../robot_state_machine.py ../../robot_entry_limit.py ../../robot_protection.py ../../robot_l_shape.py ../../retest_account_risk.py ../../retest_campaign.py "$RUNNER_TEMP/machine-time/"
+          cp ../../robot_state_machine.py ../../robot_entry_limit.py ../../robot_entry_flow_evidence.py ../../robot_protection.py ../../robot_l_shape.py ../../retest_account_risk.py ../../retest_campaign.py "$RUNNER_TEMP/machine-time/"
           cp ../../mirror_retest_robot.py ../../mirror_retest_observer.py ../../mirror_retest_robot_bridge.py ../../retest_calibration.py ../../robot_failure_diagnostics.py ../../robot_market_confirmation.py ../../robot_partial_fill.py ../../robot_candidate_store.py "$RUNNER_TEMP/machine-time/"
           mkdir -p "$RUNNER_TEMP/machine-time/terminal/api" "$RUNNER_TEMP/machine-time/terminal/domain" "$RUNNER_TEMP/machine-time/terminal/application" "$RUNNER_TEMP/machine-time/terminal/paper" "$RUNNER_TEMP/machine-time/terminal/market_data" "$RUNNER_TEMP/machine-time/terminal/persistence"
           cp ../../terminal/api/models.py "$RUNNER_TEMP/machine-time/terminal/api/"
@@ -162,6 +162,8 @@ jobs:
         shell: pwsh
         working-directory: machine-time
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           python -B server.py --check
           python -c "import protocol_launcher, launch_bridge_agent; from research.local_replay_viewer.paper_episode_local_store import store_episode; assert launch_bridge_agent.read_config() is None; print('SIMULATOR_PAIRED_ADAPTER_PACKAGE_OK_DEFAULT_OFF')"
           python -B smoke_package.py
