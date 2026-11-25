@@ -111,3 +111,140 @@ finally:
     except subprocess.TimeoutExpired:
         proc.kill()
         proc.wait(timeout=5)
+
+
+# Only on disposable Windows GitHub CI. Never change an owner's trust store.
+def verify_windows_native_bridge():
+    import hashlib
+    import json
+    import os
+    import shutil
+    import ssl
+    import tempfile
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from unittest.mock import patch
+    from urllib.error import URLError
+    import launch_bridge_agent as agent
+
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        cert, key = root / "test.pem", root / "test.key"
+        openssl = shutil.which("openssl") or str(
+            Path(os.environ["ProgramFiles"]) / "Git/usr/bin/openssl.exe")
+        subprocess.run([openssl, "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+                        "-keyout", str(key), "-out", str(cert), "-days", "1",
+                        "-subj", "/CN=MachineTime CI isolated TLS",
+                        "-addext", "subjectAltName=IP:127.0.0.1",
+                        "-addext", "extendedKeyUsage=serverAuth"],
+                       check=True, capture_output=True, timeout=20)
+        fingerprint = hashlib.sha1(
+            ssl.PEM_cert_to_DER_cert(cert.read_text(encoding="ascii"))).hexdigest()
+        token, code = "A" * 64, "C" * 24
+        seen = []
+        bridge = "/api/diary/simulator-bridge/"
+        episode = "te_" + "a" * 24
+        request_id = "b" * 32
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def reply(self, status, data):
+                raw = json.dumps(data).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+
+            def do_POST(self):
+                route = urlsplit(self.path).path
+                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                seen.append(route)
+                if route == bridge + "pair-claim":
+                    assert self.headers["X-BybitScanner-Local-Pair-Claim"] == "v1"
+                    assert body == {"device_id": "owner-pc", "code": code}
+                    self.reply(200, {"ok": True, "device_id": "owner-pc", "token": token})
+                elif route == bridge + "ack":
+                    assert self.headers["X-BybitScanner-Simulator-Device-Token"] == token
+                    assert body == {"device_id": "owner-pc", "request_id": request_id, "launched": True}
+                    self.reply(200, {"ok": True, "state": "LAUNCHED"})
+                else:
+                    self.reply(404, {})
+
+            def do_GET(self):
+                route = urlsplit(self.path).path
+                seen.append(route)
+                if self.headers.get("X-BybitScanner-Simulator-Device-Token") != token:
+                    self.reply(403, {"ok": False, "error": "simulator_device_unauthorized"})
+                elif route == bridge + "poll":
+                    if self.path.endswith("viewer_running=0"):
+                        self.reply(200, {"ok": True, "state": "IDLE"})
+                    else:
+                        self.reply(200, {"ok": True, "state": "OPEN_EPISODE",
+                                         "episode_id": episode, "request_id": request_id})
+                elif route == bridge + "facts":
+                    self.send_response(302)
+                    self.send_header("Location", self.server.origin + bridge + "poll")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                else:
+                    self.reply(404, {})
+
+        host = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(cert, key)
+        host.socket = context.wrap_socket(host.socket, server_side=True)
+        host.origin = f"https://127.0.0.1:{host.server_address[1]}"
+        thread = Thread(target=host.serve_forever, daemon=True)
+        thread.start()
+        certutil = str(Path(os.environ["SystemRoot"]) / "System32/certutil.exe")
+        try:
+            probe = Request(host.origin + bridge + "poll?device_id=owner-pc&viewer_running=0")
+            try:
+                agent._relay_https_opener().open(probe, 5)
+                raise AssertionError("Untrusted TLS unexpectedly accepted")
+            except HTTPError:
+                raise AssertionError("Untrusted TLS reached HTTP handler")
+            except URLError:
+                assert not seen
+            subprocess.run([certutil, "-user", "-f", "-addstore", "Root", str(cert)],
+                           check=True, capture_output=True, timeout=20)
+            try:
+                agent._relay_https_opener().open(probe, 5)
+                raise AssertionError("Unauthenticated poll accepted")
+            except HTTPError as error:
+                assert error.code == 403
+            with patch.object(agent, "CONFIG_PATH", root / "launch-bridge.json"), \
+                 patch.object(agent, "_trusted_statistics_origin", return_value=host.origin), \
+                 patch.object(agent, "install_if_configured", return_value=True), \
+                 patch.object(agent, "viewer_is_running", return_value=True):
+                agent.claim_one_time_pairing_code("owner-pc", code)
+                config = agent.read_config()
+                assert config == {"origin": host.origin, "device_id": "owner-pc", "token": token}
+                opened = []
+                assert agent.poll_once(config, launch=opened.append) == "OPEN_REQUESTED"
+                assert opened == [episode]
+                before = len(seen)
+                redirect = Request(host.origin + bridge + "facts?device_id=owner-pc&request_id=" + request_id,
+                                   headers={"X-BybitScanner-Simulator-Device-Token": token})
+                try:
+                    agent._relay_https_opener().open(redirect, 5)
+                    raise AssertionError("Redirect accepted")
+                except HTTPError as error:
+                    assert error.code == 302
+                assert seen[before:] == [bridge + "facts"]
+            assert seen == [bridge + "poll", bridge + "pair-claim", bridge + "poll",
+                            bridge + "poll", bridge + "ack", bridge + "facts"]
+            print("WINDOWS_NATIVE_TLS_CLAIM_PERSIST_POLL_ACK_NO_REDIRECT_OK")
+        finally:
+            host.shutdown()
+            host.server_close()
+            thread.join(timeout=5)
+            subprocess.run([certutil, "-user", "-delstore", "Root", fingerprint],
+                           capture_output=True, timeout=20)
+
+
+import os
+if os.name == "nt" and os.environ.get("GITHUB_ACTIONS") == "true" and os.environ.get("RUNNER_OS") == "Windows":
+    verify_windows_native_bridge()
