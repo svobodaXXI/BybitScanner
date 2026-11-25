@@ -99,14 +99,14 @@ jobs:
           mkdir -p "$RUNNER_TEMP/machine-time/analyzer"
           cp ../../analyzer/__init__.py ../../analyzer/scoring.py "$RUNNER_TEMP/machine-time/analyzer/"
           cp ../../pivots.py ../../confirmation.py ../../scanner_geometry_cursor.py "$RUNNER_TEMP/machine-time/"
-          cp ../../robot_state_machine.py ../../robot_entry_limit.py ../../robot_protection.py ../../robot_l_shape.py ../../retest_account_risk.py ../../retest_campaign.py "$RUNNER_TEMP/machine-time/"
+          cp ../../robot_state_machine.py ../../robot_entry_limit.py ../../robot_entry_flow_evidence.py ../../robot_restart_recovery.py ../../robot_protection.py ../../robot_l_shape.py ../../retest_account_risk.py ../../retest_campaign.py "$RUNNER_TEMP/machine-time/"
           cp ../../mirror_retest_robot.py ../../mirror_retest_observer.py ../../mirror_retest_robot_bridge.py ../../retest_calibration.py ../../robot_failure_diagnostics.py ../../robot_market_confirmation.py ../../robot_partial_fill.py ../../robot_candidate_store.py "$RUNNER_TEMP/machine-time/"
           mkdir -p "$RUNNER_TEMP/machine-time/terminal/api" "$RUNNER_TEMP/machine-time/terminal/domain" "$RUNNER_TEMP/machine-time/terminal/application" "$RUNNER_TEMP/machine-time/terminal/paper" "$RUNNER_TEMP/machine-time/terminal/market_data" "$RUNNER_TEMP/machine-time/terminal/persistence"
           cp ../../terminal/api/models.py "$RUNNER_TEMP/machine-time/terminal/api/"
           cp ../../terminal/domain/models.py ../../terminal/domain/states.py "$RUNNER_TEMP/machine-time/terminal/domain/"
           cp ../../terminal/market_data/models.py "$RUNNER_TEMP/machine-time/terminal/market_data/"
           cp ../../terminal/protection_timing.py "$RUNNER_TEMP/machine-time/terminal/"
-          cp ../../terminal/application/normalization.py ../../terminal/application/command_identity.py ../../terminal/application/ikigai_box_plan_persistence.py ../../terminal/application/ikigai_box_first_grid.py ../../terminal/application/ikigai_box_catchup.py ../../terminal/application/robot_admission.py ../../terminal/application/robot_admission_catchup.py ../../terminal/application/robot_late_admission.py ../../terminal/application/robot_late_admission_market.py ../../terminal/application/robot_breakout_monitor.py ../../terminal/application/box_protection_finalizer.py "$RUNNER_TEMP/machine-time/terminal/application/"
+          cp ../../terminal/application/normalization.py ../../terminal/application/command_identity.py ../../terminal/application/ikigai_box_plan_persistence.py ../../terminal/application/ikigai_box_first_grid.py ../../terminal/application/ikigai_box_catchup.py ../../terminal/application/robot_admission.py ../../terminal/application/robot_admission_catchup.py ../../terminal/application/robot_late_admission.py ../../terminal/application/robot_late_admission_market.py ../../terminal/application/robot_breakout_monitor.py ../../terminal/application/box_protection_finalizer.py ../../terminal/application/robot_recovery.py ../../terminal/application/robot_trade_ledger.py "$RUNNER_TEMP/machine-time/terminal/application/"
           cp ../../terminal/persistence/schema.py ../../terminal/persistence/sqlite_store.py ../../terminal/persistence/source_terminal_events.py "$RUNNER_TEMP/machine-time/terminal/persistence/"
           cp ../../terminal/paper/ikigai_box_plan.py ../../terminal/paper/box_ownership.py ../../terminal/paper/matching.py "$RUNNER_TEMP/machine-time/terminal/paper/"
           # Deliberate allowlist only: no runtime, executor, exchange adapter,
@@ -162,6 +162,8 @@ jobs:
         shell: pwsh
         working-directory: machine-time
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           python -B server.py --check
           python -c "import protocol_launcher, launch_bridge_agent; from research.local_replay_viewer.paper_episode_local_store import store_episode; assert launch_bridge_agent.read_config() is None; print('SIMULATOR_PAIRED_ADAPTER_PACKAGE_OK_DEFAULT_OFF')"
           python -B smoke_package.py

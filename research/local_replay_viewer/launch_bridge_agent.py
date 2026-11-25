@@ -8,6 +8,8 @@ shell commands received from the network.
 from __future__ import annotations
 
 import argparse
+import base64
+import io
 import ctypes
 import json
 import os
@@ -82,12 +84,134 @@ def _direct_https_opener():
     return build_opener(ProxyHandler({}), _NoRedirect())
 
 
-def _relay_https_opener():
-    """Use the owner's configured HTTPS route (including Windows proxy).
+# Fixed script: request data and secrets enter only through the child's stdin.
+# Use the same native .NET HTTPS stack already used for public candle history.
+_WINDOWS_RELAY_SCRIPT = r"""
+$ErrorActionPreference = 'Stop'
+$inputDoc = [Console]::In.ReadToEnd() | ConvertFrom-Json
+$request = [Net.HttpWebRequest]::Create([string]$inputDoc.url)
+$request.Method = [string]$inputDoc.method
+$request.AllowAutoRedirect = $false
+$request.Timeout = [int]$inputDoc.timeout_ms
+$request.ReadWriteTimeout = [int]$inputDoc.timeout_ms
+$request.UseDefaultCredentials = $false
+$request.PreAuthenticate = $false
+foreach ($header in $inputDoc.headers.PSObject.Properties) {
+    if ($header.Name -eq 'content-type') {
+        $request.ContentType = [string]$header.Value
+    } else {
+        $request.Headers[$header.Name] = [string]$header.Value
+    }
+}
+try {
+    if ($request.Method -eq 'POST') {
+        $body = [Convert]::FromBase64String([string]$inputDoc.body)
+        $request.ContentLength = $body.Length
+        $stream = $request.GetRequestStream()
+        try { $stream.Write($body, 0, $body.Length) } finally { $stream.Dispose() }
+    }
+    $response = $request.GetResponse()
+} catch {
+    $errorCause = $_.Exception.GetBaseException()
+    if ($errorCause -is [Net.WebException] -and $null -ne $errorCause.Response) {
+        $response = $errorCause.Response
+    } else {
+        exit 3
+    }
+}
+try {
+    $stream = $response.GetResponseStream()
+    $buffer = New-Object byte[] 65536
+    $result = New-Object IO.MemoryStream
+    try {
+        while (($n = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+            if ($result.Length + $n -gt [int]$inputDoc.max_bytes) { exit 4 }
+            $result.Write($buffer, 0, $n)
+        }
+        $reply = @{ status = [int]$response.StatusCode; body = [Convert]::ToBase64String($result.ToArray()) }
+        [Console]::Write(($reply | ConvertTo-Json -Compress))
+    } finally {
+        $result.Dispose()
+        $stream.Dispose()
+    }
+} finally { $response.Dispose() }
+"""
 
-    HTTPS still verifies the certificate and hostname end to end. No
-    redirects or fallback/replay of a possibly consumed pairing request.
-    """
+
+class _WindowsRelayOpener:
+    def open(self, request, timeout):
+        parsed = urlsplit(request.full_url)
+        routes = {
+            "/api/diary/simulator-bridge/pair-claim": "POST",
+            "/api/diary/simulator-bridge/poll": "GET",
+            "/api/diary/simulator-bridge/facts": "GET",
+            "/api/diary/simulator-bridge/ack": "POST",
+        }
+        method = request.get_method()
+        if (parsed.scheme != "https" or not parsed.hostname or parsed.username is not None
+                or parsed.password is not None or parsed.fragment
+                or routes.get(parsed.path) != method
+                or (method == "POST" and parsed.query)):
+            raise AgentConfigError("invalid_windows_relay_request")
+        headers = {k.lower(): v for k, v in request.header_items()}
+        if not set(headers) <= {"content-type", "cache-control",
+                               "x-bybitscanner-simulator-device-token",
+                               "x-bybitscanner-local-pair-claim"}:
+            raise AgentConfigError("invalid_windows_relay_headers")
+        body = request.data or b""
+        if not isinstance(body, bytes) or len(body) > 320 or (method == "GET" and body):
+            raise AgentConfigError("invalid_windows_relay_body")
+        if parsed.path.endswith("/facts"):
+            from research.local_replay_viewer.paper_episode_local_store import MAX_BYTES
+            limit = MAX_BYTES + 1
+        else:
+            limit = 1025
+        # Match the proven native Windows timeout; one attempt only.
+        seconds = max(12, timeout)
+        payload = json.dumps({
+            "url": request.full_url, "method": method, "headers": headers,
+            "body": base64.b64encode(body).decode("ascii"),
+            "timeout_ms": int(seconds * 1000), "max_bytes": limit,
+        }, separators=(",", ":")).encode("ascii")
+        shell = Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"
+        encoded = base64.b64encode(_WINDOWS_RELAY_SCRIPT.encode("utf-16-le")).decode("ascii")
+        try:
+            result = subprocess.run(
+                [str(shell), "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+                input=payload, capture_output=True, timeout=seconds + 8,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            raise URLError("windows_relay_transport_failed") from None
+        if result.returncode == 4:
+            raise AgentConfigError("windows_relay_reply_too_large")
+        if result.returncode != 0:
+            raise URLError("windows_relay_transport_failed")
+        try:
+            if len(result.stdout) > ((limit + 2) // 3) * 4 + 128:
+                raise ValueError("oversized")
+            reply = json.loads(result.stdout)
+            if set(reply) != {"status", "body"} or type(reply["status"]) is not int:
+                raise ValueError("invalid response")
+            status = reply["status"]
+            if not 100 <= status <= 599:
+                raise ValueError("invalid status")
+            data = base64.b64decode(reply["body"], validate=True)
+            if len(data) > limit:
+                raise ValueError("oversized")
+        except (ValueError, TypeError, KeyError):
+            raise AgentConfigError("invalid_windows_relay_reply") from None
+        response = io.BytesIO(data)
+        response.status = status
+        if status != 200:
+            raise HTTPError(request.full_url, status, "windows_relay_http_rejected", {}, response)
+        return response
+
+
+def _relay_https_opener():
+    """One configured route; no automatic replay of a consumed claim."""
+    if os.name == "nt":
+        return _WindowsRelayOpener()
     return build_opener(ProxyHandler(), _NoRedirect())
 
 

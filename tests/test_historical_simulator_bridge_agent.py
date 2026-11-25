@@ -75,7 +75,9 @@ assert flat.HERE / "paper-episode-facts" == nested.HERE / "paper-episode-facts"
             self.assertFalse((nested / "simulator-v2-data").exists())
 
     def test_default_relay_transport_honors_configured_proxy_and_keeps_tls(self):
-        with patch.dict("os.environ", {"https_proxy": "http://127.0.0.1:1"}):
+        from types import SimpleNamespace
+        with patch.dict("os.environ", {"https_proxy": "http://127.0.0.1:1"}), \
+                patch.object(agent, "os", SimpleNamespace(name="posix")):
             opener = agent._relay_https_opener()
         self.assertTrue(any(isinstance(h, ProxyHandler) and
                             h.proxies.get("https") == "http://127.0.0.1:1"
@@ -84,6 +86,58 @@ assert flat.HERE / "paper-episode-facts" == nested.HERE / "paper-episode-facts"
                             for h in opener.handlers))
         self.assertTrue(any(isinstance(h, HTTPSHandler)
                             for h in opener.handlers))
+
+    def test_windows_native_opener_uses_only_fixed_script_and_stdin(self):
+        import base64
+        from types import SimpleNamespace
+        from urllib.error import HTTPError, URLError
+        from urllib.request import Request
+        url = self.config["origin"] + "/api/diary/simulator-bridge/pair-claim"
+        code = "C" * 24
+        body = json.dumps({"device_id": "owner-pc", "code": code}).encode()
+        request = Request(url, data=body, headers={
+            "Content-Type": "application/json", "X-BybitScanner-Local-Pair-Claim": "v1",
+        })
+        def reply(status, data):
+            return SimpleNamespace(returncode=0, stdout=json.dumps({
+                "status": status, "body": base64.b64encode(data).decode(),
+            }).encode())
+        with patch.dict("os.environ", {"SystemRoot": "C:/Windows"}), \
+                patch.object(agent.subprocess, "run", return_value=reply(200, b'{"ok":true}')) as run:
+            with agent._WindowsRelayOpener().open(request, 5) as response:
+                self.assertEqual(response.read(), b'{"ok":true}')
+            run.assert_called_once()
+            args, kwargs = run.call_args
+            self.assertNotIn(code, str(args))
+            self.assertNotIn(url, str(args))
+            self.assertNotIn("env", kwargs)
+            self.assertEqual(json.loads(kwargs["input"])["url"], url)
+            self.assertEqual(base64.b64decode(json.loads(kwargs["input"])["body"]), body)
+            self.assertEqual(kwargs["timeout"], 20)
+            script = base64.b64decode(args[0][-1]).decode("utf-16-le")
+            self.assertIn("AllowAutoRedirect = $false", script)
+            self.assertNotIn("CertificateValidationCallback", script)
+            for status in (302, 403):
+                run.reset_mock()
+                run.return_value = reply(status, b"rejected")
+                with self.assertRaises(HTTPError) as error:
+                    agent._WindowsRelayOpener().open(request, 5)
+                self.assertEqual(error.exception.code, status)
+                run.assert_called_once()
+            run.reset_mock()
+            run.return_value = SimpleNamespace(returncode=3, stdout=b"")
+            with self.assertRaises(URLError):
+                agent._WindowsRelayOpener().open(request, 5)
+            run.assert_called_once()
+            run.reset_mock()
+            with self.assertRaises(agent.AgentConfigError):
+                agent._WindowsRelayOpener().open(Request("http://example.test/api/diary/simulator-bridge/poll"), 5)
+            run.assert_not_called()
+
+    def test_windows_selects_native_transport(self):
+        from types import SimpleNamespace
+        with patch.object(agent, "os", SimpleNamespace(name="nt")):
+            self.assertIsInstance(agent._relay_https_opener(), agent._WindowsRelayOpener)
 
     def test_send_uses_configured_transport_without_injected_opener(self):
         opener = MockOpener([{"ok": True, "state": "IDLE"}])
