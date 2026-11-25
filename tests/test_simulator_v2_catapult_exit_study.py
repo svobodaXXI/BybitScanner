@@ -34,6 +34,7 @@ def receipt(direction="LONG", **overrides):
         best_price_event_ms=1500, best_price_received_ms=1600,
         directional_print_delta_usdt=D("0"),
         structure_invalidated=False,
+        price_event_ms=10800, price_received_ms=10900,
     )
     vals.update(overrides)
     return MarketReceipt(**vals)
@@ -153,6 +154,13 @@ class CatapultHypothesisMechanics(unittest.TestCase):
             replace(source, print_received_ms=11001),
             replace(source, print_received_ms=10849),
             replace(source, book_received_ms=10200),
+            replace(source, price_event_ms=None),
+            replace(source, price_received_ms=None),
+            replace(source, price_event_ms=999),
+            replace(source, price_event_ms=10901),
+            replace(source, price_received_ms=11001),
+            replace(source, price_event_ms=10000, price_received_ms=10001),
+            replace(source, price_received_ms=True),
             replace(source, book_event_ms=999),
             replace(source, decision_at_ms=900),
             replace(source, best_price_since_fill=D("99.9")),
@@ -173,6 +181,15 @@ class CatapultHypothesisMechanics(unittest.TestCase):
         result = evaluate_exit(
             trade(protection_confirmed=False), source, settings())
         self.assertEqual(result.action, "INSUFFICIENT")
+
+    def test_fresh_book_cannot_make_stale_exit_price_valid(self):
+        e = receipt(mark_price=D("101"), best_price_since_fill=D("101"),
+                    directional_print_delta_usdt=D("-250"),
+                    price_event_ms=10000, price_received_ms=10001)
+        result = evaluate_exit(trade(), e, settings())
+        self.assertEqual(result.action, "INSUFFICIENT")
+        self.assertIsNone(result.estimated_net_if_exited)
+        self.assertFalse(result.trading_authorized)
 
     def test_source_only_icnt_style_evidence_is_not_host_proof(self):
         # Public Bybit archives have exchange event times, not Robot receipts.
