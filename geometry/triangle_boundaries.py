@@ -222,3 +222,87 @@ def build_triangle_only_lines(
         result.append(extra)
 
     return result[0], result[1]
+
+
+def build_closed_wick_triangle_pairs(highs, lows, candles, current_index, max_span=None):
+    """Recover paired outer contacts without promoting candle wicks to pivots.
+
+    A/B/C remain confirmed by the native pair evaluator. Each side requires
+    independent confirmed forward support and a later actual enclosing wick.
+    Only one exact outer ray per first anchor; no fit tolerance or new span.
+    The two rays are paired only within their original adjacent A/B episode.
+    """
+    import math
+    if (candles is None or current_index is None or current_index < 0
+            or current_index >= len(candles) or not {"high", "low"}.issubset(candles.columns)):
+        return []
+    from .candidate import DEFAULT_TOLERANCE_PERCENT
+    from .trendline import fit_anchor_trendline
+    from .envelope_metrics import evaluate_strict_wedge_wicks
+
+    prefix = candles.iloc[:current_index+1]
+    def confirmed(points, side):
+        return sorted((p for p in points or [] if
+            type(p.get("index")) is int and 0 <= p["index"] <= current_index-PIVOT_RIGHT
+            and math.isfinite(float(p["price"])) and float(p["price"]) > 0
+            and float(prefix.iloc[p["index"]][side]) == float(p["price"])),
+            key=lambda p:p["index"])
+    hs, ls = confirmed(highs, "high"), confirmed(lows, "low")
+    def ray(anchor, points, side, sign):
+        a, price = anchor["index"], float(anchor["price"])
+        if current_index-a < DEFAULT_MIN_LINE_SPAN:
+            return None
+        values = prefix[side].iloc[a+1:].to_numpy(dtype=float)
+        if not all(math.isfinite(x) and x > 0 for x in values):
+            return None
+        # Tightest enclosing slope through the immutable first contact.
+        # Tie: earliest real contact; never extend END merely to refresh age.
+        offset = max(range(1,len(values)+1),
+                     key=lambda k: sign*(values[k-1]-price)/k)
+        contact_index = a+offset
+        slope = (values[offset-1]-price)/offset
+        if (sign*slope >= 0 or offset < DEFAULT_MIN_LINE_SPAN
+                or (max_span is not None and offset > max_span)):
+            return None
+        prior = [p for p in points if a < p["index"] < contact_index]
+        if not prior or any(p["index"] >= contact_index for p in points):
+            return None
+        contact = {"index":contact_index, "price":float(values[offset-1]),
+                   "type":side, "contact_kind":"CLOSED_WICK_NOT_CONFIRMED_PIVOT"}
+        line = fit_anchor_trendline([anchor,contact])
+        if line is None:
+            return None
+        support = [p for p in prior if
+            abs(float(p["price"])-calculate_price(line,p["index"])) /
+                abs(float(p["price"]))*100 <= DEFAULT_TOLERANCE_PERCENT]
+        if not support:
+            return None
+        candidate_points = [anchor,*support,contact]
+        confirmations = len(support)  # do not count the wick as a confirmed pivot
+        line.update(points=len(candidate_points), confirmations=confirmations,
+                    structure_span=offset, support_ratio=confirmations/len(prior),
+                    confirmation_error_percent=0.0,
+                    contact_kind=contact["contact_kind"])
+        if evaluate_strict_wedge_wicks(line,prefix,
+                "upper" if side=="high" else "lower",current_index,current_index) != []:
+            return None
+        return {"points":candidate_points,"line":line,"anchor_index":a,
+                "second_index":contact_index,"confirmations":confirmations,
+                "structure_span":offset,"support_ratio":confirmations/len(prior),
+                "triangle_only":True,"triangle_closed_wick":True}
+    pairs = []
+    for high in hs:
+        for low in ls:
+            a,b = high["index"],low["index"]
+            if not anchor_order_possible({"anchor_index":a},{"anchor_index":b},hs,ls):
+                continue
+            if max_span is not None and current_index-min(a,b)>max_span:
+                continue
+            upper,lower = ray(high,hs,"high",1),ray(low,ls,"low",-1)
+            if upper is None or lower is None:
+                continue
+            if max_span is not None and max(upper["second_index"],lower["second_index"])-min(a,b)>max_span:
+                continue
+            upper["triangle_wick_episode"] = lower["triangle_wick_episode"] = (a,b)
+            pairs.append((upper,lower))
+    return pairs

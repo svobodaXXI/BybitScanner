@@ -54,6 +54,36 @@ class TriangleOuterRayEvidence(unittest.TestCase):
                             sequence=winner.pair_metrics.get("anchor_sequence"),
                             validation=winner.validation,
                             mode=winner.pair_metrics.get("geometry_mode"))
+        from geometry.triangle_boundaries import build_closed_wick_triangle_pairs
+        from geometry.evaluation import evaluate_candidate_pair
+        from wedge.detector import detect_structure
+        from unittest.mock import patch
+        pairs=build_closed_wick_triangle_pairs(highs,lows,frame,len(frame)-1,max_span=round(len(frame)*engine.GEOMETRY_MAX_STRUCTURE_SPAN_RATIO))
+        anchors=lambda u,l:[u["anchor_index"],u["second_index"],l["anchor_index"],l["second_index"]]
+        correct=[(u,l) for u,l in pairs if anchors(u,l)==f["corrected_anchors"]]
+        self.assertEqual(len(correct),1)
+        u,l=correct[0]
+        self.assertEqual(u["points"][-1]["contact_kind"],"CLOSED_WICK_NOT_CONFIRMED_PIVOT")
+        self.assertEqual(l["points"][-1]["contact_kind"],"CLOSED_WICK_NOT_CONFIRMED_PIVOT")
+        direct=evaluate_candidate_pair(u,l,highs=highs,lows=lows,current_index=len(frame)-1,candles=frame)
+        self.assertIsNotNone(direct)
+        print("PENGSTOCK_WICK_DIRECT",json.dumps(dict(validation=direct.validation,
+              sequence=direct.pair_metrics["anchor_sequence"],end=direct.end_index,
+              fresh=engine._is_candidate_fresh(direct,_freshness_predicate),
+              detection=detect_structure(direct,candles=frame)),default=str))
+        self.assertTrue(direct.validation["valid"],direct.validation)
+        self.assertTrue(engine._is_anchor_sequence_valid(direct),direct.pair_metrics)
+        self.assertTrue(engine._is_candidate_local(direct,len(frame)-1))
+        self.assertTrue(engine._is_boundary_structurally_valid(direct))
+        self.assertTrue(engine._is_candidate_fresh(direct,_freshness_predicate))
+        self.assertTrue(detect_structure(direct,candles=frame)["detected"])
+        self.assertEqual(direct.end_index,196)
+        future=frame.copy()
+        future.loc[len(frame)]={"open":1000,"high":1000,"low":1,"close":1,"time":int(frame.time.iloc[-1])+f["step_ms"],"volume":0}
+        self.assertEqual([anchors(u,l) for u,l in pairs],
+          [anchors(u,l) for u,l in build_closed_wick_triangle_pairs(highs,lows,future,len(frame)-1,max_span=round(len(frame)*engine.GEOMETRY_MAX_STRUCTURE_SPAN_RATIO))])
+        self.assertFalse(any(anchors(u,l)==f["corrected_anchors"] for u,l in
+          build_closed_wick_triangle_pairs(highs,lows,frame,193)))
         print("PENGSTOCK_NATIVE",json.dumps(dict(raw_highs=[p["index"] for p in raw_highs],
               raw_lows=[p["index"] for p in raw_lows], local_highs=[p["index"] for p in qh],
               local_lows=[p["index"] for p in ql], upper=starts(upper,157),lower=starts(lower,155),
