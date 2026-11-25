@@ -23,6 +23,141 @@ from tests.test_terminal_paper_runtime import (
 )
 
 
+def _assert_synthetic_catapult_preview_then_explicit_owner_close(case, direction):
+    """Research preview is inert; separate simulated operator closes via native PAPER.
+
+    This deliberately does NOT promote a CATAPULT_FULL strategy to Robot.
+    The canonical authorized action here is MANUAL Robot Close-All, so Diary
+    must say MANUAL, not an invented CATAPULT_FULL exit reason.
+    """
+    from dataclasses import replace
+    from terminal.api.models import ClientActionId, CloseAllCommandRequest
+    from research.simulator_v2.catapult_exit_study import (
+        FrozenTrade, MarketReceipt, StudySettings, evaluate_exit,
+    )
+
+    runtime = case.runtime
+    stored_trade = runtime.store.get_robot_trade(case.trade_id)
+    position = runtime.store.get_position_projection(case.key)
+    protection = runtime.store.get_protection_projection(case.key)
+    fills_before = runtime.store.load_executions_for_symbol(
+        case.account, case.symbol,
+    )
+    case.assertEqual(len(fills_before), 1)
+    case.assertEqual(protection.status, "confirmed_active")
+    case.assertEqual(protection.stop_loss, stored_trade.stop_price)
+    case.assertEqual(protection.take_profit, stored_trade.take_price)
+    book = runtime._streamed_book(case.symbol)
+    case.assertIsNotNone(book)
+    entry_fill_ms = fills_before[0].exchange_timestamp_ms
+    decision_ms = book.received_at_ms + 20
+    case.assertLess(entry_fill_ms, decision_ms - 500)
+
+    frozen = FrozenTrade(
+        trade_id=stored_trade.trade_id, direction=direction,
+        regime="TREND_RETEST", filled_at_ms=entry_fill_ms,
+        entry_price=stored_trade.average_entry,
+        protective_stop=protection.stop_loss, initial_stop=stored_trade.stop_price,
+        remaining_qty=position.quantity.value,
+        entry_fee_for_remaining=fills_before[0].fee,
+        protection_confirmed=True,
+    )
+    exit_price = (
+        book.bids[0].price.value if direction == "LONG"
+        else book.asks[0].price.value
+    )
+    observation = MarketReceipt(
+        trade_id=stored_trade.trade_id, decision_at_ms=decision_ms,
+        book_event_ms=decision_ms - 200,
+        book_received_ms=decision_ms - 150,
+        print_event_ms=decision_ms - 180,
+        print_received_ms=decision_ms - 120,
+        book_snapshot_delta_continuous=True,
+        prints_covered=True,  # explicitly synthetic oracle, not real L2 proof
+        mark_price=exit_price,
+        best_price_since_fill=stored_trade.average_entry,
+        best_price_event_ms=entry_fill_ms,
+        best_price_received_ms=entry_fill_ms + 1,
+        directional_print_delta_usdt=Decimal("0"),
+        structure_invalidated=True,
+        structure_event_ms=decision_ms - 190,
+        structure_received_ms=decision_ms - 130,
+        price_event_ms=decision_ms - 200,
+        price_received_ms=decision_ms - 150,
+    )
+    config = StudySettings(
+        timeouts_by_regime_ms=(
+            ("PROBE", 5000), ("TREND_RETEST", 20000), ("EXHAUSTION", 7000),
+        ),
+        minimum_followthrough_r=Decimal("0.3"),
+        opposition_notional_usdt=Decimal("200"),
+        start_trailing_at_r=Decimal("1"),
+        trailing_gap_r=Decimal("0.5"),
+        partial_fraction=Decimal("0.25"),
+        exit_fee_rate=Decimal("0.0006"),
+        adverse_slippage_rate=Decimal("0.001"),
+        max_data_age_ms=500,
+    )
+    stale = replace(
+        observation, structure_event_ms=decision_ms - 2500,
+        structure_received_ms=decision_ms - 2000,
+    )
+    case.assertEqual(evaluate_exit(frozen, stale, config).action, "INSUFFICIENT")
+    preview = evaluate_exit(frozen, observation, config)
+    case.assertEqual(preview.action, "FULL_EXIT_PREVIEW")
+    case.assertEqual(preview.reason, "frozen structure invalidated")
+    case.assertFalse(preview.trading_authorized)
+    case.assertEqual(
+        len(runtime.store.load_executions_for_symbol(case.account, case.symbol)), 1,
+        "research exit proposals may not dispatch any market order",
+    )
+    case.assertEqual(runtime.store.get_protection_projection(case.key).stop_loss,
+                     stored_trade.stop_price)
+
+    # A distinct, explicit simulated owner instruction is required. This
+    # exercises the ACTUAL existing PAPER matching, ledger and fee path.
+    request = CloseAllCommandRequest(
+        ClientActionId("synthetic-explicit-owner-close-" + direction.lower()),
+    )
+    response = runtime.robot_close_all(request)
+    case.assertEqual(len(response.results), 1)
+    case.assertEqual(response.results[0].status, CommandResultStatus.COMPLETED)
+    after = runtime.store.get_position_projection(case.key)
+    case.assertEqual(after.quantity.value, Decimal("0"))
+    case.assertEqual(after.side.value, "Flat")
+    final = runtime.store.get_robot_trade(case.trade_id)
+    case.assertEqual(final.exit_reason, "MANUAL")
+    case.assertIsNotNone(final.exit_time_ms)
+    all_fills = runtime.store.load_executions_for_symbol(case.account, case.symbol)
+    case.assertEqual(len(all_fills), 2)
+    case.assertEqual(all_fills[1].quantity.value, position.quantity.value)
+    case.assertEqual(
+        all_fills[1].side.value, "Sell" if direction == "LONG" else "Buy",
+    )
+    sign = Decimal("1") if direction == "LONG" else Decimal("-1")
+    expected_gross = (
+        sign * (all_fills[1].price.value - final.average_entry)
+        * all_fills[1].quantity.value
+    )
+    fees = sum((fill.fee for fill in all_fills), Decimal("0"))
+    case.assertEqual(final.realized_pnl_usdt, expected_gross)
+    case.assertEqual(final.fees_costs_usdt, fees)
+    case.assertEqual(
+        final.realized_pnl_pct,
+        (expected_gross - fees)
+        / (final.entry_quantity * final.average_entry) * Decimal("100"),
+    )
+    # Replaying the SAME owner request is not a second exit; legacy Close-All
+    # may report an unresolved candidate after FLAT, which is not a success
+    # claim for automatic catapult/reentry.
+    runtime.robot_close_all(request)
+    case.assertEqual(
+        len(runtime.store.load_executions_for_symbol(case.account, case.symbol)), 2,
+    )
+    case.assertEqual(runtime.store.get_position_projection(case.key).quantity.value,
+                     Decimal("0"))
+
+
 class RobotBePartialOwnerPaperTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -287,6 +422,9 @@ class RobotBePartialOwnerPaperTests(unittest.TestCase):
                     )
                     projection = self.runtime.store.get_protection_projection(self.key)
                     self.assertEqual(projection.stop_loss, Decimal("64000"))
+
+    def test_synthetic_full_exit_preview_then_explicit_paper_owner_close_long(self):
+        _assert_synthetic_catapult_preview_then_explicit_owner_close(self, "LONG")
 
     def test_exact_reduce_only_partial_preserves_stop_take_and_trade(self):
         initial = len(self.runtime.store.load_executions())
@@ -816,6 +954,9 @@ class RobotBeShortOwnerPaperTests(unittest.TestCase):
             "low": 63650, "close": 63700,
         } if symbol == self.symbol.value else None
         return monitor
+
+    def test_synthetic_full_exit_preview_then_explicit_paper_owner_close_short(self):
+        _assert_synthetic_catapult_preview_then_explicit_owner_close(self, "SHORT")
 
     def test_short_closed_m1_partial_then_fee_aware_stop_once(self):
         from unittest.mock import patch
