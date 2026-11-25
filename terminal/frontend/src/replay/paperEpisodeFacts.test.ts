@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { ReplayDocument } from "./replayModel";
+import { parseReplayDocument, type ReplayDocument } from "./replayModel";
+import { isReplayUsdtSymbol, parseRunCoordinates, makeWedgeRunRequest, onlyWedges, parseWedgeStatus } from "./runSetup";
 import {
   matchPaperFactsToMarket, parsePaperEpisodeFacts, revealedPaperMarkers, visibleGeometryRevisions,
 } from "./paperEpisodeFacts";
@@ -81,6 +82,36 @@ const originalArchive = {
 };
 
 describe("PAPER episode facts are display-only, never SIMULATION fills", () => {
+  it("accepts the exact short ticker through facts, history, coordinates and marker matching", () => {
+    for (const symbol of ["SUSDT", "WUSDT", "ARUSDT", "BTCUSDT", "1000000MOGUSDT", "A".repeat(26) + "USDT"]) {
+      const facts = parsePaperEpisodeFacts({ ...source, symbol });
+      const history = parseReplayDocument(market(symbol));
+      expect(facts.symbol).toBe(symbol);
+      expect(history.symbol).toBe(symbol);
+      expect(parseReplayDocument({ ...market(symbol), mode: "STRATEGY",
+        market_data_source: "BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M" }).symbol).toBe(symbol);
+      expect(matchPaperFactsToMarket(facts, history).markers).toHaveLength(2);
+      const start = "2026-10-01T00:00", end = "2026-10-01T23:59";
+      expect(parseRunCoordinates(symbol + " | " + start + " | " + end).symbol).toBe(symbol);
+      expect(makeWedgeRunRequest(onlyWedges(), symbol, start, end, "1000").symbol).toBe(symbol);
+      expect(parseWedgeStatus({
+        namespace: "SIMULATION", can_attempt: false, wedge_engine_available: true,
+        python_dependencies_available: true, archive_files_present: true,
+        wedge_risk_profile_present: false,
+        archive_hint: { symbol, start_utc: start, end_utc_inclusive: end },
+      }).archive_hint?.symbol).toBe(symbol);
+    }
+    for (const symbol of ["USDT", "SUSDC", "S/USDT", "sUSDT", "SUSDT\n", "A".repeat(27) + "USDT"]) {
+      expect(isReplayUsdtSymbol(symbol)).toBe(false);
+      expect(() => parsePaperEpisodeFacts({ ...source, symbol })).toThrow();
+      // Generic MARKET_ONLY archives retain their existing broader contract.
+      expect(() => parseReplayDocument({ ...market(symbol), mode: "STRATEGY",
+        market_data_source: "BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M" })).toThrow();
+    }
+    const facts = parsePaperEpisodeFacts({ ...source, symbol: "SUSDT" });
+    expect(matchPaperFactsToMarket(facts, parseReplayDocument(market("WUSDT"))).status).toBe("WAIT_MARKET");
+  });
+
   it("preserves exact execution prices and maps them only onto real closed M5", () => {
     const facts = parsePaperEpisodeFacts(source);
     const history = market();

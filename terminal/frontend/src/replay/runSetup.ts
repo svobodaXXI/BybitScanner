@@ -1,4 +1,9 @@
 /** Pure configuration for one-symbol LOCAL SIMULATION research; not trading admission. */
+// Match the public history backend's ASCII alphanumeric 30-character bound.
+// A one-character base (e.g. S) is valid; require the exact USDT suffix.
+export function isReplayUsdtSymbol(value: unknown): value is string {
+  return typeof value === "string" && value.endsWith("USDT") && /^[A-Z0-9]{1,26}USDT$/.test(value);
+}
 export type StrategyId =
   | "MIRROR_LEVELS" | "PATTERN_BOUNDARY"
   | "WEDGE_RISING" | "WEDGE_FALLING" | "IKIGAI_BOX"
@@ -123,7 +128,7 @@ export function parseRunCoordinates(value: string): {
   const parts = legacy ? legacy.slice(1) : stripped.split(/\s*\|\s*/);
   if (parts.length !== 3) throw new Error(format);
   const [symbol, start_utc, end_utc_inclusive] = parts.map(x => x.trim());
-  if (!/^[A-Z0-9]{2,25}USDT$/.test(symbol))
+  if (!isReplayUsdtSymbol(symbol))
     throw new Error("В координатах должен быть один USDT-тикер");
   const window = validateInclusiveWindow(start_utc, end_utc_inclusive);
   if (window.minutes > 90 * 1440) throw new Error("Максимальный прогон — 90 дней");
@@ -225,7 +230,7 @@ export function makeWedgeRunRequest(
   const { minutes } = validateInclusiveWindow(start, endInclusive);
   if (minutes > 90 * 1440) throw new Error("Максимальный прогон — 90 дней");
   const ticker = symbol.trim().toUpperCase();
-  if (!/^[A-Z0-9]{2,25}USDT$/.test(ticker)) throw new Error("Укажите один USDT-тикер");
+  if (!isReplayUsdtSymbol(ticker)) throw new Error("Укажите один USDT-тикер");
   if (!/^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(initialBalance) ||
       !(Number(initialBalance) > 0) || !Number.isFinite(Number(initialBalance))) {
     throw new Error("Укажите положительный виртуальный депозит");
@@ -259,7 +264,7 @@ export function parseWedgeStatus(raw: unknown): LocalWedgeStatus {
     const hint = x.archive_hint;
     if (!hint || typeof hint !== "object") throw new Error("Неверная подсказка архива");
     const h = hint as Record<string, unknown>;
-    if (typeof h.symbol !== "string" || !/^[A-Z0-9]{2,25}USDT$/.test(h.symbol) ||
+    if (typeof h.symbol !== "string" || !isReplayUsdtSymbol(h.symbol) ||
         typeof h.start_utc !== "string" || typeof h.end_utc_inclusive !== "string") {
       throw new Error("Неверный тикер или период архива");
     }
