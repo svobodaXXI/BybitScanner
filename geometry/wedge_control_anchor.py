@@ -545,3 +545,27 @@ class ControlAnchorObservation:
             return tuple(p for p in proposals if "revision_record" in p
                          or p.get("revision_outcome") == "JOURNAL_BLOCKED")
         return tuple(proposals)
+
+
+def attach_control_anchor_observation(seed, source, *, journal_database_path=None):
+    """Join an existing locally observed source without a second subscription.
+
+    No arbitrary seed-to-current OHLC reconstruction. A source without a
+    retained cutoff bracket cannot support a causal observation and returns
+    None. A matching bracket proves only local observed continuity, never
+    full exchange coverage or order authority.
+    """
+    from queue import Queue
+
+    if seed is None or source.symbol != seed["symbol"]:
+        return None
+    inbox = Queue(maxsize=32)
+    epoch = source.attach_print_inbox_from(inbox, seed["prefix_as_of_ms"])
+    if epoch is None:
+        return None
+    try:
+        return ControlAnchorObservation(seed, source, inbox, epoch,
+                                        journal_database_path=journal_database_path)
+    except Exception:
+        source.detach_print_inbox(inbox)
+        raise

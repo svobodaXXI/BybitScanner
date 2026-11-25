@@ -397,3 +397,39 @@ class WedgeControlAnchorTest(unittest.TestCase):
             self.assertEqual(feed(source3, skipped, "skip", cutoff+4, "0.5808"), ())
             self.assertFalse(skipped.valid)
             self.assertEqual(load_revisions(db, seed), [record])
+
+
+    def test_real_attach_requires_retained_cutoff_bracket(self):
+        from terminal.market_data.impulse_observation import PublicTradeObservation
+        from geometry.wedge_control_anchor import attach_control_anchor_observation
+        from geometry.trendline import fit_anchor_trendline
+
+        bars = pd.DataFrame(dict(open_time_ms=[60000,120000], open=[100.,95.],
+                                 high=[101.,96.], low=[90.,85.], close=[95.,90.]))
+        pivots = [dict(index=0,price=101.,known_at_ms=180000),
+                  dict(index=1,price=96.,known_at_ms=180000)]
+        seed = dict(candidate_id="seed", symbol="TESTUSDT", family="falling",
+                    episode_start=0, first_strict_index=0, prefix_as_of_ms=180000,
+                    timeframe_ms=60000, candles=bars, established_pivots=pivots,
+                    original_strict_line=fit_anchor_trendline(pivots))
+        def push(source, identity, at, price):
+            self.assertTrue(source.observe({"topic":"publicTrade.TESTUSDT","data":[{
+                "s":"TESTUSDT","i":identity,"T":at,"S":"Sell","p":price,"v":"1","seq":at,
+            }]},received_at_ms=at+1))
+        late = PublicTradeObservation("TESTUSDT")
+        push(late,"late",180001,"84.99")
+        self.assertIsNone(attach_control_anchor_observation(seed,late))
+        source = PublicTradeObservation("TESTUSDT")
+        push(source,"prior",179999,"90")
+        push(source,"boundary",180000,"85")
+        track = attach_control_anchor_observation(seed,source)
+        self.assertIsNotNone(track)
+        push(source,"after",180001,"84.99")
+        self.assertEqual(track.consume(),())
+        self.assertEqual(track.consume(),())
+        self.assertEqual(str(track.extreme),"84.99")
+        self.assertEqual(len(track.rows),3)
+        self.assertEqual(len(bars),2)
+        source.mark_gap()
+        self.assertEqual(track.consume(),())
+        self.assertFalse(track.valid)
