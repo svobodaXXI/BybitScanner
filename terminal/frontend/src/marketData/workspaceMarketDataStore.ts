@@ -6,6 +6,13 @@ import { applyWorkspaceEvent, type WorkspaceProjectionState } from "./workspaceP
 
 type SocketFactory = (url: string) => WebSocket;
 
+// A silent socket may never deliver onclose. Bound one recovery attempt
+// during symbol navigation; normal reconnect/resnapshot remains unchanged.
+export const FIRST_SNAPSHOT_DEADLINE_MS = 2000;
+type NavigationTransport = {
+  attempts: number; opens: number; closes: number; rejected: number; timeouts: number;
+};
+
 const initialSnapshot = (): MarketDataSnapshot => ({
   ...createDemoMarketData(),
   book: {
@@ -47,6 +54,10 @@ export class BackendWorkspaceMarketDataStore implements MarketDataPort {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private started = false;
   private fastSwitchRetryAvailable = false;
+  private firstSnapshotTimer: ReturnType<typeof setTimeout> | null = null;
+  private firstSnapshotRecoveryAvailable = false;
+  private navigationTransport: NavigationTransport | null = null;
+  private awaitingFirstSnapshot = false;
 
   constructor(private readonly socketFactory: SocketFactory = (url) => new WebSocket(url)) {}
 
@@ -58,6 +69,10 @@ export class BackendWorkspaceMarketDataStore implements MarketDataPort {
 
   dispose = () => {
     this.started = false;
+    this.clearFirstSnapshotTimer();
+    this.firstSnapshotRecoveryAvailable = false;
+    this.awaitingFirstSnapshot = false;
+    this.navigationTransport = null;
     this.fastSwitchRetryAvailable = false;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
@@ -68,6 +83,11 @@ export class BackendWorkspaceMarketDataStore implements MarketDataPort {
 
   getSnapshot = () => this.projection.snapshot;
 
+  getNavigationTransportTiming = () => {
+    const value = this.navigationTransport;
+    return value ? `WS ${value.attempts} попыток / ${value.opens} открытий / ${value.closes} закрытий / ${value.rejected} отклонений / ${value.timeouts} тайм-аутов` : null;
+  };
+
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -76,6 +96,9 @@ export class BackendWorkspaceMarketDataStore implements MarketDataPort {
   setTimeframe = (timeframe: ChartTimeframe) => {
     if (timeframe === this.timeframe) return;
     this.timeframe = timeframe;
+    this.awaitingFirstSnapshot = false;
+    this.firstSnapshotRecoveryAvailable = false;
+    this.navigationTransport = null;
     this.fastSwitchRetryAvailable = false;
     this.replaceConnection(false);
   };
@@ -89,6 +112,9 @@ export class BackendWorkspaceMarketDataStore implements MarketDataPort {
     // The activation ACK can precede the selected interval's first snapshot.
     // Permit one faster retry, then return to the normal reconnect cadence.
     this.fastSwitchRetryAvailable = true;
+    this.awaitingFirstSnapshot = true;
+    this.firstSnapshotRecoveryAvailable = true;
+    this.navigationTransport = { attempts: 0, opens: 0, closes: 0, rejected: 0, timeouts: 0 };
     this.replaceConnection(false);
   };
 
@@ -108,6 +134,21 @@ export class BackendWorkspaceMarketDataStore implements MarketDataPort {
     );
     const socket = this.socketFactory(websocketUrl(path));
     this.socket = socket;
+    if (this.awaitingFirstSnapshot && this.navigationTransport) this.navigationTransport.attempts++;
+    socket.onopen = () => {
+      if (this.socket === socket && this.awaitingFirstSnapshot && this.navigationTransport) this.navigationTransport.opens++;
+    };
+    if (this.awaitingFirstSnapshot && this.firstSnapshotRecoveryAvailable) {
+      this.firstSnapshotTimer = setTimeout(() => {
+        this.firstSnapshotTimer = null;
+        if (this.socket !== socket || !this.awaitingFirstSnapshot) return;
+        this.firstSnapshotRecoveryAvailable = false;
+        this.fastSwitchRetryAvailable = false;
+        if (this.navigationTransport) this.navigationTransport.timeouts++;
+        this.markDisconnected();
+        this.replaceConnection(false);
+      }, FIRST_SNAPSHOT_DEADLINE_MS);
+    }
 
     socket.onmessage = (message) => {
       if (this.socket !== socket || this.symbol !== symbol
@@ -116,17 +157,24 @@ export class BackendWorkspaceMarketDataStore implements MarketDataPort {
       try {
         event = JSON.parse(String(message.data));
       } catch {
+        if (this.awaitingFirstSnapshot && this.navigationTransport) this.navigationTransport.rejected++;
         this.requireFreshSnapshot(socket);
         return;
       }
       const result = applyWorkspaceEvent(
         this.projection, event, symbol, interval, Date.now(), this.expectedGeneration,
       );
+      if (result.decision !== "APPLIED" && this.awaitingFirstSnapshot && this.navigationTransport) this.navigationTransport.rejected++;
       if (result.decision === "RESNAPSHOT_REQUIRED") {
         this.requireFreshSnapshot(socket);
         return;
       }
       if (result.decision === "IGNORED_STALE") return;
+      if (this.awaitingFirstSnapshot) {
+        this.clearFirstSnapshotTimer();
+        this.awaitingFirstSnapshot = false;
+        this.firstSnapshotRecoveryAvailable = false;
+      }
       this.fastSwitchRetryAvailable = false;
       this.projection = result.state;
       this.emit();
@@ -136,6 +184,8 @@ export class BackendWorkspaceMarketDataStore implements MarketDataPort {
     socket.onclose = () => {
       if (this.socket !== socket) return;
       this.socket = null;
+      this.clearFirstSnapshotTimer();
+      if (this.awaitingFirstSnapshot && this.navigationTransport) this.navigationTransport.closes++;
       this.markDisconnected();
       const delayMs = this.fastSwitchRetryAvailable ? 250 : 1000;
       this.fastSwitchRetryAvailable = false;
@@ -145,6 +195,7 @@ export class BackendWorkspaceMarketDataStore implements MarketDataPort {
 
   private requireFreshSnapshot(socket: WebSocket) {
     if (this.socket !== socket) return;
+    this.clearFirstSnapshotTimer();
     this.socket = null;
     socket.close();
     this.projection = {
@@ -160,7 +211,13 @@ export class BackendWorkspaceMarketDataStore implements MarketDataPort {
     this.scheduleReconnect(false);
   }
 
+  private clearFirstSnapshotTimer() {
+    if (this.firstSnapshotTimer !== null) clearTimeout(this.firstSnapshotTimer);
+    this.firstSnapshotTimer = null;
+  }
+
   private replaceConnection(allowResume: boolean) {
+    this.clearFirstSnapshotTimer();
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
     const socket = this.socket;
