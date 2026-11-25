@@ -173,10 +173,54 @@ class CatapultHypothesisMechanics(unittest.TestCase):
             trade(), receipt(mark_price=D("101"),
                              best_price_since_fill=D("101"),
                              directional_print_delta_usdt=D("100"),
-                             structure_invalidated=True),
+                             structure_invalidated=True,
+                             structure_event_ms=10800,
+                             structure_received_ms=10900),
             settings(),
         )
         self.assertEqual(result.action, "FULL_EXIT_PREVIEW")
+
+    def test_synthetic_full_catapult_needs_fresh_structure_provenance(self):
+        # Two observed as-of states, not real fills or order submissions.
+        # A recovered/old structural boolean cannot borrow fresh book times.
+        for direction in ("LONG", "SHORT"):
+            with self.subTest(direction=direction):
+                frozen = trade(direction, regime="TREND_RETEST")
+                no_failure = receipt(direction)
+                self.assertEqual(
+                    evaluate_exit(frozen, no_failure, settings()).action, "HOLD"
+                )
+                proven = replace(
+                    no_failure, structure_invalidated=True,
+                    structure_event_ms=10800, structure_received_ms=10900,
+                )
+                result = evaluate_exit(frozen, proven, settings())
+                self.assertEqual(result.action, "FULL_EXIT_PREVIEW")
+                self.assertEqual(result.reason, "frozen structure invalidated")
+                self.assertFalse(result.trading_authorized)
+                self.assertIsNone(result.fraction_to_close)
+                self.assertIsNone(result.unrounded_stop_preview)
+                for bad in (
+                    replace(proven, structure_event_ms=None),
+                    replace(proven, structure_received_ms=None),
+                    replace(proven, structure_event_ms=True),
+                    replace(proven, structure_received_ms=True),
+                    replace(proven, structure_event_ms=999),
+                    replace(proven, structure_event_ms=10901),
+                    replace(proven, structure_received_ms=11001),
+                    replace(proven, structure_event_ms=10000,
+                            structure_received_ms=10001),
+                ):
+                    with self.subTest(direction=direction, bad=bad):
+                        rejected = evaluate_exit(frozen, bad, settings())
+                        self.assertEqual(rejected.action, "INSUFFICIENT")
+                        self.assertIsNone(rejected.estimated_net_if_exited)
+                        self.assertFalse(rejected.trading_authorized)
+                        # Research decision never changes the armed hard STOP.
+                        self.assertEqual(
+                            frozen.protective_stop,
+                            D("99") if direction == "LONG" else D("101"),
+                        )
 
     def test_unverified_host_receipts_and_protection_fail_closed(self):
         source = receipt()
