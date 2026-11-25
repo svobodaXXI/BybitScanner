@@ -208,7 +208,7 @@ def verify_windows_native_bridge():
                 raise AssertionError("Untrusted TLS reached HTTP handler")
             except URLError:
                 assert not seen
-            subprocess.run([certutil, "-user", "-f", "-addstore", "Root", str(cert)],
+            subprocess.run([certutil, "-f", "-addstore", "Root", str(cert)],
                            check=True, capture_output=True, timeout=20)
             try:
                 agent._relay_https_opener().open(probe, 5)
@@ -241,8 +241,8 @@ def verify_windows_native_bridge():
             host.shutdown()
             host.server_close()
             thread.join(timeout=5)
-            subprocess.run([certutil, "-user", "-delstore", "Root", fingerprint],
-                           capture_output=True, timeout=20)
+            subprocess.run([certutil, "-delstore", "Root", fingerprint],
+                           check=True, capture_output=True, timeout=20)
 
 
 import os
