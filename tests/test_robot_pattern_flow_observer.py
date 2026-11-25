@@ -809,6 +809,28 @@ class ObserverTests(unittest.TestCase):
         self.assertEqual(rest.requests, [])
         observer.close()
 
+    def test_source_rejection_reports_missing_windows_without_rest(self):
+        observed, recent, previous, current = PatternFlowSourceTests.source()
+        observed = dict(observed, prints=())
+        rest = _REST(recent, previous, current)
+        record = _candidate()
+        observer = PatternFlowObserver(
+            SimpleNamespace(list_contexts=lambda: (_Context(observed),)),
+            rest, "unused",
+            clock_ms=lambda: PatternFlowSourceTests.CLOSE + 5_000,
+            get_candidates=lambda: (record,),
+        )
+        try:
+            with self.assertLogs("terminal.market_data.pattern_flow_observer", level="WARNING") as logs:
+                self.assertEqual(observer.once(), 0)
+            self.assertIn("reason=TWO_CLOSED_MINUTES_MISSING", " ".join(logs.output))
+            self.assertEqual(rest.requests, [])
+            self.assertIsNone(observer.get(record))
+            self.assertEqual(observer.once(), 0)
+            self.assertEqual(rest.requests, [])
+        finally:
+            observer.close()
+
     def test_no_existing_candidate_or_no_subscription_means_zero_rest(self):
         observed, recent, previous, current = PatternFlowSourceTests.source()
         rest = _REST(recent, previous, current)
