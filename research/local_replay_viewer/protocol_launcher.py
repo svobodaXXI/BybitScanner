@@ -22,7 +22,24 @@ from urllib.request import ProxyHandler, Request, build_opener
 
 SCHEME = "bybitscanner-simulator"
 PORT = 48765
-HERE = Path(__file__).resolve().parent
+def _application_root(module_file: Path) -> Path:
+    """Both copies in a verified desktop layout use the same application root."""
+    here = module_file.resolve().parent
+    if here.name == "local_replay_viewer" and here.parent.name == "research":
+        root = here.parents[1]
+        # A source checkout has no flat desktop launchers. Only recognize
+        # the packaged layout; never search arbitrary parents or user paths.
+        if all((root / name).is_file() and not (root / name).is_symlink()
+               for name in ("desktop-build-sha.txt", "START_LOCAL.cmd",
+                            "server.py", "protocol_launcher.py", "launch_bridge_agent.py")):
+            marker = root / "desktop-build-sha.txt"
+            if marker.stat().st_size <= 64 and re.fullmatch(
+                    r"[0-9a-f]{40}", marker.read_text(encoding="ascii").strip()):
+                return root
+    return here
+
+
+HERE = _application_root(Path(__file__))
 EPISODE_RE = re.compile(r"te_[0-9a-f]{24}\Z")
 DEVICE_RE = re.compile(r"[a-z][a-z0-9_-]{1,31}\Z")
 PAIR_TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{48,256}\Z")
@@ -71,7 +88,7 @@ def register_windows_protocol() -> None:
     import winreg
 
     executable = str(Path(sys.executable).resolve())
-    script = str(Path(__file__).resolve())
+    script = str(HERE / "protocol_launcher.py")
     # Both paths originate from this local installation, not the URI.
     command = f'"{executable}" -B "{script}" "%1"'
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER,
