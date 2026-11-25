@@ -13,7 +13,9 @@ from terminal.market_data.workspace_stream import (
     WorkspaceStreamSession,
     websocket_accept, websocket_text_frame,
 )
-from terminal.market_data.workspace_errors import UnknownWorkspaceStream
+from terminal.market_data.workspace_errors import (
+    UnknownWorkspaceStream, UpstreamWorkspaceMarketDataFailure,
+)
 from terminal.runtime.paper_http_server import PaperHttpHandler
 
 
@@ -141,6 +143,37 @@ class WorkspaceStreamTests(unittest.TestCase):
             broker.open("BTCUSDT", "5", stream_id=opened.session.stream_id, after_sequence=0)
         self.assertEqual(raised.exception.code, "unknown_stream")
         self.assertNotEqual(opened.session.stream_id, replacement.session.stream_id)
+
+    def test_not_ready_snapshot_does_not_leak_attached_sessions(self):
+        broker = WorkspaceStreamBroker(self.factory, _instrument, session_limit=1)
+        self.context.public_klines["5"].data["state"] = "CONNECTING"
+        for _ in range(3):
+            with self.assertRaises(UpstreamWorkspaceMarketDataFailure):
+                broker.open("BTCUSDT", "5")
+            diagnostic = broker.diagnostics()
+            self.assertEqual(diagnostic["session_count"], 0)
+            self.assertEqual(diagnostic["attached_count"], 0)
+        self.context.public_klines["5"].data["state"] = "READY"
+        opened = broker.open("BTCUSDT", "5")
+        self.assertEqual(opened.events[0]["state"], "READY")
+        self.assertEqual(broker.diagnostics()["attached_count"], 1)
+
+    def test_failed_resume_does_not_leave_session_attached(self):
+        broker = WorkspaceStreamBroker(self.factory, _instrument, session_limit=1)
+        opened = broker.open("BTCUSDT", "5")
+        identity = opened.session.stream_id
+        broker.detach(identity)
+        self.context.public_klines["5"].data["state"] = "CONNECTING"
+        with self.assertRaises(UpstreamWorkspaceMarketDataFailure):
+            broker.open("BTCUSDT", "5", stream_id=identity, after_sequence=-1)
+        diagnostic = broker.diagnostics()
+        self.assertEqual(diagnostic["session_count"], 1)
+        self.assertEqual(diagnostic["attached_count"], 0)
+        self.context.public_klines["5"].data["state"] = "READY"
+        resumed = broker.open("BTCUSDT", "5", stream_id=identity, after_sequence=-1)
+        self.assertTrue(resumed.resumed)
+        self.assertEqual(resumed.events[0]["state"], "READY")
+        self.assertEqual(broker.diagnostics()["attached_count"], 1)
 
     def test_websocket_handshake_and_large_text_frame(self):
         self.assertEqual(
