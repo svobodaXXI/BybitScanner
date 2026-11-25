@@ -68,6 +68,17 @@ export type PaperCandidateGeometry = {
   geometry: PaperOriginalGeometry;
 };
 
+export type GeometryRevisionObservation = {
+  revision: number;
+  event_time_ms: number;
+  source_trade_id: string;
+  reason: "CONTROL_CONTACT" | "OUTER_ENVELOPE";
+  previous_extreme: string;
+  trigger_price: string;
+  previous_boundary: OriginalBoundary;
+  current_boundary: OriginalBoundary;
+};
+
 export type PaperEpisodeFacts = {
   schema: "BYBITSCANNER_CLOSED_EPISODE_FACTS_V1";
   namespace: "PAPER_READ_ONLY";
@@ -86,6 +97,7 @@ export type PaperEpisodeFacts = {
   execution_allocations: PaperAllocation[];
   setup_context?: PaperD2Context;
   candidate_geometry?: PaperCandidateGeometry;
+  geometry_revisions?: GeometryRevisionObservation[];
 };
 
 export type PaperMarker = {
@@ -319,6 +331,66 @@ function parseCandidateGeometry(
   return { pattern, timeframe, signal_time_ms: signalTime, geometry };
 }
 
+function parseGeometryRevisions(
+  raw: unknown, original: PaperOriginalGeometry | undefined, side: unknown, closed: number,
+): GeometryRevisionObservation[] {
+  const payload = object(raw);
+  if (!original || payload.schema !== "BYBITSCANNER_WEDGE_GEOMETRY_REVISIONS_V1" ||
+      payload.source !== "ROBOT_OBSERVED_PUBLIC_TRADES" ||
+      payload.coverage !== "LOCAL_OBSERVATION_NOT_COMPLETE_EXCHANGE_TAPE" ||
+      payload.candidate_id !== original.signal_id || payload.source_geometry_sha256 !== original.sha256 ||
+      !Array.isArray(payload.events) || !payload.events.length || payload.events.length > 2000)
+    throw new Error("Не подтверждена история перестроений");
+  const strict = side === "LONG" ? "upper" : "lower";
+  let previous = original.boundaries.find(b => b.boundary_id === strict && b.kind === "ray");
+  let lastTime = original.sent_at_ms;
+  const ids = new Set<string>();
+  const equal = (a: OriginalBoundary, b: OriginalBoundary) =>
+    a.anchors.every((v, i) => v.bar_open_time_ms === b.anchors[i]?.bar_open_time_ms &&
+                              v.price === b.anchors[i]?.price);
+  function boundary(raw: unknown, at: number): OriginalBoundary {
+    const b = object(raw);
+    if (b.boundary_id !== strict || b.kind !== "ray" ||
+        !Array.isArray(b.anchors) || b.anchors.length !== 2)
+      throw new Error("Некорректная строгая граница");
+    const anchors = b.anchors.map((v: unknown) => {
+      const a = object(v), stamp = time(a.bar_open_time_ms, "revision anchor");
+      if (stamp >= at || typeof a.price !== "number" || !Number.isFinite(a.price) || a.price <= 0)
+        throw new Error("Недопустимая точка перестроения");
+      return { bar_open_time_ms: stamp, price: a.price };
+    });
+    if (anchors[0].bar_open_time_ms >= anchors[1].bar_open_time_ms ||
+        (side === "LONG" ? anchors[0].price <= anchors[1].price : anchors[0].price >= anchors[1].price))
+      throw new Error("Нарушено направление строгой границы");
+    return { boundary_id: strict, kind: "ray", anchors };
+  }
+  return payload.events.map((rawEvent: unknown, i: number) => {
+    const e = object(rawEvent);
+    const at = time(e.event_time_ms, "revision timestamp");
+    const tradeId = id(e.source_trade_id, "revision trade");
+    const prior = decimal(e.previous_extreme, "previous extreme", true);
+    const price = decimal(e.trigger_price, "trigger", true);
+    const old = boundary(e.previous_boundary, at), current = boundary(e.current_boundary, at);
+    if (!previous || e.revision !== i+1 || e.event !== "Паттерн перестроен" ||
+        e.candidate_id !== original.signal_id || e.source_geometry_sha256 !== original.sha256 ||
+        e.family !== (side === "LONG" ? "falling" : "rising") ||
+        at < lastTime || at > closed || ids.has(tradeId) || !equal(old, previous) || equal(old,current) ||
+        old.anchors[0].bar_open_time_ms !== current.anchors[0].bar_open_time_ms ||
+        old.anchors[0].price !== current.anchors[0].price ||
+        (e.reason !== "CONTROL_CONTACT" && e.reason !== "OUTER_ENVELOPE") ||
+        (side === "LONG" ? Number(price) >= Number(prior) : Number(price) <= Number(prior)))
+      throw new Error("Нарушена история перестроений");
+    previous = current; lastTime = at; ids.add(tradeId);
+    return { revision: i+1, event_time_ms: at, source_trade_id: tradeId,
+      reason: e.reason, previous_extreme: prior, trigger_price: price,
+      previous_boundary: old, current_boundary: current };
+  });
+}
+
+export function visibleGeometryRevisions(facts: PaperEpisodeFacts | null, at: number | null) {
+  return at === null ? [] : (facts?.geometry_revisions ?? []).filter(e => e.event_time_ms <= at);
+}
+
 /** Own immutable facts only; no remote requests, persistence or exchange access. */
 export function parsePaperEpisodeFacts(input: unknown): PaperEpisodeFacts {
   const f = object(input);
@@ -404,6 +476,16 @@ export function parsePaperEpisodeFacts(input: unknown): PaperEpisodeFacts {
 
   const d2 = f.setup_context !== undefined
     ? parseD2Context(f.setup_context, f.symbol, f.side, first.controller, opened) : undefined;
+  const candidate = f.candidate_geometry !== undefined
+    ? parseCandidateGeometry(f.candidate_geometry, f, opened, d2) : undefined;
+  let revisions: GeometryRevisionObservation[] | undefined;
+  if (f.geometry_revisions !== undefined && f.owner === "ROBOT" && f.cohort === "ROBOT") {
+    // Optional malformed geometry must not hide verified executions.
+    try {
+      revisions = parseGeometryRevisions(f.geometry_revisions, candidate?.geometry ??
+        (d2?.status === "EXACT_D2_LINK" ? d2.original_geometry : undefined), f.side, closed);
+    } catch { revisions = undefined; }
+  }
   return {
     schema: "BYBITSCANNER_CLOSED_EPISODE_FACTS_V1", namespace: "PAPER_READ_ONLY",
     account_id: "paper", owner: f.owner, cohort: f.cohort as PaperEpisodeFacts["cohort"],
@@ -412,9 +494,8 @@ export function parsePaperEpisodeFacts(input: unknown): PaperEpisodeFacts {
     realized_price_pnl_usdt: realized, known_execution_fees_usdt: fees,
     pnl_usdt: pnl, execution_allocations: allocations,
     ...(d2 ? { setup_context: d2 } : {}),
-    ...(f.candidate_geometry !== undefined ? {
-      candidate_geometry: parseCandidateGeometry(f.candidate_geometry, f, opened, d2),
-    } : {}),
+    ...(candidate ? { candidate_geometry: candidate } : {}),
+    ...(revisions ? { geometry_revisions: revisions } : {}),
   };
 }
 

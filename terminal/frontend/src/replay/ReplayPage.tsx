@@ -10,7 +10,7 @@ import {
 } from "./replayModel";
 import { visibleExecutionMarkers, TELEGRAM_BUY_COLOR, TELEGRAM_SELL_COLOR } from "./executionMarkers";
 import {
-  matchPaperFactsToMarket, parsePaperEpisodeFacts, revealedPaperMarkers,
+  matchPaperFactsToMarket, parsePaperEpisodeFacts, revealedPaperMarkers, visibleGeometryRevisions,
   type PaperEpisodeFacts, type PaperOverlay,
 } from "./paperEpisodeFacts";
 import { rayEndPoint } from "../chart/drawingGeometry";
@@ -336,7 +336,15 @@ function ReplayChart({ document, cursor, paperOverlay, paperFacts, showTrendGeom
           && displayCandles.length >= 2) {
         const oldest = displayCandles[0].start_ms;
         const newest = displayCandles[displayCandles.length - 1].start_ms;
-        for (const boundary of original.boundaries) {
+        const revisions = visibleGeometryRevisions(paperFacts, shown.lastTimeMs);
+        const latest = revisions[revisions.length - 1];
+        const overlays = original.boundaries.map(boundary => ({
+          boundary: latest && boundary.boundary_id === latest.current_boundary.boundary_id
+            ? latest.current_boundary : boundary,
+          dashed: !latest || boundary.boundary_id !== latest.current_boundary.boundary_id,
+        }));
+        if (latest) overlays.push({ boundary: latest.previous_boundary, dashed: true });
+        for (const { boundary, dashed } of overlays) {
           const first = boundary.anchors[0];
           const last = boundary.anchors[boundary.anchors.length - 1];
           const startAt = boundary.kind === "horizontal"
@@ -365,7 +373,7 @@ function ReplayChart({ document, cursor, paperOverlay, paperFacts, showTrendGeom
           context.beginPath();
           context.strokeStyle = "#d08cf0";
           context.lineWidth = 1.25;
-          context.setLineDash([3, 4]);
+          context.setLineDash(dashed ? [3, 4] : []);
           context.moveTo(x1, y1);
           context.lineTo(to.x, to.y);
           context.stroke();
@@ -746,7 +754,16 @@ export function ReplayPage() {
       details: "Контроллер " + item.controller + " · источник " + item.origin,
       provenance: "decision_event_id " + item.decision_event_id,
     }));
-    return [...executions, ...observations].sort((a, b) =>
+    const revisions = visibleGeometryRevisions(paperFacts, shown.lastTimeMs).map(item => ({
+      id: "geometry:" + item.revision + ":" + item.source_trade_id,
+      timeMs: item.event_time_ms,
+      category: "Robot · наблюдение геометрии",
+      summary: "Паттерн перестроен · ревизия " + item.revision,
+      details: "Экстремум " + item.previous_extreme + " → " + item.trigger_price +
+        " · " + (item.reason === "CONTROL_CONTACT" ? "контрольный анкер" : "внешняя граница"),
+      provenance: "publicTrade " + item.source_trade_id + " · локально наблюдавшийся поток",
+    }));
+    return [...executions, ...observations, ...revisions].sort((a, b) =>
       a.timeMs - b.timeMs || a.id.localeCompare(b.id));
   }, [paperFacts, paperOverlay, shown.candles, shown.lastTimeMs, paperDecisionObservations]);
 
@@ -1636,7 +1653,7 @@ export function ReplayPage() {
               <p>Ожидаю события Scanner и Robot</p>}
             {paperTimeline.length > 0 && (
               <section aria-label="Хронология PAPER и D2" className="replay-d2-observations">
-                <strong>Фактические исполнения PAPER и наблюдения D2 · не полный журнал команд Robot</strong>
+                <strong>Фактические исполнения PAPER, наблюдения D2 и геометрии · не полный журнал команд Robot</strong>
                 {paperTimeline.map(item => (
                   <div className="replay-events-item replay-evidence-event" key={item.id}>
                     <time>{evidenceTimestampUtc(item.timeMs)}</time>
