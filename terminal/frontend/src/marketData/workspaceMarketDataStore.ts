@@ -46,6 +46,7 @@ export class BackendWorkspaceMarketDataStore implements MarketDataPort {
   private socket: WebSocket | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private started = false;
+  private fastSwitchRetryAvailable = false;
 
   constructor(private readonly socketFactory: SocketFactory = (url) => new WebSocket(url)) {}
 
@@ -57,6 +58,7 @@ export class BackendWorkspaceMarketDataStore implements MarketDataPort {
 
   dispose = () => {
     this.started = false;
+    this.fastSwitchRetryAvailable = false;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
     const socket = this.socket;
@@ -74,6 +76,7 @@ export class BackendWorkspaceMarketDataStore implements MarketDataPort {
   setTimeframe = (timeframe: ChartTimeframe) => {
     if (timeframe === this.timeframe) return;
     this.timeframe = timeframe;
+    this.fastSwitchRetryAvailable = false;
     this.replaceConnection(false);
   };
 
@@ -83,6 +86,9 @@ export class BackendWorkspaceMarketDataStore implements MarketDataPort {
     this.symbol = normalized;
     this.expectedGeneration = Number.isInteger(generation) && Number(generation) > 0
       ? Number(generation) : null;
+    // The activation ACK can precede the selected interval's first snapshot.
+    // Permit one faster retry, then return to the normal reconnect cadence.
+    this.fastSwitchRetryAvailable = true;
     this.replaceConnection(false);
   };
 
@@ -121,6 +127,7 @@ export class BackendWorkspaceMarketDataStore implements MarketDataPort {
         return;
       }
       if (result.decision === "IGNORED_STALE") return;
+      this.fastSwitchRetryAvailable = false;
       this.projection = result.state;
       this.emit();
     };
@@ -130,7 +137,9 @@ export class BackendWorkspaceMarketDataStore implements MarketDataPort {
       if (this.socket !== socket) return;
       this.socket = null;
       this.markDisconnected();
-      this.scheduleReconnect(true);
+      const delayMs = this.fastSwitchRetryAvailable ? 250 : 1000;
+      this.fastSwitchRetryAvailable = false;
+      this.scheduleReconnect(true, delayMs);
     };
   }
 
@@ -147,6 +156,7 @@ export class BackendWorkspaceMarketDataStore implements MarketDataPort {
       },
     };
     this.emit();
+    this.fastSwitchRetryAvailable = false;
     this.scheduleReconnect(false);
   }
 
@@ -159,13 +169,13 @@ export class BackendWorkspaceMarketDataStore implements MarketDataPort {
     if (this.started) this.connect(allowResume);
   }
 
-  private scheduleReconnect(allowResume: boolean) {
+  private scheduleReconnect(allowResume: boolean, delayMs = 1000) {
     if (!this.started) return;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.connect(allowResume);
-    }, 1000);
+    }, delayMs);
   }
 
   private markDisconnected() {
