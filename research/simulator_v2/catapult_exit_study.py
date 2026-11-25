@@ -69,6 +69,9 @@ class MarketReceipt:
     best_price_received_ms: int
     directional_print_delta_usdt: Decimal
     structure_invalidated: bool = False
+    # Independent observed price provenance; absent historical receipt => INSUFFICIENT.
+    price_event_ms: int | None = None
+    price_received_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -123,7 +126,9 @@ def evaluate_exit(
     """One immutable, no-side-effect decision preview at a declared host time.
 
     This does not simulate execution or guarantee receipt completeness. An
-    upstream independent source attestor must provide the two continuity flags.
+    upstream independent source attestor must provide the two continuity flags
+    and the mark-price event/host-receipt timestamps. A price without its own
+    fresh receipt is not a defensible executable-price preview.
     In particular source-time-only historical exchange archives fail this gate.
     """
     def insufficient(why: str) -> ExitProposal:
@@ -141,12 +146,17 @@ def evaluate_exit(
         receipt.decision_at_ms, receipt.book_event_ms, receipt.book_received_ms,
         receipt.print_event_ms, receipt.print_received_ms,
         receipt.best_price_event_ms, receipt.best_price_received_ms,
+        receipt.price_event_ms, receipt.price_received_ms,
     )
     if any(type(t) is not int or t < 0 for t in times):
         return insufficient("invalid receipt time")
     if (receipt.decision_at_ms < trade.filled_at_ms
             or receipt.book_event_ms < trade.filled_at_ms
             or receipt.print_event_ms < trade.filled_at_ms
+            or receipt.price_event_ms < trade.filled_at_ms
+            or receipt.price_received_ms < receipt.price_event_ms
+            or receipt.price_received_ms > receipt.decision_at_ms
+            or receipt.decision_at_ms - receipt.price_received_ms > settings.max_data_age_ms
             or receipt.book_received_ms < receipt.book_event_ms
             or receipt.print_received_ms < receipt.print_event_ms
             or receipt.best_price_event_ms < trade.filled_at_ms
