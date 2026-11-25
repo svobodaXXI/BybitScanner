@@ -29,8 +29,57 @@ def _call(base: str, path: str, *, body=None, token="", origin=""):
         return error.code, json.load(error)
 
 
-@pytest.mark.parametrize("linked,tls_pairing", [(True, False), (False, False), (True, True)])
-def test_episode_bridge_exact_device_and_revision(tmp_path: Path, monkeypatch, linked, tls_pairing):
+@pytest.fixture
+def connect_proxy():
+    """An actual loopback CONNECT tunnel, restricted to the test TLS server."""
+    import select
+    import socket
+    import socketserver
+
+    seen = []
+    allowed = []
+
+    class Tunnel(socketserver.StreamRequestHandler):
+        def handle(self):
+            self.connection.settimeout(5)
+            line = self.rfile.readline(1024).decode("ascii").strip()
+            headers = []
+            while True:
+                header = self.rfile.readline(1024)
+                if header in (b"\r\n", b"\n", b""):
+                    break
+                headers.append(header.lower())
+            method, target, version = line.split()
+            assert method == "CONNECT" and target == allowed[0]
+            assert not any(b"x-bybitscanner-simulator-device-token" in h for h in headers)
+            seen.append(target)
+            host, port = target.rsplit(":", 1)
+            with socket.create_connection((host, int(port)), timeout=5) as upstream:
+                self.connection.sendall(b"HTTP/1.1 200 Connection established\r\n\r\n")
+                while True:
+                    readable, _, _ = select.select([self.connection, upstream], [], [], 5)
+                    if not readable:
+                        return
+                    for src in readable:
+                        data = src.recv(65536)
+                        if not data:
+                            return
+                        dst = upstream if src is self.connection else self.connection
+                        dst.sendall(data)
+
+    with socketserver.ThreadingTCPServer(("127.0.0.1", 0), Tunnel) as proxy:
+        proxy.daemon_threads = True
+        thread = threading.Thread(target=proxy.serve_forever, daemon=True)
+        thread.start()
+        try:
+            yield f"http://127.0.0.1:{proxy.server_address[1]}", allowed, seen
+        finally:
+            proxy.shutdown()
+            thread.join(timeout=3)
+
+
+@pytest.mark.parametrize("linked,tls_pairing", [(True, False), (False, False), (True, "direct"), (True, "proxy")])
+def test_episode_bridge_exact_device_and_revision(tmp_path: Path, monkeypatch, linked, tls_pairing, connect_proxy):
     episode = "te_" + "a" * 24
     origin = "https://statistics.example.test"
     token = "a" * 64
@@ -132,14 +181,21 @@ def test_episode_bridge_exact_device_and_revision(tmp_path: Path, monkeypatch, l
             (app / "trusted-statistics-origin.txt").write_text(origin + "\n", encoding="ascii")
             monkeypatch.setattr(agent, "HERE", app)
             monkeypatch.setattr(agent, "CONFIG_PATH", app / "simulator-v2-data" / "launch-bridge.json")
-            # Reject an untrusted test certificate using the real default TLS client.
+            proxy_url, allowed, seen = connect_proxy
+            allowed.append(origin.removeprefix("https://"))
+            # Exercise both the direct path and the same configured HTTPS proxy
+            # mechanism used by the Windows owner's networking environment.
+            for name in ("HTTPS_PROXY", "https_proxy"):
+                monkeypatch.setenv(name, proxy_url)
+            for name in ("NO_PROXY", "no_proxy"):
+                monkeypatch.setenv(name, "" if tls_pairing == "proxy" else "*")
+            # Reject an untrusted test certificate on the selected transport.
             with pytest.raises(URLError) as untrusted:
-                agent._direct_https_opener().open(base + bridge + "poll?device_id=owner-pc&viewer_running=0", timeout=3)
+                agent._relay_https_opener().open(base + bridge + "poll?device_id=owner-pc&viewer_running=0", timeout=3)
             assert isinstance(untrusted.value.reason, ssl.SSLCertVerificationError)
             assert agent.read_config() is None
             # Trust only the ephemeral loopback test certificate; no disabled TLS.
             monkeypatch.setenv("SSL_CERT_FILE", str(cert))
-            monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:1")
             # Owner-side request uses the real direct HTTPS transport too.
             def owner_call(route, payload):
                 req = Request(base + bridge + route, data=json.dumps(payload).encode(),
@@ -193,7 +249,8 @@ def test_episode_bridge_exact_device_and_revision(tmp_path: Path, monkeypatch, l
                 assert agent.poll_once(config) == "IDLE"
                 assert [kind for kind, *_ in calls] == ["read", "project", "d2", "geometry"]
                 assert not source.exists()
-                print("PAIR_TLS_CLAIM_PERSIST_FACTS_ACK_OK")
+                assert len(seen) >= 7 if tls_pairing == "proxy" else not seen
+                print("PAIR_TLS_CLAIM_PERSIST_FACTS_ACK_OK", tls_pairing)
             finally:
                 local.shutdown()
                 local.server_close()
