@@ -89,7 +89,7 @@ def is_pristine_baseline(baseline) -> bool:
     )
 
 
-def prove_box_exposure(candidate, baseline, ownership, fills, position):
+def prove_box_exposure(candidate, baseline, ownership, fills, position, *, terminal_exit_at_ms=None):
     """Require complete, unambiguous fills from the attested FLAT base.
 
     Equal timestamps cannot prove order; reject rather than use exec-id sorting.
@@ -127,6 +127,17 @@ def prove_box_exposure(candidate, baseline, ownership, fills, position):
     base_version = 0 if pristine else baseline["baseline_position_version"]
     if position.version != base_version + len(current):
         raise BoxOwnershipError("position version has an unexplained mutation or missing execution")
+    # Only the terminal emergency-marker reader supplies this exact EXIT-0
+    # timestamp. Live ownership continues to cover the entire current journal.
+    suffix = ()
+    if terminal_exit_at_ms is not None:
+        if terminal_exit_at_ms <= baseline["baseline_time_ms"]:
+            raise BoxOwnershipError("terminal exit precedes Box baseline")
+        suffix = tuple(f for f in current if f.exchange_timestamp_ms > terminal_exit_at_ms)
+        current = tuple(f for f in current if f.exchange_timestamp_ms <= terminal_exit_at_ms)
+        owned_ids = {row["order_id"] for row in ownership}
+        if any(f.order_id.value in owned_ids for f in suffix):
+            raise BoxOwnershipError("owned execution after terminal Box exit")
     plan = candidate.signal_snapshot["plan"]
     entry_side = OrderSide.BUY if plan["direction"] == "LONG" else OrderSide.SELL
     expected_side = PositionSide.LONG if entry_side is OrderSide.BUY else PositionSide.SHORT
@@ -184,7 +195,26 @@ def prove_box_exposure(candidate, baseline, ownership, fills, position):
                 average = None
         if remaining > bound:
             raise BoxOwnershipError("owned exposure exceeds frozen grid")
-    if (position.quantity.value != remaining
+    if terminal_exit_at_ms is not None and (
+        last_time != terminal_exit_at_ms or entry <= 0 or remaining != 0 or entry != exit_qty
+    ):
+        raise BoxOwnershipError("terminal Box prefix does not prove flat closure")
+    if suffix:
+        # The historical lot was flat at the exact exit. Later executions
+        # belong to a different lifecycle; still reconcile their net exposure
+        # and the full projection version checked above. This is not a live
+        # ownership proof or permission to execute against the later position.
+        if any(f.dedup_key.category is not Category.LINEAR
+               or f.dedup_key.trading_account_id != candidate.trading_account_id
+               or f.symbol != candidate.symbol for f in suffix):
+            raise BoxOwnershipError("later execution scope conflicts")
+        net = sum((f.quantity.value if f.side is OrderSide.BUY else -f.quantity.value
+                   for f in suffix), Decimal(0))
+        side = PositionSide.LONG if net > 0 else PositionSide.SHORT if net < 0 else PositionSide.FLAT
+        if (position.quantity.value != abs(net) or position.side is not side
+                or position.updated_at_ms < max(f.exchange_timestamp_ms for f in suffix)):
+            raise BoxOwnershipError("later position does not reconcile with executions")
+    elif (position.quantity.value != remaining
             or position.side is not (expected_side if remaining else PositionSide.FLAT)
             or (position.average_entry.value if position.average_entry else None) != average
             or position.updated_at_ms < last_time):
