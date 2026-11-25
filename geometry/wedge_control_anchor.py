@@ -372,6 +372,7 @@ class ControlAnchorObservation:
         self.broken = False
         self.valid = True
         self.journal_database_path = journal_database_path
+        self.allow_publish = lambda: True
         self.control_anchor = self.pivots.get(self.line['second_index'])
         self.replay_history = []
         if journal_database_path is not None:
@@ -479,8 +480,8 @@ class ControlAnchorObservation:
             ))
             if _line(self.line) == _line(geometry[strict]):
                 return dict(proposal, revision_outcome="UNCHANGED_RAY")
-            if not self._current():
-                raise ValueError("source epoch lost")
+            if not self._current() or not self.allow_publish():
+                raise ValueError("source or Robot owner epoch lost")
             if self.revision < len(self.replay_history):
                 expected = self.replay_history[self.revision]
                 if (proposal["source_trade_id"] != expected["source_trade_id"]

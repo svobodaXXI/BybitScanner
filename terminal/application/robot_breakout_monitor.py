@@ -294,6 +294,7 @@ class RobotBreakoutMonitor:
         # Optional PRIVATE research audit; no active poll, subscription or order path.
         self._private_box_inspector: Callable[[str], object] | None = None
         self._private_box_capture = None
+        self._wedge_geometry_observer = None
         self._private_box_epoch = None
         # Resting entry LIMITs become fill-capable the moment they are durable, so
         # protection coverage for the symbol must already be listening. Without a
@@ -353,6 +354,14 @@ class RobotBreakoutMonitor:
         if not callable(inspector):
             raise TypeError("private Box inspector must be callable")
         self._private_box_inspector = inspector
+
+    def bind_wedge_geometry_observer(self, observer) -> None:
+        """One observational component owned by the existing PAPER monitor."""
+        if (self._started or self._stop.is_set()
+                or self._wedge_geometry_observer is not None
+                or self._account_id.value != "paper"):
+            raise RuntimeError("geometry observer must bind before PAPER Robot start")
+        self._wedge_geometry_observer = observer
 
     def bind_private_box_capture(self, capture, path) -> None:
         """Only the existing PAPER monitor may own the optional capture."""
@@ -473,9 +482,16 @@ class RobotBreakoutMonitor:
             return
         self._started = True
         self._thread.start()
+        if self._wedge_geometry_observer is not None:
+            try:
+                self._wedge_geometry_observer.start()
+            except Exception as error:
+                print("[WEDGE GEOMETRY OBSERVATION DISABLED]", type(error).__name__)
 
     def close(self) -> None:
         self._stop.set()
+        if self._wedge_geometry_observer is not None:
+            self._wedge_geometry_observer.close()
         # Release the only research callback when the canonical Robot stops.
         self._private_box_inspector = None
         if self._started and self._thread is not threading.current_thread():

@@ -433,3 +433,49 @@ class WedgeControlAnchorTest(unittest.TestCase):
         source.mark_gap()
         self.assertEqual(track.consume(),())
         self.assertFalse(track.valid)
+
+
+    def test_runtime_observer_uses_existing_context_and_stops_with_robot_epoch(self):
+        from tempfile import TemporaryDirectory
+        from pathlib import Path
+        from types import SimpleNamespace
+        from terminal.market_data.impulse_observation import PublicTradeObservation
+        from geometry.wedge_runtime_observer import WedgeRuntimeObserver
+        from geometry.trendline import fit_anchor_trendline
+
+        source = PublicTradeObservation("TESTUSDT")
+        def push(identity, at, price):
+            self.assertTrue(source.observe({"topic":"publicTrade.TESTUSDT","data":[{
+                "s":"TESTUSDT","i":identity,"T":at,"S":"Sell","p":price,"v":"1","seq":at,
+            }]}, received_at_ms=at+1))
+        push("before",179999,"90")
+        push("at",180000,"85")
+        bars = pd.DataFrame(dict(open_time_ms=[60000,120000], open=[100.,95.],
+                                 high=[101.,96.], low=[90.,85.], close=[95.,90.]))
+        pivots = [dict(index=0,price=101.,known_at_ms=180000),
+                  dict(index=1,price=96.,known_at_ms=180000)]
+        seed = dict(candidate_id="seed",symbol="TESTUSDT",family="falling",
+                    source_geometry_sha256="a"*64, episode_start=0,first_strict_index=0,
+                    prefix_as_of_ms=180000,timeframe_ms=60000,candles=bars,
+                    established_pivots=pivots,original_strict_line=fit_anchor_trendline(pivots))
+        record = SimpleNamespace(candidate_id="seed",symbol=SimpleNamespace(value="TESTUSDT"),
+                                 snapshot_sha256="b"*64)
+        state = [1,(record,)]
+        # No subscribe API exists on this hub double.
+        hub = SimpleNamespace(list_flow_contexts=lambda: (SimpleNamespace(impulse_observation=source),))
+        with TemporaryDirectory() as directory:
+            observer = WedgeRuntimeObserver(hub,Path(directory)/"paper.sqlite3",
+                read_records=lambda candidate_id=None: tuple(state),load_seed=lambda r: seed)
+            observer.sync()
+            track = observer.tracks["seed"][0]
+            self.assertTrue(track.allow_publish())
+            observer.drain()
+            push("new",180001,"84.99")
+            observer.drain()
+            self.assertEqual(str(track.extreme),"84.99")
+            state[:] = [None,()]
+            self.assertFalse(track.allow_publish())
+            observer.sync()
+            self.assertEqual(observer.tracks,{})
+            self.assertFalse(source.print_inbox_current(track.inbox,track.generation,track.invalid_frames))
+            observer.close()
