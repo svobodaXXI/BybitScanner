@@ -344,3 +344,78 @@ def test_competing_exact_entry_candidate_remains_unproven():
     evidence = dict(snapshot.wedge_evidence, candidates=(valid, other))
     with pytest.raises(WedgeLineageUnproven):
         project_selected_paper_wedge(replace(snapshot, wedge_evidence=evidence), **kwargs)
+
+
+def test_finrez_batch_indexes_candidate_json_once_and_preserves_exact_proof(monkeypatch):
+    from terminal.diary import wedge_lineage as lineage
+
+    snapshot, kwargs = case()
+    original = snapshot.wedge_evidence
+    second = original["candidates"][0]
+    first = dict(second, candidate_id="candidate-1",
+                 robot_state_json='{"execution":{"limit_order_id":"entry-1"}}')
+    legacy = dict(second, candidate_id="legacy", robot_state_json="{invalid")
+    evidence = dict(
+        original,
+        candidates=(first, legacy, second),
+        trades=(dict(original["trades"][0], candidate_id="candidate-1",
+                     trade_id="trade-1", signal_time_ms=900,
+                     entry_time_ms=1000, exit_time_ms=1100, exit_reason="STOP"),
+                *original["trades"]),
+        robot_entries=(dict(original["robot_entries"][0], order_id="entry-1"),
+                       *original["robot_entries"]),
+        obligations=(dict(original["obligations"][0], trade_id="trade-1",
+                          winning_leg="STOP", order_id="exit-1", exec_id="close-1"),
+                     *original["obligations"]),
+    )
+    snapshot = replace(snapshot, wedge_evidence=evidence)
+    rows = [
+        dict(trade_episode_id=e.trade_episode_id.value, symbol="BTCUSDT",
+             side="LONG", opened_at_ms=e.opened_at_ms, closed_at_ms=e.closed_at_ms,
+             pnl_usdt="1.8", execution_count=2, cohort="ROBOT")
+        for e in snapshot.episodes
+    ]
+    report = dict(account_id="paper", owner="ROBOT", source_revision=5,
+                  closed_episodes=rows)
+    expected_ids = [
+        lineage.project_selected_paper_wedge(
+            snapshot, **dict(kwargs, trade_episode_id=row["trade_episode_id"])
+        )["candidate_id"] for row in rows
+    ]
+    parsed = []
+    original_parser = lineage._order_ids
+
+    def counted(candidate):
+        parsed.append(candidate["candidate_id"])
+        return original_parser(candidate)
+
+    monkeypatch.setattr(lineage, "_order_ids", counted)
+    enriched = lineage.attach_verified_wedge_signals(snapshot, report)
+    assert parsed == ["candidate-1", "legacy", "candidate-2"]
+    assert [r["verified_signal"]["candidate_id"] for r in enriched["closed_episodes"]] == expected_ids
+    assert [{k: v for k, v in r.items() if k != "verified_signal"}
+            for r in enriched["closed_episodes"]] == rows
+
+    # An additional candidate sharing one entry must not be hidden by
+    # deduplication, even when it has exactly the same ID and source row.
+    for competing in (
+        second,
+        dict(second, candidate_id="overlap",
+             robot_state_json='{"execution":{"limit_order_ids":["entry-2","unrelated"]}}'),
+    ):
+        ambiguous = replace(snapshot, wedge_evidence=dict(
+            evidence, candidates=(*evidence["candidates"], competing),
+        ))
+        actual = lineage.attach_verified_wedge_signals(ambiguous, report)
+        assert actual["closed_episodes"][0] == enriched["closed_episodes"][0]
+        assert actual["closed_episodes"][1] == rows[1]
+
+
+def test_candidate_order_index_deduplicates_buckets_not_source_rows():
+    from terminal.diary.wedge_lineage import _CandidateOrderIndex
+
+    candidate = dict(trading_account_id="paper", candidate_id="multi",
+                     robot_state_json='{"execution":{"limit_order_ids":["a","b"]}}')
+    both = {"a", "b"}
+    assert _CandidateOrderIndex((candidate,)).matches(both) == [(candidate, frozenset(both))]
+    assert len(_CandidateOrderIndex((candidate, candidate)).matches(both)) == 2
