@@ -17,6 +17,7 @@ import {
 export interface MarketDataPort {
   dispose(): void;
   getSnapshot(): MarketDataSnapshot;
+  getNavigationTransportTiming?(): string | null;
   setTimeframe(timeframe: ChartTimeframe): void;
   setSymbol(symbol: string, generation?: number): void;
   start(): void;
