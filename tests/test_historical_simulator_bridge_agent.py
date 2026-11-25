@@ -40,6 +40,40 @@ class PairedAdapterTests(unittest.TestCase):
             "token": "A" * 64,
         }
 
+    def test_desktop_flat_and_nested_imports_share_pairing_and_facts_root(self):
+        import shutil
+        import subprocess
+        import sys
+        from research.local_replay_viewer import protocol_launcher as protocol
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "MachineTime"
+            nested = root / "research" / "local_replay_viewer"
+            nested.mkdir(parents=True)
+            for module in (protocol, agent):
+                source = Path(module.__file__)
+                shutil.copyfile(source, root / source.name)
+                shutil.copyfile(source, nested / source.name)
+            for name in ("START_LOCAL.cmd", "server.py"):
+                (root / name).touch()
+            (root / "desktop-build-sha.txt").write_text("a" * 40 + "\n", encoding="ascii")
+            (root / "trusted-statistics-origin.txt").write_text(
+                "https://example.test\n", encoding="ascii")
+            script = """
+import launch_bridge_agent as flat
+from research.local_replay_viewer import launch_bridge_agent as nested
+from pathlib import Path
+root = Path.cwd()
+assert flat.HERE == nested.HERE == root
+assert flat.CONFIG_PATH == nested.CONFIG_PATH == root / "simulator-v2-data" / "launch-bridge.json"
+assert flat._trusted_statistics_origin() == nested._trusted_statistics_origin() == "https://example.test"
+assert flat._expected_autostart_command() == nested._expected_autostart_command()
+assert flat.HERE / "paper-episode-facts" == nested.HERE / "paper-episode-facts"
+"""
+            subprocess.run([sys.executable, "-B", "-c", script],
+                           cwd=root, check=True, timeout=15)
+            self.assertFalse((nested / "simulator-v2-data").exists())
+
     def test_default_relay_transport_ignores_ambient_proxy_and_keeps_tls(self):
         with patch.dict("os.environ", {"https_proxy": "http://127.0.0.1:1"}):
             opener = agent._direct_https_opener()

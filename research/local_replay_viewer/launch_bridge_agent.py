@@ -333,7 +333,7 @@ def _poll_executable() -> Path:
 
 def _expected_autostart_command() -> str:
     """Canonical per-user Windows Run entry for THIS installed release."""
-    return f'"{_poll_executable()}" -B "{Path(__file__).resolve()}" --poll'
+    return f'"{_poll_executable()}" -B "{HERE / "launch_bridge_agent.py"}" --poll'
 
 
 def _this_release_still_registered() -> bool:
@@ -382,7 +382,7 @@ def install_if_configured() -> bool:
     # Known installed script only; no arguments from a remote URL.
     command = _expected_autostart_command()
     executable = _poll_executable()
-    path = Path(__file__).resolve()
+    path = HERE / "launch_bridge_agent.py"
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER,
                           r"Software\Microsoft\Windows\CurrentVersion\Run") as key:
         winreg.SetValueEx(key, AGENT_RUN_NAME, 0, winreg.REG_SZ, command)
