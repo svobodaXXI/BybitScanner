@@ -1870,6 +1870,7 @@ export function App() {
           positionFooter={mode === "AUTOPILOT" ? (
             <RobotExecutionJournal
               selectedTradeId={activeRobotTradeId}
+              revisions={robotGeometry.revisions}
               markers={robotPosition && robotMarkers?.tradeId === activeRobotTradeId
                 && robotMarkers.symbol === tradingSymbol ? robotMarkers.markers : null}
             />

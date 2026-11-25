@@ -1245,6 +1245,7 @@ class PaperRuntime:
     def start_robot_monitor(
         self, dispatcher: Callable[[Callable[["PaperRuntime"], object]], object],
         *, private_box_research_snapshot=None, private_box_capture=None,
+        wedge_geometry_observer=None,
     ) -> None:
         """Bind the Robot command dispatcher and start ticking.
 
@@ -1272,6 +1273,12 @@ class PaperRuntime:
                 self._robot_breakout_monitor.bind_private_box_capture(*private_box_capture)
             except Exception as error:
                 LOGGER.warning("Optional private Box capture disabled: %s",
+                               type(error).__name__)
+        if wedge_geometry_observer is not None:
+            try:
+                self._robot_breakout_monitor.bind_wedge_geometry_observer(wedge_geometry_observer)
+            except Exception as error:
+                LOGGER.warning("Optional wedge geometry observer disabled: %s",
                                type(error).__name__)
         self._robot_command_dispatcher = dispatcher
         self._robot_breakout_monitor.start()

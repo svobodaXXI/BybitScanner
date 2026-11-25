@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ReplayDocument } from "./replayModel";
 import {
-  matchPaperFactsToMarket, parsePaperEpisodeFacts, revealedPaperMarkers,
+  matchPaperFactsToMarket, parsePaperEpisodeFacts, revealedPaperMarkers, visibleGeometryRevisions,
 } from "./paperEpisodeFacts";
 
 const t = Date.UTC(2026, 9, 1);
@@ -347,5 +347,34 @@ describe("Exact Robot candidate archive independent of D2", () => {
     expect(() => parsePaperEpisodeFacts({ ...source, setup_context: { ...d2, status: "CONFLICTING_D2_LINK" },
       candidate_geometry: candidate,
     })).toThrow();
+  });
+});
+
+
+describe("Recorded wedge revisions", () => {
+  it("reveals only causal observations and rejects a conflicting chain without hiding fills", () => {
+    const old = { boundary_id: "upper", kind: "ray", anchors: [
+      {bar_open_time_ms:t,price:102},{bar_open_time_ms:t+300000,price:101},
+    ]};
+    const current = { ...old, anchors: [old.anchors[0],{bar_open_time_ms:t+600000,price:101}] };
+    const at = t+900001;
+    const d2 = { ...linkedD2, geometry_status:"ORIGINAL_ARCHIVE_HASH_VERIFIED",
+      original_geometry:{ ...originalArchive,snapshot:{...originalArchive.snapshot,boundaries:[old]}} };
+    const event = { revision:1, event:"Паттерн перестроен", event_time_ms:at,
+      candidate_id:"candidate-42",source_geometry_sha256:"a".repeat(64),family:"falling",
+      source_trade_id:"print-1",reason:"CONTROL_CONTACT",previous_extreme:"98",
+      trigger_price:"97.99",previous_boundary:old,current_boundary:current };
+    const payload = { schema:"BYBITSCANNER_WEDGE_GEOMETRY_REVISIONS_V1",
+      source:"ROBOT_OBSERVED_PUBLIC_TRADES",coverage:"LOCAL_OBSERVATION_NOT_COMPLETE_EXCHANGE_TAPE",
+      candidate_id:"candidate-42",source_geometry_sha256:"a".repeat(64),events:[event] };
+    const facts = parsePaperEpisodeFacts({...source,setup_context:d2,geometry_revisions:payload});
+    expect(visibleGeometryRevisions(facts,at-1)).toEqual([]);
+    expect(visibleGeometryRevisions(facts,at)[0].current_boundary).toEqual(current);
+    expect(visibleGeometryRevisions(facts,at)[0].previous_boundary).toEqual(old);
+    expect(visibleGeometryRevisions(facts,at-1)).toEqual([]); // rewind
+    const broken = parsePaperEpisodeFacts({...source,setup_context:d2,
+      geometry_revisions:{...payload,events:[{...event,previous_boundary:current}]}});
+    expect(broken.geometry_revisions).toBeUndefined();
+    expect(broken.execution_allocations).toHaveLength(2);
   });
 });

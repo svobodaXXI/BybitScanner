@@ -10,6 +10,8 @@ on:
       - "tests/test_geometry_strict_wedge.py"
       - "geometry/engine.py"
       - "geometry/wedge_boundaries.py"
+      - "geometry/wedge_control_anchor.py"
+      - "tests/test_wedge_control_anchor.py"
       - "tests/test_geometry_formation_fit.py"
       - "geometry/envelope_metrics.py"
       - "tests/test_geometry_strict_wedge_owner.py"
@@ -47,3 +49,4 @@ jobs:
           tests.test_geometry_triangle_outer_ray
           tests.test_geometry_strict_wedge
           tests.test_geometry_formation_fit
+          tests.test_wedge_control_anchor

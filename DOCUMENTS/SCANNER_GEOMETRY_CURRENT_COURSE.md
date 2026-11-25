@@ -96,6 +96,31 @@ links back here; any earlier subtype-specific START statements there describe
 historical examples, not an alternative selection contract. Do not ask the
 owner to restate this rule.
 
+## Dynamic strict Wedge boundary — owner rule 2026-11-24
+
+Authority: #1330 comments [tick trigger](https://github.com/svobodaXXI/BybitScanner/pull/1330#issuecomment-7125118576), [outer envelope](https://github.com/svobodaXXI/BybitScanner/pull/1330#issuecomment-7125160752), [mandatory contact](https://github.com/svobodaXXI/BybitScanner/pull/1330#issuecomment-7125175884), [revision journal](https://github.com/svobodaXXI/BybitScanner/pull/1330#issuecomment-7125123457).
+
+For Falling Wedge, point 2 is the lowest observed LOW of the owned episode.
+The control anchor is the last structurally established HIGH preceding that LOW.
+Rising mirrors this. A line crossing or an equal extreme alone never transfers
+the anchor. The first traded tick strictly beyond point 2 triggers immediate
+re-evaluation, without waiting for candle close or confirmation of the new
+opposite extreme. Default construction must pass through the control anchor.
+Only earlier relevant structural extrema that prevent clean contact permit
+a real-pivot-supported outer envelope that leaves the control anchor inside.
+Preserve episode/START and immutable original signal; no arbitrary parallel
+shift, lookahead or score-based bypass. The exceptional single-wick quality
+tier is separate from clean construction.
+
+The first bounded proposal primitive retains the original first strict-side
+contact. It does not publish revised geometry or replace full pattern gates.
+Integration must consume existing market observations and causal pivot evidence,
+preserve identity and durable revision/recovery, emit actual successful revisions
+as «Паттерн перестроен», render prior line dashed and keep full history.
+Do not create another subscription or service; no order, re-entry, admission,
+STOP/TAKE or risk change. QNT screenshot is a visual reference, not a verified
+tick replay. Other H1/M5/D1 trendline extensions are separate.
+
 ## Current state and next one bounded slice
 
 **Current routing (2026-09-23):** the owner selected Scanner Telegram
