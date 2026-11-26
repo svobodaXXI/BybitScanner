@@ -3385,14 +3385,14 @@ def main(argv=None) -> int:
                     ):
                         print("BLOCKED: readonly_stop_recovery_stage_unproven; no STOP")
                         return 2
-                    ancestry = subprocess.run(
-                        ["git", "-C", str(stage), "merge-base", "--is-ancestor", PRIOR, args.sha],
-                        capture_output=True, text=True, timeout=15, check=False,
-                    )
-                    if ancestry.returncode != 0:
-                        print("BLOCKED: readonly_stop_successor_missing_prior_package; no STOP")
-                        return 2
                     try:
+                        ancestry = subprocess.run(
+                            ["git", "-C", str(stage), "merge-base", "--is-ancestor", PRIOR, args.sha],
+                            capture_output=True, text=True, timeout=15, check=False,
+                        )
+                        if ancestry.returncode != 0:
+                            print("BLOCKED: readonly_stop_successor_missing_prior_package; no STOP")
+                            return 2
                         bundle = _prepare_editor_frontend_bundle(args.sha, stage=stage)
                         seal_readonly_refusal(
                             root=REPO, env_file=args.env_file, directory=TRANSACTIONS,
