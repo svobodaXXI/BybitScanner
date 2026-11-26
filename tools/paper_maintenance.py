@@ -794,6 +794,9 @@ def _proven_prior_exceptional_completion(
     # receipts remain untouched and are validated by the recovery proof.
     if _owner_stop_only_confirmed(journal_root, prior, uid=uid):
         return True
+    from tools.paper_readonly_stop_refusal_recovery import proven_readonly_refusal
+    if proven_readonly_refusal(journal_root, prior, uid=uid):
+        return True
     if _unsealed_paused_successor_proven(
         journal_root, prior, root=root, uid=uid, require_ready=True,
     ):
@@ -3248,7 +3251,7 @@ def _stop_exact_installed_paper_once(
 def main(argv=None) -> int:
     parser = _MaintenanceParser(description="Fail-closed one-action PAPER maintenance")
     parser.add_argument("sha")
-    parser.add_argument("--action", choices=("stop", "start", "update", "update-and-start", "provision-owner-pc", "telegram-recover", "update-take-closed", "github-status-enable", "github-diagnostic-enable", "owner-release-prepare"),
+    parser.add_argument("--action", choices=("stop", "start", "update", "update-and-start", "provision-owner-pc", "telegram-recover", "update-take-closed", "github-status-enable", "github-diagnostic-enable", "owner-release-prepare", "update-after-readonly-stop-refusal"),
                         help="single owner action: canonical STOP, PAPER START, or exact stable UPDATE")
     parser.add_argument("--env-file", type=Path, default=Path("/etc/bybitscanner/paper.env"))
     parser.add_argument("--wait-seconds", type=float, default=0)
@@ -3363,6 +3366,47 @@ def main(argv=None) -> int:
                     status = provision_owner_pc(args.sha, env_file=args.env_file)
                     print(status)
                     return 0 if status.startswith("READY:") else 2
+                if args.action == "update-after-readonly-stop-refusal":
+                    # Exact incident recovery from a verified target stage.
+                    # Retire only the proven non-mutating refusal; the normal
+                    # successor STOP/activation/start gates still own delivery.
+                    from tools.paper_readonly_stop_refusal_recovery import (
+                        PRIOR, OLD, seal_readonly_refusal,
+                    )
+                    from tools.vps_gitless_release_activate import TRANSACTIONS
+                    stage = Path("/var/lib") / ("bybitscanner-stage-git-" + args.sha)
+                    project_modules = tuple(
+                        (name, mod) for name, mod in sys.modules.items()
+                        if name in ("tools", "terminal")
+                        or name.startswith(("tools.", "terminal."))
+                    )
+                    if args.sha in (PRIOR, OLD) or not _verified_staged_module_bootstrap(
+                        args.sha, stage, (("__main__", sys.modules[__name__]),) + project_modules,
+                    ):
+                        print("BLOCKED: readonly_stop_recovery_stage_unproven; no STOP")
+                        return 2
+                    try:
+                        ancestry = subprocess.run(
+                            ["git", "-C", str(stage), "merge-base", "--is-ancestor", PRIOR, args.sha],
+                            capture_output=True, text=True, timeout=15, check=False,
+                        )
+                        if ancestry.returncode != 0:
+                            print("BLOCKED: readonly_stop_successor_missing_prior_package; no STOP")
+                            return 2
+                        bundle = _prepare_editor_frontend_bundle(args.sha, stage=stage)
+                        seal_readonly_refusal(
+                            root=REPO, env_file=args.env_file, directory=TRANSACTIONS,
+                        )
+                    except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as exc:
+                        print("BLOCKED: readonly_stop_recovery_unproven:"
+                              + type(exc).__name__ + ":" + str(exc)[:200] + "; no STOP")
+                        return 2
+                    return main([
+                        args.sha, "--env-file", str(args.env_file),
+                        "--staged-gitless-editor-only", str(stage),
+                        "--start-paper-after-editor",
+                        *(["--frontend-bundle", str(bundle)] if bundle is not None else []),
+                    ])
                 if args.action == "update-take-closed":
                     # One exceptional owner UUID, not a second SSH recovery
                     # controller. Only the fully verified exact stable target

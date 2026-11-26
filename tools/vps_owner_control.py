@@ -20,7 +20,7 @@ PYTHON = REPO + "/venv/bin/python"
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 REQUEST = re.compile(r"[0-9a-f]{32}\Z")
 ORIGIN = re.compile(r"[A-Za-z0-9_.-]{1,64}\Z")
-ACTIONS = ("update", "start", "stop", "update-and-start", "provision-owner-pc", "telegram-recover", "update-take-closed", "github-status-enable", "github-diagnostic-enable", "owner-release-prepare")
+ACTIONS = ("update", "start", "stop", "update-and-start", "provision-owner-pc", "telegram-recover", "update-take-closed", "github-status-enable", "github-diagnostic-enable", "owner-release-prepare", "update-after-readonly-stop-refusal")
 UNIT_PREFIX = "bybitscanner-owner-"
 
 
@@ -162,7 +162,7 @@ def status(request: str, *, run=subprocess.run, verify_sha: str = "",
         return verify_update(verify_sha)
     if state == "FINISHED_OK" and verify_start_sha:
         match = re.fullmatch(
-            r"BybitScanner (start|update-and-start) ([0-9a-f]{40}) origin=([A-Za-z0-9_.-]{1,64})",
+            r"BybitScanner (start|update-and-start|update-after-readonly-stop-refusal) ([0-9a-f]{40}) origin=([A-Za-z0-9_.-]{1,64})",
             fields.get("Description", ""),
         )
         if not match or verify_start_sha not in ("installed", match.group(2)):
@@ -243,7 +243,9 @@ def submit(action: str, sha: str, request: str, origin: str,
 
     # Staging is necessary only for a *new* update, never to read an
     # already-detached operation after its verified stage has been retired.
-    stage = _verified_take_closed_stage(sha) if action == "update-take-closed" else None
+    stage = (_verified_take_closed_stage(sha)
+             if action in ("update-take-closed", "update-after-readonly-stop-refusal")
+             else None)
 
     cmd = [
         "systemd-run", "--no-block", "--remain-after-exit",

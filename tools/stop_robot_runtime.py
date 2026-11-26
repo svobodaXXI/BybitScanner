@@ -576,26 +576,33 @@ class RuntimeShutdown:
             # issued if the host no longer has the proven paused ownership.
             self.require_known_natural_drain_ready(known_drain_continuation)
 
-        # This is the sole transition from observation to the canonical STOP
-        # phases, including legacy branches. Never enter any mutating path if
-        # the existing durable owner journal cannot seal this release intent.
-        if before_mutation is not None and before_mutation() is not True:
-            raise SafeStopError("release STOP intent unproven; no runtime mutation")
-
-        if (
+        legacy_starved = (
             self._legacy_supported
             and backend == PRESENT
             and scope == SCOPE_ALL
             and self._robot_state() == ROBOT_STOPPED_PAIR
             and self._legacy_owner_queue_starved()
-        ):
+        )
+        # The initial Autopilot GET is observation, not a STOP mutation.
+        # Do not poison a release's one-shot fence on a failed read.
+        initial_mode = None
+        if (before_mutation is not None and backend == PRESENT
+                and scope == SCOPE_ALL and not legacy_starved):
+            initial_mode = self._read_autopilot_mode()
+        # Seal before the first possible mutation, including legacy shutdown.
+        if before_mutation is not None and before_mutation() is not True:
+            raise SafeStopError("release STOP intent unproven; no runtime mutation")
+
+        if legacy_starved:
             self._mark("using proven legacy starvation shutdown path")
             return self._shutdown_starved_legacy_runtime(telegram, steps)
 
         if backend == PRESENT:
             if scope == SCOPE_ALL:
                 self._mark("freezing Autopilot before Scanner/Robot shutdown")
-                if self._freeze_autopilot():
+                frozen = (self._freeze_autopilot() if initial_mode is None
+                          else self._freeze_autopilot(initial_mode=initial_mode))
+                if frozen:
                     steps.append("autopilot:off")
             self._mark("requesting Scanner STOPPED")
             if self._stop_scanner():
@@ -879,34 +886,29 @@ class RuntimeShutdown:
             return PRESENT
         raise SafeStopError("Telegram monitoring identity does not match the configured PAPER DB")
 
-    def _freeze_autopilot(self) -> bool:
-        """Inside the existing ALL stop, close PAPER_AUTO entry decisions first.
+    def _read_autopilot_mode(self) -> str:
+        try:
+            status, body = self._get(self._backend + "/api/robot/autopilot", PROBE_TIMEOUT_S)
+        except Exception as exc:
+            raise SafeStopError(
+                "Autopilot state unavailable; runtime kept alive"
+            ) from exc
+        if (
+            status != 200 or not isinstance(body, dict)
+            or body.get("ok") is not True
+            or body.get("trading_account_id") != {"value": "paper"}
+            or body.get("mode") not in ("OFF", "SHADOW", "PAPER_AUTO")
+        ):
+            raise SafeStopError("Autopilot state unproven; runtime kept alive")
+        return body["mode"]
 
-        Keep Scanner/Robot and their protection untouched on any unknown or
-        rejected transition. An already OFF Autopilot needs no write. A changed
-        postcondition blocks the shutdown; never retry an ambiguous mutation.
-        """
+    def _freeze_autopilot(self, *, initial_mode: str | None = None) -> bool:
+        """Close PAPER_AUTO entry decisions first; never retry an unknown POST."""
         url = self._backend + "/api/robot/autopilot"
-
-        def read_mode() -> str:
-            try:
-                status, body = self._get(url, PROBE_TIMEOUT_S)
-            except Exception as exc:
-                raise SafeStopError(
-                    "Autopilot state unavailable; runtime kept alive"
-                ) from exc
-            if (
-                status != 200 or not isinstance(body, dict)
-                or body.get("ok") is not True
-                or body.get("trading_account_id") != {"value": "paper"}
-                or body.get("mode") not in ("OFF", "SHADOW", "PAPER_AUTO")
-            ):
-                raise SafeStopError(
-                    "Autopilot state unproven; runtime kept alive"
-                )
-            return body["mode"]
-
-        mode = read_mode()
+        # A previously OFF observation may have drifted while sealing the
+        # release intent. Preserve the original fresh OFF check before Scanner.
+        mode = (self._read_autopilot_mode()
+                if initial_mode in (None, "OFF") else initial_mode)
         if mode == "OFF":
             return False
         try:
@@ -922,7 +924,13 @@ class RuntimeShutdown:
             raise SafeStopError(
                 "Autopilot OFF rejected or unconfirmed; runtime kept alive"
             )
-        if read_mode() != "OFF":
+        try:
+            observed = self._read_autopilot_mode()
+        except SafeStopError as exc:
+            raise SafeStopError(
+                "Autopilot OFF postcondition unavailable; runtime kept alive"
+            ) from exc
+        if observed != "OFF":
             raise SafeStopError(
                 "Autopilot OFF postcondition unproven; runtime kept alive"
             )
