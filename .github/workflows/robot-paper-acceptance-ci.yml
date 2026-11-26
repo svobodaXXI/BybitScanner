@@ -346,6 +346,7 @@ jobs:
           tests.test_robot_autopilot
           tests.test_robot_autopilot_shadow
           tests.test_robot_autopilot_a6_deferred_commit.HandoverOwnerTests
+          tests.test_robot_autopilot_bounded_admission
           tests.test_robot_portfolio
       - name: Run Scanner control and Telegram menu acceptance
         run: >-
