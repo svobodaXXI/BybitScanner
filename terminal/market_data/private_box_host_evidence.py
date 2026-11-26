@@ -217,26 +217,35 @@ class PrivateBoxCapture:
             self.close()
             return PrivateBoxReceiptEvidence("UNKNOWN")
         try:
-            selected = None
-            for candidate_id in sorted(set(candidate_ids)):
-                # Reuse the exact identity/parent/approval checks. No
-                # book or tape access occurs during host selection.
+            ids = sorted(set(candidate_ids))
+            # Preserve the current exact witness rather than discard a
+            # usable tape when a lexically earlier candidate arrives.
+            if self._host is not None and self._host.candidate_id in ids:
+                ids.remove(self._host.candidate_id)
+                ids.insert(0, self._host.candidate_id)
+            first_valid = None
+            for candidate_id in ids:
                 host = inspect_private_box_receipts(
                     get_candidate, lambda _symbol: None,
                     candidate_id=candidate_id, observed_at_ms=observed_at_ms,
                 )
-                if host.status == "NO_RECEIPT":
-                    selected = host
-                    break
-            if selected != self._host:
+                if host.status != "NO_RECEIPT":
+                    continue
+                if first_valid is None:
+                    first_valid = host
+                if host != self._host:
+                    self.close()
+                self._host = host
+                self._witness = self._hub.begin_protected_research_capture(
+                    host.symbol, owner_token=self._owner,
+                )
+                if self._witness is not None:
+                    return host
+                # An approved candidate without an existing protected
+                # context must not starve other eligible candidates.
                 self.close()
-            if selected is None:
-                return PrivateBoxReceiptEvidence("NO_PROVEN_HOST")
-            self._host = selected
-            self._witness = self._hub.begin_protected_research_capture(
-                selected.symbol, owner_token=self._owner,
-            )
-            return selected
+            self.close()
+            return first_valid or PrivateBoxReceiptEvidence("NO_PROVEN_HOST")
         except Exception:
             self.close()
             return PrivateBoxReceiptEvidence("UNKNOWN")
