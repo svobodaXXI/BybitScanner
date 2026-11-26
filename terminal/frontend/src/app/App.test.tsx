@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { App } from "./App";
@@ -247,6 +247,47 @@ it("reused Telegram Mini App reopens Autopilot with the new signal ticker and ti
   expect(setMarketTimeframe).toHaveBeenCalledWith("1m");
   expect(posts).toEqual(["COTIUSDT"]);
   expect(fetchMock.mock.calls.some(([url]) => url === "/api/market" || url === "/api/close-all")).toBe(false);
+});
+
+it("reactivated Telegram Mini App applies the fresh signal without DOM focus or pageshow", async () => {
+  window.history.replaceState({}, "", "/?mode=TERMINAL&symbol=ONGUSDT&timeframe=1m");
+  vi.mocked(setMarketSymbol).mockClear();
+  vi.mocked(setMarketTimeframe).mockClear();
+  const listeners = new Map<string, () => void>();
+  const onEvent = vi.fn((event: string, handler: () => void) => {
+    listeners.set(event, handler);
+  });
+  const offEvent = vi.fn((event: string, handler: () => void) => {
+    if (listeners.get(event) === handler) listeners.delete(event);
+  });
+  vi.stubGlobal("Telegram", { WebApp: { expand: vi.fn(), ready: vi.fn(), onEvent, offEvent } });
+  const posts: string[] = [];
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url === "/api/workspace/symbol") {
+      const body = JSON.parse(String(init?.body)) as { symbol: string };
+      posts.push(body.symbol);
+      return { ok: true, json: async () => ({
+        ok: true, symbol: body.symbol, generation: posts.length + 40,
+      }) };
+    }
+    return { ok: false, json: async () => ({}) };
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const { unmount } = render(<App />);
+  expect(screen.getByTestId("active-workspace-mode")).toHaveTextContent("TERMINAL");
+  await waitFor(() => expect(posts).toContain("ONGUSDT"));
+  expect(onEvent).toHaveBeenCalledWith("activated", expect.any(Function));
+
+  // Telegram can restore the same document without dispatching DOM navigation events.
+  window.history.replaceState({}, "", "/?mode=AUTOPILOT&symbol=PIEVERSEUSDT&timeframe=5m");
+  act(() => listeners.get("activated")?.());
+  await waitFor(() => expect(screen.getByTestId("active-workspace-mode")).toHaveTextContent("AUTOPILOT"));
+  await waitFor(() => expect(posts).toContain("PIEVERSEUSDT"));
+  expect(setMarketTimeframe).toHaveBeenCalledWith("5m");
+  expect(fetchMock.mock.calls.some(([url]) => url === "/api/market" || url === "/api/close-all")).toBe(false);
+
+  unmount();
+  expect(offEvent).toHaveBeenCalledWith("activated", expect.any(Function));
 });
 
 it("opens a Telegram signal in read-only Autopilot with immutable lines and live candles", async () => {

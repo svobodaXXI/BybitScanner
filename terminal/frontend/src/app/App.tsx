@@ -118,7 +118,12 @@ export function App() {
     window.addEventListener("pageshow", refreshLaunchSearch);
     window.addEventListener("focus", refreshLaunchSearch);
     document.addEventListener("visibilitychange", refreshLaunchSearch);
+    // Telegram may reactivate a minimized Mini App without firing DOM focus/pageshow.
+    // Re-read the URL, not an unverified Telegram payload or stale symbol.
+    const webApp = window.Telegram?.WebApp;
+    webApp?.onEvent?.("activated", refreshLaunchSearch);
     return () => {
+      webApp?.offEvent?.("activated", refreshLaunchSearch);
       window.removeEventListener("popstate", refreshLaunchSearch);
       window.removeEventListener("pageshow", refreshLaunchSearch);
       window.removeEventListener("focus", refreshLaunchSearch);
