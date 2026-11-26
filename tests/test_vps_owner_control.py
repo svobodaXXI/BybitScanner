@@ -348,6 +348,39 @@ if __name__ == "__main__":
     unittest.main()
 
 
+def test_readonly_refusal_recovery_is_one_pinned_detached_owner_request(monkeypatch):
+    from pathlib import Path
+    stage = Path("/var/lib/bybitscanner-stage-git-" + SHA)
+    monkeypatch.setattr(control, "_verified_take_closed_stage", lambda sha: stage)
+    action = "update-after-readonly-stop-refusal"
+    calls = []
+
+    def run(cmd, **kwargs):
+        calls.append(cmd)
+        return completed(cmd, out="LoadState=not-found\n" if cmd[0] == "systemctl" else "")
+
+    assert control.submit(action, SHA, R, "win-pc", run=run, uid=0) == 0
+    assert len(calls) == 2
+    assert calls[1][0] == "systemd-run"
+    assert "--working-directory=" + str(stage) in calls[1]
+    assert calls[1][-5:] == ["-m", "tools.paper_maintenance", SHA, "--action", action]
+    assert "--description=BybitScanner " + action + " " + SHA + " origin=win-pc" in calls[1]
+
+
+def test_readonly_refusal_recovery_requires_exact_paper_postcheck(monkeypatch):
+    action = "update-after-readonly-stop-refusal"
+    output = ("LoadState=loaded\nActiveState=active\nSubState=exited\n"
+              "Result=success\nExecMainStatus=0\nDescription=BybitScanner "
+              + action + " " + SHA + " origin=win-pc\n")
+    checked = []
+    monkeypatch.setattr(control, "verify_start", lambda target: (checked.append(target), 0)[1])
+    run = lambda cmd, **kw: completed(cmd, out=output)
+    assert control.status(R, run=run, verify_start_sha="c" * 40) == 2
+    assert checked == []
+    assert control.status(R, run=run, verify_start_sha=SHA) == 0
+    assert checked == [SHA]
+
+
 def test_take_closed_update_is_one_detached_pinned_stage_owner_request(monkeypatch):
     from pathlib import Path
     target_stage = Path("/var/lib/bybitscanner-stage-git-" + SHA)
