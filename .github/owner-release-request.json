@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "operation": "update-and-start",
+  "owner_request_id": "741b3b540b63424fa8c4d69113747375",
+  "expected_installed_sha": "9d88a1f8e6bff8544a864ed79456a54df8927ae5",
+  "target_sha": "b136ffab3e865774bc02052bd33ffb3b43e952ab",
+  "issued_at": 1795701509,
+  "expires_at": 1795702409
+}
