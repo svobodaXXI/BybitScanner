@@ -97,9 +97,49 @@ def _verified_wedge_entry_risk(
     }
 
 
+class _CandidateOrderIndex:
+    """Request-local exact order lookup; preserve distinct candidate rows."""
+
+    def __init__(self, candidates):
+        self.by_order = {}
+        for index, candidate in enumerate(candidates):
+            if candidate.get("trading_account_id") != "paper":
+                continue
+            if not candidate.get("robot_state_json"):
+                continue
+            try:
+                ids = _order_ids(candidate)
+            except WedgeLineageUnproven:
+                # Unrelated rejected/legacy candidates prove no entry identity.
+                continue
+            for order_id in ids:
+                self.by_order.setdefault(order_id, []).append((index, candidate, ids))
+
+    def matches(self, opening_order_ids):
+        # A multi-order candidate may occur in multiple buckets. Deduplicate
+        # only by source row position, never by candidate ID or row equality.
+        matched = {}
+        for order_id in opening_order_ids:
+            for index, candidate, ids in self.by_order.get(order_id, ()):
+                matched[index] = (candidate, ids)
+        return list(matched.values())
+
+
 def project_selected_paper_wedge(
     snapshot: PaperSourceSnapshot, *, account_id: str, owner: str,
     trade_episode_id: str, source_revision: int,
+) -> dict[str, object]:
+    """Prove exactly one completed Wedge episode, preserving actual fills/fees."""
+    return _project_selected_paper_wedge(
+        snapshot, account_id=account_id, owner=owner,
+        trade_episode_id=trade_episode_id, source_revision=source_revision,
+    )
+
+
+def _project_selected_paper_wedge(
+    snapshot: PaperSourceSnapshot, *, account_id: str, owner: str,
+    trade_episode_id: str, source_revision: int,
+    candidate_index: _CandidateOrderIndex | None = None,
 ) -> dict[str, object]:
     """Prove exactly one completed Wedge episode, preserving actual fills/fees.
 
@@ -172,23 +212,9 @@ def project_selected_paper_wedge(
     }
     if not opening_order_ids.issubset(robot_orders):
         _deny("wedge_robot_entry_ownership_unproven")
-    candidates = []
-    for candidate in evidence["candidates"]:
-        if candidate.get("trading_account_id") != "paper":
-            continue
-        if not candidate.get("robot_state_json"):
-            continue
-        try:
-            ids = _order_ids(candidate)
-        except WedgeLineageUnproven:
-            # A candidate without exact persisted entry-order identity proves
-            # nothing about this episode. Do not let unrelated rejected/legacy
-            # candidates globally veto other independent exact-ID evidence.
-            # An affected episode still remains UNPROVEN unless one unique
-            # candidate and Robot entry ledger match its actual opening orders.
-            continue
-        if ids & opening_order_ids:
-            candidates.append((candidate, ids))
+    if candidate_index is None:
+        candidate_index = _CandidateOrderIndex(evidence["candidates"])
+    candidates = candidate_index.matches(opening_order_ids)
     if len(candidates) != 1 or candidates[0][1] != opening_order_ids:
         _deny("wedge_candidate_order_ambiguous")
     candidate, _ = candidates[0]
@@ -270,16 +296,23 @@ def attach_verified_wedge_signals(
     if not isinstance(rows, list):
         return report
     enriched = []
+    # The report and all proofs share this one immutable source snapshot.
+    # No cross-request caching or source-revision-only invalidation.
+    evidence = snapshot.wedge_evidence
+    candidate_index = None
+    if "candidates" in evidence:
+        candidate_index = _CandidateOrderIndex(evidence["candidates"])
     for row in rows:
         if (not isinstance(row, dict) or row.get("cohort") != "ROBOT"
                 or not isinstance(row.get("trade_episode_id"), str)):
             enriched.append(row)
             continue
         try:
-            proof = project_selected_paper_wedge(
+            proof = _project_selected_paper_wedge(
                 snapshot, account_id="paper", owner="ROBOT",
                 trade_episode_id=row["trade_episode_id"],
                 source_revision=snapshot.source_revision,
+                candidate_index=candidate_index,
             )
         except WedgeLineageUnproven:
             enriched.append(row)
