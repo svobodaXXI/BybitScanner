@@ -600,7 +600,9 @@ class RuntimeShutdown:
         if backend == PRESENT:
             if scope == SCOPE_ALL:
                 self._mark("freezing Autopilot before Scanner/Robot shutdown")
-                if self._freeze_autopilot(initial_mode=initial_mode):
+                frozen = (self._freeze_autopilot() if initial_mode is None
+                          else self._freeze_autopilot(initial_mode=initial_mode))
+                if frozen:
                     steps.append("autopilot:off")
             self._mark("requesting Scanner STOPPED")
             if self._stop_scanner():
