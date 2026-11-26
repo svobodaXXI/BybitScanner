@@ -94,6 +94,7 @@ def _failed_unit_proof(*, run=subprocess.run):
     _require(result.returncode == 0, "readonly_stop_log_unavailable")
     boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip().replace("-", "")
     records = [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
+    _require(all(isinstance(row, dict) for row in records), "readonly_stop_log_invalid")
     refusals = [row for row in records
                 if isinstance(row.get("MESSAGE"), str) and row["MESSAGE"].startswith("BLOCKED:")]
     _require(len(refusals) == 1, "readonly_stop_refusal_not_unique")
@@ -111,7 +112,7 @@ def seal_readonly_refusal(*, root, env_file, directory, uid=0):
     """Called only from the verified successor monolith under owner-action lock."""
     from tools.paper_maintenance import _legacy_paused_backend_predates_stop
     from tools.runtime_intent import expected_database_identity
-    from tools.stop_robot_runtime import _environment, _http_get, PROBE_TIMEOUT_S
+    from tools.stop_robot_runtime import _environment, _http_get, PROBE_TIMEOUT_S, Unreachable
     from tools.vps_release_identity import verify_release
 
     _require(os.geteuid() == uid, "readonly_stop_requires_trusted_owner")
@@ -137,8 +138,14 @@ def seal_readonly_refusal(*, root, env_file, directory, uid=0):
         _require((env.get("BYBITSCANNER_PAPER_BACKEND_URL") or url).rstrip("/") == url,
                  "readonly_stop_backend_route_changed")
 
+        def read(path):
+            try:
+                return _http_get(url + path, PROBE_TIMEOUT_S)
+            except Unreachable as exc:
+                raise ValueError("readonly_stop_runtime_observation_unavailable") from exc
+
         def health():
-            code, body = _http_get(url + "/api/health", PROBE_TIMEOUT_S)
+            code, body = read("/api/health")
             _require(code == 200 and isinstance(body, dict)
                      and body.get("ok") is True and body.get("component") == "paper_backend"
                      and body.get("mode") == "paper" and body.get("paper_live_safe") is True
@@ -148,7 +155,7 @@ def seal_readonly_refusal(*, root, env_file, directory, uid=0):
             return body["process_instance_id"]
 
         before = health()
-        code, body = _http_get(url + "/api/robot/autopilot", PROBE_TIMEOUT_S)
+        code, body = read("/api/robot/autopilot")
         # In the pinned installed implementation, the only preceding mutation
         # is an OFF POST. A successful change increments the durable version
         # and advances updated_at_ms; PAPER_AUTO cannot be restored silently.
