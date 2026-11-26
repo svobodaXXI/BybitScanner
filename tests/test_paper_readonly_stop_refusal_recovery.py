@@ -66,6 +66,21 @@ def test_exact_refusal_is_retired_without_forging_stop_or_install(evidence):
     assert evidence.calls == before
 
 
+def test_historical_refusal_requires_fresh_successor_stop_intent(evidence):
+    from tools.paper_maintenance import _record_one_shot_stop_intent
+    successor = "c" * 40
+    fresh = evidence.directory / (".stop-invoked-" + successor)
+    assert not _record_one_shot_stop_intent(
+        evidence.directory, successor, uid=os.geteuid(), root=evidence.root)
+    assert not fresh.exists()
+    evidence.seal()
+    assert _record_one_shot_stop_intent(
+        evidence.directory, successor, uid=os.geteuid(), root=evidence.root)
+    assert fresh.is_file() and evidence.marker.is_file()
+    assert not _record_one_shot_stop_intent(
+        evidence.directory, successor, uid=os.geteuid(), root=evidence.root)
+
+
 @pytest.mark.parametrize("key,value", [
     ("mode", "OFF"), ("version", recovery.AUTOPILOT_VERSION + 1),
     ("updated_at_ms", recovery.MARKER_MS + 1),
