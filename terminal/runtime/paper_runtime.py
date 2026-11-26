@@ -5591,8 +5591,12 @@ class PaperRuntime:
                             "Robot trade closed from durable PAPER execution",
                         )
                     else:
+                        close_evidence = (evidence or {}).get(symbol)
+                        evidence_kwargs = (
+                            {"evidence": close_evidence} if close_evidence is not None else {}
+                        )
                         result = self._robot_full_close(
-                            manual_request, identity=manual_identity,
+                            manual_request, identity=manual_identity, **evidence_kwargs,
                         )
                         # CR-ROBOT-CLOSE-ALL-MAX-QTY-001: full_close() caps a
                         # chunk at the confirmed position quantity; PreTradeGuard
@@ -5655,7 +5659,7 @@ class PaperRuntime:
                                     chunk_index=chunk_index,
                                 )
                                 result = self._robot_full_close(
-                                    chunk_request, identity=chunk_identity,
+                                    chunk_request, identity=chunk_identity, **evidence_kwargs,
                                 )
                                 if result.status != CommandResultStatus.COMPLETED:
                                     break
