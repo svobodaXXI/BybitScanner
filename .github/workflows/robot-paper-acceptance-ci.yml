@@ -56,6 +56,8 @@ on:
       - "terminal/runtime/incident_telemetry.py"
       - "terminal/market_data/hub.py"
       - "tests/test_terminal_market_data_hub.py"
+      - "terminal/market_data/private_box_host_evidence.py"
+      - "tests/test_private_box_host_evidence.py"
       - "tests/test_wedge_passive_book_capture_promotion.py"
       - "tests/test_incident_telemetry.py"
       - "terminal/persistence/**"
@@ -174,7 +176,7 @@ jobs:
       - name: Verify publicTrade observation without order runtime
         run: python -m unittest tests.test_public_trade_impulse_observation -v
       - name: Verify subscribed-only Scanner source diagnostics
-        run: python -m unittest tests.test_terminal_market_data_hub tests.test_wedge_passive_book_capture_promotion -v
+        run: python -m unittest tests.test_terminal_market_data_hub tests.test_wedge_passive_book_capture_promotion tests.test_private_box_host_evidence -v
       - name: Profile synthetic extra source cost without live subscriptions
         run: python -m tools.profile_pattern_flow_source_load
       - name: Compile acceptance surface

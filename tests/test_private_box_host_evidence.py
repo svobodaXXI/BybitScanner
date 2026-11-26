@@ -311,6 +311,76 @@ class PrivateBoxCaptureTests(unittest.TestCase):
         capture.close()
 
 
+    def test_missing_first_context_does_not_starve_protected_host(self):
+        store, data = setup()
+        parent = store["box-plan-123"]
+        host = store["box-robot-123"]
+        other_source = {**parent.signal_snapshot,
+                        "identity": {"symbol": "ETHUSDT", "direction": "LONG"}}
+        store["box-plan-100"] = NS(
+            **{**vars(parent), "candidate_id": "box-plan-100",
+               "symbol": NS(value="ETHUSDT"), "signal_snapshot": other_source})
+        store["box-robot-100"] = NS(
+            **{**vars(host), "candidate_id": "box-robot-100",
+               "symbol": NS(value="ETHUSDT"),
+               "signal_snapshot": {**other_source,
+                                   "source_box_candidate_id": "box-plan-100"},
+               "robot_state": {**host.robot_state,
+                               "source_box_candidate_id": "box-plan-100"}})
+        available = {"BTCUSDT"}
+        attempts = []
+        active = {}
+        def begin(symbol, *, owner_token):
+            attempts.append(symbol)
+            if symbol not in available:
+                return None
+            if active:
+                self.assertEqual(set(active), {symbol})
+                self.assertIs(active[symbol][0], owner_token)
+            else:
+                active[symbol] = (owner_token, object())
+            return active[symbol][1]
+
+        def end(symbol, *, owner_token):
+            if symbol in active:
+                self.assertIs(active[symbol][0], owner_token)
+                del active[symbol]
+                return True
+            return False
+
+        def snapshot(symbol, *, expected_witness):
+            self.assertIs(expected_witness, active[symbol][1])
+            return data
+
+        capture = PrivateBoxCapture(NS(
+            begin_protected_research_capture=begin,
+            end_protected_research_capture=end,
+            private_protected_research_snapshot=snapshot,
+        ))
+        ids = ("box-robot-123", "box-robot-100")
+        def sync():
+            return capture.sync(store.get, ids, robot_ready=True,
+                                observed_at_ms=2100)
+        self.assertEqual(sync().candidate_id, "box-robot-123")
+        self.assertEqual(attempts, ["ETHUSDT", "BTCUSDT"])
+        original = active["BTCUSDT"][1]
+        available.add("ETHUSDT")
+        self.assertEqual(sync().candidate_id, "box-robot-123")
+        self.assertIs(active["BTCUSDT"][1], original)
+        self.assertEqual(attempts, ["ETHUSDT", "BTCUSDT", "BTCUSDT"])
+        self.assertEqual(capture.observe(store.get, robot_ready=True,
+                                         observed_at_ms=2100).status,
+                         "RECEIPTS_OBSERVED_UNATTESTED")
+        host.status = "INVALIDATED"
+        self.assertEqual(sync().candidate_id, "box-robot-100")
+        self.assertEqual(set(active), {"ETHUSDT"})
+        available.clear()
+        self.assertEqual(sync().status, "NO_RECEIPT")
+        self.assertEqual(active, {})
+        self.assertEqual(capture.observe(store.get, robot_ready=True,
+                                         observed_at_ms=2100).status, "NO_RECEIPT")
+        capture.close()
+
     def test_only_validated_detached_receipts_reach_private_sink(self):
         store, data = setup()
         witness = object()
