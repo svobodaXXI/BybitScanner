@@ -176,3 +176,17 @@ test count and documentation do not earn XP by themselves.
   counted again; open draft PR #267 (position-card presentation) is not
   reward-eligible until its required acceptance/merge boundary is satisfied.
 
+### REWARD-FAST-STATISTICS-20261126
+
+- Date: 2026-11-26
+- Type: quest stage
+- Outcome: «Быстрая статистика» — owner confirmed Robot → Statistics → ALL → Deals opens in approximately 1–2 seconds in Telegram after the release.
+- Evidence: [owner acceptance #1077](https://github.com/svobodaXXI/BybitScanner/issues/1077#issuecomment-7200551057); [PR #1373](https://github.com/svobodaXXI/BybitScanner/pull/1373), installed SHA `64a30dea74212a8cc768c723575c0c9f94d1514d`, [PAPER postcheck](https://github.com/svobodaXXI/BybitScanner/issues/1077#issuecomment-7200123812).
+- XP before: 285
+- XP delta: +25
+- XP after: 310
+- Level: **3 — Следопыт клиньев**
+- Achievement changes: none
+- Loot: request-local candidate-order index preserving exact evidence and ambiguity rejection; reusable per-stage latency diagnosis.
+- Note: owner estimate, not instrumented post-release HTTP timing; no measured speedup ratio claimed. No duplicate reward for tests or deployment.
+
