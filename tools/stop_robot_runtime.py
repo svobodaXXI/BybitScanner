@@ -903,7 +903,10 @@ class RuntimeShutdown:
     def _freeze_autopilot(self, *, initial_mode: str | None = None) -> bool:
         """Close PAPER_AUTO entry decisions first; never retry an unknown POST."""
         url = self._backend + "/api/robot/autopilot"
-        mode = self._read_autopilot_mode() if initial_mode is None else initial_mode
+        # A previously OFF observation may have drifted while sealing the
+        # release intent. Preserve the original fresh OFF check before Scanner.
+        mode = (self._read_autopilot_mode()
+                if initial_mode in (None, "OFF") else initial_mode)
         if mode == "OFF":
             return False
         try:
@@ -919,7 +922,13 @@ class RuntimeShutdown:
             raise SafeStopError(
                 "Autopilot OFF rejected or unconfirmed; runtime kept alive"
             )
-        if self._read_autopilot_mode() != "OFF":
+        try:
+            observed = self._read_autopilot_mode()
+        except SafeStopError as exc:
+            raise SafeStopError(
+                "Autopilot OFF postcondition unavailable; runtime kept alive"
+            ) from exc
+        if observed != "OFF":
             raise SafeStopError(
                 "Autopilot OFF postcondition unproven; runtime kept alive"
             )
