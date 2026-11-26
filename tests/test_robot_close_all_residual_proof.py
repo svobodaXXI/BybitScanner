@@ -116,6 +116,57 @@ class RobotCloseAllResidualProofTests(unittest.TestCase):
         )
         self.assertEqual(response.positions, ())
 
+    def test_mirror_close_all_uses_prefetched_book_for_every_chunk(self):
+        runtime, store, _, _ = fake_runtime(robot_symbols=("ZHIPUUSDT",))
+        store.load_robot_candidates_by_status.return_value[0].signal_snapshot = {
+            "pattern": "MIRROR",
+        }
+        runtime._instrument_provider.return_value = SimpleNamespace(
+            max_market_order_quantity=Decimal("5"),
+            quantity_step=Decimal("1"),
+        )
+        store.get_position_projection = Mock(side_effect=[
+            SimpleNamespace(quantity=SimpleNamespace(value=Decimal("6"))),
+            SimpleNamespace(quantity=SimpleNamespace(value=Decimal("1"))),
+            SimpleNamespace(quantity=SimpleNamespace(value=Decimal(0))),
+        ])
+        book = SimpleNamespace(symbol=Symbol("ZHIPUUSDT"))
+        runtime._streamed_book = Mock(return_value=None)
+        runtime._robot_execution_book = lambda symbol, evidence=None: (
+            PaperRuntime._robot_execution_book(runtime, symbol, evidence)
+        )
+
+        def full_close(request, *, market_book, identity):
+            # Synthetic command boundary: missing evidence must not execute.
+            return CommandResult(
+                request.client_action_id.value,
+                CommandResultStatus.COMPLETED if market_book is book
+                else CommandResultStatus.UNAVAILABLE,
+                "test", "test",
+            )
+
+        runtime._robot_api = SimpleNamespace(full_close=Mock(side_effect=full_close))
+        runtime._robot_full_close = lambda request, **kwargs: (
+            PaperRuntime._robot_full_close(runtime, request, **kwargs)
+        )
+        runtime._robot_finalize_manual_close = Mock(
+            side_effect=lambda candidate: runtime._robot_api.full_close.call_count == 2,
+        )
+
+        response = PaperRuntime.robot_close_all(
+            runtime, CloseAllCommandRequest(ClientActionId("mirror-close")),
+            evidence={"ZHIPUUSDT": book},
+        )
+
+        calls = runtime._robot_api.full_close.call_args_list
+        self.assertEqual([call.args[0].quantity for call in calls],
+                         [Decimal("5"), Decimal("1")])
+        self.assertTrue(all(call.kwargs["market_book"] is book for call in calls))
+        self.assertNotEqual(calls[0].kwargs["identity"], calls[1].kwargs["identity"])
+        self.assertEqual(response.results[0].status, CommandResultStatus.COMPLETED)
+        self.assertEqual(response.positions, ())
+        store.update_robot_runtime_state.assert_not_called()
+
     def test_completed_command_with_remaining_owned_position_requires_reconcile(self):
         runtime, store, close, inventory = fake_runtime(
             remaining=(("BOTUSDT", "2.50"),),
