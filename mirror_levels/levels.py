@@ -266,6 +266,8 @@ def levels_from_geometry(*, symbol: str, timeframe: str, pattern: str,
     if not 0 <= decision_index < len(candle_times_ms):
         return ()
     confirmed = int(candle_times_ms[decision_index]) + step
+    wedge = pattern in ("Rising Wedge", "Falling Wedge")
+    end_index = geometry.get("end_index") if isinstance(geometry, Mapping) else None
     out = []
     for side in (SIDE_UPPER, SIDE_LOWER):
         line = geometry.get(f"{side}_line") if isinstance(geometry, Mapping) else None
@@ -278,13 +280,16 @@ def levels_from_geometry(*, symbol: str, timeframe: str, pattern: str,
             return ()
         if not (0 <= i1 < i2 <= decision_index):
             return ()
+        provenance = {"anchor_index": i1, "second_index": i2, "decision_index": decision_index}
+        if wedge and type(end_index) is int and i2 <= end_index <= decision_index:
+            provenance["formation_end_open_ms"] = int(candle_times_ms[end_index])
         try:
             out.append(line_level(
                 symbol=symbol, timeframe=timeframe, pattern=pattern, side=side,
                 first=(int(candle_times_ms[i1]), slope * i1 + intercept),
                 second=(int(candle_times_ms[i2]), slope * i2 + intercept),
                 confirmed_at_ms=confirmed,
-                provenance={"anchor_index": i1, "second_index": i2, "decision_index": decision_index},
+                provenance=provenance,
             ))
         except MirrorLevelError:
             return ()

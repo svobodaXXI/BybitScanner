@@ -301,8 +301,9 @@ def _retest_potential_percent(target: float | Decimal, reference: float | Decima
 def _prior_wick_rejection(level: MirrorLevel, rows, breakout_open_ms: int) -> str | None:
     """Only an untouched source ray may initiate a new naked MIRROR breakout.
 
-    Check closed candles AFTER source confirmation / latest source anchor and BEFORE the
-    breakout, including the candle immediately before the signal. A candle's
+    Check closed candles after formation END for engine Wedges (including the
+    pivot-confirmation interval), or after the existing source-specific cutoff,
+    and before breakout. A candle's
     exact wick timestamp is unknown within OHLC; a possible penetration of a
     sloping boundary therefore rejects the candidate rather than assuming a
     pristine level. Missing historical bars cannot establish untouchedness.
@@ -319,6 +320,17 @@ def _prior_wick_rejection(level: MirrorLevel, rows, breakout_open_ms: int) -> st
     first = (anchor_ms + step
              if level.source == SOURCE_SWING_ZONE and len(source_pivots) >= 2
              else max(anchor_ms + step, int(level.confirmed_at_ms)))
+    # Formation contacts through END belong to the frozen geometry. A later
+    # wick cannot be excused by the delay before the final pivot is confirmed.
+    # Legacy engine Wedges without exact END cannot prove this interval clean;
+    # do not infer it from a later rescan or revise previously judged campaigns.
+    if level.pattern in ("Rising Wedge", "Falling Wedge") and "decision_index" in level.provenance:
+        end_ms = level.provenance.get("formation_end_open_ms")
+        if (type(end_ms) is not int or end_ms < anchor_ms
+                or end_ms + step > level.confirmed_at_ms
+                or (end_ms - anchor_ms) % step):
+            return "prior_wick_history_unavailable"
+        first = end_ms + step
     if first >= breakout_open_ms:
         return None
     earlier = [r for r in rows if first <= int(r["open_time_ms"]) < breakout_open_ms]
