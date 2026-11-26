@@ -641,6 +641,47 @@ def test_wick_sweep_owner_mirror_pristine_slope_still_allows_breakout(root, fixe
     assert record["candidate"] is True and summary["new_candidates"] == 1
 
 
+@pytest.mark.parametrize("premature_wick", [False, True])
+def test_wedge_mirror_checks_post_end_confirmation_gap(root, fixed_levels, premature_wick):
+    from mirror_levels.levels import levels_from_geometry
+
+    geometry = {
+        "upper_line": {"anchor_index": 0, "second_index": 5,
+                       "slope": -0.01, "intercept": 103.0},
+        "lower_line": {"anchor_index": 1, "second_index": 24,
+                       "slope": -0.005, "intercept": 99.0},
+        "end_index": 24,
+    }
+    levels = levels_from_geometry(
+        symbol="TESTUSDT", timeframe="1", pattern="Falling Wedge",
+        geometry=geometry, candle_times_ms=[i * M for i in range(29)],
+        decision_index=27,
+    )
+    level = next(lv for lv in levels if lv.side == "upper")
+    assert level.confirmed_at_ms == 28 * M
+    assert level.provenance["formation_end_open_ms"] == 24 * M
+    fixed_levels["levels"] = [level]
+    bars = [(99.5, 100.0, 99.1, 99.5)] * 30
+    bars[24] = (99.5, 102.76, 99.1, 99.5)  # formation contact at END
+    if premature_wick:
+        bars[26] = (99.5, 102.75, 99.1, 99.5)  # before confirmation, after END
+    bars.append((99.5, 105.0, 99.4, 104.0))
+    summary = observe(frame(bars), root)
+    record = ms.load_state("TESTUSDT", "1", root)["records"][level.level_id]
+    assert record["candidate"] is (not premature_wick)
+    assert summary["new_candidates"] == (0 if premature_wick else 1)
+    assert record["rejection"] == ("prior_wick_breached_level" if premature_wick else None)
+
+
+def test_legacy_engine_wedge_without_end_cannot_prove_freshness():
+    level = line_level(symbol="TESTUSDT", timeframe="1",
+                       pattern="Falling Wedge", side="upper",
+                       first=(0, 103.0), second=(5 * M, 102.95),
+                       confirmed_at_ms=28 * M,
+                       provenance={"decision_index": 27})
+    assert ms._prior_wick_rejection(level, [], 30 * M) == "prior_wick_history_unavailable"
+
+
 def test_level_without_parent_fresh_breakout_becomes_candidate_and_first_retest_is_terminal(root, fixed_levels):
     level = level_at(101.0, 5 * M)
     fixed_levels["levels"] = [level]
@@ -1186,7 +1227,7 @@ def test_real_horn_kncusdt_does_not_originate_mirror(root):
     assert all(row["level"]["pattern"] != "Broadening" for row in ms.project_mirror_levels(root, include_waiting=True)["levels"])
 
 
-def test_real_drift_wedge_5m_boundaries_breakout_and_first_retest(root, fixed_levels, monkeypatch):
+def test_real_drift_wedge_5m_post_end_wicks_reject_mirror_candidate(root, fixed_levels, monkeypatch):
     raw = json.loads((FIXTURES / "mirror_levels" / "wedge_DRIFTUSDT_d954e71a03.json").read_text())
     snapshot, step = raw["signal_snapshot"], 5 * M
     # The Scanner frame index base follows from the formation id (anchor timestamps of indices 87 / 65).
@@ -1216,6 +1257,11 @@ def test_real_drift_wedge_5m_boundaries_breakout_and_first_retest(root, fixed_le
         ms.observe_mirror_levels("DRIFTUSDT", window, timeframe="5", root=root, now_ms=0)
     records = ms.load_state("DRIFTUSDT", "5", root)["records"]
     upper_record = records[upper.level_id]
+    # The frozen formation ended before several actual pre-confirmation wicks.
+    # Preserve the observed breakout/retest history, but not MIRROR eligibility.
+    assert upper.provenance["formation_end_open_ms"] == base + snapshot["geometry"]["end_index"] * step
+    assert upper_record["candidate"] is False
+    assert upper_record["rejection"] == "prior_wick_breached_level"
     assert upper_record["status"] == STATUS_RETESTED
     assert upper_record["naked_retest"]["breakout"]["direction"] == "UP"
     assert upper_record["naked_retest"]["breakout"]["open_time_ms"] == 1792844400000
