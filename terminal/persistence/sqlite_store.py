@@ -1260,6 +1260,18 @@ class SQLiteStore:
         ("robot_auto_decisions_a6_heads",
          "robot_auto_decisions(trading_account_id, candidate_ref, source_identity, mode, "
          "policy_version, evaluated_at_ms, decision_id, outcome)"),
+        # PAPER_AUTO admission must not scan the full immutable audit for these
+        # two subsets. Match the existing predicates exactly, including invalid
+        # non-null latches, so no admission fact or fail-closed behavior changes.
+        ("robot_auto_decisions_shadow_allow",
+         "robot_auto_decisions(trading_account_id, decision_id) "
+         "WHERE mode='SHADOW' AND outcome='ALLOW'"),
+        ("robot_auto_decisions_daily_latch",
+         "robot_auto_decisions(trading_account_id, "
+         "json_extract(facts_json, '$.daily_loss_gate.business_date_msk'), "
+         "evaluated_at_ms, decision_id) WHERE mode='PAPER_AUTO' "
+         "AND json_type(facts_json, '$.daily_loss_gate')='object' "
+         "AND json_type(facts_json, '$.daily_loss_gate.latched') != 'null'"),
     )
 
     @staticmethod

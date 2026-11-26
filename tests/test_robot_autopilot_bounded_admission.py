@@ -93,6 +93,34 @@ class BoundedAdmissionTests(unittest.TestCase):
                 self.assertEqual(ap.daily_loss_gate_facts(equity, rows, enabled=enabled),
                                  ap.daily_loss_gate_facts(equity, full, enabled=enabled))
 
+    def test_admission_indexes_upgrade_preserves_rows_and_targets_subsets(self):
+        store = self.db.store
+        conn = store._connection
+        # Simulate an existing database before the two read-only access paths
+        # were installed; no audit rows or trading state are changed.
+        for name in ("robot_auto_decisions_shadow_allow",
+                     "robot_auto_decisions_daily_latch"):
+            conn.execute("DROP INDEX " + name)
+        before = bounded(store, "history", self.original.source_identity)
+        count = store.count_robot_auto_decisions(ACCOUNT)
+        SQLiteStore._ensure_auto_decision_read_indexes(conn)
+        traced = []
+        conn.set_trace_callback(traced.append)
+        try:
+            after = bounded(store, "history", self.original.source_identity)
+        finally:
+            conn.set_trace_callback(None)
+        self.assertEqual(after, before)
+        self.assertEqual(store.count_robot_auto_decisions(ACCOUNT), count)
+        query = next(sql for sql in traced
+                     if "json_group_array" in sql and "daily_loss_gate" in sql)
+        plan = "\\n".join(str(row[3]) for row in
+                         conn.execute("EXPLAIN QUERY PLAN " + query))
+        self.assertIn("robot_auto_decisions_shadow_allow", plan)
+        self.assertIn("robot_auto_decisions_daily_latch", plan)
+        # Reopen/steady-state initialization is idempotent.
+        SQLiteStore._ensure_auto_decision_read_indexes(conn)
+
     def test_malformed_latest_latch_is_not_silently_discarded(self):
         store = self.db.store
         _wedge(self.db.candidates, "fresh", symbol="FRESHUSDT")
