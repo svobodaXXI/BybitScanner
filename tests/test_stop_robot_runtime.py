@@ -693,6 +693,22 @@ class FullShutdownTests(unittest.TestCase):
             "backend:shutdown", "telegram:shutdown",
         ])
 
+    def test_release_autopilot_off_observation_is_revalidated_after_seal(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.autopilot_mode = "OFF"
+
+        def seal():
+            runtime.calls.append("STOP_INTENT")
+            runtime.autopilot_mode = "PAPER_AUTO"
+            return True
+
+        result = runtime.orchestrator().run("all", before_mutation=seal)
+        self.assertTrue(result.ok, result.message)
+        self.assertEqual(runtime.calls, [
+            "STOP_INTENT", "autopilot:off", "scanner:stop", "robot:stop",
+            "backend:shutdown", "telegram:shutdown",
+        ])
+
     def test_release_autopilot_postcheck_read_failure_retains_sealed_intent(self):
         runtime = FakeRuntime(robot=READY)
         runtime.autopilot_mode = "PAPER_AUTO"
