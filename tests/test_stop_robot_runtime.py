@@ -664,6 +664,55 @@ class FullShutdownTests(unittest.TestCase):
                 self.assertEqual(runtime.calls, [])
                 self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
 
+    def test_release_initial_autopilot_read_failure_leaves_intent_unsealed(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.autopilot_mode = "PAPER_AUTO"
+        original_get = runtime.get
+        unavailable = True
+
+        def get(url, timeout):
+            if unavailable and url == BACKEND + "/api/robot/autopilot":
+                raise shutdown.Unreachable("read timeout")
+            return original_get(url, timeout)
+
+        runtime.get = get
+        seal = mock.Mock(side_effect=lambda: runtime.calls.append("STOP_INTENT") or True)
+        result = runtime.orchestrator().run("all", before_mutation=seal)
+        self.assertFalse(result.ok)
+        self.assertIn("Autopilot state unavailable", result.message)
+        seal.assert_not_called()
+        self.assertEqual(runtime.calls, [])
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+        unavailable = False
+        result = runtime.orchestrator().run("all", before_mutation=seal)
+        self.assertTrue(result.ok, result.message)
+        seal.assert_called_once()
+        self.assertEqual(runtime.calls, [
+            "STOP_INTENT", "autopilot:off", "scanner:stop", "robot:stop",
+            "backend:shutdown", "telegram:shutdown",
+        ])
+
+    def test_release_autopilot_postcheck_read_failure_retains_sealed_intent(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.autopilot_mode = "PAPER_AUTO"
+        original_get = runtime.get
+
+        def get(url, timeout):
+            if url == BACKEND + "/api/robot/autopilot" and "autopilot:off" in runtime.calls:
+                raise shutdown.Unreachable("postcheck timeout")
+            return original_get(url, timeout)
+
+        runtime.get = get
+        seal = mock.Mock(side_effect=lambda: runtime.calls.append("STOP_INTENT") or True)
+        result = runtime.orchestrator().run("all", before_mutation=seal)
+        self.assertFalse(result.ok)
+        seal.assert_called_once()
+        self.assertEqual(runtime.calls, ["STOP_INTENT", "autopilot:off"])
+        self.assertEqual(runtime.autopilot_mode, "OFF")
+        self.assertEqual(runtime.scanner_mode, "SCANNER_RUNNING")
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
     def test_release_unknown_first_mutation_is_not_retried(self):
         runtime = FakeRuntime(robot=READY)
         runtime.autopilot_mode = "PAPER_AUTO"
