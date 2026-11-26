@@ -312,13 +312,13 @@ def poll_once(config: dict[str, str], *, opener=None, launch=launch_local_viewer
     opened = False
     try:
         if scoped:
-            from research.local_replay_viewer.paper_episode_local_store import store_episode
+            from research.local_replay_viewer.paper_episode_local_store import store_episode, release_archive_root
             raw = _verified_facts(
                 config, request_id=request_id, episode_id=episode,
                 owner=response["owner"], revision=response["source_revision"],
                 opener=opener,
             )
-            stored = store_episode(HERE / "paper-episode-facts", raw)
+            stored = store_episode(release_archive_root(HERE), raw)
             if stored != episode:
                 raise AgentConfigError("local_episode_identity_mismatch")
         launch(episode)
@@ -485,7 +485,7 @@ def _acquire_windows_singleton():
     # Wait only for the existing same-product agent to release its handle.
     # The old version checks the Run registration and exits on supersession.
     # No process is killed, no file deleted, and no second poller may run.
-    for attempt in range(6):
+    for attempt in range(31):
         handle = ctypes.windll.kernel32.CreateMutexW(
             None, False, r"Local\BybitScannerMachineTimeLaunchAdapter"
         )
@@ -494,7 +494,7 @@ def _acquire_windows_singleton():
         if ctypes.windll.kernel32.GetLastError() != 183:
             return handle
         ctypes.windll.kernel32.CloseHandle(handle)
-        if attempt < 5:
+        if attempt < 30:
             time.sleep(POLL_SECONDS)
     return None
 
