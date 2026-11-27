@@ -96,3 +96,41 @@ def load_episode(directory: Path, episode_id: str) -> bytes | None:
     if found_id != episode_id:
         raise ValueError("local_episode_corrupt")
     return raw
+
+def release_archive_root(here: Path) -> Path:
+    """Share facts only across verified installed desktop release layouts."""
+    here = here.resolve()
+    sha = here.parent.name
+    marker = here / "desktop-build-sha.txt"
+    if (here.name == "MachineTime" and here.parent.parent.name == "releases"
+            and here.parent.parent.parent.name == "MachineTime"
+            and re.fullmatch(r"[0-9a-f]{40}", sha)
+            and marker.is_file() and not marker.is_symlink()
+            and marker.read_text(encoding="ascii").strip() == sha):
+        root = here.parent.parent.parent / "paper-episode-facts"
+        return root
+    return here / "paper-episode-facts"
+
+
+def recover_release_episode(here: Path, episode_id: str) -> bytes | None:
+    """Read immutable facts from verified predecessors, never choose conflicts."""
+    root = release_archive_root(here)
+    result = load_episode(root, episode_id)
+    if root == here.resolve() / "paper-episode-facts":
+        return result
+    releases = here.resolve().parent.parent
+    for version in sorted(releases.iterdir()):
+        if version.is_symlink() or not re.fullmatch(r"[0-9a-f]{40}", version.name):
+            continue
+        app = version / "MachineTime"
+        if app.is_symlink() or not app.is_dir() or release_archive_root(app) != root:
+            continue
+        raw = load_episode(app / "paper-episode-facts", episode_id)
+        if raw is not None:
+            if result is not None and json.loads(result) != json.loads(raw):
+                raise LocalEpisodeConflict("episode_identity_conflict")
+            if result is None:
+                result = raw
+    if result is not None:
+        store_episode(root, result)
+    return result

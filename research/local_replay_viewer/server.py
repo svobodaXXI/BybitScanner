@@ -49,7 +49,8 @@ MAX_RESPONSE_BYTES = 2_000_000
 # browser nor HTTP input may supply arbitrary filesystem paths.
 SIM_DATA = HERE / "simulator-v2-data"
 # Local owner-imported facts; never shared with VPS or trading runtime.
-PAPER_EPISODES = HERE / "paper-episode-facts"
+from research.local_replay_viewer.paper_episode_local_store import release_archive_root
+PAPER_EPISODES = release_archive_root(HERE)
 SIM_LOCK = threading.Lock()
 UPDATE_LOCK = threading.Lock()
 UPDATE_STATE = {"status": "idle", "detail": ""}
@@ -489,7 +490,7 @@ def handler_factory(static_dir: Path = STATIC_DIR,
                            "application/json; charset=utf-8")
                 return
             if url.path == "/local-replay/paper-episode":
-                from research.local_replay_viewer.paper_episode_local_store import load_episode
+                from research.local_replay_viewer.paper_episode_local_store import recover_release_episode
                 if (self.headers.get("Sec-Fetch-Site") == "cross-site"
                     or self.headers.get("Origin") not in (
                         None, "", f"http://127.0.0.1:{self.server.server_address[1]}",
@@ -501,7 +502,7 @@ def handler_factory(static_dir: Path = STATIC_DIR,
                     params = parse_qs(url.query, strict_parsing=True)
                     if set(params) != {"trade_episode_id"} or len(params["trade_episode_id"]) != 1:
                         raise ValueError("invalid_episode_lookup")
-                    raw = load_episode(PAPER_EPISODES, params["trade_episode_id"][0])
+                    raw = recover_release_episode(HERE, params["trade_episode_id"][0])
                 except (ValueError, OSError):
                     self._error(422, "Invalid local episode evidence")
                     return

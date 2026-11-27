@@ -74,6 +74,40 @@ assert flat.HERE / "paper-episode-facts" == nested.HERE / "paper-episode-facts"
                            cwd=root, check=True, timeout=15)
             self.assertFalse((nested / "simulator-v2-data").exists())
 
+    def test_installed_release_pairing_recovery_and_conflict_refusal(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            releases = root / "BybitScanner" / "MachineTime" / "releases"
+            def release(sha):
+                app = releases / sha / "MachineTime"
+                app.mkdir(parents=True)
+                (app / "desktop-build-sha.txt").write_text(sha, encoding="ascii")
+                (app / "trusted-statistics-origin.txt").write_text(
+                    "https://example.test\n", encoding="ascii")
+                return app
+            old, new = release("a"*40), release("b"*40)
+            old_config = old / "simulator-v2-data" / "launch-bridge.json"
+            old_config.parent.mkdir()
+            original = json.dumps({"schema": agent.SCHEMA, **self.config})
+            old_config.write_text(original, encoding="utf-8")
+            with patch.dict("os.environ", {"LOCALAPPDATA": str(root)}):
+                shared = agent._config_path(new)
+                self.assertEqual(shared, agent._config_path(old))
+                with patch.object(agent, "HERE", new), patch.object(agent, "CONFIG_PATH", shared):
+                    other = new / "simulator-v2-data" / "launch-bridge.json"
+                    other.parent.mkdir()
+                    other.write_text(json.dumps({"schema": agent.SCHEMA, **self.config,
+                                                 "token": "B"*64}), encoding="utf-8")
+                    with self.assertRaisesRegex(agent.AgentConfigError, "conflicting_legacy_pairings"):
+                        agent.read_config()
+                    self.assertFalse(shared.exists())
+                    other.unlink()
+                    self.assertEqual(agent.read_config(), self.config)
+                    self.assertEqual(old_config.read_text(encoding="utf-8"), original)
+                    self.assertTrue(shared.is_file())
+                with patch.object(agent, "HERE", old), patch.object(agent, "CONFIG_PATH", shared):
+                    self.assertEqual(agent.read_config(), self.config)
+
     def test_default_relay_transport_honors_configured_proxy_and_keeps_tls(self):
         from types import SimpleNamespace
         with patch.dict("os.environ", {"https_proxy": "http://127.0.0.1:1"}), \
