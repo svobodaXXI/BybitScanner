@@ -22,7 +22,10 @@ class TelegramOwnerActionTests(unittest.TestCase):
             stdout = "LoadState=not-found\n" if command[0] == "systemctl" else ""
             return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
 
-        with redirect_stdout(StringIO()):
+        with (redirect_stdout(StringIO()),
+              patch.object(vps_owner_control, "_owner_request_path"),
+              patch.object(vps_owner_control, "_read_request_intent", return_value=None),
+              patch.object(vps_owner_control, "_reserve_request_intent")):
             result = vps_owner_control.submit(
                 "telegram-recover", SHA, REQUEST, "win-laptop", run=runner, uid=0
             )
