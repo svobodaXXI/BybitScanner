@@ -87,6 +87,8 @@ def _authority_refs(kind: str) -> list[str]:
         "DOCUMENTS/ASSISTANT_RULES/60-context.md#3.1 AUTO_SESSION_BOOTSTRAP_RULE",
         "DOCUMENTS/ASSISTANT_RULES/60-context.md#3.2 CONTEXT_AND_LIMIT_ECONOMY_RULE",
         "DOCUMENTS/BACKLOG.md",
+        "DOCUMENTS/ASSISTANT_RULES/00-core.md#1. ROLE AND AUTHORITY",
+        "DOCUMENTS/ASSISTANT_RULES/11-result-first.md#RESULT-FIRST NEXT-ACTION GATE — OWNER RULE 2026-10-17",
     ]
     routed = {
         "frontend": [

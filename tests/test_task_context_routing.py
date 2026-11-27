@@ -27,7 +27,9 @@ class TaskContextRoutingTests(unittest.TestCase):
 
     def test_common_authority_anchors_resolve(self):
         root = Path(__file__).resolve().parents[1]
-        common = _authority_refs("developer_workflow")[:4]
+        common = _authority_refs("developer_workflow")[:7]
+        self.assertIn("DOCUMENTS/ASSISTANT_RULES/00-core.md#1. ROLE AND AUTHORITY", common)
+        self.assertIn("DOCUMENTS/ASSISTANT_RULES/11-result-first.md#RESULT-FIRST NEXT-ACTION GATE — OWNER RULE 2026-10-17", common)
 
         for reference in common:
             with self.subTest(reference=reference):
