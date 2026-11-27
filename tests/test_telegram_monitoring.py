@@ -1559,5 +1559,74 @@ class TelegramMarketTests(unittest.TestCase):
         candles.assert_any_call("BBBUSDT", "15", HISTORY_BARS, end_ms=cutoff - 1)
 
 
+class MarketTapeTests(unittest.TestCase):
+    NOW = 1_800_000_000_000
+    SYMBOL = "TESTUSDT"
+
+    def response(self, ages, *, price="100", size="2"):
+        return {
+            "retCode": 0, "time": self.NOW,
+            "result": {"category": "linear", "list": [
+                {"symbol": self.SYMBOL, "execId": str(i),
+                 "time": str(self.NOW - age), "price": price,
+                 "size": size, "side": "Buy"}
+                for i, age in enumerate(ages)
+            ]},
+        }
+
+    def observe(self, response):
+        from telegram_market import observe_recent_trades
+        return observe_recent_trades(self.SYMBOL, response)
+
+    def test_observed_sustained_activity_and_expiry(self):
+        ages = [1000 + i * 1500 for i in range(36)]
+        result = self.observe(self.response(ages + [61_000, 300_000]))
+        self.assertEqual(result.prints_1m, 36)
+        self.assertEqual(result.prints_5m, 37)
+        self.assertEqual(result.turnover_1m, 7200)
+        self.assertEqual(result.active_10s_buckets, 6)
+        self.assertEqual(result.activity_state(self.NOW), "ACTIVE_SUSTAINED_OBSERVED")
+        self.assertEqual(result.activity_state(self.NOW + 5000), "QUIET")
+        self.assertEqual(result.activity_state(self.NOW + 10001), "UNKNOWN")
+        self.assertEqual(result.activity_state(self.NOW - 1), "UNKNOWN")
+
+    def test_thin_and_old_tape_do_not_qualify(self):
+        for ages, price, size in [
+            ([200, 500, 1000, 24000], "100", "0.1"),
+            ([1000 + i * 1500 for i in range(36)], "1", "1"),
+            ([24000 + i * 500 for i in range(40)], "100", "2"),
+            ([860100, 900000], "100", "2"),
+            ([1000] * 40, "100", "2"),
+        ]:
+            with self.subTest(ages=ages[:4], price=price, size=size):
+                result = self.observe(self.response(ages, price=price, size=size))
+                self.assertEqual(result.activity_state(self.NOW), "QUIET")
+
+    def test_capped_busy_tape_does_not_invent_continuity(self):
+        result = self.observe(self.response([100 + i for i in range(1000)]))
+        self.assertTrue(result.truncated_1m)
+        self.assertTrue(result.truncated_5m)
+        self.assertEqual(result.prints_1m, 1000)
+        self.assertEqual(result.active_10s_buckets, 1)
+        self.assertEqual(result.activity_state(self.NOW), "ACTIVE_BURST_OBSERVED")
+
+    def test_duplicates_and_invalid_responses(self):
+        response = self.response([100, 1000])
+        rows = response["result"]["list"]
+        rows.append(dict(rows[0]))
+        self.assertEqual(self.observe(response).prints_1m, 2)
+        rows[-1]["size"] = "999"
+        self.assertIsNone(self.observe(response))
+        for field, value in [("symbol", "OTHERUSDT"), ("price", "nan"),
+                             ("size", "0"), ("time", str(self.NOW + 1)),
+                             ("execId", ""), ("side", "invalid")]:
+            response = self.response([100])
+            response["result"]["list"][0][field] = value
+            self.assertIsNone(self.observe(response))
+        self.assertIsNone(self.observe(self.response([])))
+        self.assertIsNone(self.observe({"retCode": 10006}))
+
+
+
 if __name__ == "__main__":
     unittest.main()
