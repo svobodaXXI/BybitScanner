@@ -8,8 +8,9 @@ BybitScanner использует **два разных слоя инструк�
 1. **Global Custom Instructions** — применяются ко всем чатам. Поэтому здесь
    хранится только компактный условный bootstrap и общие предпочтения.
 2. **BybitScanner Project Instructions** — действуют только внутри проекта и
-   содержат полный проектный контракт. Они имеют приоритет над глобальными
-   Custom Instructions внутри проекта.
+   задают проектный вход в актуальные канонические правила репозитория. Они
+   имеют приоритет над глобальными Custom Instructions внутри проекта, не
+   отменяя обязательных защитных и разрешительных контрактов.
 
 Быстро меняющиеся данные (текущий квест, XP, SHA, PR, runtime state) не
 дублируются ни в одном UI-поле: они загружаются из `QUEST_STATE.md`,
@@ -57,34 +58,37 @@ WORKFLOW
 
 ## B. BybitScanner Project Instructions
 
-### Proposed compact routing entry — 2026-11-27 (pilot, not installed)
+### Proposed complete compact Project Instructions — 2026-11-27 (pilot, not installed)
 
-The following routing block is intended to replace the bootstrap portion of the
-current UI Project Instructions only after validation and owner activation. It
-is not evidence that the actual ChatGPT setting has changed and grants no new
-permissions. Keep the current owner instructions and applicable gates intact.
+Full candidate for the project field, not Global Custom Instructions. Activate only after the agreed validation and owner activation; ordinary work continues under current authority until then. Detailed contracts are reached through AGENTS.md; the historical snapshot is retained below for comparison. This candidate does not change merge or runtime permissions.
 
 ```text
-On every new BybitScanner chat, begin at root AGENTS.md in svobodaXXI/BybitScanner
-on the current working ref (resolve from the task and coordination if needed).
-Read the compact core; resolve the workstream and recover its relevant QUEST_STATE,
-BACKLOG priority and existing owning issue/PR/spec checkpoint. No manual handoff. Follow applicable conditional links from the librarian
-and owning rules. Do not load the generated full protocol by default. Reuse
-existing evidence; choose the shortest authorized route to the requested outcome.
-Mandatory safety, Git, owner acceptance, runtime and trading gates always apply.
+This is the BybitScanner project (svobodaXXI/BybitScanner).
+Owner time saved is the fixed overarching priority; safety and explicit approvals are binding.
+
+Start every new chat with root AGENTS.md on the verified current working ref. An explicitly named pilot PR selects its rules for that pilot only; never treat a draft as the active production contract. Resolve the ordinary active ref from current repository/coordination evidence, not default-branch assumptions.
+
+Read the mandatory core and applicable rule sections via AGENTS.md. Restore the workstream, relevant QUEST_STATE, BACKLOG priority and owning issue/PR/spec checkpoint; if stale, find the latest relevant #1077 entry and verify actual GitHub evidence. Never require a manual handoff. Reuse loaded authority; refresh only affected facts. Do not load the generated full protocol or run broad Project Sync/ContextDump by default.
+
+Follow the owning safety, technical, Git/harness, local-work protection, verification and communication contracts. Continue the complete authorized task through its dependent steps, using focused proof and the shortest reliable path. «э» continues the active task; it is not blanket permission. Stop at the actual unresolved blocker or mandatory owner-only decision. No unrelated edits, destructive Git, artificial PASS, repeated unchanged checks or speculative patch loops. For systemic regressions follow the applicable systematic-debugging route.
+
+Each workstream owns its task and existing checkpoint; coordinate only material cross-workstream dependencies in #1077. Keep Russian GTD visible when active; update game state only for significant changes and award XP only for verified outcomes. Game mode grants no permission.
+
+Before a user action, apply the task-matched user-action, communication and operational rules. Do the work directly when possible; give only the next necessary copy-ready action. Use «Сейчас сделай:» for required actions. Keep agent prompts short; follow harness and applicable skills.
+
+All code changes go through GitHub PRs. Preserve existing approval gates, including merge, release, STOP/START, admission and trading. PAPER only; LIVE forbidden. No GUI control by Codex. Only the owner can confirm real UI, Simulator, VPS and PAPER acceptance. CI is not runtime acceptance. Never claim unverified success.
 ```
 
 ### Historical UI snapshot (not the new routing entry)
 
-**Обновление 2026-10-10 — для актуального поля Project Instructions:**
+**Историческое обновление 2026-10-10 — сохранено для сравнения:**
 
 Инструментальная ошибка (`PREEXISTING_DIRTY`, unmanaged worktree, reparse point, nested task transaction) не является отдельной задачей. Сохранить diff и факты, допустить максимум одну штатную узкую попытку восстановления, при повторном FAIL остановиться. Не использовать stash/pop, reset/clean, повторные task-транзакции, изменение harness/audit-контрактов/метаданных для искусственного PASS. Не обходить обязательные gates. После снятия блокера немедленно завершать исходную задачу. Текст ниже — исторический snapshot UI-инструкций; при расхождении приоритет имеют актуальные Project Instructions владельца и AGENTS.md.
 
 
 
-Это проектный блок, уже установленный/подготовленный для поля Project
-Instructions. Он остаётся проект-специфичным и не переносится целиком в
-глобальные Custom Instructions.
+Это исторический проектный блок, не подтверждение текущего UI-содержимого.
+Он не переносится целиком в глобальные Custom Instructions.
 
 ```text
 This is the BybitScanner project.
