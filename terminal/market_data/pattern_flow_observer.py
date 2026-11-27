@@ -452,6 +452,7 @@ class PatternFlowObserver:
             return None
         return {"subscription_acks": acks, "trade_generation": tape["generation"],
                 "book_update_ids_contiguous": True, "trade_interval_bracketed": True,
+                "trade_bracket": [asdict(prints[0]), asdict(prints[-1])],
                 "public_trade_completeness": "UNPROVEN"}
 
     def _save_wedge_capture(self, record, context) -> None:
