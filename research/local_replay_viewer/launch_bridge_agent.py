@@ -27,7 +27,31 @@ if __package__:
 else:
     from protocol_launcher import HERE, EPISODE_RE, launch_local_viewer, viewer_is_running
 
-CONFIG_PATH = HERE / "simulator-v2-data" / "launch-bridge.json"
+def _installed_releases(here: Path) -> Path | None:
+    """Recognize only the per-user installed desktop layout, not source trees."""
+    local = os.environ.get("LOCALAPPDATA")
+    if not local:
+        return None
+    releases = Path(local).resolve() / "BybitScanner" / "MachineTime" / "releases"
+    sha = here.parent.name
+    marker = here / "desktop-build-sha.txt"
+    if (here.name == "MachineTime" and here.parent.parent == releases
+            and not any(p.is_symlink() for p in (releases, releases.parent, here.parent, here))
+            and re.fullmatch(r"[0-9a-f]{40}", sha)
+            and marker.is_file() and not marker.is_symlink()
+            and marker.stat().st_size <= 64
+            and marker.read_text(encoding="ascii").strip() == sha):
+        return releases
+    return None
+
+
+def _config_path(here: Path) -> Path:
+    releases = _installed_releases(here)
+    root = releases.parent if releases is not None else here
+    return root / "simulator-v2-data" / "launch-bridge.json"
+
+
+CONFIG_PATH = _config_path(HERE)
 DEVICE_RE = re.compile(r"[a-z][a-z0-9_-]{1,31}\Z")
 REQUEST_RE = re.compile(r"[0-9a-f]{32}\Z")
 SCHEMA = "BYBITSCANNER_SIMULATOR_LAUNCH_DEVICE_V1"
@@ -40,7 +64,10 @@ class AgentConfigError(ValueError):
 
 
 def read_config(path: Path | None = None) -> dict[str, str] | None:
-    path = CONFIG_PATH if path is None else path
+    if path is None:
+        path = CONFIG_PATH
+        if not path.exists() and not path.is_symlink():
+            _recover_installed_pairing(path)
     if not path.exists():
         return None
     if path.is_symlink() or path.parent.is_symlink() or not path.is_file():
@@ -72,6 +99,46 @@ def read_config(path: Path | None = None) -> dict[str, str] | None:
     if not valid_origin:
         raise AgentConfigError("invalid_device_origin")
     return {"origin": origin, "device_id": device, "token": token}
+
+
+def _recover_installed_pairing(path: Path) -> None:
+    """Copy one unambiguous existing pairing; never re-pair or replace a token."""
+    releases = _installed_releases(HERE)
+    if releases is None or path != _config_path(HERE):
+        return
+    if path.parent.is_symlink() or path.is_symlink():
+        raise AgentConfigError("untrusted_device_config_path")
+    candidate = None
+    for version in sorted(releases.iterdir()):
+        app = version / "MachineTime"
+        if version.is_symlink() or app.is_symlink() or not app.is_dir():
+            continue
+        if _installed_releases(app) != releases:
+            continue
+        existing = read_config(app / "simulator-v2-data" / "launch-bridge.json")
+        if existing is None:
+            continue
+        if candidate is not None and existing != candidate:
+            raise AgentConfigError("conflicting_legacy_pairings")
+        candidate = existing
+    if candidate is None:
+        return
+    if candidate["origin"] != _trusted_statistics_origin():
+        raise AgentConfigError("legacy_pairing_origin_mismatch")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.parent.is_symlink():
+        raise AgentConfigError("untrusted_device_config_path")
+    raw = json.dumps({"schema": SCHEMA, **candidate}, separators=(",", ":")).encode("utf-8")
+    try:
+        fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        if read_config(path) != candidate:
+            raise AgentConfigError("existing_device_pairing_preserved")
+        return
+    with os.fdopen(fd, "wb") as stream:
+        stream.write(raw)
+        stream.flush()
+        os.fsync(stream.fileno())
 
 
 class _NoRedirect(HTTPRedirectHandler):
