@@ -2,7 +2,7 @@
 
 Version:
 
-4.54
+4.55
 
 Date:
 
@@ -869,8 +869,9 @@ A workstream, not a particular chat or chat title, owns its active task. For
 continuation, use the active workstream routing in
 `DOCUMENTS/WORKSTREAM_COORDINATION.md`. Resolve the direction from the current
 owner task and available conversation context; use the relevant workstream
-checkpoint, not the newest unrelated entry in QUEST_STATE or #1077. Verify
-changed or uncertain PR/issue/host facts against their actual authority.
+checkpoint, not the newest unrelated entry in QUEST_STATE or #1077. If its checkpoint is missing or stale, use the direction-specific recovery
+fallback in WORKSTREAM_COORDINATION, then verify changed or uncertain PR/issue/host
+facts against their actual authority.
 An ambiguous bare continuation in a new chat with no recoverable direction
 requires only the direction name, never a manually reconstructed handoff.
 
@@ -1523,6 +1524,8 @@ extends `8.7` (no user as file transport) and `8.8` (machine-applied file change
 ---
 
 # 9. CURRENT REVISION RECORD
+
+`4.55` adds bounded workstream checkpoint recovery when the quest projection is missing or stale. Actual issue/PR evidence determines completion, not journal order or old status labels.
 
 `4.54` routes continuation by stable workstream rather than chat identity, reuses existing task checkpoints and limits shared coordination to cross-workstream facts. No changes to ownership or approval gates.
 

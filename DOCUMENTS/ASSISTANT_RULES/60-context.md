@@ -117,8 +117,9 @@ A workstream, not a particular chat or chat title, owns its active task. For
 continuation, use the active workstream routing in
 `DOCUMENTS/WORKSTREAM_COORDINATION.md`. Resolve the direction from the current
 owner task and available conversation context; use the relevant workstream
-checkpoint, not the newest unrelated entry in QUEST_STATE or #1077. Verify
-changed or uncertain PR/issue/host facts against their actual authority.
+checkpoint, not the newest unrelated entry in QUEST_STATE or #1077. If its checkpoint is missing or stale, use the direction-specific recovery
+fallback in WORKSTREAM_COORDINATION, then verify changed or uncertain PR/issue/host
+facts against their actual authority.
 An ambiguous bare continuation in a new chat with no recoverable direction
 requires only the direction name, never a manually reconstructed handoff.
 
