@@ -2,7 +2,7 @@
 
 Version:
 
-4.55
+4.56
 
 Date:
 
@@ -321,7 +321,7 @@ quest, agent role, approval or required document.
 
 - **One outcome:** owner specifies observable success and product constraints;
   ChatGPT carries GitHub work through implementation, focused evidence and the
-  next authorized action. Codex handles VPS operations only. Internal PRs are
+  next authorized action. Codex handles authorized VPS operations and exceptional local-only verification when repository-native evidence is insufficient. Internal PRs are
   not separate user tasks; request only genuinely required owner approvals.
 - **Small context:** follow `60-context.md` §3.2. Do not duplicate state
   or write progress logs without a significant verified change.
@@ -385,7 +385,7 @@ transition timing/state boundary—not only internal helpers or mocked success
 paths. A passing targeted test and required CI qualify the code for a separate
 authorized merge; neither is runtime acceptance. Do not interrupt a pending,
 safe, expressly authorized operational continuation solely to merge preventive
-code unless that code is a proven prerequisite. Codex is a VPS executor only;
+code unless that code is a proven prerequisite. Codex is a host-specific executor under the task's existing authority;
 ChatGPT owns GitHub implementation.
 
 **One result to the owner:** apply Result-First step 5 to the verified
@@ -1524,6 +1524,8 @@ extends `8.7` (no user as file transport) and `8.8` (machine-applied file change
 ---
 
 # 9. CURRENT REVISION RECORD
+
+`4.56` connects the existing task-context/harness to the Codex economy route and clarifies its authorized local-only verification role; no new host, publication or trading permission.
 
 `4.55` adds bounded workstream checkpoint recovery when the quest projection is missing or stale. Actual issue/PR evidence determines completion, not journal order or old status labels.
 

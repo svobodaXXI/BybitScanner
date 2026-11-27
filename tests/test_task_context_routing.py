@@ -27,7 +27,8 @@ class TaskContextRoutingTests(unittest.TestCase):
 
     def test_common_authority_anchors_resolve(self):
         root = Path(__file__).resolve().parents[1]
-        common = _authority_refs("developer_workflow")[:7]
+        common = _authority_refs("developer_workflow")[:8]
+        self.assertIn("AGENTS.md#Codex — task-scoped economy route", common)
         self.assertIn("DOCUMENTS/ASSISTANT_RULES/00-core.md#1. ROLE AND AUTHORITY", common)
         self.assertIn("DOCUMENTS/ASSISTANT_RULES/11-result-first.md#RESULT-FIRST NEXT-ACTION GATE — OWNER RULE 2026-10-17", common)
 
@@ -71,6 +72,8 @@ class TaskContextRoutingTests(unittest.TestCase):
             context["project_priority"],
         )
         self.assertIn("DOCUMENTS/BACKLOG.md", context["authority_refs"])
+        self.assertIn("AGENTS.md#Codex — task-scoped economy route", context["authority_refs"])
+        self.assertIn("not a full-read checklist", context["notice"])
 
     def test_task_context_does_not_route_to_legacy_protocol_heading(self):
         references = _authority_refs("developer_workflow")

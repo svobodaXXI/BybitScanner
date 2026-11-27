@@ -83,6 +83,7 @@ def _scope_kind(paths: Sequence[str]) -> str:
 def _authority_refs(kind: str) -> list[str]:
     common = [
         "AGENTS.md#Fast task entry",
+        "AGENTS.md#Codex — task-scoped economy route",
         "DOCUMENTS/PROJECT_STATE.md#CURRENT_DEVELOPMENT_PRIORITY",
         "DOCUMENTS/ASSISTANT_RULES/60-context.md#3.1 AUTO_SESSION_BOOTSTRAP_RULE",
         "DOCUMENTS/ASSISTANT_RULES/60-context.md#3.2 CONTEXT_AND_LIMIT_ECONOMY_RULE",
@@ -158,7 +159,7 @@ def build_task_context(
     result: dict[str, object] = {
         "schema": SCHEMA,
         "authority": AUTHORITY,
-        "notice": "Disposable bootstrap; repository authority and current Git/filesystem state prevail.",
+        "notice": "Disposable bootstrap; repository authority and current Git/filesystem state prevail. Authority references are task-scoped pointers, not a full-read checklist; the current assignment outranks unrelated project-priority hints.",
         "git": {"branch": branch, "head": head, "last_safe_commit": head},
         "task": {"paths": exact_paths, "scope_kind": kind},
         "current": active,

@@ -1,5 +1,7 @@
 # 9. CURRENT REVISION RECORD
 
+`4.56` connects the existing task-context/harness to the Codex economy route and clarifies its authorized local-only verification role; no new host, publication or trading permission.
+
 `4.55` adds bounded workstream checkpoint recovery when the quest projection is missing or stale. Actual issue/PR evidence determines completion, not journal order or old status labels.
 
 `4.54` routes continuation by stable workstream rather than chat identity, reuses existing task checkpoints and limits shared coordination to cross-workstream facts. No changes to ownership or approval gates.

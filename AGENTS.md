@@ -63,7 +63,7 @@ stopping boundary. Do not create serial owner handoffs.
 
 1. Identify the owner's observable outcome, intended repository ref or local
    worktree, and actual scope. Read [core](DOCUMENTS/ASSISTANT_RULES/00-core.md).
-2. For a new chat, resolve the workstream using the current task and [workstream routing](DOCUMENTS/WORKSTREAM_COORDINATION.md).
+2. For a new ChatGPT project chat or an open-ended workstream continuation, resolve the workstream using the current task and [workstream routing](DOCUMENTS/WORKSTREAM_COORDINATION.md).
    Recover its relevant `QUEST_STATE.md` entry, `BACKLOG.md` priority and owning
    issue/PR/spec checkpoint via [Context §3.2.2](DOCUMENTS/ASSISTANT_RULES/60-context.md#322-chat-independent-task-continuation).
    Reconcile with the latest owner command; continue in Russian GTD mode. No manual handoff.
@@ -108,7 +108,9 @@ the numbered packages. Maintain the owning package, not two copies of a rule.
 Use GitHub-native evidence and implementation first. Delegate to Codex only an
 already authorized host-specific outcome or local verification that cannot be
 established from repository-native evidence. After the mandatory core, load
-only the applicable route above and the owning task references; reuse current
+only the applicable route above and the owning task references. A concrete
+local assignment with sufficient authority and evidence does not require a
+project-wide chat bootstrap or unrelated quest-history reads. Reuse current
 Git/CI/host evidence when it actually proves the claim. A read-only local check
 needs no edit transaction. For authorized local edits use the existing `task
 start` / `task finish` facade in `DOCUMENTS/AGENT_GUIDE_FULL.md` → Repository
