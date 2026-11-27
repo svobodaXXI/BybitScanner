@@ -91,6 +91,7 @@ stopping boundary. Do not create serial owner handoffs.
 | When | Canonical destination |
 | --- | --- |
 | GitHub branches, PR, CI, merge | `DOCUMENTS/GITHUB_FIRST_WORKFLOW.md`; [harness/publication](DOCUMENTS/ASSISTANT_RULES/10-harness-and-publication.md) |
+| Codex quota economy, authorized local-only checks or VPS synchronization | [Context §§3.2–3.2.1a](DOCUMENTS/ASSISTANT_RULES/60-context.md#32-context_and_limit_economy_rule); [workspace/continuation](DOCUMENTS/ASSISTANT_RULES/70-workspace-continuation.md) for sync; VPS register and operational checks only for host tasks |
 | Local/Codex edits, dirty work, sync/handoff | [Workspace/continuation](DOCUMENTS/ASSISTANT_RULES/70-workspace-continuation.md); `DOCUMENTS/AGENT_GUIDE_FULL.md` → Change safety / Repository edits |
 | Implementation, test selection, build, checkpoint | [Development](DOCUMENTS/ASSISTANT_RULES/80-development.md); task-specific code/spec |
 | Architecture, structure, development contract | `DOCUMENTS/ARCHITECTURE.md`, `DOCUMENTS/PROJECT_TREE.md`, applicable `DOCUMENTS/PROJECT_CONTRACTS.md` / `DOCUMENTS/PROJECT_RULES.md`; `DOCUMENTS/WORKFLOW_RULES.md` only for its owning workflow |
@@ -101,6 +102,22 @@ stopping boundary. Do not create serial owner handoffs.
 
 `DOCUMENTS/ASSISTANT_PROTOCOL.md` is a generated compatibility projection of
 the numbered packages. Maintain the owning package, not two copies of a rule.
+
+### Codex — task-scoped economy route
+
+Use GitHub-native evidence and implementation first. Delegate to Codex only an
+already authorized host-specific outcome or local verification that cannot be
+established from repository-native evidence. After the mandatory core, load
+only the applicable route above and the owning task references; reuse current
+Git/CI/host evidence when it actually proves the claim. A read-only local check
+needs no edit transaction. For authorized local edits use the existing `task
+start` / `task finish` facade in `DOCUMENTS/AGENT_GUIDE_FULL.md` → Repository
+edits; do not repeat its successful sync, context, governance or final checks.
+Return the bounded result and stop at the applicable outcome or real blocker;
+no repeated polling, broad recovery or agent-supervised Scanner pass. Use the
+existing `context_budget` tool only when measuring recovery footprint, not as
+a routine gate. This route changes no delegation, host, trading, merge or
+acceptance authority.
 
 ## Trading, safety and product routes
 
