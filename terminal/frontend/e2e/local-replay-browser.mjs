@@ -780,6 +780,8 @@ try {
     `BTCUSDT | ${fromValue} | ${toValue} UTC`);
   assert.match(await factNote.innerText(), /BTCUSDT · LONG · 2 исполнения · PnL: -1,00 USDT/);
   assert.match(await factNote.innerText(), /Свечи M5 сопоставлены/);
+  assert.match(await page.locator('[aria-label="Фактические исполнения PAPER"]').innerText(), /1 \/ 1/);
+  assert.match(await page.locator(".replay-meta").innerText(), /Свечи \/ виртуальные входы \/ выходы/);
   assert.doesNotMatch(await factNote.innerText(), /Gross PnL/);
   await factNote.locator("summary").click();
   assert.match(await factNote.innerText(), /Треугольники на закрытых свечах/);

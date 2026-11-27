@@ -10,7 +10,7 @@ import {
 } from "./replayModel";
 import { visibleExecutionMarkers, TELEGRAM_BUY_COLOR, TELEGRAM_SELL_COLOR } from "./executionMarkers";
 import {
-  matchPaperFactsToMarket, parsePaperEpisodeFacts, revealedPaperMarkers, visibleGeometryRevisions,
+  matchPaperFactsToMarket, parsePaperEpisodeFacts, revealedPaperMarkers, visibleGeometryRevisions, visiblePaperExecutionCounts,
   type PaperEpisodeFacts, type PaperOverlay,
 } from "./paperEpisodeFacts";
 import { rayEndPoint } from "../chart/drawingGeometry";
@@ -767,6 +767,8 @@ export function ReplayPage() {
       a.timeMs - b.timeMs || a.id.localeCompare(b.id));
   }, [paperFacts, paperOverlay, shown.candles, shown.lastTimeMs, paperDecisionObservations]);
 
+  const paperCounts = useMemo(() => visiblePaperExecutionCounts(paperFacts, paperOverlay, shown.candles),
+    [paperFacts, paperOverlay, shown.candles]);
   const total = document.events.length;
   const progress = total > 0 ? Math.round(100 * cursor / total) : 0;
   const expectedM5 = useMemo(() => requestedWindow
@@ -1442,13 +1444,17 @@ export function ReplayPage() {
         </details>
       </div>}
       <section className="replay-meta" aria-label="Состояние симулятора">
-        <div><span>Источник</span><strong>{fileLabel}</strong></div>
+        <div><span>Источник</span><strong>{paperFacts && document.mode === "MARKET_ONLY"
+          ? fileLabel.replace("без сделок", "без виртуальных сделок") : fileLabel}</strong></div>
         <div><span>Время рынка</span><strong>{simulationGraphPending ? "До начала прогона" :
           shown.lastTimeMs === null ? "До первого события" :
           new Date(shown.lastTimeMs).toLocaleString("ru-RU", { timeZone: "UTC" }) + " UTC"}</strong></div>
-        <div><span>Свечи / входы / выходы</span>
+        <div><span>Свечи / виртуальные входы / выходы</span>
           <strong>{simulationGraphPending ? "0 / 0 / 0" :
             `${shown.candles.length} / ${shown.fills.length} / ${shown.exits.length}`}</strong></div>
+        {paperFacts && <div aria-label="Фактические исполнения PAPER"><span>Исполнения PAPER · входы / выходы</span>
+          <strong>{paperOverlay.status !== "MATCHED" ? "Ожидание свечей M5" :
+            simulationGraphPending ? "0 / 0" : `${paperCounts.entries} / ${paperCounts.exits}`}</strong></div>}
       </section>
       {!simulationGraphPending && <>
       <div className="replay-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100}
@@ -1456,7 +1462,7 @@ export function ReplayPage() {
         <div style={{ width: progress + "%" }} />
       </div>
       {document.mode === "MARKET_ONLY" && <p className="replay-note" role="status" aria-label="Статус выбранных стратегий">
-        РЕАЛЬНЫЕ СВЕЧИ BYBIT · БЕЗ СДЕЛОК:
+        {paperFacts ? "РЕАЛЬНЫЕ СВЕЧИ BYBIT · БЕЗ ВИРТУАЛЬНЫХ СДЕЛОК:" : "РЕАЛЬНЫЕ СВЕЧИ BYBIT · БЕЗ СДЕЛОК:"}
         {" "}{document.market_data_source === "BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M"
           ? "исторические сделки из официального публичного архива, агрегированные в закрытые 5m OHLCV"
           : "публичные свечи API Bybit"}

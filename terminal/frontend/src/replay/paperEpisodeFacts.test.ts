@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { parseReplayDocument, type ReplayDocument } from "./replayModel";
 import { isReplayUsdtSymbol, parseRunCoordinates, makeWedgeRunRequest, onlyWedges, parseWedgeStatus } from "./runSetup";
 import {
-  matchPaperFactsToMarket, parsePaperEpisodeFacts, revealedPaperMarkers, visibleGeometryRevisions,
+  matchPaperFactsToMarket, parsePaperEpisodeFacts, revealedPaperMarkers, visibleGeometryRevisions, visiblePaperExecutionCounts,
 } from "./paperEpisodeFacts";
 
 const t = Date.UTC(2026, 9, 1);
@@ -134,6 +134,24 @@ describe("PAPER episode facts are display-only, never SIMULATION fills", () => {
     ])).toHaveLength(1);
     expect(revealedPaperMarkers(overlay, [])).toEqual([]);
     expect(JSON.stringify(history.events)).toBe(original); // never modify the simulation
+  });
+
+  it("counts only causally revealed PAPER entry and exit allocations, including partials", () => {
+    const facts = parsePaperEpisodeFacts(source);
+    const doc = market();
+    const overlay = matchPaperFactsToMarket(facts, doc);
+    const candles = doc.events.map(event => event.candle!);
+    expect(visiblePaperExecutionCounts(facts, overlay, [])).toEqual({ entries: 0, exits: 0 });
+    expect(visiblePaperExecutionCounts(facts, overlay, candles.slice(0, 3))).toEqual({ entries: 1, exits: 0 });
+    expect(visiblePaperExecutionCounts(facts, overlay, candles)).toEqual({ entries: 1, exits: 1 });
+    const partials = { ...facts, execution_allocations: [
+      ...facts.execution_allocations,
+      { ...facts.execution_allocations[0], allocation_role: "INCREASE" as const },
+      { ...facts.execution_allocations[1], allocation_role: "REDUCE" as const },
+    ] };
+    expect(visiblePaperExecutionCounts(partials, overlay, candles)).toEqual({ entries: 2, exits: 2 });
+    expect(visiblePaperExecutionCounts(facts, matchPaperFactsToMarket(facts, market("ETHUSDT")), candles))
+      .toEqual({ entries: 0, exits: 0 });
   });
 
   it("maps exact M5-boundary executions to the next fully closed bar, not the past", () => {
