@@ -3,10 +3,13 @@
 Research-only WebSocket subscribe behavior; no Robot admission or trading.
 """
 import json
+from decimal import Decimal
 from types import SimpleNamespace
 import unittest
 
 from terminal.market_data.hub import MarketDataHub
+from terminal.market_data.impulse_observation import ObservedPrint
+from terminal.market_data.pattern_flow_observer import PatternFlowObserver
 
 
 class _Registry:
@@ -128,6 +131,41 @@ class PassiveBookCapturePromotionTests(unittest.TestCase):
         self.assertEqual(hub.private_passive_wedge_snapshot(passive)["subscription_acks"], {})
         hub._dispatch({"op": "subscribe", "req_id": current_request, "success": True})
         self.assertEqual(hub.private_passive_wedge_snapshot(passive)["subscription_acks"], {})
+
+    def test_private_receipt_requires_ack_generation_and_contiguous_book(self):
+        symbol = "BTCUSDT"
+        book = "orderbook.200." + symbol
+        trades = "publicTrade." + symbol
+
+        def frame(uid, seq, stamp, kind):
+            return (stamp, {"topic": book, "type": kind, "ts": stamp,
+                            "cts": stamp, "data": {"s": symbol, "u": uid, "seq": seq}})
+
+        def trade(identity, stamp, seq):
+            return ObservedPrint(identity, stamp, seq, "Buy", Decimal("100"),
+                                 Decimal("1"), received_at_ms=stamp)
+
+        sample = {
+            "book_frames": (frame(10, 100, 1000, "snapshot"),
+                            frame(11, 102, 1010, "delta")),
+            "tape": {"generation": 3, "invalid_frames": 0,
+                     "prints": (trade("a", 990, 99), trade("b", 1020, 103))},
+            "subscription_acks": {
+                topic: {"request_id": "id", "received_at_ms": 900, "generation": 3}
+                for topic in (book, trades)
+            },
+        }
+        proof = PatternFlowObserver._passive_receipt(symbol, sample)
+        self.assertIsNotNone(proof)
+        self.assertEqual(proof["public_trade_completeness"], "UNPROVEN")
+        self.assertEqual(len(proof["trade_bracket"]), 2)
+        missing = dict(sample, subscription_acks={})
+        self.assertIsNone(PatternFlowObserver._passive_receipt(symbol, missing))
+        stale = dict(sample, tape=dict(sample["tape"], generation=4))
+        self.assertIsNone(PatternFlowObserver._passive_receipt(symbol, stale))
+        gap = dict(sample, book_frames=(sample["book_frames"][0],
+                                       frame(12, 102, 1010, "delta")))
+        self.assertIsNone(PatternFlowObserver._passive_receipt(symbol, gap))
 
     def test_existing_protected_context_is_never_replaced(self):
         socket = _WebSocket()
