@@ -159,6 +159,9 @@ def _run_market_radar(stop):
                 if source is None:
                     from bybit_api import PublicRadarSource
                     source = PublicRadarSource()
+                if source.backoff_remaining() > 0:
+                    stop.wait(1)
+                    continue
                 _MARKET_RADAR.step(source.symbols, source.candles, source.recent_trades,
                                    now_ms=int(time.time() * 1000),
                                    monotonic_now=time.monotonic())
