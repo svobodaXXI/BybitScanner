@@ -7,7 +7,9 @@ so the action is not tied to the lifetime of the SSH/Termius connection.
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import stat
 import re
 import subprocess
 import sys
@@ -194,6 +196,60 @@ def _verified_take_closed_stage(sha: str) -> Path:
     return stage
 
 
+def _owner_request_path(request: str, *, create: bool = False,
+                        root: Path | None = None, trusted_uid: int = 0) -> Path:
+    """Reuse the protected release journal; never trust a symlink or writable parent."""
+    from tools.vps_gitless_release_activate import TRANSACTIONS, _sync_directory
+    unit_name(request)
+    directory = TRANSACTIONS if root is None else root
+    parent = directory.parent
+    info = parent.lstat()
+    if (not stat.S_ISDIR(info.st_mode) or info.st_uid != trusted_uid
+            or info.st_mode & 0o022):
+        raise ValueError("owner_request_parent_untrusted")
+    try:
+        info = directory.lstat()
+    except FileNotFoundError:
+        if not create:
+            return directory / (".owner-request-" + request)
+        directory.mkdir(mode=0o700, exist_ok=True)
+        info = directory.lstat()
+    if (not stat.S_ISDIR(info.st_mode) or info.st_uid != trusted_uid
+            or info.st_mode & 0o077):
+        raise ValueError("owner_request_journal_untrusted")
+    if create:
+        _sync_directory(parent)
+    return directory / (".owner-request-" + request)
+
+
+def _read_request_intent(path: Path) -> bytes | None:
+    """Missing is distinct from corrupt/unsafe; no success is inferred from intent."""
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return None
+    if (not stat.S_ISREG(info.st_mode) or info.st_uid != path.parent.stat().st_uid
+            or info.st_mode & 0o077 or info.st_size > 4096):
+        raise ValueError("owner_request_intent_untrusted")
+    return path.read_bytes()
+
+
+def _reserve_request_intent(request: str, payload: bytes) -> None:
+    """One durable dispatch reservation, even across systemd loss/reboot.
+
+    An interruption before dispatch may strand the intent deliberately. Never
+    remove or overwrite it, and never regard it as proof of execution.
+    """
+    from tools.vps_gitless_release_activate import _sync_directory
+    path = _owner_request_path(request, create=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "wb") as stream:
+        stream.write(payload)
+        stream.flush()
+        os.fsync(stream.fileno())
+    _sync_directory(path.parent)
+
+
 def submit(action: str, sha: str, request: str, origin: str,
            *, run=subprocess.run, uid: int | None = None,
            expected_installed_sha: str | None = None) -> int:
@@ -224,6 +280,18 @@ def submit(action: str, sha: str, request: str, origin: str,
     # Legacy units with 12-digit descriptions remain queryable by status()
     # but cannot silently accept a new submission under the same UUID.
     description = "BybitScanner " + action + " " + sha + " origin=" + origin
+    payload = (json.dumps({
+        "schema": 1, "request_id": request, "action": action, "target_sha": sha,
+        "origin": origin, "expected_installed_sha": expected_installed_sha,
+    }, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii")
+    try:
+        recorded = _read_request_intent(_owner_request_path(request))
+    except (OSError, ValueError):
+        print("SUBMISSION=UNPROVEN REQUEST_ID=" + request)
+        return 2
+    if recorded is not None and recorded != payload:
+        print("SUBMISSION=BLOCKED_REQUEST_IDENTITY_MISMATCH REQUEST_ID=" + request)
+        return 2
     try:
         probe = run(
             ["systemctl", "show", "--no-pager",
@@ -242,10 +310,18 @@ def submit(action: str, sha: str, request: str, origin: str,
         if fields.get("Description") != description:
             print("SUBMISSION=BLOCKED_REQUEST_IDENTITY_MISMATCH REQUEST_ID=" + request)
             return 2
+        # Legacy loaded units have no durable predecessor fingerprint.
+        if recorded is None and expected_installed_sha is not None:
+            print("SUBMISSION=UNPROVEN REQUEST_ID=" + request)
+            return 2
         print("SUBMISSION=EXISTS REQUEST_ID=" + request)
         return status(request, run=run)
     if fields.get("LoadState") != "not-found":
         print("SUBMISSION=UNPROVEN REQUEST_ID=" + request)
+        return 2
+
+    if recorded is not None:
+        print("SUBMISSION=UNPROVEN; durable intent exists, never retry the action REQUEST_ID=" + request)
         return 2
 
     # Staging is necessary only for a *new* update, never to read an
@@ -264,6 +340,13 @@ def submit(action: str, sha: str, request: str, origin: str,
         *(["--expected-installed-sha", expected_installed_sha]
           if expected_installed_sha is not None else []),
     ]
+    try:
+        _reserve_request_intent(request, payload)
+    except (OSError, ValueError):
+        # Includes concurrent reservation, incomplete writes and fsync failure.
+        # No dispatch unless this exact invocation sealed a fresh intent.
+        print("SUBMISSION=UNPROVEN REQUEST_ID=" + request)
+        return 2
     try:
         result = run(cmd, capture_output=True, text=True, timeout=20, check=False)
     except (OSError, subprocess.TimeoutExpired):
