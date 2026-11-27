@@ -259,6 +259,10 @@ class PublicRadarSource:
         self._http.proxies.update(default_bybit_proxies(sys.platform))
         self._backoff_until = 0.0
 
+    def backoff_remaining(self):
+        import time
+        return max(0.0, self._backoff_until - time.monotonic())
+
     def _get(self, endpoint, params):
         import time
         if time.monotonic() < self._backoff_until:
