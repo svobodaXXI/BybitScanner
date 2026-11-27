@@ -189,14 +189,23 @@ dashboard, new approval gate or recurring meeting.
    Only the relevant owner and governing contract can accept a non-safety
    limitation. Such acceptance is **not** a waiver of protection or mandatory
    safety gates.
-4. **Pull one next step.** Choose the smallest safe action that (a) moves
+4. **Pull one critical path, not one operation per turn.** Choose the smallest safe action that (a) moves
    the current product edge, (b) clears a demonstrated blocking dependency,
    or (c) obtains the explicit owner authorization needed for the next edge.
    Keep **one active owner-priority critical path**; queue unrelated fixes.
    Related changes may be batched only when truly inseparable. No
    speculative audits, new worktrees, PR reshuffling or receipt-recovery
    campaigns absent a demonstrated dependency.
-5. **Finish the transition.** Upon required evidence PASS, immediately
+5. **Finish the authorized execution cycle.** A continuation («э») means
+   execute the remaining dependent authorized work, not merely describe or
+   perform one microstep. Continue from inspection through minimal change,
+   targeted proof and applicable gates until the outcome is demonstrated,
+   an actual external dependency prevents further progress, or a required
+   owner authorization/product decision is reached. A completed intermediate
+   operation, plan, PR or CI check is not a stopping point while the next
+   authorized action is available. Never use «э» as blanket permission;
+   the specific merge and runtime approval contracts remain binding.
+   Upon required evidence PASS, immediately
    offer/do the next *authorized* dependent step instead of launching another
    preparation round. If only a missing owner approval remains, request
    that approval once with its exact scope and effect. Never silently merge,
@@ -241,6 +250,14 @@ strategy parameters, owner-only permissions or any fail-closed condition.
 Responses should be concise, current-stage-oriented, technically precise, and free of repeated artifacts or
 unnecessary process narration. A natural, lightly humorous tone is allowed only when it does not reduce clarity,
 discipline, or productivity.
+
+Explain the actual outcome, evidence, remaining acceptance gap and any
+necessary owner action. Scale explanation to decision significance: routine
+changes briefly; material architecture, trading, systemic regressions and
+risks with causes, alternatives, consequences and rationale. Repeated status
+reports without new evidence, progress or an objective blocker are not
+delivery. Each workstream owns its assigned outcome; coordinate dependencies
+without transferring responsibility to another chat.
 
 Priority: saving the user's time and manual effort outranks the assistant's response brevity. The assistant prepares
 the commands and prompts itself; it does not shorten a response by moving work onto the user (see `2.2.2` and `8.11`).
