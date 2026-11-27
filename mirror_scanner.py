@@ -1264,10 +1264,11 @@ def _frozen_event_chart(symbol: str, timeframe: str, rows: Sequence[Mapping[str,
                 and other.pattern == selected.pattern
                 and other.source == selected.source
                 and other.confirmed_at_ms == selected.confirmed_at_ms
-                and selected_decision is not None
                 and other.provenance.get("decision_index") == selected_decision
                 and other.provenance.get("parent_formation_id")
                 == selected.provenance.get("parent_formation_id")
+                and (selected_decision is not None
+                     or selected.provenance.get("parent_formation_id"))
             )
     for level in chart_levels:
         is_selected = level.level_id == level_id
