@@ -47,7 +47,7 @@ class PassiveBookCapturePromotionTests(unittest.TestCase):
         self.assertEqual(len(socket.messages), 2)
         self.assertEqual(socket.messages[1]["op"], "subscribe")
         self.assertEqual(socket.messages[1]["args"], ["orderbook.200.BTCUSDT"])
-        self.assertTrue(socket.messages[1]["req_id"].startswith("flowbook:"))
+        self.assertNotEqual(socket.messages[0]["req_id"], socket.messages[1]["req_id"])
 
         frame = {"topic": "orderbook.200.BTCUSDT", "type": "snapshot", "data": {"u": 1}}
         hub._dispatch(frame)
@@ -78,7 +78,7 @@ class PassiveBookCapturePromotionTests(unittest.TestCase):
 
         hub._dispatch({
             "op": "subscribe",
-            "req_id": "flowbook:BTCUSDT:capture",
+            "req_id": socket.messages[1]["req_id"],
             "success": False,
         })
         self.assertFalse(passive.capture_book)
@@ -104,6 +104,30 @@ class PassiveBookCapturePromotionTests(unittest.TestCase):
         self.assertEqual(passive.topics(), [
             "publicTrade.BTCUSDT", "orderbook.200.BTCUSDT",
         ])
+
+    def test_positive_acks_are_independent_of_data_and_old_request(self):
+        socket = _WebSocket()
+        hub = _hub(socket)
+        passive = hub.subscribe_flow_only("BTCUSDT", capture_book=True)
+        old_request = socket.messages[-1]["req_id"]
+        hub.release_flow_only("BTCUSDT")
+        passive = hub.subscribe_flow_only("BTCUSDT", capture_book=True)
+        current_request = socket.messages[-1]["req_id"]
+        self.assertNotEqual(old_request, current_request)
+        hub._dispatch({"op": "subscribe", "req_id": old_request, "success": True})
+        self.assertEqual(hub.private_passive_wedge_snapshot(passive)["subscription_acks"], {})
+        hub._dispatch({"topic": "publicTrade.BTCUSDT", "data": [
+            {"i": "1", "s": "BTCUSDT", "T": 1000, "seq": 1,
+             "S": "Buy", "p": "100", "v": "1"}]})
+        self.assertEqual(hub.private_passive_wedge_snapshot(passive)["subscription_acks"], {})
+        hub._dispatch({"op": "subscribe", "req_id": current_request, "success": True})
+        receipt = hub.private_passive_wedge_snapshot(passive)
+        self.assertEqual(set(receipt["subscription_acks"]),
+                         {"publicTrade.BTCUSDT", "orderbook.200.BTCUSDT"})
+        hub._send_flow_only(socket, passive)
+        self.assertEqual(hub.private_passive_wedge_snapshot(passive)["subscription_acks"], {})
+        hub._dispatch({"op": "subscribe", "req_id": current_request, "success": True})
+        self.assertEqual(hub.private_passive_wedge_snapshot(passive)["subscription_acks"], {})
 
     def test_existing_protected_context_is_never_replaced(self):
         socket = _WebSocket()
