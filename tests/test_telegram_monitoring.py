@@ -628,6 +628,7 @@ class TelegramMonitoringTests(unittest.TestCase):
                 patch.object(monitoring, "_load_offset", return_value=None), \
                 patch.object(monitoring, "poll_updates_once", side_effect=poll), \
                 patch.object(monitoring, "start_lifecycle_thread"), \
+                patch.object(monitoring, "start_market_thread"), \
                 patch.object(monitoring, "configure_monitoring_menu") as startup, \
                 patch.object(monitoring, "refresh_command_menu") as refresh, \
                 patch.object(monitoring, "_ensure_commands_menu_button") as ensure, \
@@ -1375,7 +1376,7 @@ class TelegramWorkerSingletonReadinessTests(unittest.TestCase):
                 raise response
             return response
 
-        with patch("telegram_monitoring.acquire_worker_singleton", return_value=self.server),                 patch("telegram_monitoring._load_offset", return_value=None),                 patch("telegram_monitoring._telegram_request", side_effect=request),                 patch("telegram_monitoring._process_message", side_effect=record("message")),                 patch("telegram_monitoring.start_lifecycle_thread", side_effect=record("lifecycle")),                 patch("telegram_monitoring.configure_monitoring_menu", side_effect=record("menu")),                 patch("telegram_monitoring.refresh_command_menu", side_effect=record("refresh")),                 patch("telegram_monitoring._ensure_commands_menu_button",
+        with patch("telegram_monitoring.acquire_worker_singleton", return_value=self.server),                 patch("telegram_monitoring._load_offset", return_value=None),                 patch("telegram_monitoring._telegram_request", side_effect=request),                 patch("telegram_monitoring._process_message", side_effect=record("message")),                 patch("telegram_monitoring.start_lifecycle_thread", side_effect=record("lifecycle")),                 patch("telegram_monitoring.start_market_thread"),                 patch("telegram_monitoring.configure_monitoring_menu", side_effect=record("menu")),                 patch("telegram_monitoring.refresh_command_menu", side_effect=record("refresh")),                 patch("telegram_monitoring._ensure_commands_menu_button",
                       side_effect=record("button")):
             return monitoring.run(), events
 
@@ -1514,8 +1515,9 @@ class TelegramMarketTests(unittest.TestCase):
         self.assertIn("Неполный охват", card)
         active, rest = card.split("🟢 Лидеры роста")
         growth, decline = rest.split("🔴 Лидеры падения")
-        self.assertIn("AAAUSDT", active)
-        self.assertIn("BBBUSDT", active)
+        self.assertNotIn("AAAUSDT", active)
+        self.assertNotIn("BBBUSDT", active)
+        self.assertIn("Свежая лента: 0/3", active)
         self.assertIn("AAAUSDT +4.00%", growth)
         self.assertNotIn("BBBUSDT", growth)
         self.assertIn("BBBUSDT -4.00%", decline)
@@ -1537,7 +1539,7 @@ class TelegramMarketTests(unittest.TestCase):
         self.assertIn("4ч:\n—", growth)
         self.assertIn("4ч:\n—", decline)
         self.assertIn("24ч:\nAAAUSDT +2.00%\nBBBUSDT +1.00%", growth)
-        self.assertIn("Число сделок и ΔOI: н/д.", decline)
+        self.assertIn("ΔOI и ликвидации: н/д.", decline)
 
     def test_market_collection_reuses_canonical_source_and_fixed_cutoff(self):
         from telegram_market import PERIOD_MS, HISTORY_BARS, collect_market
@@ -1626,6 +1628,60 @@ class MarketTapeTests(unittest.TestCase):
         self.assertIsNone(self.observe(self.response([])))
         self.assertIsNone(self.observe({"retCode": 10006}))
 
+
+
+    def test_cached_card_never_requests_exchange(self):
+        from telegram_market import MarketRadar
+        radar = MarketRadar()
+        with patch.object(monitoring, "_MARKET_RADAR", radar), \
+                patch.object(monitoring, "_send_text") as send, \
+                patch.object(monitoring, "_scanner_request") as status:
+            monitoring._MARKET_REQUEST_LOCK.acquire()
+            monitoring._market_worker(123)
+            self.assertIn("ещё не готов", send.call_args.args[1])
+            status.assert_not_called()
+            self.assertFalse(monitoring._MARKET_REQUEST_LOCK.locked())
+
+    def test_radar_collects_in_steps_and_expires_tape(self):
+        from telegram_market import MarketRadar, MarketRow, PERIOD_MS
+        from unittest.mock import Mock
+        radar = MarketRadar()
+        now = self.NOW // PERIOD_MS * PERIOD_MS
+        symbols = Mock(return_value=[self.SYMBOL, "QUIETUSDT"])
+        candles = Mock(return_value=object())
+        def response(symbol):
+            data = self.response([1000 + i * 1500 for i in range(36)])
+            data["time"] = now
+            for i, row in enumerate(data["result"]["list"]):
+                row["symbol"] = symbol
+                row["time"] = str(now - (1000 + i * 1500))
+            if symbol != self.SYMBOL:
+                data["result"]["list"] = data["result"]["list"][:1]
+            return data
+        trades = Mock(side_effect=response)
+        def step(i):
+            radar.step(symbols, candles, trades, now_ms=now, monotonic_now=i)
+        with patch("telegram_market.rank_candles",
+                   side_effect=lambda symbol, frame, cutoff: MarketRow(
+                       symbol, (1, 2, 3, 4), 3, 2, 100000)):
+            step(0)
+            self.assertIn("ещё не готов", radar.card(now))
+            step(1)
+            step(2)
+            self.assertEqual(candles.call_count, 2)
+            trades.assert_not_called()
+            for i in range(3, 8):
+                step(i)
+            active = radar.card(now).split("🟢 Лидеры роста")[0]
+            self.assertIn(self.SYMBOL, active)
+            self.assertNotIn("QUIETUSDT", active)
+            self.assertIn("Свежая лента: 2/2", active)
+            self.assertNotIn(self.SYMBOL, radar.card(now+10001).split("🟢 Лидеры роста")[0])
+            before = (symbols.call_count, candles.call_count, trades.call_count)
+            radar.card(now)
+            self.assertEqual(before, (symbols.call_count, candles.call_count, trades.call_count))
+            radar.clear()
+            self.assertIn("ещё не готов", radar.card(now))
 
 
 if __name__ == "__main__":
