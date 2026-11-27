@@ -71,6 +71,10 @@ Minimize owner time: GitHub evidence is not host access. If Windows host executi
 
 ## Outcome-owned delegation — proven lesson (2026-10-28)
 
+**Select the execution surface before delegation:** apply protocol §7.0.
+A deterministic direct PowerShell operation is preferred to routine Codex VPS
+work; GitHub-first and all existing authority gates remain binding.
+
 **One goal → one end-to-end assignment → observable acceptance.** Do not turn a
 single owner outcome into serial prompts for logs, key searches, terminal tests,
 preparatory reports or other subgoals. Give the executor the **end state, allowed
@@ -105,6 +109,7 @@ trading, runtime, Git/harness and secret-protection contracts intact.
 | When | Canonical destination (selective section read) |
 | --- | --- |
 | Strategic end-to-end execution / avoiding owner intervention | `DOCUMENTS/ASSISTANT_PROTOCOL.md` → `STRATEGIC EXECUTION / OWNER-TIME CONTRACT` (inside Result-First; no new workflow) |
+| Selecting ChatGPT/GitHub, PowerShell or Codex before delegation | `DOCUMENTS/ASSISTANT_PROTOCOL.md` → `7.0 EXECUTION-SURFACE ROUTING / DIRECT COMMAND FIRST`; for Codex prompts `7.1 MINIMAL_CODEX_DELTA_RULE` |
 | Choosing any next task, prompt or post-CI action | `DOCUMENTS/ASSISTANT_PROTOCOL.md` → `RESULT-FIRST NEXT-ACTION GATE`; `3.2.1 BOUNDED_SLICE_AND_NO_REPEAT_RULE` |
 | Determining owner priority and current facts | `DOCUMENTS/ASSISTANT_PROTOCOL.md` → `1. ROLE AND AUTHORITY`; current owner task, target Git ref or host state; only relevant top of `DOCUMENTS/BACKLOG.md` / `DOCUMENTS/QUEST_STATE.md` |
 | Any edit or handling existing user files | `DOCUMENTS/AGENT_GUIDE_FULL.md` → `Change safety`; `DOCUMENTS/ASSISTANT_PROTOCOL.md` → `4. LOCAL REALITY AND USER-OWNED WORK` |
