@@ -2,11 +2,11 @@
 
 Version:
 
-4.48
+4.49
 
 Date:
 
-2026-10-18
+2026-11-27
 
 Document Type:
 
@@ -40,6 +40,13 @@ ACTIVE
 
 Purpose: the compact, assistant-facing operating protocol for ChatGPT and Codex work on BybitScanner. It routes
 to project authority; it does not duplicate current project state, architecture, contracts, or governance internals.
+
+Source layout: `DOCUMENTS/ASSISTANT_RULES/` owns the editable protocol sections.
+`DOCUMENTS/ASSISTANT_PROTOCOL.md` is their generated compatibility projection;
+existing anchors, numbering and machine readers remain supported. Edit the owning
+package, then run `python -m tools.dev.assistant_protocol --write`; the existing
+developer workflow tests verify exact assembly. Agents use the task routes in
+`AGENTS.md`, not a full read of the projection.
 
 ---
 
@@ -1504,6 +1511,10 @@ extends `8.7` (no user as file transport) and `8.8` (machine-applied file change
 ---
 
 # 9. CURRENT REVISION RECORD
+
+`4.49` separates the protocol into task-routed source packages with a generated
+backward-compatible projection and existing developer-workflow consistency test.
+The owner-time priority and all protection/acceptance boundaries remain binding.
 
 `4.48` reconciles source-of-truth/priority routing with GitHub-first vs
 host-local reality, and limits legacy Project Sync/full-document workflow to

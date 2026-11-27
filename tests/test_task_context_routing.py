@@ -6,11 +6,25 @@ from pathlib import Path
 from tools.dev.task_context import (
     _authority_refs, _current_backlog_priority, _derived_context_boundary, build_task_context,
 )
+from tools.dev.assistant_protocol import PACKAGES, PACKAGE_DIR, PROJECTION, assemble
 from tools.dev.workflow import CommandResult
 from tools.project_sync.governance.context_budget import measure_reference
 
 
 class TaskContextRoutingTests(unittest.TestCase):
+    def test_protocol_projection_matches_canonical_packages(self):
+        root = Path(__file__).resolve().parents[1]
+        self.assertEqual((root / PROJECTION).read_text(encoding="utf-8"), assemble(root))
+
+    def test_librarian_routes_to_all_active_protocol_packages(self):
+        root = Path(__file__).resolve().parents[1]
+        agents = (root / "AGENTS.md").read_text(encoding="utf-8")
+        for name in PACKAGES:
+            if name != "99-revision.md":
+                self.assertIn((PACKAGE_DIR / name).as_posix(), agents)
+        self.assertIn("DOCUMENTS/WINDOWS_PC_VPS_ACCESS_RECOVERY_20261108.md", agents)
+        self.assertIn("DOCUMENTS/ASSISTANT_RULES/60-context.md#3.1 AUTO_SESSION_BOOTSTRAP_RULE", _authority_refs("developer_workflow"))
+
     def test_common_authority_anchors_resolve(self):
         root = Path(__file__).resolve().parents[1]
         common = _authority_refs("developer_workflow")[:4]

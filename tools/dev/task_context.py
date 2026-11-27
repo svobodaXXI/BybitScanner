@@ -84,8 +84,8 @@ def _authority_refs(kind: str) -> list[str]:
     common = [
         "AGENTS.md#Fast task entry",
         "DOCUMENTS/PROJECT_STATE.md#CURRENT_DEVELOPMENT_PRIORITY",
-        "DOCUMENTS/ASSISTANT_PROTOCOL.md#3.1 AUTO_SESSION_BOOTSTRAP_RULE",
-        "DOCUMENTS/ASSISTANT_PROTOCOL.md#3.2 CONTEXT_AND_LIMIT_ECONOMY_RULE",
+        "DOCUMENTS/ASSISTANT_RULES/60-context.md#3.1 AUTO_SESSION_BOOTSTRAP_RULE",
+        "DOCUMENTS/ASSISTANT_RULES/60-context.md#3.2 CONTEXT_AND_LIMIT_ECONOMY_RULE",
         "DOCUMENTS/BACKLOG.md",
     ]
     routed = {
@@ -144,7 +144,7 @@ def build_task_context(
     agents = _read_required(root, "AGENTS.md")
     state = _read_required(root, "DOCUMENTS/PROJECT_STATE.md")
     backlog = _read_required(root, "DOCUMENTS/BACKLOG.md")
-    protocol = _read_required(root, "DOCUMENTS/ASSISTANT_PROTOCOL.md")
+    protocol = _read_required(root, "DOCUMENTS/ASSISTANT_RULES/00-core.md")
     if not _derived_context_boundary(agents):
         raise RuntimeError("AGENTS.md derived-context authority boundary cannot be confirmed")
     branch = require_ok(active_git.run("branch", "--show-current"), "branch discovery")

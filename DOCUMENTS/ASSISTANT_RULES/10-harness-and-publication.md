@@ -1,0 +1,66 @@
+# 2. COMMUNICATION AND USER ACTIONS
+
+### No harness recovery spiral — OWNER RULE 2026-10-10
+
+A tool/harness error is NOT authorization to launch a new infrastructure task.
+For `PREEXISTING_DIRTY`, `not a managed worktree`, reparse-point/`apply_patch`
+failure, or a nested task-transaction rejection:
+
+1. Preserve the current task diff, user changes and exact failure evidence; identify
+   whether the failure is workspace/tooling rather than product code.
+2. Reuse the original task/worktree and its already-passing checks. Attempt at most
+   ONE narrowly supported, authorized recovery with the existing harness.
+3. Never silently stash/pop, reset, clean, move worktrees, recreate tasks, or modify
+   audit contracts, task metadata or harness guards merely to manufacture PASS.
+   A workaround requires a proven supported procedure and explicit permission;
+   no permission bypasses a mandatory gate.
+4. If recovery fails, STOP with exact blocker, location of preserved diff and
+   smallest supported next action. Do not chain fallbacks or reopen transactions.
+5. Once unblocked, finish the original product delta and mandatory targeted proof,
+   then STOP. Do not create another preparatory quest.
+
+This rule does not weaken repository integrity, fail-closed protection, PAPER/LIVE
+boundaries, mandatory gates or owner runtime authority.
+
+### Agent-owned GitHub delivery — OWNER RULE 2026-10-10
+
+The owner is NOT a courier between ChatGPT, Codex, Claude, sandboxes and GitHub.
+For tasks whose outcome is code or a PR, select an execution environment with
+write access to the intended repository and a supported task harness **before**
+delegation. The assigned agent owns the complete chain: scoped edit, targeted
+verification, harness finish, commit, push and opening its own PR. ChatGPT owns
+PR review, CI/safety-gate verification and an owner-authorized merge.
+
+Do not ask the owner to copy patches, paste code between agents, upload working
+tree diffs, perform routine git push or run GitHub UI merge merely because an
+agent chose a read-only sandbox. A read-only agent may audit or design, but is
+not the default executor for a delivery requiring publication.
+
+If the assigned environment unexpectedly lacks write access: STOP, preserve
+the exact changes and evidence, state the access blocker, and use an already
+connected and permitted direct GitHub workflow if one exists. Do not initiate
+a chain of sandbox-to-sandbox transfers or invent an infrastructure workaround.
+If no supported direct path exists, ask for the smallest *one-time connection*
+action rather than repeated manual patch forwarding. Never claim that a
+read-only sandbox's task finish passed if it failed.
+
+All existing scope, owner authorization, CI/harness, PAPER/LIVE, safety,
+runtime-start and no-auto-merge boundaries still apply.
+
+### GitHub PR merge via ChatGPT — OWNER RULE 2026-10-10
+
+The owner should not need to click "Squash and merge" on GitHub when the
+connected integration can do it. Explicit permission to merge named PR(s), or
+a standalone «э» in direct response to the assistant's immediately preceding
+explicit proposal to merge those named PR(s), authorizes **only those PRs**.
+No blanket auto-merge or inference from CI success alone.
+
+Before merge, verify each PR's target base, current head SHA, mergeability,
+required CI/reviews and known safety blockers. Use squash merge with the
+expected head SHA and confirm the resulting GitHub merge commit. On conflict,
+changed head or unsatisfied gate, stop without merge. A new «э» after a blocker
+authorizes only the clearly proposed next remedy, not bypassing a gate.
+
+Owner-only runtime starts, PAPER/LIVE constraints, and mandatory safety gates
+remain unchanged. Never merge other PRs implicitly.
+

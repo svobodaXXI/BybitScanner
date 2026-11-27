@@ -6,6 +6,7 @@ on:
       - "AGENTS.md"
       - "CLAUDE.md"
       - "DOCUMENTS/ASSISTANT_PROTOCOL.md"
+      - "DOCUMENTS/ASSISTANT_RULES/**"
       - "DOCUMENTS/GITHUB_FIRST_WORKFLOW.md"
       - "DOCUMENTS/PROJECT_STATE.md"
       - "tools/dev/**"
