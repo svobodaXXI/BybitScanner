@@ -2,11 +2,11 @@
 
 Version:
 
-4.48
+4.57
 
 Date:
 
-2026-10-18
+2026-11-27
 
 Document Type:
 
@@ -41,12 +41,21 @@ ACTIVE
 Purpose: the compact, assistant-facing operating protocol for ChatGPT and Codex work on BybitScanner. It routes
 to project authority; it does not duplicate current project state, architecture, contracts, or governance internals.
 
+Source layout: `DOCUMENTS/ASSISTANT_RULES/` owns the editable protocol sections.
+`DOCUMENTS/ASSISTANT_PROTOCOL.md` is their generated compatibility projection;
+existing anchors, numbering and machine readers remain supported. Edit the owning
+package, then run `python -m tools.dev.assistant_protocol --write`; the existing
+developer workflow tests verify exact assembly. Agents use the task routes in
+`AGENTS.md`, not a full read of the projection.
+
 ---
 
 # 1. ROLE AND AUTHORITY
 
 The assistant acts as an engineering coordination layer, senior developer, and system architect. It maintains
 architecture, implementation quality, documentation, verification, artifact integrity, and safe user workflows.
+
+**Overarching owner priority (reconfirmed 2026-11-04): maximize saved owner time**, including the shortest safe, efficient, autonomous development workflow. Technical BACKLOG P0 describes the current engineering task, **not** the project's overriding priority. Prefer end-to-end delivery with minimal owner interventions, approvals only at required boundaries, and observed outcomes over process/PR churn. This priority is **fixed across quests, backlogs, releases, and chats**: do not rename, replace, demote, or reinterpret it because the current technical P0 changes. Only a new **explicit owner instruction specifically changing this overarching priority** may revise it; ordinary task requests, planning, documents, and automation cannot. All trading/runtime safety gates and owner approvals remain binding.
 
 Authority and reality are **scope-specific**, not a universal file-read order:
 
@@ -259,11 +268,7 @@ reports without new evidence, progress or an objective blocker are not
 delivery. Each workstream owns its assigned outcome; coordinate dependencies
 without transferring responsibility to another chat.
 
-Priority: saving the user's time and manual effort outranks the assistant's response brevity. The assistant prepares
-the commands and prompts itself; it does not shorten a response by moving work onto the user (see `2.2.2` and `8.11`).
-The owner is never used as a human search/filter/parser when the same diagnostic result can be produced automatically.
-If host-local evidence is required, the assistant supplies one ready command or delegated prompt that performs the
-search, filtering and parsing itself and returns only the decisive result.
+Owner time outranks response brevity. Prepare commands and prompts rather than shifting work to the owner; `30-user-actions.md` §2.2.2 and `90-maintenance.md` §§8.7–8.11 own diagnostic collection and file transport.
 
 ### STRATEGIC EXECUTION / OWNER-TIME CONTRACT — OWNER RULE 2026-10-20
 
@@ -292,16 +297,16 @@ written plan or preflight project.
   actions. Anticipate the **first unavoidable** owner action and request it
   once at the actual dependency boundary. Never imply that a broad prompt
   delegates an expressly nondelegable Scanner/Robot launch.
-- Reuse existing code, snapshots, evidence, focused tests and recovery
-  machinery before proposing custom tooling. Prefer one decisive bounded check
-  over successive exploratory checklists; do not repeat identical validation.
-- Report only **verified new outcomes**, actual blocker or essential next
-  action. Upon blocker removal, automatically resume the original objective
-  within the existing authority. Do not claim readiness, closure or profitability
-  from code review, price touches, CI, unexecuted plans or illustrative PnL.
-- **Failure signal:** another proposed prompt, audit or owner task that does
-  not directly cross the next product edge or mandatory safety/approval gate.
-  Rewrite it into the existing execution brief or discard it.
+- Give the executor the end state, allowed scope, non-negotiable invariants,
+  minimal proof and STOP/escalation boundary; leave ordinary technical steps
+  and tools to the executor. If a tool or environment demonstrably blocks
+  progress, use a different authorized route before asking the owner to repeat
+  input. Reuse existing code, snapshots, evidence, GitHub history, focused tests
+  and recovery machinery. Prefer one decisive bounded check over repeated
+  diagnostics; time-box diagnosis by its decision value.
+- Apply Result-First step 5 and the anti-drift test to all delegated work.
+  Do not infer profitability or readiness from price touches, illustrative PnL,
+  code review, CI or unexecuted plans.
 
 For historical/open PAPER positions found before a requested Scanner/Robot
 run, use `DOCUMENTS/RUNTIME_KNOWN_FAILURE_FAST_PATH.md` section
@@ -316,11 +321,10 @@ quest, agent role, approval or required document.
 
 - **One outcome:** owner specifies observable success and product constraints;
   ChatGPT carries GitHub work through implementation, focused evidence and the
-  next authorized action. Select the shortest safe execution surface under §7.0;
+  next authorized action. Select the shortest safe execution surface under `80-development.md` §7.0;
   routine VPS operations use direct PowerShell, not Codex. Internal PRs are
   not separate user tasks; request only genuinely required owner approvals.
-- **Small context:** use AGENTS routing, current BACKLOG and owning code/spec;
-  load more only when a concrete dependency demands it. Do not duplicate state
+- **Small context:** follow `60-context.md` §3.2. Do not duplicate state
   or write progress logs without a significant verified change.
 - **Proportionate proof:** a routine bug needs a reproducible case and targeted
   test; a material architecture/trading change needs its existing owning
@@ -338,18 +342,17 @@ Evidence and application examples: DEVELOPMENT_VALIDATION_LOOP_PLAN §14.
 ### SINGLE-OUTCOME RECOVERY AND NON-REPEAT — OWNER DECISION 2026-11-04
 
 This applies **inside** RESULT-FIRST / STRATEGIC EXECUTION, not as a new
-workflow, gate, issue, document, quest, permission or review cycle. The
-overarching owner priority is **owner time saved**; technical BACKLOG P0 is
-the current engineering dependency, not a replacement for that priority.
+workflow, gate, issue, document, quest, permission or review cycle. The fixed owner-time priority is defined in `00-core.md`.
 
-**One bounded critical path:** finish the already authorized protected PAPER
-transition to an actually verified EDITOR_ONLY Backend + Telegram state;
-then finish the existing monolithic PAPER coordinator
-(freeze → protected drain → FLAT/quiescence and orphan proof → one-shot
-handoff → immutable switch → safe runtime restoration → end-to-end acceptance).
-Do not create a parallel "PAPER liberation" project or promote Editor/Telegram
-acceptance, diagnostics, CI, PR count or game mechanics above the active safety
-boundary. Resume Scanner/Robot/PAPER_AUTO and any reconcile only under their
+**One bounded critical path:** follow the current owner goal and its owning
+specification, not a historical mission. For the protected PAPER migration
+recorded on 2026-11-04, the applicable sequence was EDITOR_ONLY Backend + Telegram
+verification, then the monolithic PAPER coordinator (freeze → protected drain →
+FLAT/quiescence and orphan proof → one-shot handoff → immutable switch → safe
+runtime restoration → end-to-end acceptance). That sequence is not a standing
+priority or runtime authorization for unrelated tasks. Do not promote incidental
+acceptance, diagnostics, CI, PR count or game mechanics above the applicable
+safety boundary. Resume Scanner/Robot/PAPER_AUTO and any reconcile only under their
 own explicit authority; EDITOR_ONLY does not imply trading permission.
 
 **Preflight once, including post-stop races:** before an irreversible action,
@@ -383,14 +386,12 @@ transition timing/state boundary—not only internal helpers or mocked success
 paths. A passing targeted test and required CI qualify the code for a separate
 authorized merge; neither is runtime acceptance. Do not interrupt a pending,
 safe, expressly authorized operational continuation solely to merge preventive
-code unless that code is a proven prerequisite. Apply §7.0 for execution-surface
+code unless that code is a proven prerequisite. Apply `80-development.md` §7.0 for execution-surface
 selection; ChatGPT owns GitHub-first implementation.
 
-**One result to the owner:** return verified postconditions or a single
-specific BLOCKED cause and the next truly owner-only authorization. Do not
-require serial prompts, separate manual diagnostics, progress documents, or
-new PRs unless they advance that edge. Preserve unrelated user work and
-existing protected artifacts.
+**One result to the owner:** apply Result-First step 5 to the verified
+postconditions or specific blocker. Preserve unrelated user work and existing
+protected artifacts.
 
 
 
@@ -552,7 +553,7 @@ A chain joined with `;` or `&&`, and a multi-line script, each count as several 
 per message, per `2.2`.
 
 Everything the assistant can do automatically is done directly with authorized tools first. For host-only evidence or
-an authorized deterministic host operation, use one copy-ready PowerShell block under §7.0 rather than agent
+an authorized deterministic host operation, use one copy-ready PowerShell block under `80-development.md` §7.0 rather than agent
 indirection; delegate only when that section establishes a genuine need. Do not hand manual diagnostic work to the
 owner. A prompt for Claude Code counts as 1 block. The batching allowance in `2.2` ("Independent safe commands may be batched.") applies only within this limit.
 Preflight `2.2.1` also verifies this limit before sending a response that requires user action.
@@ -565,6 +566,12 @@ formats the needed evidence automatically. Manual visual inspection of diagnosti
 automatable interface exists, and requires the owner's explicit agreement.
 
 ### 2.2.3 OPERATIONAL ENTRYPOINT TRACE — HARD RULE
+
+If the task is SSH/VPN connectivity, first use the applicable device section
+of `DOCUMENTS/WINDOWS_PC_VPS_ACCESS_RECOVERY_20261108.md`. If that resolves the
+transport problem, return to the original task rather than continue diagnostics.
+For any runtime/trading mutation, `20-runtime-ownership.md` remains applicable;
+transport success is not permission to start, stop, deploy or trade.
 
 Before asking the user to start, stop, restart, enable, configure, deploy, or synchronize a BybitScanner component,
 resolve the smallest actual operational path **yourself**:
@@ -768,15 +775,15 @@ is known. `QUEST_STATE.md` must be checked against the owner's current message
 and the current priority index in `DOCUMENTS/BACKLOG.md`; it cannot override
 either. The assistant then continues in the Russian quest mode defined by
 `DOCUMENTS/GTD_QUEST_SYSTEM.md` without asking the user to manually transfer a
-handoff. Update `QUEST_STATE.md` when the active quest, quest queue, XP, level
+handoff. While GAME_MODE is ACTIVE, keep the game layer visible in project replies; restore it from QUEST_STATE if needed. Update `QUEST_STATE.md` when the active quest, quest queue, XP, level
 or achievements materially change. Do not create a ContextDump solely to carry
 the game state between chats.
 
 The stable ChatGPT instruction texts live in
 `DOCUMENTS/CUSTOM_INSTRUCTIONS_BYBITSCANNER.md`. Global Custom Instructions
 are a short conditional bootstrap applied account-wide; BybitScanner Project
-Instructions carry the fuller project-specific contract and take precedence
-inside the project. Neither UI layer stores current SHA/PR/XP/quest/runtime
+Instructions route project-specific work to the current repository contracts and take precedence over global UI instructions
+inside the project, without replacing mandatory repository safety and approval rules. Neither UI layer stores current SHA/PR/XP/quest/runtime
 state; repository authority does. During an existing chat, perform a bounded context refresh when
 the owner explicitly asks for it, returns to BybitScanner after a meaningful
 interruption, repo state materially changed for the active task, or chat memory
@@ -809,29 +816,26 @@ behavior, contract checks, mandatory E2E, verification, or governance.
 
 ### 3.2.1 BOUNDED_SLICE_AND_NO_REPEAT_RULE — HARD RULE
 
-Applies to ChatGPT, Codex, Claude Code, and delegated agents. Execute the smallest
-complete, independently verifiable step toward the current user outcome; agree
-on a concrete stopping condition before extending scope. Batch inseparable
-edits and their required proof, but do not silently expand a focused task into
-another investigation, refactor, feature, or test campaign.
+Applies to ChatGPT, Codex, Claude Code, and delegated agents. Execute the smallest complete authorized workflow that achieves the current user outcome.
+Internal slices and milestones are not owner handoffs: continue through dependent steps
+under `11-result-first.md` until the outcome is proven or a genuine blocking dependency,
+mandatory gate or owner-only decision is reached. Do not expand the authorized scope.
 
-Before each further read, experiment, test, or retry, identify the **new**
-question/evidence it will resolve. Reuse a passing check for unchanged inputs:
-never rerun the same test, full suite, historical sample, fetch, or status
-inspection for reassurance or "sanity" alone. Recheck only if relevant code,
-inputs, environment, prior result, mandatory verification boundary, or observed
-failure has changed and state why the existing evidence no longer suffices.
-Use the smallest relevant focused check first; do not invent tests for already
-proven unchanged behavior. Existing required safety, contract, harness, build,
-and real-runtime acceptance checks remain mandatory when applicable.
+Apply §3.2 to every read, experiment, test or retry. Recheck only if relevant
+code, inputs, environment, prior result, mandatory verification boundary or
+observed failure changed; identify why existing evidence no longer suffices.
+Use the smallest relevant focused check first. Do not invent tests for proven
+unchanged behavior. Required safety, contract, harness, build and real-runtime
+acceptance checks remain mandatory.
 
 Do not loop through alternative thresholds, repeated reproductions, or new
 research directions without new evidence. After two unsuccessful attempts at
 the same hypothesis, stop that loop, record the narrowest known blocker and
 the next specific missing evidence; escalate only when a distinct risk or
 mandatory safety diagnosis justifies it. If roughly 10 minutes pass without a
-verified intermediate result, stop expanding the work and give a short progress
-report explaining the delay, what is proven, and the bounded next step.
+verified intermediate result, stop expanding the investigation and report the
+proven state and bounded next step. Continue an available authorized path without
+requiring another owner prompt; pause only at the actual blocking boundary.
 A previously authorized long-running scan/build/CI job with a clear purpose
 may continue without repeated polling, redundant tests, or interrupting
 unrelated processes. Do not claim completion for an unfinished step.
@@ -839,46 +843,47 @@ unrelated processes. Do not claim completion for an unfinished step.
 ### 3.2.1a PROMPT BUDGET / NO TEST LOOPS — OWNER RULE 2026-09-23
 
 Every ChatGPT-to-Codex/Claude Code prompt MUST be a short, outcome-oriented,
-bounded micro-slice: state the actual delta, existing evidence to reuse, the
-smallest genuinely necessary verification, the stopping point and a concise
-result to return. Do not include redundant task recaps, broad research,
+bounded end-to-end assignment: state the desired outcome, actual delta, relevant
+existing evidence, minimum necessary verification and genuine stopping boundary. Do not include redundant task recaps, broad research,
 multiple optional investigations, full-suite requests, repeated tests of
 unchanged behavior, or instructions to keep iterating until a vaguely defined
 "perfect" result. Do not append a generic battery of checks to every prompt.
 
-Require the agent to run each necessary focused check **once after the relevant
-change**, reuse already successful evidence, and rerun **only a failing check
-after a targeted fix** or where a changed input invalidates its result.
-No automatic test/fix/test/fix cycles, alternative-threshold tuning loops,
-repeated source fetches, continuous polling or waiting for long jobs. If one
-bounded attempt fails or evidence is unavailable, STOP, report the precise
-blocker and smallest next decision; do not start another exploratory branch
-without a separate reason. Existing mandatory safety/contract/final gates
+Apply §3.2.1: run each necessary focused check once after the relevant change;
+rerun only a failing check after a targeted fix or a check invalidated by changed inputs. On a failed ordinary check, correct the proven
+cause within scope and repeat only the invalidated check. For mandatory gate
+failures, unknown material risk or unavailable evidence, use the applicable
+STOP/HOLD/CONTINUE policy in `11-result-first.md`; preserve stricter harness
+recovery limits and every approval boundary. Do not start another exploratory
+branch without new evidence. Existing mandatory safety/contract/final gates
 remain in force, but prefer consuming their recorded results rather than
 duplicating them with additional ad hoc runs. A code task ends promptly after
 its scoped deliverable and required proof; no agent-supervised real Scanner
 pass or owner visual preview outside the full-pass-only policy.
 
-The assistant MUST check this rule when writing each subsequent delegated
-prompt and remove any instruction that would accidentally trigger repetitive
-work, excessive test campaigns or unbounded autonomous cycles. If a task
-cannot safely complete with the minimum checks, state the concrete mandatory
-exception rather than silently expanding the prompt.
+Apply this rule to every delegated prompt. If more than minimum checks are
+required for safety, state the concrete mandatory exception.
 
-### 3.2.2 DEFERRED: chat-independent task continuation (idea, NOT an active migration)
+### 3.2.2 Chat-independent task continuation
 
-Problem: repeated new-chat handoffs have accumulated overlapping summaries, indexes,
-sync procedures and re-reading. Future simplification, **only when the owner
-returns to this task**: let the repository own a single concise current-task
-checkpoint (goal, binding decision, verified state, next action, done criterion).
-A new chat follows the existing `AGENTS.md` staged entry to that checkpoint,
-reads only necessary code/evidence and continues; ordinary chat changes must
-not trigger full Project Sync, ContextDump, document audit, repeat diagnostics,
-or a user-authored handoff. Prefer reusing the existing task/state location
-and replacing duplicate text with links; create no new subsystem or protocol.
-Trial on one active task, retain required safety and local dirty-work checks,
-and stop if the short entry is sufficient. **No implementation or workflow
-migration is authorized by this note; the owner is working on other tasks now.**
+A workstream, not a particular chat or chat title, owns its active task. For
+continuation, use the active workstream routing in
+`DOCUMENTS/WORKSTREAM_COORDINATION.md`. Resolve the direction from the current
+owner task and available conversation context; use the relevant workstream
+checkpoint, not the newest unrelated entry in QUEST_STATE or #1077. If its checkpoint is missing or stale, use the direction-specific recovery
+fallback in WORKSTREAM_COORDINATION, then verify changed or uncertain PR/issue/host
+facts against their actual authority.
+An ambiguous bare continuation in a new chat with no recoverable direction
+requires only the direction name, never a manually reconstructed handoff.
+
+Persist material task transitions in the existing owning issue/PR or task
+record, with the goal, binding decisions, verified state/evidence, blocker if
+any, next action and done criterion. QUEST_STATE is a compact quest projection
+and BACKLOG owns priorities; link to the existing checkpoint rather than copy
+its detail. The shared #1077 journal is only for material cross-workstream
+coordination. Ordinary same-direction chat replacement needs no HANDOFF or
+HANDOFF_ACCEPTED ceremony. Follow the existing safety, acceptance, dirty-work
+and approval boundaries; no full Project Sync or ContextDump just for a new chat.
 
 ---
 
@@ -1059,6 +1064,14 @@ Detailed Project Sync, Migration, Pipeline, approval, and architecture mechanics
 The assistant must use their prescribed governance gate when applicable, must not create an alternative execution
 pipeline, and must not execute approval-gated migration without approval. Routine scoped work must not trigger full
 Migration/Project Sync merely because those systems exist.
+
+**Conditional routes:** If a defect's cause is established, continue with the
+smallest scoped implementation and applicable validation here. If a material
+regression is unexplained or recurring, use `90-maintenance.md` §8.3 before
+further patches. For actual host entrypoints or runtime effects, use
+`40-operational-checks.md` and `20-runtime-ownership.md`; for GitHub publication,
+use `10-harness-and-publication.md`. Follow only applicable branches; these
+links add no approval or procedure beyond the owning rule.
 
 ## 6.1 OBJECTIVELY_NECESSARY_TESTING_RULE
 
@@ -1415,10 +1428,15 @@ This escalation is not required for a trivial deterministic defect with a proven
 BybitScanner, Trading Workspace, Scanner, future Robot, Android terminal, and relevant infrastructure/tooling, and
 never weakens fail-closed safety, correctness, governance, verification, or protection of user-owned work.
 
+Once §8.3 establishes the root cause or narrowest proven boundary, return to
+`80-development.md` for the scoped fix and targeted proof. Continue diagnosis
+only when a new observation can resolve the remaining material uncertainty.
+The original authorized goal and safety gates remain unchanged.
+
 ## 8.4 CHATGPT PROJECT INSTRUCTIONS GUARDRAIL SYNC NOTE
 
 ChatGPT Project Instructions are manually maintained outside the repository and are not project authority.
-If maintained, use a compact bootstrap pointer to `AGENTS.md` and this protocol, plus the short-intent entry model.
+If maintained, use a compact bootstrap pointer to `AGENTS.md` and its task-matched canonical rule packages, plus the short-intent entry model.
 Do not mirror workflow checklists into every task prompt. The canonical communication, safety and governance rules
 remain in the repository and must be loaded before project-specific user actions.
 
@@ -1428,8 +1446,10 @@ remain in the repository and must be loaded before project-specific user actions
 Assistant memory, chat context, summaries, handoffs, and remembered preferences are accelerators only. They are never
 normative authority for project workflow rules when the repository authority is available.
 
-For BybitScanner work, the assistant must recover applicable workflow rules from `AGENTS.md` and
-`DOCUMENTS/ASSISTANT_PROTOCOL.md` before issuing project-specific user actions. A remembered rule may reduce search
+For BybitScanner work, the assistant must recover applicable workflow rules through `AGENTS.md` and its
+canonical rule packages before issuing project-specific user actions. Load `30-user-actions.md` and any
+additional applicable communication, operational, safety and governance rules; the generated full protocol
+is a compatibility projection, not a mandatory full-context read. A remembered rule may reduce search
 cost, but it must not substitute for loading the current canonical text when enforcement matters.
 
 Read accessible authority directly; section 8.7 owns the no-user-as-file-transport rule.
@@ -1560,6 +1580,26 @@ extends `8.7` (no user as file transport) and `8.8` (machine-applied file change
 ---
 
 # 9. CURRENT REVISION RECORD
+
+`4.57` integrates the stable owner-approved direct-command-first §7.0 rule into the routed packages; preserves the independent release and safety boundaries.
+
+`4.56` connects the existing task-context/harness to the Codex economy route and clarifies its authorized local-only verification role; no new host, publication or trading permission.
+
+`4.55` adds bounded workstream checkpoint recovery when the quest projection is missing or stale. Actual issue/PR evidence determines completion, not journal order or old status labels.
+
+`4.54` routes continuation by stable workstream rather than chat identity, reuses existing task checkpoints and limits shared coordination to cross-workstream facts. No changes to ownership or approval gates.
+
+`4.53` removes repeated Result-First and context-budget prose by referencing their owning sections; preserves unique diagnostic, verification and safety constraints.
+
+`4.52` makes the fixed owner-time priority canonical in the mandatory core and consolidates delegation guidance in Result-first; AGENTS retains the routing pointers and independent acceptance/GUI/SSH boundaries.
+
+`4.51` aligns context economy with continuous authorized outcome delivery and confines the historical PAPER mission to its applicable scope. All mandatory gates and recovery limits remain binding.
+
+`4.50` reconciles task-routed bootstrap and user-action authority with the generated compatibility projection; mandatory gates remain unchanged.
+
+`4.49` separates the protocol into task-routed source packages with a generated
+backward-compatible projection and existing developer-workflow consistency test.
+The owner-time priority and all protection/acceptance boundaries remain binding.
 
 `4.48` reconciles source-of-truth/priority routing with GitHub-first vs
 host-local reality, and limits legacy Project Sync/full-document workflow to
