@@ -13,7 +13,8 @@ WINDOWS = (("15м", 1), ("1ч", 4), ("4ч", 16), ("24ч", 96))
 TOP = 5
 REQUEST_SPACING_SECONDS = 0.25
 COLLECTION_LIMIT_SECONDS = 300
-MAX_AGE_MS = PERIOD_MS + COLLECTION_LIMIT_SECONDS * 1000
+RADAR_COLLECTION_LIMIT_SECONDS = 720
+MAX_AGE_MS = PERIOD_MS + RADAR_COLLECTION_LIMIT_SECONDS * 1000
 
 
 @dataclass(frozen=True)
@@ -109,23 +110,22 @@ def format_market(snapshot, *, now_ms, tapes=()):
     rows = snapshot.rows
     lines = ["📊 Рынок Bybit · USDT perpetual", f"Закрытые свечи до {stamp} МСК",
              f"Покрытие: {len(rows)}/{snapshot.expected}"]
-    if not snapshot.expected or not rows:
+    if not snapshot.expected:
         return "\n".join(lines + ["Подтверждённая история недоступна."])
     if len(rows) != snapshot.expected:
-        lines.append("Неполный охват — рейтинг только по проверенным инструментам.")
+        lines.append("Неполный охват свечей — лидеры движения только по проверенным инструментам.")
     lines.extend(["", "🔥 Монеты в игре"])
-    fresh = {t.symbol: t for t in tapes if t.activity_state(now_ms) != "UNKNOWN"}
+    fresh = {t.symbol: t for t in tapes if 0 <= now_ms - t.as_of_ms <= TAPE_FRESH_MS}
     lines.append(f"Свежая лента: {len(fresh)}/{snapshot.expected} · выборочная проверка")
-    active = [(r, fresh[r.symbol]) for r in rows if r.symbol in fresh
-              and fresh[r.symbol].activity_state(now_ms).startswith("ACTIVE_")]
-    active.sort(key=lambda item: (
-        -(item[0].activity or 0), -item[1].turnover_1m,
-        -item[1].prints_1m, item[0].symbol))
-    for r, t in active[:TOP]:
+    anomaly = {r.symbol: r.activity or 0 for r in rows}
+    active = [t for t in fresh.values() if t.activity_state(now_ms).startswith("ACTIVE_")]
+    active.sort(key=lambda t: (-anomaly.get(t.symbol, 0), -t.turnover_1m,
+                               -t.prints_1m, t.symbol))
+    for t in active[:TOP]:
         bound = "≥" if t.truncated_1m else ""
         state = ("живой поток" if t.activity_state(now_ms) == "ACTIVE_SUSTAINED_OBSERVED"
                  else "всплеск; непрерывность н/д")
-        lines.append(f"{r.symbol} · {bound}{t.prints_1m} сделок/мин · "
+        lines.append(f"{t.symbol} · {bound}{t.prints_1m} сделок/мин · "
                      f"{bound}{t.turnover_1m:,.0f} USDT/мин · {state}")
     if not active:
         lines.append("Нет подтверждённой активности в свежей проверенной выборке.")
@@ -278,6 +278,7 @@ class MarketRadar:
         self._priority_index = 0
         self._universe_index = 0
         self._turn = 0
+        self._sweep_offset = 0
 
     def clear(self):
         # Called by the sole worker when Scanner is not confirmed RUNNING.
@@ -290,6 +291,7 @@ class MarketRadar:
         self._priority = ()
         self._cutoff = None
         self._slot = self._priority_index = self._universe_index = self._turn = 0
+        self._sweep_offset = 0
 
     def card(self, now_ms):
         with self._lock:
@@ -312,7 +314,7 @@ class MarketRadar:
         self._priority_index = 0
         with self._lock:
             self._snapshot = MarketSnapshot(self._cutoff, len(self._symbols), rows)
-            allowed = {r.symbol for r in rows}
+            allowed = set(self._symbols)
             self._tapes = {s: t for s, t in self._tapes.items() if s in allowed}
 
     def step(self, get_symbols, get_candles, get_recent_trades, *,
@@ -328,15 +330,17 @@ class MarketRadar:
             self._symbols = symbols
             self._cutoff = cutoff
             self._rows = []
-            self._pending = deque(symbols)
-            self._deadline = monotonic_now + COLLECTION_LIMIT_SECONDS
+            offset = self._sweep_offset % len(symbols) if symbols else 0
+            self._pending = deque(symbols[offset:] + symbols[:offset])
+            self._deadline = monotonic_now + RADAR_COLLECTION_LIMIT_SECONDS
             if not self._pending:
                 self._publish()
             return
 
         self._turn += 1
-        if self._pending and (not self._priority or self._turn % 2 == 0):
+        if self._pending and (not self._priority or self._turn % 3 != 0):
             symbol = self._pending.popleft()
+            self._sweep_offset += 1
             try:
                 row = rank_candles(symbol, get_candles(
                     symbol, "15", HISTORY_BARS, end_ms=self._cutoff - 1), self._cutoff)
