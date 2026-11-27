@@ -553,3 +553,18 @@ export function revealedPaperMarkers(
   const seen = new Set(candles.map(c => c.start_ms));
   return overlay.markers.filter(item => seen.has(item.candle_start_ms));
 }
+
+/** Count only revealed, source-proven PAPER allocations; never virtual fills. */
+export function visiblePaperExecutionCounts(
+  facts: PaperEpisodeFacts | null, overlay: PaperOverlay, candles: readonly ReplayCandle[],
+): { entries: number; exits: number } {
+  const visible = new Set(revealedPaperMarkers(overlay, candles).map(marker => marker.execution_id));
+  let entries = 0, exits = 0;
+  for (const item of facts?.execution_allocations ?? []) {
+    if (!visible.has(item.execution_id)) continue;
+    if (item.allocation_role === "OPEN" || item.allocation_role === "REVERSAL_OPEN" ||
+        item.allocation_role === "INCREASE") entries++;
+    else if (item.allocation_role === "REDUCE" || item.allocation_role === "CLOSE") exits++;
+  }
+  return { entries, exits };
+}
