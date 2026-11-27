@@ -271,6 +271,7 @@ class MarketRadar:
         self._pending = deque()
         self._rows = []
         self._symbols = ()
+        self._sweep_symbols = ()
         self._priority = ()
         self._cutoff = None
         self._deadline = 0
@@ -288,6 +289,7 @@ class MarketRadar:
         self._pending.clear()
         self._rows = []
         self._symbols = ()
+        self._sweep_symbols = ()
         self._priority = ()
         self._cutoff = None
         self._slot = self._priority_index = self._universe_index = self._turn = 0
@@ -304,6 +306,7 @@ class MarketRadar:
 
     def _publish(self):
         rows = tuple(self._rows)
+        self._symbols = self._sweep_symbols
         anomaly = sorted((r for r in rows if r.activity is not None),
                          key=lambda r: (-r.activity, r.symbol))
         liquid = sorted(rows, key=lambda r: (-r.turnover_15m, r.symbol))
@@ -327,7 +330,7 @@ class MarketRadar:
             self._publish()
         if not self._pending and self._cutoff != cutoff:
             symbols = tuple(sorted(set(get_symbols())))
-            self._symbols = symbols
+            self._sweep_symbols = symbols
             self._cutoff = cutoff
             self._rows = []
             offset = self._sweep_offset % len(symbols) if symbols else 0
