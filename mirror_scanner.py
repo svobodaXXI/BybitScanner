@@ -174,12 +174,28 @@ def collect_levels(symbol: str, timeframe: str, candles, *, wedge_result=None,
 
     if isinstance(wedge_result, Mapping) and wedge_result.get("pattern") in WEDGE_ENGINE_PATTERNS:
         pattern = str(wedge_result["pattern"])
-        out += _with_parent(
+        engine_levels = _with_parent(
             levels_from_geometry(symbol=symbol, timeframe=timeframe, pattern=pattern,
                                  geometry=wedge_result.get("geometry") or {},
                                  candle_times_ms=times, decision_index=len(candles) - 2),
             {"parent_pattern": pattern,
              "parent_formation_id": wedge_result.get("scanner_formation_id")})
+        if pattern in ("Rising Wedge", "Falling Wedge"):
+            # Preserve the original opposite boundary as chart-only evidence.
+            # It must never become an independent MIRROR registry/tracker level.
+            for level in engine_levels:
+                if not mirror_level_allowed(level):
+                    continue
+                counterpart = next((other for other in engine_levels
+                                    if other.side != level.side), None)
+                if counterpart is not None:
+                    level = replace(level, provenance={
+                        **level.provenance,
+                        "chart_only_counterpart": counterpart.to_dict(),
+                    })
+                out.append(level)
+        else:
+            out += engine_levels
 
     # HORN/Broadening has a separate strategy; it cannot originate MIRROR.
 
@@ -1212,7 +1228,48 @@ def _frozen_event_chart(symbol: str, timeframe: str, rows: Sequence[Mapping[str,
     # index, confirmation time, pattern and source all agree. Never pair levels
     # merely because they share a symbol or pattern name.
     selected_decision = selected.provenance.get("decision_index")
-    for level in registry.levels.values():
+    wedge = selected.pattern in ("Rising Wedge", "Falling Wedge")
+    chart_levels = list(registry.levels.values())
+    if wedge:
+        # The selected primary is immutable across rescans and restarts.
+        # Use its own decision-time counterpart, never a newer source alias.
+        chart_levels = [selected]
+        raw = selected.provenance.get("chart_only_counterpart")
+        if isinstance(raw, Mapping):
+            try:
+                counterpart = MirrorLevel.from_dict(raw)
+            except (MirrorLevelError, KeyError, TypeError, ValueError):
+                counterpart = None
+            if (counterpart is not None
+                    and counterpart.symbol == selected.symbol
+                    and counterpart.timeframe == selected.timeframe
+                    and counterpart.source == selected.source
+                    and counterpart.pattern == selected.pattern
+                    and counterpart.side != selected.side
+                    and counterpart.level_id != selected.level_id
+                    and counterpart.confirmed_at_ms == selected.confirmed_at_ms
+                    and selected_decision is not None
+                    and counterpart.provenance.get("decision_index") == selected_decision
+                    and counterpart.provenance.get("parent_formation_id")
+                    == selected.provenance.get("parent_formation_id")
+                    and counterpart.provenance.get("formation_end_open_ms")
+                    == selected.provenance.get("formation_end_open_ms")):
+                chart_levels.append(counterpart)
+        else:
+            # Legacy registry evidence may still contain a true frozen pair.
+            # Never recover it from a later refit or another formation.
+            chart_levels.extend(
+                other for other in registry.levels.values()
+                if other.side != selected.side
+                and other.pattern == selected.pattern
+                and other.source == selected.source
+                and other.confirmed_at_ms == selected.confirmed_at_ms
+                and selected_decision is not None
+                and other.provenance.get("decision_index") == selected_decision
+                and other.provenance.get("parent_formation_id")
+                == selected.provenance.get("parent_formation_id")
+            )
+    for level in chart_levels:
         is_selected = level.level_id == level_id
         same_origin = bool(origin_ids and level.provenance.get("parent_formation_id") in origin_ids)
         same_frozen_geometry = bool(
@@ -1221,7 +1278,7 @@ def _frozen_event_chart(symbol: str, timeframe: str, rows: Sequence[Mapping[str,
             and level.confirmed_at_ms == selected.confirmed_at_ms
             and level.source == selected.source and level.pattern == selected.pattern
         )
-        if not (is_selected or same_origin or same_frozen_geometry):
+        if not (wedge or is_selected or same_origin or same_frozen_geometry):
             continue
         # Never draw a later pattern boundary on a historical MIRROR event.
         if int(level.confirmed_at_ms) > event_close_ms:
