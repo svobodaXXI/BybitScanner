@@ -140,7 +140,12 @@ def test_canonical_owner_action_does_not_call_start_or_stop(monkeypatch, capsys)
     assert "owner_release_prepare_unproven" in output and "SECRET" not in output
 
 
-def test_prepare_goes_via_existing_detached_uuid_owner_monolith(capsys):
+def test_prepare_goes_via_existing_detached_uuid_owner_monolith(capsys, monkeypatch, tmp_path):
+    original = vps_owner_control._owner_request_path
+    monkeypatch.setattr(vps_owner_control, "_owner_request_path",
+                        lambda request, *, create=False: original(
+                            request, create=create, root=tmp_path / "transactions",
+                            trusted_uid=os.geteuid()))
     calls = []
     def run(cmd, **kwargs):
         calls.append(cmd)
