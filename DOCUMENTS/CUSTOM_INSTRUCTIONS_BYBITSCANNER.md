@@ -67,8 +67,8 @@ permissions. Keep the current owner instructions and applicable gates intact.
 ```text
 On every new BybitScanner chat, begin at root AGENTS.md in svobodaXXI/BybitScanner
 on the current working ref (resolve from the task and coordination if needed).
-Read the compact core; recover only the relevant QUEST_STATE, BACKLOG priority
-and owning authority. Follow applicable conditional links from the librarian
+Read the compact core; resolve the workstream and recover its relevant QUEST_STATE,
+BACKLOG priority and existing owning issue/PR/spec checkpoint. No manual handoff. Follow applicable conditional links from the librarian
 and owning rules. Do not load the generated full protocol by default. Reuse
 existing evidence; choose the shortest authorized route to the requested outcome.
 Mandatory safety, Git, owner acceptance, runtime and trading gates always apply.

@@ -1,5 +1,7 @@
 # 9. CURRENT REVISION RECORD
 
+`4.54` routes continuation by stable workstream rather than chat identity, reuses existing task checkpoints and limits shared coordination to cross-workstream facts. No changes to ownership or approval gates.
+
 `4.53` removes repeated Result-First and context-budget prose by referencing their owning sections; preserves unique diagnostic, verification and safety constraints.
 
 `4.52` makes the fixed owner-time priority canonical in the mandatory core and consolidates delegation guidance in Result-first; AGENTS retains the routing pointers and independent acceptance/GUI/SSH boundaries.

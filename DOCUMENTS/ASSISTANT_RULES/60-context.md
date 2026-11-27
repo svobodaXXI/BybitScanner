@@ -111,20 +111,25 @@ pass or owner visual preview outside the full-pass-only policy.
 Apply this rule to every delegated prompt. If more than minimum checks are
 required for safety, state the concrete mandatory exception.
 
-### 3.2.2 DEFERRED: chat-independent task continuation (idea, NOT an active migration)
+### 3.2.2 Chat-independent task continuation
 
-Problem: repeated new-chat handoffs have accumulated overlapping summaries, indexes,
-sync procedures and re-reading. Future simplification, **only when the owner
-returns to this task**: let the repository own a single concise current-task
-checkpoint (goal, binding decision, verified state, next action, done criterion).
-A new chat follows the existing `AGENTS.md` staged entry to that checkpoint,
-reads only necessary code/evidence and continues; ordinary chat changes must
-not trigger full Project Sync, ContextDump, document audit, repeat diagnostics,
-or a user-authored handoff. Prefer reusing the existing task/state location
-and replacing duplicate text with links; create no new subsystem or protocol.
-Trial on one active task, retain required safety and local dirty-work checks,
-and stop if the short entry is sufficient. **No implementation or workflow
-migration is authorized by this note; the owner is working on other tasks now.**
+A workstream, not a particular chat or chat title, owns its active task. For
+continuation, use the active workstream routing in
+`DOCUMENTS/WORKSTREAM_COORDINATION.md`. Resolve the direction from the current
+owner task and available conversation context; use the relevant workstream
+checkpoint, not the newest unrelated entry in QUEST_STATE or #1077. Verify
+changed or uncertain PR/issue/host facts against their actual authority.
+An ambiguous bare continuation in a new chat with no recoverable direction
+requires only the direction name, never a manually reconstructed handoff.
+
+Persist material task transitions in the existing owning issue/PR or task
+record, with the goal, binding decisions, verified state/evidence, blocker if
+any, next action and done criterion. QUEST_STATE is a compact quest projection
+and BACKLOG owns priorities; link to the existing checkpoint rather than copy
+its detail. The shared #1077 journal is only for material cross-workstream
+coordination. Ordinary same-direction chat replacement needs no HANDOFF or
+HANDOFF_ACCEPTED ceremony. Follow the existing safety, acceptance, dirty-work
+and approval boundaries; no full Project Sync or ContextDump just for a new chat.
 
 ---
 

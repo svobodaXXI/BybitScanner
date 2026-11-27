@@ -63,10 +63,10 @@ stopping boundary. Do not create serial owner handoffs.
 
 1. Identify the owner's observable outcome, intended repository ref or local
    worktree, and actual scope. Read [core](DOCUMENTS/ASSISTANT_RULES/00-core.md).
-2. For a new chat, recover the relevant top of `DOCUMENTS/QUEST_STATE.md`,
-   the current priority in `DOCUMENTS/BACKLOG.md`, and only the owning task/spec.
-   Reconcile with the latest owner command and use the Russian GTD game mode;
-   see `DOCUMENTS/GTD_QUEST_SYSTEM.md` only where needed. No manual game handoff.
+2. For a new chat, resolve the workstream using the current task and [workstream routing](DOCUMENTS/WORKSTREAM_COORDINATION.md).
+   Recover its relevant `QUEST_STATE.md` entry, `BACKLOG.md` priority and owning
+   issue/PR/spec checkpoint via [Context §3.2.2](DOCUMENTS/ASSISTANT_RULES/60-context.md#322-chat-independent-task-continuation).
+   Reconcile with the latest owner command; continue in Russian GTD mode. No manual handoff.
 3. Choose applicable routes below. Follow conditional links inside the owning
    rules as facts change; these are knowledge routes, not extra workflow stages.
    Keep loaded authority and evidence for the same task. Do not follow unrelated
