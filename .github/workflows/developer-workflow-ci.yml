@@ -16,6 +16,7 @@ on:
       - "tests/test_harness_lean_workflow.py"
       - "tests/test_codex_workflow_governance.py"
       - "tests/test_context_budget_governance.py"
+      - "tests/test_task_context.py"
       - "tests/test_task_context_routing.py"
       - ".github/workflows/developer-workflow-ci.yml"
   workflow_dispatch:
@@ -46,4 +47,5 @@ jobs:
           tests.test_harness_lean_workflow
           tests.test_codex_workflow_governance
           tests.test_context_budget_governance
+          tests.test_task_context
           tests.test_task_context_routing

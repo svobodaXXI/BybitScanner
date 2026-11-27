@@ -28,10 +28,14 @@ class TaskContextTests(unittest.TestCase):
         self.root = Path(self.temporary.name)
         (self.root / "DOCUMENTS").mkdir()
         (self.root / "AGENTS.md").write_text(
-            "# Staged recovery\nGenerated ContextDumps are non-authoritative.\n", encoding="utf-8"
+            "# Staged recovery\nGenerated ContextDumps are derived context.\n", encoding="utf-8"
         )
-        (self.root / "DOCUMENTS/ASSISTANT_PROTOCOL.md").write_text(
-            "# Protocol\n\nВерсия:\n\n4.18\n", encoding="utf-8"
+        (self.root / "DOCUMENTS/ASSISTANT_RULES").mkdir()
+        (self.root / "DOCUMENTS/ASSISTANT_RULES/00-core.md").write_text(
+            "# Protocol\n\nВерсия:\n\n4.49\n", encoding="utf-8"
+        )
+        (self.root / "DOCUMENTS/BACKLOG.md").write_text(
+            "## P0 Test priority\n", encoding="utf-8"
         )
         (self.root / "DOCUMENTS/PROJECT_STATE.md").write_text(
             """# CURRENT_DEVELOPMENT_PRIORITY
@@ -73,6 +77,11 @@ NEXT_SLICE_NOT_AUTHORIZED
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("x\n", encoding="utf-8")
         return build_task_context(self.root, [path], git=FakeGit(self.root, head))
+
+    def test_protocol_version_from_core_without_legacy_projection(self):
+        value = self.context("tools/dev/task.py")
+        self.assertEqual(value["workflow"]["assistant_protocol_version"], "4.49")
+        self.assertFalse((self.root / "DOCUMENTS/ASSISTANT_PROTOCOL.md").exists())
 
     def test_narrow_frontend_task(self):
         value = self.context("terminal/frontend/src/App.tsx")
