@@ -31,12 +31,15 @@ def unit_name(request: str) -> str:
 
 
 def _read_owner_fields(request: str, *, run=subprocess.run) -> dict:
-    result = run(
-        ["systemctl", "show", "--no-pager",
-         "--property=LoadState,ActiveState,SubState,Result,ExecMainStatus,Description",
-         unit_name(request)],
-        capture_output=True, text=True, timeout=12, check=False,
-    )
+    try:
+        result = run(
+            ["systemctl", "show", "--no-pager",
+             "--property=LoadState,ActiveState,SubState,Result,ExecMainStatus,Description",
+             unit_name(request)],
+            capture_output=True, text=True, timeout=12, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return {}
     if result.returncode != 0:
         return {}
     fields = {}
@@ -221,11 +224,15 @@ def submit(action: str, sha: str, request: str, origin: str,
     # Legacy units with 12-digit descriptions remain queryable by status()
     # but cannot silently accept a new submission under the same UUID.
     description = "BybitScanner " + action + " " + sha + " origin=" + origin
-    probe = run(
-        ["systemctl", "show", "--no-pager",
-         "--property=LoadState,Description", unit],
-        capture_output=True, text=True, timeout=12, check=False,
-    )
+    try:
+        probe = run(
+            ["systemctl", "show", "--no-pager",
+             "--property=LoadState,Description", unit],
+            capture_output=True, text=True, timeout=12, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        print("SUBMISSION=UNPROVEN REQUEST_ID=" + request)
+        return 2
     if probe.returncode != 0:
         print("SUBMISSION=UNPROVEN REQUEST_ID=" + request)
         return 2
@@ -257,7 +264,15 @@ def submit(action: str, sha: str, request: str, origin: str,
         *(["--expected-installed-sha", expected_installed_sha]
           if expected_installed_sha is not None else []),
     ]
-    result = run(cmd, capture_output=True, text=True, timeout=20, check=False)
+    try:
+        result = run(cmd, capture_output=True, text=True, timeout=20, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        # The service may already have been enqueued before the client failed.
+        # Never infer non-dispatch or try a second systemd-run.
+        print("REQUEST_ID=" + request)
+        print("UNIT=" + unit)
+        print("SUBMISSION=UNPROVEN; use status, never retry the action")
+        return 2
     print("REQUEST_ID=" + request)
     print("UNIT=" + unit)
     if result.returncode != 0:
