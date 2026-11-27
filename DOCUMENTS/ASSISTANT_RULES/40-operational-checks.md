@@ -1,5 +1,11 @@
 ### 2.2.3 OPERATIONAL ENTRYPOINT TRACE — HARD RULE
 
+If the task is SSH/VPN connectivity, first use the applicable device section
+of `DOCUMENTS/WINDOWS_PC_VPS_ACCESS_RECOVERY_20261108.md`. If that resolves the
+transport problem, return to the original task rather than continue diagnostics.
+For any runtime/trading mutation, `20-runtime-ownership.md` remains applicable;
+transport success is not permission to start, stop, deploy or trade.
+
 Before asking the user to start, stop, restart, enable, configure, deploy, or synchronize a BybitScanner component,
 resolve the smallest actual operational path **yourself**:
 

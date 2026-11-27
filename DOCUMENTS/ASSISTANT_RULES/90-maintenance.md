@@ -95,6 +95,11 @@ This escalation is not required for a trivial deterministic defect with a proven
 BybitScanner, Trading Workspace, Scanner, future Robot, Android terminal, and relevant infrastructure/tooling, and
 never weakens fail-closed safety, correctness, governance, verification, or protection of user-owned work.
 
+Once §8.3 establishes the root cause or narrowest proven boundary, return to
+`80-development.md` for the scoped fix and targeted proof. Continue diagnosis
+only when a new observation can resolve the remaining material uncertainty.
+The original authorized goal and safety gates remain unchanged.
+
 ## 8.4 CHATGPT PROJECT INSTRUCTIONS GUARDRAIL SYNC NOTE
 
 ChatGPT Project Instructions are manually maintained outside the repository and are not project authority.

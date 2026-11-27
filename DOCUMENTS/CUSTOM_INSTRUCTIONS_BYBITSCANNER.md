@@ -57,6 +57,25 @@ WORKFLOW
 
 ## B. BybitScanner Project Instructions
 
+### Proposed compact routing entry — 2026-11-27 (pilot, not installed)
+
+The following routing block is intended to replace the bootstrap portion of the
+current UI Project Instructions only after validation and owner activation. It
+is not evidence that the actual ChatGPT setting has changed and grants no new
+permissions. Keep the current owner instructions and applicable gates intact.
+
+```text
+On every new BybitScanner chat, begin at root AGENTS.md in svobodaXXI/BybitScanner
+on the current working ref (resolve from the task and coordination if needed).
+Read the compact core; recover only the relevant QUEST_STATE, BACKLOG priority
+and owning authority. Follow applicable conditional links from the librarian
+and owning rules. Do not load the generated full protocol by default. Reuse
+existing evidence; choose the shortest authorized route to the requested outcome.
+Mandatory safety, Git, owner acceptance, runtime and trading gates always apply.
+```
+
+### Historical UI snapshot (not the new routing entry)
+
 **Обновление 2026-10-10 — для актуального поля Project Instructions:**
 
 Инструментальная ошибка (`PREEXISTING_DIRTY`, unmanaged worktree, reparse point, nested task transaction) не является отдельной задачей. Сохранить diff и факты, допустить максимум одну штатную узкую попытку восстановления, при повторном FAIL остановиться. Не использовать stash/pop, reset/clean, повторные task-транзакции, изменение harness/audit-контрактов/метаданных для искусственного PASS. Не обходить обязательные gates. После снятия блокера немедленно завершать исходную задачу. Текст ниже — исторический snapshot UI-инструкций; при расхождении приоритет имеют актуальные Project Instructions владельца и AGENTS.md.

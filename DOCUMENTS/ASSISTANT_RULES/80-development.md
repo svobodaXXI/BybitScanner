@@ -20,6 +20,14 @@ The assistant must use their prescribed governance gate when applicable, must no
 pipeline, and must not execute approval-gated migration without approval. Routine scoped work must not trigger full
 Migration/Project Sync merely because those systems exist.
 
+**Conditional routes:** If a defect's cause is established, continue with the
+smallest scoped implementation and applicable validation here. If a material
+regression is unexplained or recurring, use `90-maintenance.md` §8.3 before
+further patches. For actual host entrypoints or runtime effects, use
+`40-operational-checks.md` and `20-runtime-ownership.md`; for GitHub publication,
+use `10-harness-and-publication.md`. Follow only applicable branches; these
+links add no approval or procedure beyond the owning rule.
+
 ## 6.1 OBJECTIVELY_NECESSARY_TESTING_RULE
 
 Do not create synthetic/fake UI tests for behavior the user can immediately and reliably verify in the real UI.

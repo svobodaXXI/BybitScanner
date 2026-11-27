@@ -98,13 +98,15 @@ trading, runtime, Git/harness and secret-protection contracts intact.
    the current priority in `DOCUMENTS/BACKLOG.md`, and only the owning task/spec.
    Reconcile with the latest owner command and use the Russian GTD game mode;
    see `DOCUMENTS/GTD_QUEST_SYSTEM.md` only where needed. No manual game handoff.
-3. Choose applicable routes below. Keep loaded authority for the same task;
-   follow additional routes only when a real dependency, risk or uncertainty
-   requires them. A specialized package does not waive another applicable gate.
+3. Choose applicable routes below. Follow conditional links inside the owning
+   rules as facts change; these are knowledge routes, not extra workflow stages.
+   Keep loaded authority and evidence for the same task. Do not follow unrelated
+   links or revisit an unchanged step. Applicable safety and approval gates
+   remain binding regardless of route.
 4. Finish the full authorized goal with proportionate evidence and minimal
    owner interventions; ask only at an actual required boundary.
 
-## Always-applicable routing
+## Cross-cutting routes — load only when applicable
 
 | When | Canonical destination |
 | --- | --- |

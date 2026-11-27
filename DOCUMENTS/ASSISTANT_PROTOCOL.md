@@ -572,6 +572,12 @@ automatable interface exists, and requires the owner's explicit agreement.
 
 ### 2.2.3 OPERATIONAL ENTRYPOINT TRACE — HARD RULE
 
+If the task is SSH/VPN connectivity, first use the applicable device section
+of `DOCUMENTS/WINDOWS_PC_VPS_ACCESS_RECOVERY_20261108.md`. If that resolves the
+transport problem, return to the original task rather than continue diagnostics.
+For any runtime/trading mutation, `20-runtime-ownership.md` remains applicable;
+transport success is not permission to start, stop, deploy or trade.
+
 Before asking the user to start, stop, restart, enable, configure, deploy, or synchronize a BybitScanner component,
 resolve the smallest actual operational path **yourself**:
 
@@ -1066,6 +1072,14 @@ The assistant must use their prescribed governance gate when applicable, must no
 pipeline, and must not execute approval-gated migration without approval. Routine scoped work must not trigger full
 Migration/Project Sync merely because those systems exist.
 
+**Conditional routes:** If a defect's cause is established, continue with the
+smallest scoped implementation and applicable validation here. If a material
+regression is unexplained or recurring, use `90-maintenance.md` §8.3 before
+further patches. For actual host entrypoints or runtime effects, use
+`40-operational-checks.md` and `20-runtime-ownership.md`; for GitHub publication,
+use `10-harness-and-publication.md`. Follow only applicable branches; these
+links add no approval or procedure beyond the owning rule.
+
 ## 6.1 OBJECTIVELY_NECESSARY_TESTING_RULE
 
 Do not create synthetic/fake UI tests for behavior the user can immediately and reliably verify in the real UI.
@@ -1365,6 +1379,11 @@ and fail-closed behavior—not only the first observed example.
 This escalation is not required for a trivial deterministic defect with a proven local cause. It applies across
 BybitScanner, Trading Workspace, Scanner, future Robot, Android terminal, and relevant infrastructure/tooling, and
 never weakens fail-closed safety, correctness, governance, verification, or protection of user-owned work.
+
+Once §8.3 establishes the root cause or narrowest proven boundary, return to
+`80-development.md` for the scoped fix and targeted proof. Continue diagnosis
+only when a new observation can resolve the remaining material uncertainty.
+The original authorized goal and safety gates remain unchanged.
 
 ## 8.4 CHATGPT PROJECT INSTRUCTIONS GUARDRAIL SYNC NOTE
 
