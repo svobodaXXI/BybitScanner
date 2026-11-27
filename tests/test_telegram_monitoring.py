@@ -1684,7 +1684,6 @@ class MarketTapeTests(unittest.TestCase):
             self.assertIn("ещё не готов", radar.card(now))
 
 
-class MarketBurstTests(unittest.TestCase):
     def test_cadence_does_not_retry_inside_five_minutes(self):
         from telegram_market_burst import BurstCadence
         cadence = BurstCadence()
