@@ -2,7 +2,7 @@
 
 Version:
 
-4.52
+4.53
 
 Date:
 
@@ -268,11 +268,7 @@ reports without new evidence, progress or an objective blocker are not
 delivery. Each workstream owns its assigned outcome; coordinate dependencies
 without transferring responsibility to another chat.
 
-Priority: saving the user's time and manual effort outranks the assistant's response brevity. The assistant prepares
-the commands and prompts itself; it does not shorten a response by moving work onto the user (see `2.2.2` and `8.11`).
-The owner is never used as a human search/filter/parser when the same diagnostic result can be produced automatically.
-If host-local evidence is required, the assistant supplies one ready command or delegated prompt that performs the
-search, filtering and parsing itself and returns only the decisive result.
+Owner time outranks response brevity. Prepare commands and prompts rather than shifting work to the owner; `30-user-actions.md` §2.2.2 and `90-maintenance.md` §§8.7–8.11 own diagnostic collection and file transport.
 
 ### STRATEGIC EXECUTION / OWNER-TIME CONTRACT — OWNER RULE 2026-10-20
 
@@ -308,13 +304,9 @@ written plan or preflight project.
   input. Reuse existing code, snapshots, evidence, GitHub history, focused tests
   and recovery machinery. Prefer one decisive bounded check over repeated
   diagnostics; time-box diagnosis by its decision value.
-- Report only **verified new outcomes**, actual blocker or essential next
-  action. Upon blocker removal, automatically resume the original objective
-  within the existing authority. Do not claim readiness, closure or profitability
-  from code review, price touches, CI, unexecuted plans or illustrative PnL.
-- **Failure signal:** another proposed prompt, audit or owner task that does
-  not directly cross the next product edge or mandatory safety/approval gate.
-  Rewrite it into the existing execution brief or discard it.
+- Apply Result-First step 5 and the anti-drift test to all delegated work.
+  Do not infer profitability or readiness from price touches, illustrative PnL,
+  code review, CI or unexecuted plans.
 
 For historical/open PAPER positions found before a requested Scanner/Robot
 run, use `DOCUMENTS/RUNTIME_KNOWN_FAILURE_FAST_PATH.md` section
@@ -331,8 +323,7 @@ quest, agent role, approval or required document.
   ChatGPT carries GitHub work through implementation, focused evidence and the
   next authorized action. Codex handles VPS operations only. Internal PRs are
   not separate user tasks; request only genuinely required owner approvals.
-- **Small context:** use AGENTS routing, current BACKLOG and owning code/spec;
-  load more only when a concrete dependency demands it. Do not duplicate state
+- **Small context:** follow `60-context.md` §3.2. Do not duplicate state
   or write progress logs without a significant verified change.
 - **Proportionate proof:** a routine bug needs a reproducible case and targeted
   test; a material architecture/trading change needs its existing owning
@@ -397,11 +388,9 @@ safe, expressly authorized operational continuation solely to merge preventive
 code unless that code is a proven prerequisite. Codex is a VPS executor only;
 ChatGPT owns GitHub implementation.
 
-**One result to the owner:** return verified postconditions or a single
-specific BLOCKED cause and the next truly owner-only authorization. Do not
-require serial prompts, separate manual diagnostics, progress documents, or
-new PRs unless they advance that edge. Preserve unrelated user work and
-existing protected artifacts.
+**One result to the owner:** apply Result-First step 5 to the verified
+postconditions or specific blocker. Preserve unrelated user work and existing
+protected artifacts.
 
 
 
@@ -831,15 +820,12 @@ Internal slices and milestones are not owner handoffs: continue through dependen
 under `11-result-first.md` until the outcome is proven or a genuine blocking dependency,
 mandatory gate or owner-only decision is reached. Do not expand the authorized scope.
 
-Before each further read, experiment, test, or retry, identify the **new**
-question/evidence it will resolve. Reuse a passing check for unchanged inputs:
-never rerun the same test, full suite, historical sample, fetch, or status
-inspection for reassurance or "sanity" alone. Recheck only if relevant code,
-inputs, environment, prior result, mandatory verification boundary, or observed
-failure has changed and state why the existing evidence no longer suffices.
-Use the smallest relevant focused check first; do not invent tests for already
-proven unchanged behavior. Existing required safety, contract, harness, build,
-and real-runtime acceptance checks remain mandatory when applicable.
+Apply §3.2 to every read, experiment, test or retry. Recheck only if relevant
+code, inputs, environment, prior result, mandatory verification boundary or
+observed failure changed; identify why existing evidence no longer suffices.
+Use the smallest relevant focused check first. Do not invent tests for proven
+unchanged behavior. Required safety, contract, harness, build and real-runtime
+acceptance checks remain mandatory.
 
 Do not loop through alternative thresholds, repeated reproductions, or new
 research directions without new evidence. After two unsuccessful attempts at
@@ -862,11 +848,8 @@ multiple optional investigations, full-suite requests, repeated tests of
 unchanged behavior, or instructions to keep iterating until a vaguely defined
 "perfect" result. Do not append a generic battery of checks to every prompt.
 
-Require the agent to run each necessary focused check **once after the relevant
-change**, reuse already successful evidence, and rerun **only a failing check
-after a targeted fix** or where a changed input invalidates its result.
-No blind test/fix loops, alternative-threshold tuning loops, redundant source
-fetches or continuous polling. On a failed ordinary check, correct the proven
+Apply §3.2.1: run each necessary focused check once after the relevant change;
+rerun only a failing check after a targeted fix or a check invalidated by changed inputs. On a failed ordinary check, correct the proven
 cause within scope and repeat only the invalidated check. For mandatory gate
 failures, unknown material risk or unavailable evidence, use the applicable
 STOP/HOLD/CONTINUE policy in `11-result-first.md`; preserve stricter harness
@@ -877,11 +860,8 @@ duplicating them with additional ad hoc runs. A code task ends promptly after
 its scoped deliverable and required proof; no agent-supervised real Scanner
 pass or owner visual preview outside the full-pass-only policy.
 
-The assistant MUST check this rule when writing each subsequent delegated
-prompt and remove any instruction that would accidentally trigger repetitive
-work, excessive test campaigns or unbounded autonomous cycles. If a task
-cannot safely complete with the minimum checks, state the concrete mandatory
-exception rather than silently expanding the prompt.
+Apply this rule to every delegated prompt. If more than minimum checks are
+required for safety, state the concrete mandatory exception.
 
 ### 3.2.2 DEFERRED: chat-independent task continuation (idea, NOT an active migration)
 
@@ -1538,6 +1518,8 @@ extends `8.7` (no user as file transport) and `8.8` (machine-applied file change
 ---
 
 # 9. CURRENT REVISION RECORD
+
+`4.53` removes repeated Result-First and context-budget prose by referencing their owning sections; preserves unique diagnostic, verification and safety constraints.
 
 `4.52` makes the fixed owner-time priority canonical in the mandatory core and consolidates delegation guidance in Result-first; AGENTS retains the routing pointers and independent acceptance/GUI/SSH boundaries.
 

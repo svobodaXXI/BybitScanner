@@ -1,5 +1,7 @@
 # 9. CURRENT REVISION RECORD
 
+`4.53` removes repeated Result-First and context-budget prose by referencing their owning sections; preserves unique diagnostic, verification and safety constraints.
+
 `4.52` makes the fixed owner-time priority canonical in the mandatory core and consolidates delegation guidance in Result-first; AGENTS retains the routing pointers and independent acceptance/GUI/SSH boundaries.
 
 `4.51` aligns context economy with continuous authorized outcome delivery and confines the historical PAPER mission to its applicable scope. All mandatory gates and recovery limits remain binding.

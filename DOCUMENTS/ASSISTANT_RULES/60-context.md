@@ -68,15 +68,12 @@ Internal slices and milestones are not owner handoffs: continue through dependen
 under `11-result-first.md` until the outcome is proven or a genuine blocking dependency,
 mandatory gate or owner-only decision is reached. Do not expand the authorized scope.
 
-Before each further read, experiment, test, or retry, identify the **new**
-question/evidence it will resolve. Reuse a passing check for unchanged inputs:
-never rerun the same test, full suite, historical sample, fetch, or status
-inspection for reassurance or "sanity" alone. Recheck only if relevant code,
-inputs, environment, prior result, mandatory verification boundary, or observed
-failure has changed and state why the existing evidence no longer suffices.
-Use the smallest relevant focused check first; do not invent tests for already
-proven unchanged behavior. Existing required safety, contract, harness, build,
-and real-runtime acceptance checks remain mandatory when applicable.
+Apply §3.2 to every read, experiment, test or retry. Recheck only if relevant
+code, inputs, environment, prior result, mandatory verification boundary or
+observed failure changed; identify why existing evidence no longer suffices.
+Use the smallest relevant focused check first. Do not invent tests for proven
+unchanged behavior. Required safety, contract, harness, build and real-runtime
+acceptance checks remain mandatory.
 
 Do not loop through alternative thresholds, repeated reproductions, or new
 research directions without new evidence. After two unsuccessful attempts at
@@ -99,11 +96,8 @@ multiple optional investigations, full-suite requests, repeated tests of
 unchanged behavior, or instructions to keep iterating until a vaguely defined
 "perfect" result. Do not append a generic battery of checks to every prompt.
 
-Require the agent to run each necessary focused check **once after the relevant
-change**, reuse already successful evidence, and rerun **only a failing check
-after a targeted fix** or where a changed input invalidates its result.
-No blind test/fix loops, alternative-threshold tuning loops, redundant source
-fetches or continuous polling. On a failed ordinary check, correct the proven
+Apply §3.2.1: run each necessary focused check once after the relevant change;
+rerun only a failing check after a targeted fix or a check invalidated by changed inputs. On a failed ordinary check, correct the proven
 cause within scope and repeat only the invalidated check. For mandatory gate
 failures, unknown material risk or unavailable evidence, use the applicable
 STOP/HOLD/CONTINUE policy in `11-result-first.md`; preserve stricter harness
@@ -114,11 +108,8 @@ duplicating them with additional ad hoc runs. A code task ends promptly after
 its scoped deliverable and required proof; no agent-supervised real Scanner
 pass or owner visual preview outside the full-pass-only policy.
 
-The assistant MUST check this rule when writing each subsequent delegated
-prompt and remove any instruction that would accidentally trigger repetitive
-work, excessive test campaigns or unbounded autonomous cycles. If a task
-cannot safely complete with the minimum checks, state the concrete mandatory
-exception rather than silently expanding the prompt.
+Apply this rule to every delegated prompt. If more than minimum checks are
+required for safety, state the concrete mandatory exception.
 
 ### 3.2.2 DEFERRED: chat-independent task continuation (idea, NOT an active migration)
 

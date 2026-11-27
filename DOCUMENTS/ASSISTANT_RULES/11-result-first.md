@@ -112,11 +112,7 @@ reports without new evidence, progress or an objective blocker are not
 delivery. Each workstream owns its assigned outcome; coordinate dependencies
 without transferring responsibility to another chat.
 
-Priority: saving the user's time and manual effort outranks the assistant's response brevity. The assistant prepares
-the commands and prompts itself; it does not shorten a response by moving work onto the user (see `2.2.2` and `8.11`).
-The owner is never used as a human search/filter/parser when the same diagnostic result can be produced automatically.
-If host-local evidence is required, the assistant supplies one ready command or delegated prompt that performs the
-search, filtering and parsing itself and returns only the decisive result.
+Owner time outranks response brevity. Prepare commands and prompts rather than shifting work to the owner; `30-user-actions.md` §2.2.2 and `90-maintenance.md` §§8.7–8.11 own diagnostic collection and file transport.
 
 ### STRATEGIC EXECUTION / OWNER-TIME CONTRACT — OWNER RULE 2026-10-20
 
@@ -152,13 +148,9 @@ written plan or preflight project.
   input. Reuse existing code, snapshots, evidence, GitHub history, focused tests
   and recovery machinery. Prefer one decisive bounded check over repeated
   diagnostics; time-box diagnosis by its decision value.
-- Report only **verified new outcomes**, actual blocker or essential next
-  action. Upon blocker removal, automatically resume the original objective
-  within the existing authority. Do not claim readiness, closure or profitability
-  from code review, price touches, CI, unexecuted plans or illustrative PnL.
-- **Failure signal:** another proposed prompt, audit or owner task that does
-  not directly cross the next product edge or mandatory safety/approval gate.
-  Rewrite it into the existing execution brief or discard it.
+- Apply Result-First step 5 and the anti-drift test to all delegated work.
+  Do not infer profitability or readiness from price touches, illustrative PnL,
+  code review, CI or unexecuted plans.
 
 For historical/open PAPER positions found before a requested Scanner/Robot
 run, use `DOCUMENTS/RUNTIME_KNOWN_FAILURE_FAST_PATH.md` section
@@ -175,8 +167,7 @@ quest, agent role, approval or required document.
   ChatGPT carries GitHub work through implementation, focused evidence and the
   next authorized action. Codex handles VPS operations only. Internal PRs are
   not separate user tasks; request only genuinely required owner approvals.
-- **Small context:** use AGENTS routing, current BACKLOG and owning code/spec;
-  load more only when a concrete dependency demands it. Do not duplicate state
+- **Small context:** follow `60-context.md` §3.2. Do not duplicate state
   or write progress logs without a significant verified change.
 - **Proportionate proof:** a routine bug needs a reproducible case and targeted
   test; a material architecture/trading change needs its existing owning
@@ -241,11 +232,9 @@ safe, expressly authorized operational continuation solely to merge preventive
 code unless that code is a proven prerequisite. Codex is a VPS executor only;
 ChatGPT owns GitHub implementation.
 
-**One result to the owner:** return verified postconditions or a single
-specific BLOCKED cause and the next truly owner-only authorization. Do not
-require serial prompts, separate manual diagnostics, progress documents, or
-new PRs unless they advance that edge. Preserve unrelated user work and
-existing protected artifacts.
+**One result to the owner:** apply Result-First step 5 to the verified
+postconditions or specific blocker. Preserve unrelated user work and existing
+protected artifacts.
 
 
 
