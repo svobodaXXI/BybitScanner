@@ -2,7 +2,7 @@
 
 Version:
 
-4.56
+4.57
 
 Date:
 
@@ -321,7 +321,8 @@ quest, agent role, approval or required document.
 
 - **One outcome:** owner specifies observable success and product constraints;
   ChatGPT carries GitHub work through implementation, focused evidence and the
-  next authorized action. Codex handles authorized VPS operations and exceptional local-only verification when repository-native evidence is insufficient. Internal PRs are
+  next authorized action. Select the shortest safe execution surface under `80-development.md` §7.0;
+  routine VPS operations use direct PowerShell, not Codex. Internal PRs are
   not separate user tasks; request only genuinely required owner approvals.
 - **Small context:** follow `60-context.md` §3.2. Do not duplicate state
   or write progress logs without a significant verified change.
@@ -385,8 +386,8 @@ transition timing/state boundary—not only internal helpers or mocked success
 paths. A passing targeted test and required CI qualify the code for a separate
 authorized merge; neither is runtime acceptance. Do not interrupt a pending,
 safe, expressly authorized operational continuation solely to merge preventive
-code unless that code is a proven prerequisite. Codex is a host-specific executor under the task's existing authority;
-ChatGPT owns GitHub implementation.
+code unless that code is a proven prerequisite. Apply `80-development.md` §7.0 for execution-surface
+selection; ChatGPT owns GitHub-first implementation.
 
 **One result to the owner:** apply Result-First step 5 to the verified
 postconditions or specific blocker. Preserve unrelated user work and existing
@@ -551,10 +552,10 @@ One response contains at most 2 commands or blocks for the user to execute (Powe
 A chain joined with `;` or `&&`, and a multi-line script, each count as several commands. Dependent steps are given one
 per message, per `2.2`.
 
-Everything the assistant can do automatically — Git operations, process restarts, checks, file edits, log/error search,
-diagnostic filtering, state collection and evidence correlation — is done directly with available tools or delegated to
-Claude Code (or Codex) through a prompt, not handed to the user as manual work. A prompt for Claude Code counts as 1
-block. The batching allowance in `2.2` ("Independent safe commands may be batched.") applies only within this limit.
+Everything the assistant can do automatically is done directly with authorized tools first. For host-only evidence or
+an authorized deterministic host operation, use one copy-ready PowerShell block under `80-development.md` §7.0 rather than agent
+indirection; delegate only when that section establishes a genuine need. Do not hand manual diagnostic work to the
+owner. A prompt for Claude Code counts as 1 block. The batching allowance in `2.2` ("Independent safe commands may be batched.") applies only within this limit.
 Preflight `2.2.1` also verifies this limit before sending a response that requires user action.
 
 **No manual diagnostic hunting:** do not ask the owner to open a console/window/file and visually find a line, scroll
@@ -1132,6 +1133,60 @@ available for that task; otherwise GitHub-first is the default.
 
 # 7. CODEX EXECUTION AND VERIFICATION
 
+## 7.0 EXECUTION-SURFACE ROUTING / DIRECT COMMAND FIRST — OWNER RULE 2026-11-27
+
+Applies project-wide, within Result-First and the owner-time contract, before
+any delegation. Do not delegate an operation to an intelligent agent when a
+known deterministic command can reach the same verified result with less
+owner time, equivalent safety and evidence. No additional workflow or gate.
+
+| Work | Default execution surface |
+| --- | --- |
+| Repository inspection, source analysis, GitHub-first changes, PR/CI evidence | ChatGPT + GitHub connector |
+| VPS/Windows runtime diagnostics, logs, positions, executions, reconciliation evidence, ordinary authorized maintenance and releases | ChatGPT prepares one bounded, copy-ready PowerShell operation using the canonical entrypoint; owner executes it where host access is required |
+| Code changes requiring a local checkout, complex local debugging, implementation or focused tests/builds not adequately served by GitHub-first | Codex, under §6.4 and §7.1 |
+| Real UI/device acceptance and owner-only runtime/trading actions | Owner through the existing approved interface |
+
+Use direct authorized tools without involving the owner wherever possible.
+Use the canonical SSH register and the existing monolithic operation for
+VPS work; do not invent alternate launchers, raw trading commands, manual SQL
+or duplicate writers. Batch a safe dependent operation into one invocation
+when the canonical workflow supports it. Preserve separate required owner
+approvals, real-world acceptance, Scanner/Robot ownership and all PAPER/LIVE,
+Admission, STOP/TAKE, Git and fail-closed gates. A direct command is not an
+authorization. Never transfer control of the owner's desktop to an agent.
+
+Codex is an exception for operational work, not the routine VPS executor:
+use it only for an explicit owner-selected task or a concrete technical
+dependency that cannot reasonably be handled by direct tools/commands and
+whose expected benefit outweighs delegation overhead. Do not launch Codex
+just to read an API, run an existing CLI, inspect logs, relay a receipt or
+wait for a runtime event.
+
+For every necessary Codex prompt, apply §7.1 and §3.2.1a: state the single
+observable outcome, requested delta, genuinely task-specific constraints,
+minimum evidence and STOP boundary. Reuse prior evidence. Do not duplicate
+repository rules, request broad investigations, serial status reports,
+unrelated changes or autonomous retry loops. Return only the proved result
+or precise blocker with any known partial effects.
+
+If a runtime operation returns a failure, timeout or ambiguous receipt,
+do not equate transport/HTTP failure with absence of economic effect.
+Identify the last proved phase and independently inspect the durable
+commands, executions, positions and protection through the smallest read-only
+canonical check. Do not repeat a mutation blindly or run competing operations
+in PowerShell and Codex. Stop at the real blocker; any new protected mutation
+after a terminated one-shot attempt requires its existing owner approval.
+If an agent is already executing, establish its terminal state before taking
+over. Change the method rather than prolonging unproductive delegation.
+
+Incident rationale: on 2026-11-27 a Close All HTTP 409 concealed a confirmed
+FWDIUSDT fill and an unexecuted SPCHUSDT close; a single read-only PowerShell
+inspection established the actual partial outcome. This is evidence for the
+routing rule, not proof of the remaining execution defect or authorization
+to close a position. Measure improvement by verified outcomes, owner time
+and interventions, not agent activity, prompt length, commits or XP.
+
 ## 7.1 MINIMAL_CODEX_DELTA_RULE
 
 Routine Codex prompts must contain only task intent and genuinely task-specific constraints or facts that cannot
@@ -1150,7 +1205,8 @@ PASS authorizes a material scope amendment, LIVE mutation, deployment or Git wri
 Batch approved compatible micro-tasks and related decisions. Do not interrupt implementation with serial
 micro-questions when one safe decision batch suffices. Full research, status, diff, and verbose logs are off by
 default. When Codex/local implementation is explicitly selected, use Codex primarily for current local
-inspection/mutation, tests/build/runtime, and authorized Git work. Otherwise §6.4 makes GitHub-first the default
+inspection/mutation, complex focused tests/builds, and authorized Git work. For runtime operations apply §7.0.
+Otherwise §6.4 makes GitHub-first the default
 ChatGPT-led mutation surface. Do not perform opportunistic refactoring, cleanup, redesign, or “while here”
 improvements. Prefer the smallest targeted tests and checks that prove the current delta; run full suites only when
 objectively required.
@@ -1524,6 +1580,8 @@ extends `8.7` (no user as file transport) and `8.8` (machine-applied file change
 ---
 
 # 9. CURRENT REVISION RECORD
+
+`4.57` integrates the stable owner-approved direct-command-first §7.0 rule into the routed packages; preserves the independent release and safety boundaries.
 
 `4.56` connects the existing task-context/harness to the Codex economy route and clarifies its authorized local-only verification role; no new host, publication or trading permission.
 

@@ -1,5 +1,7 @@
 # 9. CURRENT REVISION RECORD
 
+`4.57` integrates the stable owner-approved direct-command-first §7.0 rule into the routed packages; preserves the independent release and safety boundaries.
+
 `4.56` connects the existing task-context/harness to the Codex economy route and clarifies its authorized local-only verification role; no new host, publication or trading permission.
 
 `4.55` adds bounded workstream checkpoint recovery when the quest projection is missing or stale. Actual issue/PR evidence determines completion, not journal order or old status labels.

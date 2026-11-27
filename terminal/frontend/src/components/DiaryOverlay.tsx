@@ -356,6 +356,7 @@ async function queueScopedEpisodeFacts(episodeId: string, owner: "ROBOT" | "MANU
       episode_id: episodeId, owner, source_revision: revision,
     }),
   });
+  if (response.status === 409) throw new Error("Статистика изменилась. Обновите список сделок и повторите открытие.");
   if (!response.ok) throw new Error("Нет сопряжённого Симулятора для передачи JSON");
   const raw: unknown = await response.json();
   if (!raw || typeof raw !== "object") throw new Error("Нет подтверждения запроса");

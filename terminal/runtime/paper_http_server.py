@@ -3117,7 +3117,7 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 self._json_response(400, {"ok": False, "error": "invalid_simulator_fact_request"})
                 return
             try:
-                episode_id, owner, revision = relay.authorized_facts_scope(
+                facts = relay.authorized_facts_payload(
                     device=params["device_id"][0],
                     token=self.headers.get("X-BybitScanner-Simulator-Device-Token", ""),
                     request_id=params["request_id"][0],
@@ -3128,51 +3128,7 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             except RelayInvalid:
                 self._json_response(404, {"ok": False, "error": "episode_fact_request_unavailable"})
                 return
-            try:
-                snapshot = load_paper_source_snapshot(
-                    self.server.diary_source_db_path, include_wedge_evidence=True,
-                )
-                projection = project_paper_closed_episode_facts(
-                    snapshot, account_id="paper", owner=owner,
-                    trade_episode_id=episode_id, source_revision=revision,
-                    now_ms=int(time.time() * 1000),
-                )
-                # The paired device receives the same exact-ID, read-only D2
-                # and immutable archived signal geometry as the owner export.
-                # No fallback ticker/time correlation or geometry refitting.
-                d2_context = project_episode_d2_context_read_only(
-                    getattr(self.server, "diary_setup_store_path", None),
-                    trade_episode_id=episode_id, account_id="paper",
-                    symbol=projection["symbol"], side=projection["side"],
-                    opening_controller=projection["execution_allocations"][0]["controller"],
-                )
-                projection["setup_context"] = attach_verified_original_geometry(
-                    d2_context, symbol=projection["symbol"],
-                    opened_at_ms=projection["opened_at_ms"],
-                )
-                candidate_geometry = project_exact_candidate_archive_geometry(
-                    snapshot, projection, d2_context,
-                )
-                if candidate_geometry is not None:
-                    projection["candidate_geometry"] = candidate_geometry
-                from terminal.diary.episode_context import project_wedge_revision_history
-                revisions = project_wedge_revision_history(self.server.diary_source_db_path, projection)
-                if revisions is not None:
-                    projection["geometry_revisions"] = revisions
-            except EpisodeFactsSourceChanged:
-                self._json_response(409, {"ok": False, "error": "episode_facts_source_changed"})
-                return
-            except EpisodeFactsNotFound:
-                self._json_response(404, {"ok": False, "error": "episode_not_in_scope"})
-                return
-            except (StatisticsScopeError, ValueError):
-                self._json_response(503, {"ok": False, "error": "episode_facts_evidence_unavailable"})
-                return
-            except Exception:
-                LOGGER.exception("Paired episode facts unavailable")
-                self._json_response(503, {"ok": False, "error": "episode_facts_evidence_unavailable"})
-                return
-            self._json_response(200, {"ok": True, **projection})
+            self._json_response(200, json.loads(facts))
             return
 
         if parsed.path == "/api/diary/simulator-bridge/poll":
@@ -4330,6 +4286,50 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
         except Exception:
             LOGGER.warning("Robot candle cache warm-up failed", exc_info=True)
 
+    def _prepare_simulator_facts(self, episode_id: str, owner: str, revision: int) -> dict:
+        from terminal.diary.simulator_launch_relay import RelayUnavailable
+        try:
+            return self._project_simulator_facts(episode_id, owner, revision)
+        except (EpisodeFactsSourceChanged, EpisodeFactsNotFound):
+            raise
+        except Exception:
+            LOGGER.exception("Paired episode facts unavailable")
+            raise RelayUnavailable("episode_facts_evidence_unavailable") from None
+
+    def _project_simulator_facts(self, episode_id: str, owner: str, revision: int) -> dict:
+        # Freeze exact verified evidence at owner request time, not device poll time.
+        snapshot = load_paper_source_snapshot(
+            self.server.diary_source_db_path, include_wedge_evidence=True,
+        )
+        projection = project_paper_closed_episode_facts(
+            snapshot, account_id="paper", owner=owner,
+            trade_episode_id=episode_id, source_revision=revision,
+            now_ms=int(time.time() * 1000),
+        )
+        # The paired device receives the same exact-ID, read-only D2
+        # and immutable archived signal geometry as the owner export.
+        # No fallback ticker/time correlation or geometry refitting.
+        d2_context = project_episode_d2_context_read_only(
+            getattr(self.server, "diary_setup_store_path", None),
+            trade_episode_id=episode_id, account_id="paper",
+            symbol=projection["symbol"], side=projection["side"],
+            opening_controller=projection["execution_allocations"][0]["controller"],
+        )
+        projection["setup_context"] = attach_verified_original_geometry(
+            d2_context, symbol=projection["symbol"],
+            opened_at_ms=projection["opened_at_ms"],
+        )
+        candidate_geometry = project_exact_candidate_archive_geometry(
+            snapshot, projection, d2_context,
+        )
+        if candidate_geometry is not None:
+            projection["candidate_geometry"] = candidate_geometry
+        from terminal.diary.episode_context import project_wedge_revision_history
+        revisions = project_wedge_revision_history(self.server.diary_source_db_path, projection)
+        if revisions is not None:
+            projection["geometry_revisions"] = revisions
+        return {"ok": True, **projection}
+
     def do_POST(self) -> None:
         path = urlparse(self.path).path
         if path in {
@@ -4362,6 +4362,7 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                         payload["episode_id"],
                         owner=payload.get("owner"),
                         source_revision=payload.get("source_revision"),
+                        prepare_facts=self._prepare_simulator_facts,
                         request_origin=self.headers.get("Origin", ""),
                         fetch_site=self.headers.get("Sec-Fetch-Site", ""),
                     )
@@ -4408,6 +4409,12 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                         token=self.headers.get("X-BybitScanner-Simulator-Device-Token", ""),
                         request_id=payload["request_id"], launched=payload["launched"],
                     )
+            except EpisodeFactsSourceChanged:
+                self._json_response(409, {"ok": False, "error": "episode_facts_source_changed"})
+                return
+            except EpisodeFactsNotFound:
+                self._json_response(404, {"ok": False, "error": "episode_not_in_scope"})
+                return
             except RelayForbidden:
                 self._json_response(403, {"ok": False, "error": "simulator_bridge_unauthorized"})
                 return

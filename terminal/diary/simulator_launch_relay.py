@@ -1,7 +1,8 @@
 """Fail-closed, in-memory remote locator relay for the local Machine Time utility.
 
 The relay does not import PAPER runtime, touch database files, perform OS
-operations, forward arbitrary commands, or keep episode facts. Configuration is
+operations or forward arbitrary commands. Only bounded, request-scoped facts
+are held in memory until acknowledgement or expiration. Configuration is
 disabled by default. Device polls need an independent device-only secret.
 """
 from __future__ import annotations
@@ -21,6 +22,7 @@ EPISODE_ID = re.compile(r"te_[0-9a-f]{24}\Z")
 DEVICE_ID = re.compile(r"[a-z][a-z0-9_-]{1,31}\Z")
 REQUEST_ID = re.compile(r"[0-9a-f]{32}\Z")
 MAX_CONFIG_BYTES = 8192
+MAX_FACTS_BYTES = 4 * 1024 * 1024
 ONLINE_SECONDS = 12
 REQUEST_SECONDS = 35
 STATUS_SECONDS = 90
@@ -62,6 +64,7 @@ class _Request:
     state: str = "QUEUED"
     owner: str | None = None
     source_revision: int | None = None
+    facts: bytes | None = None
 
 
 class SimulatorLaunchRelay:
@@ -165,11 +168,13 @@ class SimulatorLaunchRelay:
         for key, item in list(self._requests.items()):
             if now - item.created >= REQUEST_SECONDS and item.state in {"QUEUED", "DELIVERED"}:
                 item.state = "EXPIRED"
+                item.facts = None
             if now - item.created >= STATUS_SECONDS:
                 del self._requests[key]
 
     def enqueue(self, episode_id: str, *, request_origin: str, fetch_site: str,
-                owner: str | None = None, source_revision: int | None = None) -> dict[str, str]:
+                owner: str | None = None, source_revision: int | None = None,
+                prepare_facts=None) -> dict[str, str]:
         # Nginx must additionally enforce owner authentication on this POST.
         # Origin and fetch-metadata prevent cross-site form/CSRF requests.
         if (request_origin != self.origin
@@ -184,6 +189,19 @@ class SimulatorLaunchRelay:
                                   or type(source_revision) is not int
                                   or not 1 <= source_revision <= 2**63 - 1):
             raise RelayInvalid("invalid_episode_fact_scope")
+        facts = None
+        if owner is not None and prepare_facts is not None:
+            projection = prepare_facts(episode_id, owner, source_revision)
+            if (projection.get("ok") is not True
+                    or projection.get("trade_episode_id") != episode_id
+                    or projection.get("owner") != owner
+                    or projection.get("source_revision") != source_revision
+                    or projection.get("account_id") != "paper"
+                    or projection.get("namespace") != "PAPER_READ_ONLY"):
+                raise RelayUnavailable("episode_facts_scope_mismatch")
+            facts = json.dumps(projection, separators=(",", ":")).encode("utf-8")
+            if len(facts) > MAX_FACTS_BYTES:
+                raise RelayUnavailable("episode_facts_too_large")
         with self._lock:
             now = self._clock()
             self._trim(now)
@@ -210,7 +228,8 @@ class SimulatorLaunchRelay:
                 raise RelayUnavailable("simulator_adapter_busy")
             rid = secrets.token_hex(16)
             self._requests[rid] = _Request(rid, device, episode_id, now,
-                                           owner=owner, source_revision=source_revision)
+                                           owner=owner, source_revision=source_revision,
+                                           facts=facts)
             return {"request_id": rid, "state": "QUEUED"}
 
     def poll(self, *, device: str, token: str,
@@ -258,6 +277,20 @@ class SimulatorLaunchRelay:
                 raise RelayInvalid("unavailable_episode_fact_request")
             return req.episode_id, req.owner, req.source_revision
 
+    def authorized_facts_payload(self, *, device: str, token: str,
+                                 request_id: str) -> bytes:
+        if not self._authenticated(device, token):
+            raise RelayForbidden("simulator_device_unauthorized")
+        if not isinstance(request_id, str) or not REQUEST_ID.fullmatch(request_id):
+            raise RelayInvalid("invalid_simulator_fact_request")
+        with self._lock:
+            self._trim(self._clock())
+            req = self._requests.get(request_id)
+            if (req is None or req.device_id != device or req.state != "DELIVERED"
+                    or req.owner not in {"ROBOT", "MANUAL"} or req.facts is None):
+                raise RelayInvalid("unavailable_episode_fact_request")
+            return req.facts
+
     def acknowledge(self, *, device: str, token: str, request_id: str,
                     launched: bool) -> dict[str, str]:
         if not self._authenticated(device, token):
@@ -270,6 +303,7 @@ class SimulatorLaunchRelay:
             if req is None or req.device_id != device or req.state != "DELIVERED":
                 raise RelayInvalid("unknown_or_completed_launch_request")
             req.state = "LAUNCHED" if launched else "FAILED"
+            req.facts = None
             return {"state": req.state}
 
     def status(self, request_id: str, *, request_origin: str,

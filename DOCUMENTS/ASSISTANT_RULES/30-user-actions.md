@@ -56,10 +56,10 @@ One response contains at most 2 commands or blocks for the user to execute (Powe
 A chain joined with `;` or `&&`, and a multi-line script, each count as several commands. Dependent steps are given one
 per message, per `2.2`.
 
-Everything the assistant can do automatically — Git operations, process restarts, checks, file edits, log/error search,
-diagnostic filtering, state collection and evidence correlation — is done directly with available tools or delegated to
-Claude Code (or Codex) through a prompt, not handed to the user as manual work. A prompt for Claude Code counts as 1
-block. The batching allowance in `2.2` ("Independent safe commands may be batched.") applies only within this limit.
+Everything the assistant can do automatically is done directly with authorized tools first. For host-only evidence or
+an authorized deterministic host operation, use one copy-ready PowerShell block under `80-development.md` §7.0 rather than agent
+indirection; delegate only when that section establishes a genuine need. Do not hand manual diagnostic work to the
+owner. A prompt for Claude Code counts as 1 block. The batching allowance in `2.2` ("Independent safe commands may be batched.") applies only within this limit.
 Preflight `2.2.1` also verifies this limit before sending a response that requires user action.
 
 **No manual diagnostic hunting:** do not ask the owner to open a console/window/file and visually find a line, scroll

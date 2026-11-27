@@ -88,6 +88,60 @@ available for that task; otherwise GitHub-first is the default.
 
 # 7. CODEX EXECUTION AND VERIFICATION
 
+## 7.0 EXECUTION-SURFACE ROUTING / DIRECT COMMAND FIRST — OWNER RULE 2026-11-27
+
+Applies project-wide, within Result-First and the owner-time contract, before
+any delegation. Do not delegate an operation to an intelligent agent when a
+known deterministic command can reach the same verified result with less
+owner time, equivalent safety and evidence. No additional workflow or gate.
+
+| Work | Default execution surface |
+| --- | --- |
+| Repository inspection, source analysis, GitHub-first changes, PR/CI evidence | ChatGPT + GitHub connector |
+| VPS/Windows runtime diagnostics, logs, positions, executions, reconciliation evidence, ordinary authorized maintenance and releases | ChatGPT prepares one bounded, copy-ready PowerShell operation using the canonical entrypoint; owner executes it where host access is required |
+| Code changes requiring a local checkout, complex local debugging, implementation or focused tests/builds not adequately served by GitHub-first | Codex, under §6.4 and §7.1 |
+| Real UI/device acceptance and owner-only runtime/trading actions | Owner through the existing approved interface |
+
+Use direct authorized tools without involving the owner wherever possible.
+Use the canonical SSH register and the existing monolithic operation for
+VPS work; do not invent alternate launchers, raw trading commands, manual SQL
+or duplicate writers. Batch a safe dependent operation into one invocation
+when the canonical workflow supports it. Preserve separate required owner
+approvals, real-world acceptance, Scanner/Robot ownership and all PAPER/LIVE,
+Admission, STOP/TAKE, Git and fail-closed gates. A direct command is not an
+authorization. Never transfer control of the owner's desktop to an agent.
+
+Codex is an exception for operational work, not the routine VPS executor:
+use it only for an explicit owner-selected task or a concrete technical
+dependency that cannot reasonably be handled by direct tools/commands and
+whose expected benefit outweighs delegation overhead. Do not launch Codex
+just to read an API, run an existing CLI, inspect logs, relay a receipt or
+wait for a runtime event.
+
+For every necessary Codex prompt, apply §7.1 and §3.2.1a: state the single
+observable outcome, requested delta, genuinely task-specific constraints,
+minimum evidence and STOP boundary. Reuse prior evidence. Do not duplicate
+repository rules, request broad investigations, serial status reports,
+unrelated changes or autonomous retry loops. Return only the proved result
+or precise blocker with any known partial effects.
+
+If a runtime operation returns a failure, timeout or ambiguous receipt,
+do not equate transport/HTTP failure with absence of economic effect.
+Identify the last proved phase and independently inspect the durable
+commands, executions, positions and protection through the smallest read-only
+canonical check. Do not repeat a mutation blindly or run competing operations
+in PowerShell and Codex. Stop at the real blocker; any new protected mutation
+after a terminated one-shot attempt requires its existing owner approval.
+If an agent is already executing, establish its terminal state before taking
+over. Change the method rather than prolonging unproductive delegation.
+
+Incident rationale: on 2026-11-27 a Close All HTTP 409 concealed a confirmed
+FWDIUSDT fill and an unexecuted SPCHUSDT close; a single read-only PowerShell
+inspection established the actual partial outcome. This is evidence for the
+routing rule, not proof of the remaining execution defect or authorization
+to close a position. Measure improvement by verified outcomes, owner time
+and interventions, not agent activity, prompt length, commits or XP.
+
 ## 7.1 MINIMAL_CODEX_DELTA_RULE
 
 Routine Codex prompts must contain only task intent and genuinely task-specific constraints or facts that cannot
@@ -106,7 +160,8 @@ PASS authorizes a material scope amendment, LIVE mutation, deployment or Git wri
 Batch approved compatible micro-tasks and related decisions. Do not interrupt implementation with serial
 micro-questions when one safe decision batch suffices. Full research, status, diff, and verbose logs are off by
 default. When Codex/local implementation is explicitly selected, use Codex primarily for current local
-inspection/mutation, tests/build/runtime, and authorized Git work. Otherwise §6.4 makes GitHub-first the default
+inspection/mutation, complex focused tests/builds, and authorized Git work. For runtime operations apply §7.0.
+Otherwise §6.4 makes GitHub-first the default
 ChatGPT-led mutation surface. Do not perform opportunistic refactoring, cleanup, redesign, or “while here”
 improvements. Prefer the smallest targeted tests and checks that prove the current delta; run full suites only when
 objectively required.

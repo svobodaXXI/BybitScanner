@@ -88,7 +88,8 @@ def test_episode_bridge_exact_device_and_revision(tmp_path: Path, monkeypatch, l
         origin=origin, devices={"owner-laptop": token, "owner-pc": other})
     source = tmp_path / "must-not-be-created.sqlite3"
     calls = []
-    snapshot = object()
+    from types import SimpleNamespace
+    snapshot = SimpleNamespace(source_revision=9)
 
     def load(path, *, include_wedge_evidence=False):
         assert include_wedge_evidence is True
@@ -101,6 +102,8 @@ def test_episode_bridge_exact_device_and_revision(tmp_path: Path, monkeypatch, l
         assert kwargs["account_id"] == "paper"
         assert kwargs["owner"] == "ROBOT"
         assert kwargs["trade_episode_id"] == episode
+        if kwargs["source_revision"] != snapshot.source_revision:
+            raise paper_http_server.EpisodeFactsSourceChanged("source_revision_changed")
         assert kwargs["source_revision"] == 9
         return {
             "schema": "BYBITSCANNER_CLOSED_EPISODE_FACTS_V1",
@@ -236,6 +239,8 @@ def test_episode_bridge_exact_device_and_revision(tmp_path: Path, monkeypatch, l
                 queued = owner_call("request", {"episode_id": episode, "owner": "ROBOT",
                                                "source_revision": 9})
                 assert queued["state"] == "QUEUED"
+                # Unrelated executions advance the live global revision after owner authorization.
+                snapshot.source_revision = 10
                 opened = []
                 def launch(episode_id):
                     assert episode_id == episode
@@ -265,6 +270,7 @@ def test_episode_bridge_exact_device_and_revision(tmp_path: Path, monkeypatch, l
         })
         assert code == 200 and queued["state"] == "QUEUED"
         rid = queued["request_id"]
+        snapshot.source_revision = 10
         # Device cannot export a job that was never delivered to it.
         facts = f"facts?device_id=owner-laptop&request_id={rid}"
         assert _call(base, bridge + facts, token=token)[0] == 404
@@ -300,6 +306,13 @@ def test_episode_bridge_exact_device_and_revision(tmp_path: Path, monkeypatch, l
         assert not source.exists()
         assert not server.diary_setup_store_path.exists()
 
+        # Stale owner request remains rejected; no revision is relabelled.
+        code, stale = _call(base, bridge + "request", origin=origin, body={
+            "episode_id": episode, "owner": "ROBOT", "source_revision": 9,
+        })
+        assert code == 409 and stale["error"] == "episode_facts_source_changed"
+        assert len(calls) == 6
+
         # Legacy ID-only locator is allowed to open but never retrieve facts.
         code, old = _call(base, bridge + "request", origin=origin,
                           body={"episode_id": episode})
@@ -310,7 +323,7 @@ def test_episode_bridge_exact_device_and_revision(tmp_path: Path, monkeypatch, l
         assert "owner" not in job and "source_revision" not in job
         assert _call(base, bridge + f"facts?device_id=owner-laptop&request_id={old['request_id']}",
                      token=token)[0] == 404
-        assert len(calls) == 4
+        assert len(calls) == 6
     finally:
         server.shutdown()
         server.server_close()

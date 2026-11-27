@@ -165,7 +165,8 @@ quest, agent role, approval or required document.
 
 - **One outcome:** owner specifies observable success and product constraints;
   ChatGPT carries GitHub work through implementation, focused evidence and the
-  next authorized action. Codex handles authorized VPS operations and exceptional local-only verification when repository-native evidence is insufficient. Internal PRs are
+  next authorized action. Select the shortest safe execution surface under `80-development.md` §7.0;
+  routine VPS operations use direct PowerShell, not Codex. Internal PRs are
   not separate user tasks; request only genuinely required owner approvals.
 - **Small context:** follow `60-context.md` §3.2. Do not duplicate state
   or write progress logs without a significant verified change.
@@ -229,8 +230,8 @@ transition timing/state boundary—not only internal helpers or mocked success
 paths. A passing targeted test and required CI qualify the code for a separate
 authorized merge; neither is runtime acceptance. Do not interrupt a pending,
 safe, expressly authorized operational continuation solely to merge preventive
-code unless that code is a proven prerequisite. Codex is a host-specific executor under the task's existing authority;
-ChatGPT owns GitHub implementation.
+code unless that code is a proven prerequisite. Apply `80-development.md` §7.0 for execution-surface
+selection; ChatGPT owns GitHub-first implementation.
 
 **One result to the owner:** apply Result-First step 5 to the verified
 postconditions or specific blocker. Preserve unrelated user work and existing

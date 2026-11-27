@@ -384,12 +384,12 @@ def test_flow_only_probe_uses_same_ws_no_book_and_no_protection_callback():
         assert hub.list_flow_contexts() == (passive,)
         assert passive.impulse_observation.snapshot()["buffer_capacity"] == 1000
         assert ws.sent == [{
-            "op": "subscribe", "req_id": "flow:BTCUSDT",
+            "op": "subscribe", "req_id": ws.sent[0]["req_id"],
             "args": ["publicTrade.BTCUSDT"],
         }]
         assert hub.subscribe_flow_only("ONGUSDT") is None  # hard budget 1
         hub._dispatch({
-            "op": "subscribe", "req_id": "flow:BTCUSDT", "success": True,
+            "op": "subscribe", "req_id": ws.sent[0]["req_id"], "success": True,
         })
         hub._dispatch({
             "topic": "publicTrade.BTCUSDT",
@@ -416,7 +416,7 @@ def test_protection_upgrades_passive_source_without_duplicate_trade_or_unsubscri
         hub._ws = ws
         passive = hub.subscribe_flow_only("BTCUSDT")
         hub._dispatch({
-            "op": "subscribe", "req_id": "flow:BTCUSDT", "success": True,
+            "op": "subscribe", "req_id": ws.sent[0]["req_id"], "success": True,
         })
         hub._dispatch({
             "topic": "publicTrade.BTCUSDT",

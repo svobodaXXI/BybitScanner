@@ -53,6 +53,8 @@ The [VPS Manager guide](tools/WINDOWS_VPS_MANAGER.md) owns its interface;
 applicable evidence. GitHub evidence is not host access; SSH_OK is transport only,
 not deploy, STOP/START, admission or trading authority.
 
+**Select the execution surface before delegation:** follow [Development §7.0](DOCUMENTS/ASSISTANT_RULES/80-development.md#70-execution-surface-routing--direct-command-first--owner-rule-2026-11-27). Prefer deterministic direct PowerShell to routine Codex VPS work; all existing authority gates remain binding.
+
 ## Outcome-owned delegation — proven lesson (2026-10-28)
 
 Use [Result-first](DOCUMENTS/ASSISTANT_RULES/11-result-first.md) for one bounded
@@ -105,9 +107,10 @@ the numbered packages. Maintain the owning package, not two copies of a rule.
 
 ### Codex — task-scoped economy route
 
-Use GitHub-native evidence and implementation first. Delegate to Codex only an
-already authorized host-specific outcome or local verification that cannot be
-established from repository-native evidence. After the mandatory core, load
+Use GitHub-native evidence and implementation first. Apply `80-development.md`
+§7.0 before delegation: direct commands for deterministic host work; Codex only
+when explicitly selected or a genuine authorized host/local dependency requires
+it and outweighs delegation overhead. After the mandatory core, load
 only the applicable route above and the owning task references. A concrete
 local assignment with sufficient authority and evidence does not require a
 project-wide chat bootstrap or unrelated quest-history reads. Reuse current

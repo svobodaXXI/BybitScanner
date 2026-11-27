@@ -12,6 +12,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Callable, Protocol
+from uuid import uuid4
 
 import websocket
 
@@ -197,6 +198,15 @@ class _FlowOnlyContext:
     impulse_observation: PublicTradeObservation = field(init=False)
     capture_book: bool = False
     book_frames: deque[tuple[int, dict]] = field(default_factory=lambda: deque(maxlen=1024))
+    # Private diagnostics only; never consulted by execution readiness.
+    receipt_socket: object | None = field(default=None, repr=False)
+    pending_acks: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    subscription_acks: dict[str, dict] = field(default_factory=dict)
+
+    def reset_receipts(self) -> None:
+        self.receipt_socket = None
+        self.pending_acks.clear()
+        self.subscription_acks.clear()
 
     @property
     def book_topic(self) -> str:
@@ -418,12 +428,7 @@ class MarketDataHub:
                     ws = self._ws
                     if ws is not None:
                         try:
-                            with self._send_lock:
-                                ws.send(json.dumps({
-                                    "op": "subscribe",
-                                    "req_id": f"flowbook:{normalized}:capture",
-                                    "args": [passive.book_topic],
-                                }))
+                            self._send_passive_request(ws, passive, (passive.book_topic,))
                         except Exception:
                             # No confirmed subscription: retry on the next
                             # sync, never expose partial L2 as evidence.
@@ -507,6 +512,21 @@ class MarketDataHub:
                 or first["epoch"] != epoch or len(first["frames"]) != count):
             return None
         return {"book": first, "trades": trades}
+
+    def private_passive_wedge_snapshot(self, context: object) -> dict | None:
+        """One atomic private passive capture; no order or completeness claim."""
+        with self._lock:
+            if (not isinstance(context, _FlowOnlyContext)
+                    or self._flow_only.get(context.symbol) is not context
+                    or self._ws is None or context.receipt_socket is not self._ws
+                    or self._stop.is_set() or not context.capture_book):
+                return None
+            tape = context.impulse_observation.snapshot()
+            topics = (context.book_topic, f"publicTrade.{context.symbol}")
+            acks = {topic: dict(context.subscription_acks[topic]) for topic in topics
+                    if topic in context.subscription_acks}
+            return {"book_frames": tuple(context.book_frames), "tape": tape,
+                    "subscription_acks": acks}
 
     def release_flow_only(self, symbol: str) -> bool:
         """Release ONLY a passive topic; never unsubscribe protected books."""
@@ -648,14 +668,31 @@ class MarketDataHub:
             f"publicTrade.{context.symbol}",
         ]
 
+    def _send_passive_request(self, ws, context: _FlowOnlyContext,
+                              topics: tuple[str, ...]) -> None:
+        # Unique per request (including a same-symbol replacement/reconnect);
+        # a delayed ACK for an old lease cannot certify this one.
+        request_id = "f:" + uuid4().hex
+        if context.receipt_socket is not ws:
+            context.reset_receipts()
+            context.receipt_socket = ws
+        for topic in topics:
+            context.subscription_acks.pop(topic, None)
+        context.pending_acks[request_id] = topics
+        try:
+            with self._send_lock:
+                ws.send(json.dumps({
+                    "op": "subscribe", "req_id": request_id, "args": list(topics),
+                }))
+        except Exception:
+            context.pending_acks.pop(request_id, None)
+            raise
+
     def _send_flow_only(self, ws, context: _FlowOnlyContext) -> None:
         context.trades_subscription_state = "SUBSCRIBING"
         context.trade_bootstrap_complete = False
-        with self._send_lock:
-            ws.send(json.dumps({
-                "op": "subscribe", "req_id": f"flow:{context.symbol}",
-                "args": context.topics(),
-            }))
+        context.reset_receipts()
+        self._send_passive_request(ws, context, tuple(context.topics()))
 
     def _send_book_only(self, ws, context: SymbolContext) -> None:
         context.subscription_state = "SUBSCRIBING"
@@ -720,11 +757,13 @@ class MarketDataHub:
                         witness = self._protected_research
                     if witness is not None:
                         witness.reset()  # Must await a fresh vendor snapshot.
-                    for flow in passive:
-                        flow.trades_subscription_state = "DISCONNECTED"
-                        flow.trade_bootstrap_complete = False
-                        flow.impulse_observation.mark_gap()
-                        flow.book_frames.clear()
+                    with self._lock:
+                        for flow in passive:
+                            flow.trades_subscription_state = "DISCONNECTED"
+                            flow.trade_bootstrap_complete = False
+                            flow.reset_receipts()
+                            flow.impulse_observation.mark_gap()
+                            flow.book_frames.clear()
                     for context in contexts:
                         context.subscription_state = "DISCONNECTED"
                         context.book_subscription_state = "DISCONNECTED"
@@ -781,24 +820,29 @@ class MarketDataHub:
             flow = self._flow_only.get(symbol) if context is None else None
             witness = self._protected_research if context is not None else None
         if context is None:
-            if flow is not None and flow.capture_book and topic == flow.book_topic:
-                frame_type = message.get("type")
-                if frame_type == "snapshot":
-                    flow.book_frames.clear()
-                elif frame_type != "delta" or not flow.book_frames:
+            with self._lock:
+                # Fence snapshots against concurrent release, promotion and
+                # passive ingress; the protected path is unchanged.
+                if flow is None or self._flow_only.get(symbol) is not flow:
                     return
-                elif len(flow.book_frames) == flow.book_frames.maxlen:
-                    flow.book_frames.clear()
+                if flow.capture_book and topic == flow.book_topic:
+                    frame_type = message.get("type")
+                    if frame_type == "snapshot":
+                        flow.book_frames.clear()
+                    elif frame_type != "delta" or not flow.book_frames:
+                        return
+                    elif len(flow.book_frames) == flow.book_frames.maxlen:
+                        flow.book_frames.clear()
+                        return
+                    flow.book_frames.append((int(time.time() * 1000), message))
                     return
-                flow.book_frames.append((int(time.time() * 1000), message))
-                return
-            if flow is not None and topic == f"publicTrade.{flow.symbol}":
-                result = flow.impulse_observation.observe(
-                    message, received_at_ms=int(time.time() * 1000),
-                )
-                if result:
-                    flow.trades_subscription_state = "SUBSCRIBED"
-                    flow.trade_bootstrap_complete = True
+                if topic == f"publicTrade.{flow.symbol}":
+                    result = flow.impulse_observation.observe(
+                        message, received_at_ms=int(time.time() * 1000),
+                    )
+                    if result:
+                        flow.trades_subscription_state = "SUBSCRIBED"
+                        flow.trade_bootstrap_complete = True
             return
         if topic == f"orderbook.{context.public_orderbook.depth}.{symbol}":
             # Stamp the ORIGINAL frame at ingress, never invent a vendor
@@ -841,31 +885,35 @@ class MarketDataHub:
         request_id = message.get("req_id")
         if not isinstance(request_id, str):
             return
-        if request_id.startswith("flowbook:") and request_id.endswith(":capture"):
-            # The socket may accept send() yet reject the book subscription.
-            # Keep publicTrade intact; permit the next sync to retry L2.
-            symbol = request_id[len("flowbook:"):-len(":capture")]
-            if message.get("success") is not True:
-                with self._lock:
-                    flow = self._flow_only.get(symbol)
-                    if flow is not None:
-                        flow.book_frames.clear()
-                        flow.capture_book = False
-            return
-        if request_id.startswith("flow:"):
-            symbol = request_id.removeprefix("flow:")
+        if request_id.startswith("f:"):
             with self._lock:
-                flow = self._flow_only.get(symbol)
-            if flow is None:
-                return
-            if message.get("success") is True:
-                flow.trades_subscription_state = "SUBSCRIBED"
-                flow.trade_bootstrap_complete = True
-            else:
-                flow.trades_subscription_state = "DEGRADED"
-                flow.trade_bootstrap_complete = False
-                flow.impulse_observation.mark_gap()
-                flow.book_frames.clear()
+                flow = next((item for item in self._flow_only.values()
+                             if request_id in item.pending_acks), None)
+                if flow is None or flow.receipt_socket is not self._ws:
+                    return
+                topics = flow.pending_acks.pop(request_id)
+                trade_topic = f"publicTrade.{flow.symbol}"
+                if message.get("success") is True:
+                    generation = flow.impulse_observation.snapshot()["generation"]
+                    for topic in topics:
+                        flow.subscription_acks[topic] = {
+                            "request_id": request_id,
+                            "received_at_ms": int(time.time() * 1000),
+                            "generation": generation,
+                        }
+                    if trade_topic in topics:
+                        flow.trades_subscription_state = "SUBSCRIBED"
+                        flow.trade_bootstrap_complete = True
+                elif trade_topic in topics:
+                    flow.trades_subscription_state = "DEGRADED"
+                    flow.trade_bootstrap_complete = False
+                    flow.reset_receipts()
+                    flow.impulse_observation.mark_gap()
+                    flow.book_frames.clear()
+                else:
+                    flow.subscription_acks.pop(flow.book_topic, None)
+                    flow.book_frames.clear()
+                    flow.capture_book = False
             return
         if not request_id.startswith("workspace:"):
             return
