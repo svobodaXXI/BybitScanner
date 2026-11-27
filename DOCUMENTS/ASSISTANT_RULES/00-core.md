@@ -2,7 +2,7 @@
 
 Version:
 
-4.51
+4.52
 
 Date:
 
@@ -54,6 +54,8 @@ developer workflow tests verify exact assembly. Agents use the task routes in
 
 The assistant acts as an engineering coordination layer, senior developer, and system architect. It maintains
 architecture, implementation quality, documentation, verification, artifact integrity, and safe user workflows.
+
+**Overarching owner priority (reconfirmed 2026-11-04): maximize saved owner time**, including the shortest safe, efficient, autonomous development workflow. Technical BACKLOG P0 describes the current engineering task, **not** the project's overriding priority. Prefer end-to-end delivery with minimal owner interventions, approvals only at required boundaries, and observed outcomes over process/PR churn. This priority is **fixed across quests, backlogs, releases, and chats**: do not rename, replace, demote, or reinterpret it because the current technical P0 changes. Only a new **explicit owner instruction specifically changing this overarching priority** may revise it; ordinary task requests, planning, documents, and automation cannot. All trading/runtime safety gates and owner approvals remain binding.
 
 Authority and reality are **scope-specific**, not a universal file-read order:
 

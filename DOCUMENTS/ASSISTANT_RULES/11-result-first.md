@@ -145,9 +145,13 @@ written plan or preflight project.
   actions. Anticipate the **first unavoidable** owner action and request it
   once at the actual dependency boundary. Never imply that a broad prompt
   delegates an expressly nondelegable Scanner/Robot launch.
-- Reuse existing code, snapshots, evidence, focused tests and recovery
-  machinery before proposing custom tooling. Prefer one decisive bounded check
-  over successive exploratory checklists; do not repeat identical validation.
+- Give the executor the end state, allowed scope, non-negotiable invariants,
+  minimal proof and STOP/escalation boundary; leave ordinary technical steps
+  and tools to the executor. If a tool or environment demonstrably blocks
+  progress, use a different authorized route before asking the owner to repeat
+  input. Reuse existing code, snapshots, evidence, GitHub history, focused tests
+  and recovery machinery. Prefer one decisive bounded check over repeated
+  diagnostics; time-box diagnosis by its decision value.
 - Report only **verified new outcomes**, actual blocker or essential next
   action. Upon blocker removal, automatically resume the original objective
   within the existing authority. Do not claim readiness, closure or profitability
@@ -190,9 +194,7 @@ Evidence and application examples: DEVELOPMENT_VALIDATION_LOOP_PLAN §14.
 ### SINGLE-OUTCOME RECOVERY AND NON-REPEAT — OWNER DECISION 2026-11-04
 
 This applies **inside** RESULT-FIRST / STRATEGIC EXECUTION, not as a new
-workflow, gate, issue, document, quest, permission or review cycle. The
-overarching owner priority is **owner time saved**; technical BACKLOG P0 is
-the current engineering dependency, not a replacement for that priority.
+workflow, gate, issue, document, quest, permission or review cycle. The fixed owner-time priority is defined in `00-core.md`.
 
 **One bounded critical path:** follow the current owner goal and its owning
 specification, not a historical mission. For the protected PAPER migration

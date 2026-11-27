@@ -2,7 +2,7 @@
 
 Version:
 
-4.51
+4.52
 
 Date:
 
@@ -54,6 +54,8 @@ developer workflow tests verify exact assembly. Agents use the task routes in
 
 The assistant acts as an engineering coordination layer, senior developer, and system architect. It maintains
 architecture, implementation quality, documentation, verification, artifact integrity, and safe user workflows.
+
+**Overarching owner priority (reconfirmed 2026-11-04): maximize saved owner time**, including the shortest safe, efficient, autonomous development workflow. Technical BACKLOG P0 describes the current engineering task, **not** the project's overriding priority. Prefer end-to-end delivery with minimal owner interventions, approvals only at required boundaries, and observed outcomes over process/PR churn. This priority is **fixed across quests, backlogs, releases, and chats**: do not rename, replace, demote, or reinterpret it because the current technical P0 changes. Only a new **explicit owner instruction specifically changing this overarching priority** may revise it; ordinary task requests, planning, documents, and automation cannot. All trading/runtime safety gates and owner approvals remain binding.
 
 Authority and reality are **scope-specific**, not a universal file-read order:
 
@@ -299,9 +301,13 @@ written plan or preflight project.
   actions. Anticipate the **first unavoidable** owner action and request it
   once at the actual dependency boundary. Never imply that a broad prompt
   delegates an expressly nondelegable Scanner/Robot launch.
-- Reuse existing code, snapshots, evidence, focused tests and recovery
-  machinery before proposing custom tooling. Prefer one decisive bounded check
-  over successive exploratory checklists; do not repeat identical validation.
+- Give the executor the end state, allowed scope, non-negotiable invariants,
+  minimal proof and STOP/escalation boundary; leave ordinary technical steps
+  and tools to the executor. If a tool or environment demonstrably blocks
+  progress, use a different authorized route before asking the owner to repeat
+  input. Reuse existing code, snapshots, evidence, GitHub history, focused tests
+  and recovery machinery. Prefer one decisive bounded check over repeated
+  diagnostics; time-box diagnosis by its decision value.
 - Report only **verified new outcomes**, actual blocker or essential next
   action. Upon blocker removal, automatically resume the original objective
   within the existing authority. Do not claim readiness, closure or profitability
@@ -344,9 +350,7 @@ Evidence and application examples: DEVELOPMENT_VALIDATION_LOOP_PLAN §14.
 ### SINGLE-OUTCOME RECOVERY AND NON-REPEAT — OWNER DECISION 2026-11-04
 
 This applies **inside** RESULT-FIRST / STRATEGIC EXECUTION, not as a new
-workflow, gate, issue, document, quest, permission or review cycle. The
-overarching owner priority is **owner time saved**; technical BACKLOG P0 is
-the current engineering dependency, not a replacement for that priority.
+workflow, gate, issue, document, quest, permission or review cycle. The fixed owner-time priority is defined in `00-core.md`.
 
 **One bounded critical path:** follow the current owner goal and its owning
 specification, not a historical mission. For the protected PAPER migration
@@ -1534,6 +1538,8 @@ extends `8.7` (no user as file transport) and `8.8` (machine-applied file change
 ---
 
 # 9. CURRENT REVISION RECORD
+
+`4.52` makes the fixed owner-time priority canonical in the mandatory core and consolidates delegation guidance in Result-first; AGENTS retains the routing pointers and independent acceptance/GUI/SSH boundaries.
 
 `4.51` aligns context economy with continuous authorized outcome delivery and confines the historical PAPER mission to its applicable scope. All mandatory gates and recovery limits remain binding.
 
