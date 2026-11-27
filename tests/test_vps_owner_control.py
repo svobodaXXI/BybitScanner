@@ -232,6 +232,36 @@ class OwnerControlTests(unittest.TestCase):
                                         run=run, uid=0), 2)
         self.assertEqual(sum(cmd[0] == "systemd-run" for cmd in calls), 1)
 
+    def test_transport_failure_is_unproven_and_never_replayed(self):
+        from contextlib import redirect_stdout
+        from io import StringIO
+
+        for failure in (OSError("transport"), subprocess.TimeoutExpired("systemd", 20)):
+            for phase in ("probe", "dispatch", "status"):
+                with self.subTest(failure=type(failure).__name__, phase=phase):
+                    calls = []
+
+                    def run(cmd, **_kw):
+                        calls.append(cmd[0])
+                        if phase != "dispatch" or cmd[0] == "systemd-run":
+                            raise failure
+                        return completed(cmd, out="LoadState=not-found\n")
+
+                    with redirect_stdout(StringIO()) as reply:
+                        if phase == "status":
+                            rc = control.status(R, run=run, verify_start_sha=SHA)
+                        else:
+                            rc = control.submit("update-and-start", SHA, R, "vps-console",
+                                                run=run, uid=0)
+                    self.assertEqual(rc, 2)
+                    self.assertIn(R, reply.getvalue())
+                    self.assertIn("STATUS=UNPROVEN" if phase == "status" else
+                                  "SUBMISSION=UNPROVEN", reply.getvalue())
+                    self.assertNotIn("FINISHED_OK", reply.getvalue())
+                    self.assertNotIn("SUBMISSION=ACCEPTED", reply.getvalue())
+                    self.assertEqual(calls, ["systemctl", "systemd-run"] if
+                                     phase == "dispatch" else ["systemctl"])
+
     def test_invalid_inputs_rejected_before_systemd(self):
         def forbidden(*_a, **_kw):
             self.fail("no subprocess on invalid intent")
