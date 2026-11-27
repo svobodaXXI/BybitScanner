@@ -58,6 +58,7 @@ from terminal.domain.models import TradingAccountId
 from terminal.persistence.sqlite_store import RobotCandidateRecord, SQLiteStore
 from tradingview_bridge import create_tradingview_url
 from notification import build_tradingview_keyboard
+from telegram_market import MarketRadar, RADAR_INTERVAL_SECONDS
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -109,10 +110,11 @@ def _send_text(chat_id, text, **kwargs):
 
 
 _MARKET_REQUEST_LOCK = threading.Lock()
+_MARKET_RADAR = MarketRadar()
 
 
 def _send_market(chat_id):
-    """One bounded owner-requested read; the Telegram poller stays responsive."""
+    """Read the prepared card; the Telegram poller stays responsive."""
     if not _MARKET_REQUEST_LOCK.acquire(blocking=False):
         return
     try:
@@ -125,20 +127,59 @@ def _send_market(chat_id):
 
 def _market_worker(chat_id):
     try:
-        try:
-            import bybit_api
-            from telegram_market import collect_market, format_market
-            if _SHUTDOWN_REQUESTED.is_set():
-                return
-            snapshot = collect_market(bybit_api.get_symbols, bybit_api.get_candles,
-                                      _SHUTDOWN_REQUESTED)
-            message = format_market(snapshot, now_ms=int(time.time() * 1000))
-        except Exception:
-            message = "Рынок: подтверждённые данные Bybit недоступны."
         if not _SHUTDOWN_REQUESTED.is_set():
-            _send_text(chat_id, message)
+            _send_text(chat_id, _MARKET_RADAR.card(int(time.time() * 1000)))
     finally:
         _MARKET_REQUEST_LOCK.release()
+
+
+def _run_market_radar(stop):
+    """Existing Telegram worker only; follow Scanner state read-only.
+
+    No scanner/robot lifecycle commands. On pause, stop or unavailable
+    authority, clear the radar rather than advertise an old live ranking.
+    """
+    source = None
+    running = False
+    next_probe = 0.0
+    try:
+        while not stop.is_set() and not _SHUTDOWN_REQUESTED.is_set():
+            started = time.monotonic()
+            if started >= next_probe:
+                try:
+                    running = (_scanner_request()["mode"] == "SCANNER_RUNNING")
+                except Exception:
+                    running = False
+                next_probe = time.monotonic() + 5
+            if not running:
+                _MARKET_RADAR.clear()
+                stop.wait(1)
+                continue
+            try:
+                if source is None:
+                    from bybit_api import PublicRadarSource
+                    source = PublicRadarSource()
+                if source.backoff_remaining() > 0:
+                    stop.wait(1)
+                    continue
+                _MARKET_RADAR.step(source.symbols, source.candles, source.recent_trades,
+                                   now_ms=int(time.time() * 1000),
+                                   monotonic_now=time.monotonic())
+            except Exception:
+                # A public-data failure never exits the Telegram/Scanner loop.
+                stop.wait(5)
+            stop.wait(max(0, RADAR_INTERVAL_SECONDS - (time.monotonic() - started)))
+    finally:
+        _MARKET_RADAR.clear()
+        if source is not None:
+            source.close()
+
+
+def start_market_thread(stop):
+    worker = threading.Thread(target=_run_market_radar, args=(stop,),
+                              name="telegram-market-radar", daemon=True)
+    worker.start()
+    return worker
 
 
 def _send_scanner_control(chat_id):
@@ -1578,6 +1619,7 @@ def run() -> int:
     print("=" * 60)
     offset = _load_offset()
     owned = False
+    radar_stop = threading.Event()
 
     while not _SHUTDOWN_REQUESTED.is_set():
         try:
@@ -1591,9 +1633,11 @@ def run() -> int:
                 # Menu and lifecycle posts only after getUpdates proved stream ownership.
                 owned = True
                 start_lifecycle_thread()
+                start_market_thread(radar_stop)
                 configure_monitoring_menu()
         except TelegramUpdateConflict as exc:
             print("[MONITORING TELEGRAM CONFLICT] another getUpdates consumer is active:", exc)
+            radar_stop.set()
             _release_worker_singleton(server)
             return 1
         except KeyboardInterrupt:
@@ -1605,6 +1649,7 @@ def run() -> int:
             _SHUTDOWN_REQUESTED.wait(3)
     if _SHUTDOWN_REQUESTED.is_set():
         print("Monitoring listener stopped by canonical runtime shutdown.")
+    radar_stop.set()
     _release_worker_singleton(server)
     return 0
 

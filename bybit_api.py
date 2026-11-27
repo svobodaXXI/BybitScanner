@@ -56,7 +56,7 @@ session.client.proxies.update(default_bybit_proxies(sys.platform))
 # Symbols
 # ==================================================
 
-def get_symbols():
+def get_symbols(*, client=None):
     """
     Возвращает актуальный список активных
     Bybit USDT Linear Perpetual инструментов.
@@ -70,6 +70,8 @@ def get_symbols():
 
     symbols = []
     cursor = None
+    source = session if client is None else client
+    seen_cursors = set()
 
     while True:
 
@@ -81,7 +83,7 @@ def get_symbols():
         if cursor:
             params["cursor"] = cursor
 
-        data = session.get_instruments_info(
+        data = source.get_instruments_info(
             **params
         )
 
@@ -133,6 +135,10 @@ def get_symbols():
 
         if not cursor:
             break
+        if client is not None:
+            if cursor in seen_cursors or len(seen_cursors) >= 7:
+                raise ValueError("public instrument pagination incomplete")
+            seen_cursors.add(cursor)
 
     symbols = sorted(
         set(symbols)
@@ -151,6 +157,7 @@ def get_candles(
     limit,
     *,
     end_ms=None,
+    client=None,
 ):
     """
     Загружает свечи Bybit
@@ -164,7 +171,7 @@ def get_candles(
         if end_ms is not None:
             # Historical preview; do not request candles later than signal time.
             params['end'] = int(end_ms)
-        data = session.get_kline(**params)
+        data = (session if client is None else client).get_kline(**params)
 
         rows = (
             data
@@ -234,3 +241,61 @@ def get_candles(
         )
 
         return pd.DataFrame()
+
+
+
+class PublicRadarSource:
+    """Independent public HTTP session for the background informational radar.
+
+    Reuses canonical instrument/candle parsing and the platform proxy. No
+    credentials, orders, retries, protected Robot connection or shared Session
+    mutation. Timeouts bound ordinary stalled requests.
+    """
+
+    def __init__(self):
+        import requests
+        self._http = requests.Session()
+        self._http.trust_env = False
+        self._http.proxies.update(default_bybit_proxies(sys.platform))
+        self._backoff_until = 0.0
+
+    def backoff_remaining(self):
+        import time
+        return max(0.0, self._backoff_until - time.monotonic())
+
+    def _get(self, endpoint, params):
+        import time
+        if time.monotonic() < self._backoff_until:
+            raise RuntimeError("public radar rate backoff")
+        response = self._http.get("https://api.bybit.com/v5/market/" + endpoint,
+                                  params=params, timeout=(2, 3),
+                                  allow_redirects=False)
+        if response.status_code in (403, 429):
+            self._backoff_until = time.monotonic() + 60
+        if response.status_code != 200:
+            raise RuntimeError("public radar HTTP unavailable")
+        result = response.json()
+        if result.get("retCode") == 10006:
+            self._backoff_until = time.monotonic() + 60
+        if result.get("retCode") != 0:
+            raise RuntimeError("public radar API unavailable")
+        return result
+
+    def get_instruments_info(self, **params):
+        return self._get("instruments-info", params)
+
+    def get_kline(self, **params):
+        return self._get("kline", params)
+
+    def symbols(self):
+        return get_symbols(client=self)
+
+    def candles(self, *args, **kwargs):
+        return get_candles(*args, client=self, **kwargs)
+
+    def recent_trades(self, symbol):
+        return self._get("recent-trade", {"category": "linear",
+                                          "symbol": symbol, "limit": 1000})
+
+    def close(self):
+        self._http.close()
