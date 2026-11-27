@@ -123,7 +123,9 @@ def format_market(snapshot, *, now_ms):
         for index, (window, _) in enumerate(WINDOWS):
             leaders = sorted((r for r in rows if direction * r.changes[index] > 0),
                              key=lambda r: (-direction * r.changes[index], r.symbol))[:TOP]
-            values = " · ".join(f"{r.symbol} {r.changes[index]:+.2f}%" for r in leaders)
-            lines.append(f"{window}: {values or '—'}")
+            lines.extend(["", f"{window}:"])
+            lines.extend(f"{r.symbol} {r.changes[index]:+.2f}%" for r in leaders)
+            if not leaders:
+                lines.append("—")
     lines.extend(["", "Число сделок и ΔOI: н/д."])
     return "\n".join(lines)
