@@ -673,6 +673,61 @@ def test_wedge_mirror_checks_post_end_confirmation_gap(root, fixed_levels, prema
     assert record["rejection"] == ("prior_wick_breached_level" if premature_wick else None)
 
 
+@pytest.mark.parametrize("pattern,selected_side", [
+    ("Falling Wedge", "upper"), ("Rising Wedge", "lower"),
+])
+def test_wedge_chart_retains_original_counterpart_without_registering_it(
+        root, fixed_levels, pattern, selected_side):
+    geometry = {
+        "upper_line": {"anchor_index": 0, "second_index": 5,
+                       "slope": -0.01, "intercept": 103.0},
+        "lower_line": {"anchor_index": 1, "second_index": 24,
+                       "slope": -0.005, "intercept": 99.0},
+        "end_index": 24,
+    }
+    bars = [(99.5, 100.0, 99.1, 99.5)] * 30
+    breakout = (99.5, 105.0, 99.4, 104.0)
+    if pattern == "Rising Wedge":
+        geometry["upper_line"], geometry["lower_line"] = (
+            {**geometry["lower_line"], "slope": 0.005, "intercept": 101.0},
+            {**geometry["upper_line"], "slope": 0.01, "intercept": 97.0},
+        )
+        bars = [(200-o, 200-l, 200-h, 200-c) for o,h,l,c in bars]
+        o,h,l,c = breakout
+        breakout = (200-o, 200-l, 200-h, 200-c)
+    # Collect using the production detector adapter at its original decision.
+    source_frame = frame(bars[:28])
+    sources = fixed_levels["original"](
+        "TESTUSDT", "1", source_frame,
+        wedge_result={"pattern": pattern, "geometry": geometry,
+                      "scanner_formation_id": "original-formation"})
+    (level,) = [lv for lv in sources if lv.pattern == pattern]
+    assert level.side == selected_side
+    counterpart = level.provenance["chart_only_counterpart"]
+    assert counterpart["side"] != selected_side
+    assert counterpart["confirmed_at_ms"] == level.confirmed_at_ms == 28 * M
+    fixed_levels["levels"] = [level]
+    observe(source_frame, root)
+    persisted = ms.load_state("TESTUSDT", "1", root)
+    assert set(persisted["records"]) == {level.level_id}
+    assert [lv["level_id"] for lv in persisted["registry"]["levels"]] == [level.level_id]
+    # Later snapshot no longer detects the formation; chart uses original state.
+    fixed_levels["levels"] = []
+    summary = observe(frame(bars + [breakout]), root)
+    assert summary["new_candidates"] == 1
+    state = ms.load_state("TESTUSDT", "1", root)
+    assert set(state["records"]) == {level.level_id}
+    assert [lv["level_id"] for lv in state["registry"]["levels"]] == [level.level_id]
+    (pending,) = state["pending_notifications"]
+    chart = pending["chart"]
+    assert {lv["side"] for lv in chart["levels"]} == {"upper", "lower"}
+    assert len(chart["levels"]) == 2
+    assert [lv["level_id"] for lv in chart["levels"] if lv["selected"]] == [level.level_id]
+    (visual_only,) = [lv for lv in chart["levels"] if not lv["selected"]]
+    assert visual_only == {**counterpart, "selected": False}
+    assert all(row["open_time_ms"] <= 30 * M for row in chart["geometry_candles"])
+
+
 def test_legacy_engine_wedge_without_end_cannot_prove_freshness():
     level = line_level(symbol="TESTUSDT", timeframe="1",
                        pattern="Falling Wedge", side="upper",
