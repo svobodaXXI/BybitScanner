@@ -27,6 +27,7 @@ from robot_entry_flow_evidence import (
 from terminal.domain.models import TradingAccountId
 from terminal.market_data.impulse_observation import ObservedPrint
 from terminal.market_data.pattern_flow_shadow_evidence import window_digest
+from terminal.market_data.research_l2_rest_anchor import _vendor_id
 from terminal.market_data.impulse_producer import certified_snapshot
 from terminal.persistence.sqlite_store import SQLiteStore
 
@@ -414,13 +415,53 @@ class PatternFlowObserver:
                 if capture:
                     self._save_wedge_capture(chosen, context)
 
+    @staticmethod
+    def _passive_receipt(symbol: str, snapshot: dict | None) -> dict | None:
+        """Describe the locally retained interval, never exchange completeness."""
+        if snapshot is None:
+            return None
+        frames, tape = snapshot["book_frames"], snapshot["tape"]
+        acks = snapshot["subscription_acks"]
+        topics = (f"orderbook.200.{symbol}", f"publicTrade.{symbol}")
+        if (len(frames) < 2 or not tape["prints"] or tape["invalid_frames"] != 0
+                or any(topic not in acks or acks[topic]["generation"] != tape["generation"]
+                       or acks[topic]["received_at_ms"] > frames[0][0] for topic in topics)):
+            return None
+        prior = None
+        for index, (received, frame) in enumerate(frames):
+            identity = _vendor_id(frame)
+            if (identity is None or frame.get("topic") != topics[0]
+                    or frame["data"].get("s") != symbol
+                    or frame.get("type") != ("snapshot" if index == 0 else "delta")):
+                return None
+            u, seq, cts, ts = identity
+            if not cts <= ts <= received:
+                return None
+            if prior is not None and not (u == prior[0] + 1 and seq > prior[1]
+                                         and cts >= prior[2] and ts >= prior[3]
+                                         and received >= prior[4]):
+                return None
+            prior = (u, seq, cts, ts, received)
+        # Retained prints must bracket the interval; Bybit cross-sequences
+        # are not gap-free print counters. REST parity remains independent.
+        prints = tape["prints"]
+        if (any(type(p.received_at_ms) is not int or p.timestamp_ms > p.received_at_ms
+                for p in prints)
+                or prints[0].received_at_ms > frames[0][0]
+                or prints[-1].received_at_ms < frames[-1][0]):
+            return None
+        return {"subscription_acks": acks, "trade_generation": tape["generation"],
+                "book_update_ids_contiguous": True, "trade_interval_bracketed": True,
+                "public_trade_completeness": "UNPROVEN"}
+
     def _save_wedge_capture(self, record, context) -> None:
         path = self._wedge_capture_path
         if path is None or not getattr(context, "capture_book", False):
             return
         try:
-            frames = tuple(context.book_frames)
-            tape = context.impulse_observation.snapshot()
+            snapshot = getattr(self._hub, "private_passive_wedge_snapshot", lambda _: None)(context)
+            frames = snapshot["book_frames"] if snapshot is not None else tuple(context.book_frames)
+            tape = snapshot["tape"] if snapshot is not None else context.impulse_observation.snapshot()
             if (len(frames) < 2 or not tape["prints"]
                     or tape.get("invalid_frames") != 0
                     or not context.book_frames or context.book_frames[0] is not frames[0]
@@ -461,6 +502,7 @@ class PatternFlowObserver:
                 "signal_snapshot": record.signal_snapshot,
                 "robot_state": record.robot_state,
                 "trade_generation": tape["generation"],
+                "passive_receipt": self._passive_receipt(record.symbol.value, snapshot),
                 "source_complete": False,
                 "trading_authorized": False,
                 "book_frames": frames,
