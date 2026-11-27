@@ -22,15 +22,15 @@ is known. `QUEST_STATE.md` must be checked against the owner's current message
 and the current priority index in `DOCUMENTS/BACKLOG.md`; it cannot override
 either. The assistant then continues in the Russian quest mode defined by
 `DOCUMENTS/GTD_QUEST_SYSTEM.md` without asking the user to manually transfer a
-handoff. Update `QUEST_STATE.md` when the active quest, quest queue, XP, level
+handoff. While GAME_MODE is ACTIVE, keep the game layer visible in project replies; restore it from QUEST_STATE if needed. Update `QUEST_STATE.md` when the active quest, quest queue, XP, level
 or achievements materially change. Do not create a ContextDump solely to carry
 the game state between chats.
 
 The stable ChatGPT instruction texts live in
 `DOCUMENTS/CUSTOM_INSTRUCTIONS_BYBITSCANNER.md`. Global Custom Instructions
 are a short conditional bootstrap applied account-wide; BybitScanner Project
-Instructions carry the fuller project-specific contract and take precedence
-inside the project. Neither UI layer stores current SHA/PR/XP/quest/runtime
+Instructions route project-specific work to the current repository contracts and take precedence over global UI instructions
+inside the project, without replacing mandatory repository safety and approval rules. Neither UI layer stores current SHA/PR/XP/quest/runtime
 state; repository authority does. During an existing chat, perform a bounded context refresh when
 the owner explicitly asks for it, returns to BybitScanner after a meaningful
 interruption, repo state materially changed for the active task, or chat memory

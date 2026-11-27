@@ -2,7 +2,7 @@
 
 Version:
 
-4.49
+4.50
 
 Date:
 
@@ -780,15 +780,15 @@ is known. `QUEST_STATE.md` must be checked against the owner's current message
 and the current priority index in `DOCUMENTS/BACKLOG.md`; it cannot override
 either. The assistant then continues in the Russian quest mode defined by
 `DOCUMENTS/GTD_QUEST_SYSTEM.md` without asking the user to manually transfer a
-handoff. Update `QUEST_STATE.md` when the active quest, quest queue, XP, level
+handoff. While GAME_MODE is ACTIVE, keep the game layer visible in project replies; restore it from QUEST_STATE if needed. Update `QUEST_STATE.md` when the active quest, quest queue, XP, level
 or achievements materially change. Do not create a ContextDump solely to carry
 the game state between chats.
 
 The stable ChatGPT instruction texts live in
 `DOCUMENTS/CUSTOM_INSTRUCTIONS_BYBITSCANNER.md`. Global Custom Instructions
 are a short conditional bootstrap applied account-wide; BybitScanner Project
-Instructions carry the fuller project-specific contract and take precedence
-inside the project. Neither UI layer stores current SHA/PR/XP/quest/runtime
+Instructions route project-specific work to the current repository contracts and take precedence over global UI instructions
+inside the project, without replacing mandatory repository safety and approval rules. Neither UI layer stores current SHA/PR/XP/quest/runtime
 state; repository authority does. During an existing chat, perform a bounded context refresh when
 the owner explicitly asks for it, returns to BybitScanner after a meaningful
 interruption, repo state materially changed for the active task, or chat memory
@@ -1388,7 +1388,7 @@ The original authorized goal and safety gates remain unchanged.
 ## 8.4 CHATGPT PROJECT INSTRUCTIONS GUARDRAIL SYNC NOTE
 
 ChatGPT Project Instructions are manually maintained outside the repository and are not project authority.
-If maintained, use a compact bootstrap pointer to `AGENTS.md` and this protocol, plus the short-intent entry model.
+If maintained, use a compact bootstrap pointer to `AGENTS.md` and its task-matched canonical rule packages, plus the short-intent entry model.
 Do not mirror workflow checklists into every task prompt. The canonical communication, safety and governance rules
 remain in the repository and must be loaded before project-specific user actions.
 
@@ -1398,8 +1398,10 @@ remain in the repository and must be loaded before project-specific user actions
 Assistant memory, chat context, summaries, handoffs, and remembered preferences are accelerators only. They are never
 normative authority for project workflow rules when the repository authority is available.
 
-For BybitScanner work, the assistant must recover applicable workflow rules from `AGENTS.md` and
-`DOCUMENTS/ASSISTANT_PROTOCOL.md` before issuing project-specific user actions. A remembered rule may reduce search
+For BybitScanner work, the assistant must recover applicable workflow rules through `AGENTS.md` and its
+canonical rule packages before issuing project-specific user actions. Load `30-user-actions.md` and any
+additional applicable communication, operational, safety and governance rules; the generated full protocol
+is a compatibility projection, not a mandatory full-context read. A remembered rule may reduce search
 cost, but it must not substitute for loading the current canonical text when enforcement matters.
 
 Read accessible authority directly; section 8.7 owns the no-user-as-file-transport rule.
@@ -1530,6 +1532,8 @@ extends `8.7` (no user as file transport) and `8.8` (machine-applied file change
 ---
 
 # 9. CURRENT REVISION RECORD
+
+`4.50` reconciles task-routed bootstrap and user-action authority with the generated compatibility projection; mandatory gates remain unchanged.
 
 `4.49` separates the protocol into task-routed source packages with a generated
 backward-compatible projection and existing developer-workflow consistency test.

@@ -103,7 +103,7 @@ The original authorized goal and safety gates remain unchanged.
 ## 8.4 CHATGPT PROJECT INSTRUCTIONS GUARDRAIL SYNC NOTE
 
 ChatGPT Project Instructions are manually maintained outside the repository and are not project authority.
-If maintained, use a compact bootstrap pointer to `AGENTS.md` and this protocol, plus the short-intent entry model.
+If maintained, use a compact bootstrap pointer to `AGENTS.md` and its task-matched canonical rule packages, plus the short-intent entry model.
 Do not mirror workflow checklists into every task prompt. The canonical communication, safety and governance rules
 remain in the repository and must be loaded before project-specific user actions.
 
@@ -113,8 +113,10 @@ remain in the repository and must be loaded before project-specific user actions
 Assistant memory, chat context, summaries, handoffs, and remembered preferences are accelerators only. They are never
 normative authority for project workflow rules when the repository authority is available.
 
-For BybitScanner work, the assistant must recover applicable workflow rules from `AGENTS.md` and
-`DOCUMENTS/ASSISTANT_PROTOCOL.md` before issuing project-specific user actions. A remembered rule may reduce search
+For BybitScanner work, the assistant must recover applicable workflow rules through `AGENTS.md` and its
+canonical rule packages before issuing project-specific user actions. Load `30-user-actions.md` and any
+additional applicable communication, operational, safety and governance rules; the generated full protocol
+is a compatibility projection, not a mandatory full-context read. A remembered rule may reduce search
 cost, but it must not substitute for loading the current canonical text when enforcement matters.
 
 Read accessible authority directly; section 8.7 owns the no-user-as-file-transport rule.

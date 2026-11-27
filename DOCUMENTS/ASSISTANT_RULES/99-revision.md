@@ -1,5 +1,7 @@
 # 9. CURRENT REVISION RECORD
 
+`4.50` reconciles task-routed bootstrap and user-action authority with the generated compatibility projection; mandatory gates remain unchanged.
+
 `4.49` separates the protocol into task-routed source packages with a generated
 backward-compatible projection and existing developer-workflow consistency test.
 The owner-time priority and all protection/acceptance boundaries remain binding.
