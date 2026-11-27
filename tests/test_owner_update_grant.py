@@ -130,7 +130,13 @@ def test_uninitialized_or_unprotected_ledger_fails_closed(setup):
     assert not calls
 
 
-def test_detached_command_carries_approved_predecessor():
+def test_detached_command_carries_approved_predecessor(monkeypatch, tmp_path):
+    import os
+    original = control._owner_request_path
+    monkeypatch.setattr(control, "_owner_request_path",
+                        lambda request, *, create=False: original(
+                            request, create=create, root=tmp_path / "transactions",
+                            trusted_uid=os.geteuid()))
     calls = []
     def run(command, **kwargs):
         calls.append(command)
