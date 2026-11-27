@@ -14,6 +14,7 @@ from terminal.api.models import (
     ClientActionId, CloseAllCommandRequest, CommandResult, CommandResultStatus,
 )
 from terminal.domain.models import Symbol, TradingAccountId
+from terminal.paper.executor import PaperMarketExecutor, PaperBookStale
 from terminal.runtime.paper_runtime import PaperRuntime
 
 
@@ -166,6 +167,66 @@ class RobotCloseAllResidualProofTests(unittest.TestCase):
         self.assertEqual(response.results[0].status, CommandResultStatus.COMPLETED)
         self.assertEqual(response.positions, ())
         store.update_robot_runtime_state.assert_not_called()
+
+    def test_mirror_close_all_falls_back_when_stream_is_stale(self):
+        runtime, store, _, _ = fake_runtime(robot_symbols=("ZHIPUUSDT",))
+        store.load_robot_candidates_by_status.return_value[0].signal_snapshot = {
+            "pattern": "MIRROR",
+        }
+        symbol = Symbol("ZHIPUUSDT")
+        stale = SimpleNamespace(symbol=symbol, received_at_ms=8999)
+        fresh = SimpleNamespace(symbol=symbol, received_at_ms=10000)
+        runtime._streamed_book = Mock(return_value=stale)
+        runtime._market_executor = PaperMarketExecutor(
+            Mock(), Mock(), max_book_age_ms=1000, clock_ms=lambda: 10000,
+        )
+        runtime._robot_execution_book = lambda symbol, evidence=None: (
+            PaperRuntime._robot_execution_book(runtime, symbol, evidence)
+        )
+
+        def full_close(request, *, market_book, identity):
+            try:
+                runtime._market_executor.validate_book(symbol, market_book)
+            except (RuntimeError, ValueError):
+                return CommandResult(
+                    request.client_action_id.value, CommandResultStatus.UNAVAILABLE,
+                    "invalid_book", "invalid_book",
+                )
+            return CommandResult(
+                request.client_action_id.value, CommandResultStatus.COMPLETED,
+                "closed", "closed",
+            )
+
+        runtime._robot_api = SimpleNamespace(full_close=Mock(side_effect=full_close))
+        runtime._robot_full_close = lambda request, **kwargs: (
+            PaperRuntime._robot_full_close(runtime, request, **kwargs)
+        )
+        runtime._robot_finalize_manual_close = Mock(side_effect=lambda candidate: (
+            runtime._robot_api.full_close.call_count > 0
+        ))
+        result = PaperRuntime.robot_close_all(
+            runtime, CloseAllCommandRequest(ClientActionId("mirror-stale-stream")),
+            evidence={symbol.value: fresh},
+        )
+        self.assertEqual(result.results[0].status, CommandResultStatus.COMPLETED)
+        self.assertIs(runtime._robot_api.full_close.call_args.kwargs["market_book"], fresh)
+        store.update_robot_runtime_state.assert_not_called()
+
+    def test_execution_book_retains_fresh_stream_and_rejects_two_stale_books(self):
+        symbol = Symbol("ZHIPUUSDT")
+        fresh = SimpleNamespace(symbol=symbol, received_at_ms=10000)
+        stale = SimpleNamespace(symbol=symbol, received_at_ms=8999)
+        runtime = SimpleNamespace(
+            _streamed_book=Mock(return_value=fresh),
+            _market_executor=PaperMarketExecutor(
+                Mock(), Mock(), max_book_age_ms=1000, clock_ms=lambda: 10000,
+            ),
+        )
+        self.assertIs(PaperRuntime._robot_execution_book(runtime, symbol.value, stale), fresh)
+        runtime._streamed_book.return_value = stale
+        book = PaperRuntime._robot_execution_book(runtime, symbol.value, stale)
+        with self.assertRaises(PaperBookStale):
+            runtime._market_executor.validate_book(symbol, book)
 
     def test_completed_command_with_remaining_owned_position_requires_reconcile(self):
         runtime, store, close, inventory = fake_runtime(
