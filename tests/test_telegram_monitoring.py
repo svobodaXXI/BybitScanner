@@ -1522,6 +1522,23 @@ class TelegramMarketTests(unittest.TestCase):
         self.assertNotIn("AAAUSDT", decline)
         self.assertNotIn("AAAUSDT", format_market(snapshot, now_ms=cutoff + MAX_AGE_MS + 1))
 
+    def test_market_leaders_are_vertical_ranked_lists(self):
+        from telegram_market import PERIOD_MS, MarketRow, MarketSnapshot, format_market
+
+        cutoff = 2000 * PERIOD_MS
+        rows = (
+            MarketRow("BBBUSDT", (1, -2, 0, 1), None, None),
+            MarketRow("AAAUSDT", (3, -4, 0, 2), None, None),
+        )
+        card = format_market(MarketSnapshot(cutoff, 2, rows), now_ms=cutoff)
+        growth, decline = card.split("🟢 Лидеры роста")[1].split("🔴 Лидеры падения")
+        self.assertIn("15м:\nAAAUSDT +3.00%\nBBBUSDT +1.00%\n", growth)
+        self.assertIn("1ч:\nAAAUSDT -4.00%\nBBBUSDT -2.00%\n", decline)
+        self.assertIn("4ч:\n—", growth)
+        self.assertIn("4ч:\n—", decline)
+        self.assertIn("24ч:\nAAAUSDT +2.00%\nBBBUSDT +1.00%", growth)
+        self.assertIn("Число сделок и ΔOI: н/д.", decline)
+
     def test_market_collection_reuses_canonical_source_and_fixed_cutoff(self):
         from telegram_market import PERIOD_MS, HISTORY_BARS, collect_market
         cutoff = 2000 * PERIOD_MS
