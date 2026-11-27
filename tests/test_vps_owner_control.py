@@ -1,6 +1,8 @@
 """Offline contracts for one-shot owner monolith operations."""
+import os
 import subprocess
 import unittest
+from unittest.mock import patch
 from types import SimpleNamespace
 
 from tools import vps_owner_control as control
@@ -9,11 +11,37 @@ R = "a" * 32
 SHA = "b" * 40
 
 
+def isolated_owner_request_journal(tmp_path, monkeypatch):
+    original = control._owner_request_path
+    def local(request, *, create=False):
+        return original(request, create=create, root=tmp_path / "transactions",
+                        trusted_uid=os.geteuid())
+    monkeypatch.setattr(control, "_owner_request_path", local)
+
+
 def completed(cmd, code=0, out=""):
     return subprocess.CompletedProcess(cmd, code, stdout=out, stderr="")
 
 
 class OwnerControlTests(unittest.TestCase):
+    def setUp(self):
+        # Windows smoke uses stdlib unittest without pytest or POSIX fsync.
+        # Systemd command contracts use an isolated in-memory journal seam;
+        # Linux integration tests below exercise the real durable filesystem.
+        intents = {}
+        def reserve(request, payload):
+            if request in intents:
+                raise FileExistsError(request)
+            intents[request] = payload
+        for name, side_effect in (
+            ("_owner_request_path", lambda request: request),
+            ("_read_request_intent", lambda request: intents.get(request)),
+            ("_reserve_request_intent", reserve),
+        ):
+            mock = patch.object(control, name, side_effect=side_effect)
+            mock.start()
+            self.addCleanup(mock.stop)
+
     def test_update_postcheck_is_read_only_and_fails_closed(self):
         from contextlib import redirect_stdout
         from io import StringIO
@@ -237,6 +265,7 @@ class OwnerControlTests(unittest.TestCase):
         from io import StringIO
 
         for failure in (OSError("transport"), subprocess.TimeoutExpired("systemd", 20)):
+            request = R if isinstance(failure, OSError) else "c" * 32
             for phase in ("probe", "dispatch", "status"):
                 with self.subTest(failure=type(failure).__name__, phase=phase):
                     calls = []
@@ -249,12 +278,12 @@ class OwnerControlTests(unittest.TestCase):
 
                     with redirect_stdout(StringIO()) as reply:
                         if phase == "status":
-                            rc = control.status(R, run=run, verify_start_sha=SHA)
+                            rc = control.status(request, run=run, verify_start_sha=SHA)
                         else:
-                            rc = control.submit("update-and-start", SHA, R, "vps-console",
+                            rc = control.submit("update-and-start", SHA, request, "vps-console",
                                                 run=run, uid=0)
                     self.assertEqual(rc, 2)
-                    self.assertIn(R, reply.getvalue())
+                    self.assertIn(request, reply.getvalue())
                     self.assertIn("STATUS=UNPROVEN" if phase == "status" else
                                   "SUBMISSION=UNPROVEN", reply.getvalue())
                     self.assertNotIn("FINISHED_OK", reply.getvalue())
@@ -378,7 +407,8 @@ if __name__ == "__main__":
     unittest.main()
 
 
-def test_readonly_refusal_recovery_is_one_pinned_detached_owner_request(monkeypatch):
+def test_readonly_refusal_recovery_is_one_pinned_detached_owner_request(monkeypatch, tmp_path):
+    isolated_owner_request_journal(tmp_path, monkeypatch)
     from pathlib import Path
     stage = Path("/var/lib/bybitscanner-stage-git-" + SHA)
     monkeypatch.setattr(control, "_verified_take_closed_stage", lambda sha: stage)
@@ -411,7 +441,8 @@ def test_readonly_refusal_recovery_requires_exact_paper_postcheck(monkeypatch):
     assert checked == [SHA]
 
 
-def test_take_closed_update_is_one_detached_pinned_stage_owner_request(monkeypatch):
+def test_take_closed_update_is_one_detached_pinned_stage_owner_request(monkeypatch, tmp_path):
+    isolated_owner_request_journal(tmp_path, monkeypatch)
     from pathlib import Path
     target_stage = Path("/var/lib/bybitscanner-stage-git-" + SHA)
     monkeypatch.setattr(control, "_verified_take_closed_stage", lambda sha: target_stage)
@@ -432,7 +463,8 @@ def test_take_closed_update_is_one_detached_pinned_stage_owner_request(monkeypat
     assert all("PAPER_AUTO" not in str(s) for s in unit)
 
 
-def test_take_closed_update_refuses_unverified_old_installed_source(monkeypatch):
+def test_take_closed_update_refuses_unverified_old_installed_source(monkeypatch, tmp_path):
+    isolated_owner_request_journal(tmp_path, monkeypatch)
     from pathlib import Path
     import pytest
     monkeypatch.setattr(control, "__file__", "/opt/BybitScanner/tools/vps_owner_control.py")
@@ -460,7 +492,8 @@ def test_finished_take_closed_update_requires_same_exact_postcheck():
 
 
 
-def test_owner_github_status_enable_is_one_pinned_detached_request(monkeypatch):
+def test_owner_github_status_enable_is_one_pinned_detached_request(monkeypatch, tmp_path):
+    isolated_owner_request_journal(tmp_path, monkeypatch)
     from tools import vps_release_identity as identity
     monkeypatch.setattr(identity, "verify_release", lambda root: SHA)
     calls = []
@@ -563,3 +596,77 @@ def test_signed_start_owner_outcome_checks_current_readiness_without_mutations(m
         monkeypatch.setattr(control, "verify_start", lambda _: 2)
         assert read()["postcheck"] == "BLOCKED"
         assert len(calls) == 6
+
+
+def test_durable_request_after_success(tmp_path, monkeypatch, capsys):
+    isolated_owner_request_journal(tmp_path, monkeypatch)
+    _assert_durable_request_prevents_replay("success", capsys)
+
+
+def test_durable_request_after_timeout(tmp_path, monkeypatch, capsys):
+    isolated_owner_request_journal(tmp_path, monkeypatch)
+    _assert_durable_request_prevents_replay("timeout", capsys)
+
+
+def _assert_durable_request_prevents_replay(dispatch_outcome, capsys):
+    calls = []
+    def run(cmd, **kwargs):
+        calls.append(cmd[0])
+        if cmd[0] == "systemctl":
+            return completed(cmd, out="LoadState=not-found\n")
+        assert control._owner_request_path(R).is_file()
+        if dispatch_outcome == "timeout":
+            raise subprocess.TimeoutExpired(cmd, 20)
+        return completed(cmd)
+
+    old = "c" * 40
+    rc = control.submit("update-and-start", SHA, R, "win-pc", run=run, uid=0,
+                        expected_installed_sha=old)
+    assert rc == (0 if dispatch_outcome == "success" else 2)
+    path = control._owner_request_path(R)
+    original = path.read_bytes()
+    assert control.submit("update-and-start", SHA, R, "win-pc", run=run, uid=0,
+                          expected_installed_sha=old) == 2
+    assert "durable intent exists" in capsys.readouterr().out
+    assert control.submit("update-and-start", SHA, R, "win-pc", run=run, uid=0,
+                          expected_installed_sha="d" * 40) == 2
+    assert "IDENTITY_MISMATCH" in capsys.readouterr().out
+    assert path.read_bytes() == original
+    assert calls == ["systemctl", "systemd-run", "systemctl"]
+
+
+def test_untrusted_or_partial_intent_never_dispatches(tmp_path, monkeypatch):
+    isolated_owner_request_journal(tmp_path, monkeypatch)
+    path = control._owner_request_path(R, create=True)
+    path.write_bytes(b"partial")
+    path.chmod(0o600)
+    def forbidden(*args, **kwargs):
+        raise AssertionError("no systemd operation on unsafe intent")
+    assert control.submit("update", SHA, R, "win-pc", run=forbidden, uid=0) == 2
+    assert path.read_bytes() == b"partial"
+    path.unlink()
+    target = tmp_path / "untouched"
+    target.write_bytes(b"private")
+    path.symlink_to(target)
+    assert control.submit("update", SHA, R, "win-pc", run=forbidden, uid=0) == 2
+    assert target.read_bytes() == b"private"
+
+
+def test_fsync_failure_preserves_fence_and_prevents_dispatch(monkeypatch, tmp_path):
+    isolated_owner_request_journal(tmp_path, monkeypatch)
+    from tools import vps_gitless_release_activate as release
+    sync = release._sync_directory
+    def fail_on_intent_directory(path):
+        if path.name == "transactions":
+            raise OSError("fsync failure")
+        sync(path)
+    monkeypatch.setattr(release, "_sync_directory", fail_on_intent_directory)
+    calls = []
+    def run(cmd, **kwargs):
+        calls.append(cmd[0])
+        assert cmd[0] == "systemctl"
+        return completed(cmd, out="LoadState=not-found\n")
+    assert control.submit("update", SHA, R, "win-pc", run=run, uid=0) == 2
+    assert control._owner_request_path(R).is_file()
+    assert control.submit("update", SHA, R, "win-pc", run=run, uid=0) == 2
+    assert calls == ["systemctl", "systemctl"]
