@@ -1,5 +1,7 @@
 # 9. CURRENT REVISION RECORD
 
+`4.51` aligns context economy with continuous authorized outcome delivery and confines the historical PAPER mission to its applicable scope. All mandatory gates and recovery limits remain binding.
+
 `4.50` reconciles task-routed bootstrap and user-action authority with the generated compatibility projection; mandatory gates remain unchanged.
 
 `4.49` separates the protocol into task-routed source packages with a generated

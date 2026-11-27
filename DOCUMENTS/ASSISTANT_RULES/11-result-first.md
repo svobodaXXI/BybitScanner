@@ -194,14 +194,15 @@ workflow, gate, issue, document, quest, permission or review cycle. The
 overarching owner priority is **owner time saved**; technical BACKLOG P0 is
 the current engineering dependency, not a replacement for that priority.
 
-**One bounded critical path:** finish the already authorized protected PAPER
-transition to an actually verified EDITOR_ONLY Backend + Telegram state;
-then finish the existing monolithic PAPER coordinator
-(freeze → protected drain → FLAT/quiescence and orphan proof → one-shot
-handoff → immutable switch → safe runtime restoration → end-to-end acceptance).
-Do not create a parallel "PAPER liberation" project or promote Editor/Telegram
-acceptance, diagnostics, CI, PR count or game mechanics above the active safety
-boundary. Resume Scanner/Robot/PAPER_AUTO and any reconcile only under their
+**One bounded critical path:** follow the current owner goal and its owning
+specification, not a historical mission. For the protected PAPER migration
+recorded on 2026-11-04, the applicable sequence was EDITOR_ONLY Backend + Telegram
+verification, then the monolithic PAPER coordinator (freeze → protected drain →
+FLAT/quiescence and orphan proof → one-shot handoff → immutable switch → safe
+runtime restoration → end-to-end acceptance). That sequence is not a standing
+priority or runtime authorization for unrelated tasks. Do not promote incidental
+acceptance, diagnostics, CI, PR count or game mechanics above the applicable
+safety boundary. Resume Scanner/Robot/PAPER_AUTO and any reconcile only under their
 own explicit authority; EDITOR_ONLY does not imply trading permission.
 
 **Preflight once, including post-stop races:** before an irreversible action,

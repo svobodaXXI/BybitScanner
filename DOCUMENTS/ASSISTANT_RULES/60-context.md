@@ -63,11 +63,10 @@ behavior, contract checks, mandatory E2E, verification, or governance.
 
 ### 3.2.1 BOUNDED_SLICE_AND_NO_REPEAT_RULE — HARD RULE
 
-Applies to ChatGPT, Codex, Claude Code, and delegated agents. Execute the smallest
-complete, independently verifiable step toward the current user outcome; agree
-on a concrete stopping condition before extending scope. Batch inseparable
-edits and their required proof, but do not silently expand a focused task into
-another investigation, refactor, feature, or test campaign.
+Applies to ChatGPT, Codex, Claude Code, and delegated agents. Execute the smallest complete authorized workflow that achieves the current user outcome.
+Internal slices and milestones are not owner handoffs: continue through dependent steps
+under `11-result-first.md` until the outcome is proven or a genuine blocking dependency,
+mandatory gate or owner-only decision is reached. Do not expand the authorized scope.
 
 Before each further read, experiment, test, or retry, identify the **new**
 question/evidence it will resolve. Reuse a passing check for unchanged inputs:
@@ -84,8 +83,9 @@ research directions without new evidence. After two unsuccessful attempts at
 the same hypothesis, stop that loop, record the narrowest known blocker and
 the next specific missing evidence; escalate only when a distinct risk or
 mandatory safety diagnosis justifies it. If roughly 10 minutes pass without a
-verified intermediate result, stop expanding the work and give a short progress
-report explaining the delay, what is proven, and the bounded next step.
+verified intermediate result, stop expanding the investigation and report the
+proven state and bounded next step. Continue an available authorized path without
+requiring another owner prompt; pause only at the actual blocking boundary.
 A previously authorized long-running scan/build/CI job with a clear purpose
 may continue without repeated polling, redundant tests, or interrupting
 unrelated processes. Do not claim completion for an unfinished step.
@@ -93,9 +93,8 @@ unrelated processes. Do not claim completion for an unfinished step.
 ### 3.2.1a PROMPT BUDGET / NO TEST LOOPS — OWNER RULE 2026-09-23
 
 Every ChatGPT-to-Codex/Claude Code prompt MUST be a short, outcome-oriented,
-bounded micro-slice: state the actual delta, existing evidence to reuse, the
-smallest genuinely necessary verification, the stopping point and a concise
-result to return. Do not include redundant task recaps, broad research,
+bounded end-to-end assignment: state the desired outcome, actual delta, relevant
+existing evidence, minimum necessary verification and genuine stopping boundary. Do not include redundant task recaps, broad research,
 multiple optional investigations, full-suite requests, repeated tests of
 unchanged behavior, or instructions to keep iterating until a vaguely defined
 "perfect" result. Do not append a generic battery of checks to every prompt.
@@ -103,11 +102,13 @@ unchanged behavior, or instructions to keep iterating until a vaguely defined
 Require the agent to run each necessary focused check **once after the relevant
 change**, reuse already successful evidence, and rerun **only a failing check
 after a targeted fix** or where a changed input invalidates its result.
-No automatic test/fix/test/fix cycles, alternative-threshold tuning loops,
-repeated source fetches, continuous polling or waiting for long jobs. If one
-bounded attempt fails or evidence is unavailable, STOP, report the precise
-blocker and smallest next decision; do not start another exploratory branch
-without a separate reason. Existing mandatory safety/contract/final gates
+No blind test/fix loops, alternative-threshold tuning loops, redundant source
+fetches or continuous polling. On a failed ordinary check, correct the proven
+cause within scope and repeat only the invalidated check. For mandatory gate
+failures, unknown material risk or unavailable evidence, use the applicable
+STOP/HOLD/CONTINUE policy in `11-result-first.md`; preserve stricter harness
+recovery limits and every approval boundary. Do not start another exploratory
+branch without new evidence. Existing mandatory safety/contract/final gates
 remain in force, but prefer consuming their recorded results rather than
 duplicating them with additional ad hoc runs. A code task ends promptly after
 its scoped deliverable and required proof; no agent-supervised real Scanner
