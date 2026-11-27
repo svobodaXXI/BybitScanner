@@ -1711,8 +1711,21 @@ class PaperRuntime:
         """
         normalized = Symbol(symbol.strip().upper())
         book = self._streamed_book(normalized)
-        if book is None and evidence is not None and evidence.symbol == normalized:
-            book = evidence
+        if evidence is not None and evidence.symbol == normalized:
+            if book is None:
+                return evidence
+            # A retained stream snapshot may be older than the handler's
+            # independently fetched execution evidence. Keep fresh stream
+            # precedence, but never discard a valid fallback for a stale book.
+            try:
+                self._market_executor.validate_book(normalized, book)
+            except (RuntimeError, ValueError):
+                try:
+                    self._market_executor.validate_book(normalized, evidence)
+                except (RuntimeError, ValueError):
+                    pass  # Original executor will reject invalid evidence.
+                else:
+                    return evidence
         return book
 
     @property
@@ -5687,6 +5700,10 @@ class PaperRuntime:
                 )
             results.append(result)
             if result.status != CommandResultStatus.COMPLETED:
+                LOGGER.warning(
+                    "Robot Close All unconfirmed symbol=%s status=%s reason_code=%s",
+                    symbol, result.status.value, result.reason_code,
+                )
                 any_unconfirmed = True
         # Orphan trades have no OPEN candidate to generate a normal close
         # result. Surface their unresolved identities using existing result
