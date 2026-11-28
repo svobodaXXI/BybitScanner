@@ -1049,6 +1049,32 @@ USER CORRECTION
 Harden the whole failure class, preserve stronger higher-level rules, check for overlap/contradiction, and apply
 `IMMEDIATE_WORKFLOW_RULE_RECORDING` when authorized.
 
+## 8.3A VERIFIED WORKING BASELINE GATE — OWNER RULE 2026-10-07
+
+A newer BybitScanner revision must **not replace the last owner-verified working runtime baseline**
+merely because code was merged, focused tests passed, CI is green, or a schema migration completed.
+
+For Scanner / PAPER Robot / Telegram / desktop-runtime changes, keep the last proven working
+baseline as the operational reference until the candidate revision passes the same real owner-run
+product lifecycle through the canonical desktop surface:
+
+`start -> normal work -> normal stop`.
+
+A candidate that has not passed that lifecycle is development state, not the new working baseline.
+If the candidate regresses startup, execution, protection, reconciliation, Telegram delivery, or
+normal shutdown, stop forward patch-chaining on the broken runtime unless a narrowly proven fix
+can restore the same gate immediately. Preserve/recover the last verified baseline, isolate the
+defect, fix from that known-good foundation, and re-run the acceptance gate before promoting the
+new revision.
+
+This rule does not require a redundant full acceptance cycle after every harmless documentation
+or non-runtime change. It is blocking when a change can affect the real Scanner/Robot runtime
+lifecycle or when evidence shows that the working lifecycle has regressed.
+
+Progress is therefore monotonic in verified owner-visible capability: a newer commit may be a
+development candidate, but it is not allowed to demote or silently replace the known-good runtime
+baseline before equivalent real acceptance is proven.
+
 ## 8.3 SYSTEMIC REGRESSION ESCALATION — WHOLE-SYSTEM + EXTERNAL REFERENCE BEFORE PATCH
 
 When development begins to regress in an unexplained way, stop treating symptoms independently. Re-evaluate the
