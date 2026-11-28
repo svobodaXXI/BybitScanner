@@ -102,9 +102,33 @@ def collect_market(get_symbols, get_candles, stop_event, *, clock=time.time,
     return MarketSnapshot(cutoff, len(symbols), tuple(rows))
 
 
-def format_market(snapshot, *, now_ms, tapes=()):
+def format_burst(burst, now_ms):
+    lines = ["🔥 Монеты в игре · срез рынка"]
+    if burst is None:
+        return lines + ["Первый срез ещё не готов."]
+    if burst.status != "OBSERVED" or burst.end_ms is None:
+        return lines + [f"Последний срез недоступен ({burst.status})."]
+    age = now_ms - burst.end_ms
+    if not 0 <= age <= 330_000:
+        return lines + ["Последний срез устарел. Ожидается обновление."]
+    stamp = datetime.fromtimestamp(burst.end_ms / 1000,
+                                  timezone(timedelta(hours=3))).strftime("%d.%m %H:%M:%S")
+    seconds = (burst.end_ms - burst.start_ms) // 1000
+    lines.extend([f"Срез до {stamp} МСК · {seconds} с · {age // 1000} с назад",
+                  f"Подписки: {burst.acked}/{burst.expected} · сделки получены: "
+                  f"{len(burst.rows)}/{burst.expected}",
+                  "Лидеры по наблюдаемому обороту за срез:"])
+    for row in sorted(burst.rows, key=lambda r: (-r.turnover, -r.prints, r.symbol))[:TOP]:
+        lines.append(f"{row.symbol} · {row.prints} сделок · {row.turnover:,.0f} USDT")
+    if not burst.rows:
+        lines.append("Сделки не наблюдались.")
+    lines.append("Срез каждые 5 мин; не текущая лента. Отсутствие данных не означает нулевую активность.")
+    return lines
+
+
+def format_market(snapshot, *, now_ms, burst=None):
     if not 0 <= now_ms - snapshot.as_of_ms <= MAX_AGE_MS:
-        return "Рынок: данные устарели. Ожидается автоматическое обновление."
+        return "\n".join(["Рынок: данные свечей устарели.", "", *format_burst(burst, now_ms)])
     stamp = datetime.fromtimestamp(snapshot.as_of_ms / 1000,
                                   timezone(timedelta(hours=3))).strftime("%d.%m %H:%M")
     rows = snapshot.rows
@@ -114,23 +138,7 @@ def format_market(snapshot, *, now_ms, tapes=()):
         return "\n".join(lines + ["Подтверждённая история недоступна."])
     if len(rows) != snapshot.expected:
         lines.append("Неполный охват свечей — лидеры движения только по проверенным инструментам.")
-    lines.extend(["", "🔥 Монеты в игре"])
-    fresh = {t.symbol: t for t in tapes if 0 <= now_ms - t.as_of_ms <= TAPE_FRESH_MS}
-    lines.append(f"Свежая лента: {len(fresh)}/{snapshot.expected} · выборочная проверка")
-    anomaly = {r.symbol: r.activity or 0 for r in rows}
-    active = [t for t in fresh.values() if t.activity_state(now_ms).startswith("ACTIVE_")]
-    active.sort(key=lambda t: (-anomaly.get(t.symbol, 0), -t.turnover_1m,
-                               -t.prints_1m, t.symbol))
-    for t in active[:TOP]:
-        bound = "≥" if t.truncated_1m else ""
-        state = ("живой поток" if t.activity_state(now_ms) == "ACTIVE_SUSTAINED_OBSERVED"
-                 else "всплеск; непрерывность н/д")
-        lines.append(f"{t.symbol} · {bound}{t.prints_1m} сделок/мин · "
-                     f"{bound}{t.turnover_1m:,.0f} USDT/мин · {state}")
-    if not active:
-        lines.append("Нет подтверждённой активности в свежей проверенной выборке.")
-    lines.append("Пробный фильтр: 30 сделок/мин, 3000 USDT/мин; "
-                 "последний принт ≤5с; активность в 5 из 6 интервалов для живого потока.")
+    lines.extend(["", *format_burst(burst, now_ms)])
     for heading, direction in (("🟢 Лидеры роста", 1), ("🔴 Лидеры падения", -1)):
         lines.extend(["", heading])
         for index, (window, _) in enumerate(WINDOWS):
@@ -249,81 +257,53 @@ def observe_recent_trades(symbol, response):
         return None
 
 
-# One public request at a time; one in four tape slots rotates through
-# the entire known universe rather than repeatedly checking just the winners.
-RADAR_PRIORITY_LIMIT = 12
 RADAR_INTERVAL_SECONDS = 0.5
 
 
 class MarketRadar:
-    """Single-writer, lock-protected cache; Telegram reads without exchange I/O.
-
-    Candle sweep and recent-trade sampling interleave on one worker.
-    Tape coverage is deliberately partial: a REST sweep cannot prove that
-    every symbol is active at one common instant. Never keep expired prints
-    in the live leaderboard or carry forward a failed observation.
-    """
+    """Single writer; periodic public burst and independent closed-candle sweep."""
 
     def __init__(self):
+        from telegram_market_burst import BurstCadence
         self._lock = Lock()
+        self._cadence = BurstCadence()
         self._snapshot = None
-        self._tapes = {}
+        self._burst = None
         self._pending = deque()
         self._rows = []
-        self._symbols = ()
         self._sweep_symbols = ()
-        self._priority = ()
         self._cutoff = None
         self._deadline = 0
-        self._slot = 0
-        self._priority_index = 0
-        self._universe_index = 0
-        self._turn = 0
         self._sweep_offset = 0
 
     def clear(self):
-        # Called by the sole worker when Scanner is not confirmed RUNNING.
+        # Retain cadence even across pauses: never retry inside five minutes.
         with self._lock:
             self._snapshot = None
-            self._tapes.clear()
+            self._burst = None
         self._pending.clear()
         self._rows = []
-        self._symbols = ()
         self._sweep_symbols = ()
-        self._priority = ()
         self._cutoff = None
-        self._slot = self._priority_index = self._universe_index = self._turn = 0
         self._sweep_offset = 0
 
     def card(self, now_ms):
         with self._lock:
-            snapshot = self._snapshot
-            tapes = tuple(self._tapes.values())
+            snapshot, burst = self._snapshot, self._burst
         if snapshot is None:
-            return ("Рынок: фоновый снимок ещё не готов. "
-                    "Обновляется автоматически при работающем Сканере.")
-        return format_market(snapshot, now_ms=now_ms, tapes=tapes)
+            return "\n".join([
+                "Рынок: фоновый снимок свечей ещё не готов.",
+                *format_burst(burst, now_ms)])
+        return format_market(snapshot, now_ms=now_ms, burst=burst)
 
     def _publish(self):
-        rows = tuple(self._rows)
-        self._symbols = self._sweep_symbols
-        anomaly = sorted((r for r in rows if r.activity is not None),
-                         key=lambda r: (-r.activity, r.symbol))
-        liquid = sorted(rows, key=lambda r: (-r.turnover_15m, r.symbol))
-        self._priority = tuple(dict.fromkeys(
-            r.symbol for r in (*anomaly[:RADAR_PRIORITY_LIMIT // 2],
-                               *liquid[:RADAR_PRIORITY_LIMIT])))
-        self._priority = self._priority[:RADAR_PRIORITY_LIMIT]
-        self._priority_index = 0
         with self._lock:
-            self._snapshot = MarketSnapshot(self._cutoff, len(self._symbols), rows)
-            allowed = set(self._symbols)
-            self._tapes = {s: t for s, t in self._tapes.items() if s in allowed}
+            self._snapshot = MarketSnapshot(
+                self._cutoff, len(self._sweep_symbols), tuple(self._rows))
 
-    def step(self, get_symbols, get_candles, get_recent_trades, *,
-             now_ms, monotonic_now):
-        """At most one symbol/candle/tape request per step (universe pagination
-        remains owned by the existing source). A failed symbol is isolated."""
+    def step(self, get_symbols, get_candles, sample_burst, *,
+             now_ms, monotonic_now, should_continue):
+        """One bounded observation OR one candle request; no REST tape loop."""
         cutoff = now_ms // PERIOD_MS * PERIOD_MS
         if self._pending and monotonic_now >= self._deadline:
             self._pending.clear()
@@ -340,8 +320,21 @@ class MarketRadar:
                 self._publish()
             return
 
-        self._turn += 1
-        if self._pending and (not self._priority or self._turn % 3 != 0):
+        if self._sweep_symbols and self._cadence.claim(monotonic_now):
+            from telegram_market_burst import BurstReceipt
+            try:
+                result = sample_burst(self._sweep_symbols, should_continue=should_continue)
+            except Exception:
+                result = BurstReceipt("UNAVAILABLE", len(self._sweep_symbols),
+                                      0, None, None, (), 0, 0)
+            if not should_continue():
+                self.clear()
+                return
+            with self._lock:
+                self._burst = result
+            return
+
+        if self._pending:
             symbol = self._pending.popleft()
             self._sweep_offset += 1
             try:
@@ -353,24 +346,3 @@ class MarketRadar:
                 pass
             if not self._pending:
                 self._publish()
-            return
-
-        if not self._symbols:
-            return
-        # Sampling of the full universe continues during the candle refresh.
-        self._slot += 1
-        if self._priority and self._slot % 4 != 0:
-            symbol = self._priority[self._priority_index % len(self._priority)]
-            self._priority_index += 1
-        else:
-            symbol = self._symbols[self._universe_index % len(self._symbols)]
-            self._universe_index += 1
-        try:
-            observation = observe_recent_trades(symbol, get_recent_trades(symbol))
-        except Exception:
-            observation = None
-        with self._lock:
-            if observation is None:
-                self._tapes.pop(symbol, None)
-            else:
-                self._tapes[symbol] = observation

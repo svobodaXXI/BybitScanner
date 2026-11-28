@@ -1517,7 +1517,7 @@ class TelegramMarketTests(unittest.TestCase):
         growth, decline = rest.split("🔴 Лидеры падения")
         self.assertNotIn("AAAUSDT", active)
         self.assertNotIn("BBBUSDT", active)
-        self.assertIn("Свежая лента: 0/3", active)
+        self.assertIn("Первый срез ещё не готов", active)
         self.assertIn("AAAUSDT +4.00%", growth)
         self.assertNotIn("BBBUSDT", growth)
         self.assertIn("BBBUSDT -4.00%", decline)
@@ -1642,46 +1642,145 @@ class MarketTapeTests(unittest.TestCase):
             status.assert_not_called()
             self.assertFalse(monitoring._MARKET_REQUEST_LOCK.locked())
 
-    def test_radar_collects_in_steps_and_expires_tape(self):
+    def test_radar_periodic_snapshot_candles_expiry_and_failure(self):
         from telegram_market import MarketRadar, MarketRow, PERIOD_MS
+        from telegram_market_burst import BurstReceipt, BurstRow
         from unittest.mock import Mock
         radar = MarketRadar()
         now = self.NOW // PERIOD_MS * PERIOD_MS
         symbols = Mock(return_value=[self.SYMBOL, "QUIETUSDT"])
         candles = Mock(return_value=object())
-        def response(symbol):
-            data = self.response([1000 + i * 1500 for i in range(36)])
-            data["time"] = now
-            for i, row in enumerate(data["result"]["list"]):
-                row["symbol"] = symbol
-                row["time"] = str(now - (1000 + i * 1500))
-            if symbol != self.SYMBOL:
-                data["result"]["list"] = data["result"]["list"][:1]
-            return data
-        trades = Mock(side_effect=response)
+        running = Mock(return_value=True)
+        burst = BurstReceipt("OBSERVED", 2, 2, now-15000, now,
+                             (BurstRow(self.SYMBOL, 36, 7200, now-1),), 100, 1)
+        failure = BurstReceipt("RESOURCE_LIMIT", 2, 2, now+300000,
+                               None, (), 100, 12)
+        sampler = Mock(side_effect=[burst, failure, burst])
         def step(i):
-            radar.step(symbols, candles, trades, now_ms=now, monotonic_now=i)
+            radar.step(symbols, candles, sampler, now_ms=now+i*1000,
+                       monotonic_now=i, should_continue=running)
         with patch("telegram_market.rank_candles",
                    side_effect=lambda symbol, frame, cutoff: MarketRow(
                        symbol, (1, 2, 3, 4), 3, 2, 100000)):
             step(0)
             self.assertIn("ещё не готов", radar.card(now))
             step(1)
-            step(2)
-            self.assertEqual(candles.call_count, 2)
-            trades.assert_not_called()
-            for i in range(3, 8):
-                step(i)
-            active = radar.card(now).split("🟢 Лидеры роста")[0]
+            sampler.assert_called_once_with(
+                ("QUIETUSDT", self.SYMBOL), should_continue=running)
+            active = radar.card(now+1000)
             self.assertIn(self.SYMBOL, active)
             self.assertNotIn("QUIETUSDT", active)
-            self.assertIn("Свежая лента: 2/2", active)
-            self.assertNotIn(self.SYMBOL, radar.card(now+10001).split("🟢 Лидеры роста")[0])
-            before = (symbols.call_count, candles.call_count, trades.call_count)
-            radar.card(now)
-            self.assertEqual(before, (symbols.call_count, candles.call_count, trades.call_count))
+            self.assertIn("сделки получены: 1/2", active)
+            self.assertIn("15 с", active)
+            self.assertIn("не текущая лента", active)
+            step(2)
+            step(3)
+            self.assertEqual(candles.call_count, 2)
+            step(300)
+            self.assertEqual(sampler.call_count, 1)
+            active = radar.card(now+331000).split("🟢 Лидеры роста")[0]
+            self.assertNotIn(self.SYMBOL, active)
+            self.assertIn("устарел", active)
+            step(301)
+            self.assertEqual(sampler.call_count, 2)
+            active = radar.card(now+301000).split("🟢 Лидеры роста")[0]
+            self.assertNotIn(self.SYMBOL, active)
+            self.assertIn("RESOURCE_LIMIT", active)
+            before = (symbols.call_count, candles.call_count, sampler.call_count)
+            radar.card(now+302000)
+            self.assertEqual(before, (symbols.call_count, candles.call_count, sampler.call_count))
             radar.clear()
-            self.assertIn("ещё не готов", radar.card(now))
+            self.assertIn("ещё не готов", radar.card(now+302000))
+            step(302)
+            step(303)
+            self.assertEqual(sampler.call_count, 2)
+            running.return_value = False
+            step(601)
+            self.assertEqual(sampler.call_count, 3)
+            self.assertNotIn(self.SYMBOL, radar.card(now+601000))
+
+
+    def test_cadence_does_not_retry_inside_five_minutes(self):
+        from telegram_market_burst import BurstCadence
+        cadence = BurstCadence()
+        self.assertTrue(cadence.claim(0))
+        self.assertFalse(cadence.claim(299.999))
+        self.assertTrue(cadence.claim(300))
+        self.assertFalse(cadence.claim(301))
+
+    def test_common_window_dedup_and_no_inferred_zero(self):
+        from telegram_market_burst import TradeWindow
+        window = TradeWindow(("AAAUSDT", "BBBUSDT"), 100000)
+        trade = {"s": "AAAUSDT", "T": 100001, "i": "id",
+                 "S": "Buy", "p": "100", "v": "2"}
+        message = {"topic": "publicTrade.AAAUSDT", "data": [
+            dict(trade, T=99999), trade, trade.copy(),
+            dict(trade, T=115000, i="later")]}
+        window.ingest(message)
+        row, = window.rows()
+        self.assertEqual((row.symbol, row.prints, row.turnover),
+                         ("AAAUSDT", 1, 200))
+        with self.assertRaises(ValueError):
+            window.ingest({"topic": message["topic"],
+                           "data": [dict(trade, v="3")]})
+
+    def test_burst_ack_window_and_disconnect(self):
+        import json
+        from unittest.mock import Mock
+        from telegram_market_burst import sample_public_burst
+        for disconnect in (False, True):
+            with self.subTest(disconnect=disconnect):
+                now = [0.0]
+                ws = Mock()
+                messages = [
+                    {"op": "subscribe", "req_id": "0", "success": True},
+                    {"topic": "publicTrade.AAAUSDT", "data": [
+                        {"s": "AAAUSDT", "T": 101500, "i": "id",
+                         "S": "Buy", "p": "100", "v": "2"}]},
+                ]
+                def recv():
+                    now[0] += 1
+                    if messages:
+                        return json.dumps(messages.pop(0))
+                    if disconnect:
+                        return ""
+                    return json.dumps({"op": "pong"})
+                ws.recv.side_effect = recv
+                result = sample_public_burst(
+                    ["AAAUSDT"], connect=lambda *a, **kw: ws,
+                    monotonic=lambda: now[0],
+                    clock=lambda: 100 + now[0], cpu_clock=lambda: 0)
+                self.assertEqual(result.acked, 1)
+                self.assertEqual(result.status,
+                                 "DISCONNECTED" if disconnect else "OBSERVED")
+                if disconnect:
+                    self.assertEqual(result.rows, ())
+                    self.assertIsNone(result.end_ms)
+                else:
+                    self.assertEqual(result.end_ms-result.start_ms, 15000)
+                    self.assertEqual(result.rows[0].prints, 1)
+                ws.close.assert_called_once()
+
+    def test_rejected_ack_and_cpu_guard_never_publish(self):
+        import json
+        from unittest.mock import Mock
+        from telegram_market_burst import sample_public_burst
+        ws = Mock()
+        ws.recv.return_value = json.dumps(
+            {"op": "subscribe", "req_id": "0", "success": False})
+        result = sample_public_burst(
+            ["AAAUSDT"], connect=lambda *a, **kw: ws,
+            monotonic=lambda: 0, cpu_clock=lambda: 0)
+        self.assertEqual(result.status, "ACK_REJECTED")
+        self.assertEqual(result.rows, ())
+        ws.close.assert_called_once()
+        cpu = iter([0, 13, 13, 13])
+        connect = Mock()
+        result = sample_public_burst(["AAAUSDT"], connect=connect,
+                                     cpu_clock=lambda: next(cpu))
+        self.assertEqual(result.status, "RESOURCE_LIMIT")
+        self.assertEqual(result.rows, ())
+        connect.assert_not_called()
 
 
 if __name__ == "__main__":
