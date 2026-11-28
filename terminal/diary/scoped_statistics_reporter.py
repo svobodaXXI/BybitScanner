@@ -19,7 +19,7 @@ from terminal.diary.scoped_statistics_archive import (
     ScopedStatisticsArchive, StatisticsScopeError, _attributed_episodes,
 )
 from terminal.domain.models import Execution, ExecutionDedupKey, Origin
-from terminal.persistence.sqlite_store import _execution_from_row
+from terminal.persistence.sqlite_store import _execution_from_row, _robot_candidate_from_row, SchemaError
 
 
 @dataclass(frozen=True)
@@ -30,6 +30,38 @@ class PaperSourceSnapshot:
     executions: tuple[Execution, ...] = ()
     campaign_evidence: Mapping[str, tuple[Mapping[str, object], ...]] | None = None
     wedge_evidence: Mapping[str, tuple[Mapping[str, object], ...]] | None = None
+
+
+def _verified_box_handoffs(rows):
+    """Prove the existing immutable BOX_PLAN_ONLY -> Robot clone contract."""
+    records = {}
+    for row in rows:
+        try:
+            record = _robot_candidate_from_row(row)
+        except (SchemaError, ValueError, TypeError, KeyError, ArithmeticError):
+            continue
+        records.setdefault(record.candidate_id, []).append(record)
+    result = []
+    for source_id, matches in records.items():
+        if len(matches) != 1 or not source_id.startswith("box-plan-"):
+            continue
+        source = matches[0]
+        if source.status != "BOX_PLAN_ONLY" or source.trading_account_id.value != "paper":
+            continue
+        robot_id = "box-robot-" + source_id.removeprefix("box-plan-")
+        successors = records.get(robot_id, ())
+        if len(successors) != 1:
+            continue
+        robot = successors[0]
+        if (robot.status == "BOX_PLAN_ONLY"
+                or robot.trading_account_id != source.trading_account_id
+                or robot.symbol != source.symbol
+                or robot.signal_snapshot != {
+                    **source.signal_snapshot, "source_box_candidate_id": source_id,
+                }):
+            continue
+        result.append({"source_candidate_id": source_id, "robot_candidate_id": robot_id})
+    return tuple(result)
 
 
 def load_paper_source_snapshot(
@@ -93,6 +125,22 @@ def load_paper_source_snapshot(
                            FROM box_order_ownership WHERE trading_account_id=? AND role='ENTRY'""",
                         ("paper",),
                     ).fetchall())
+                    # Only read the immutable plans that own ENTRY orders and
+                    # their canonical Robot handoffs, in the SAME source snapshot.
+                    handoff_rows = conn.execute(
+                        """WITH source_ids AS (
+                               SELECT DISTINCT candidate_id FROM box_order_ownership
+                               WHERE trading_account_id=? AND role='ENTRY'
+                                 AND candidate_id GLOB 'box-plan-*'
+                           )
+                           SELECT * FROM robot_candidates
+                           WHERE trading_account_id=? AND candidate_id IN (
+                               SELECT candidate_id FROM source_ids
+                               UNION SELECT 'box-robot-' || substr(candidate_id, 10)
+                                     FROM source_ids
+                           )""", ("paper", "paper"),
+                    ).fetchall()
+                    wedge_evidence["box_handoffs"] = _verified_box_handoffs(handoff_rows)
                 except sqlite3.Error:
                     pass
             except sqlite3.Error:

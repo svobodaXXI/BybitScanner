@@ -76,6 +76,25 @@ def attach_verified_robot_pattern_signals(
             continue
         for order in _candidate_limit_order_ids(matches[0]) & robot_orders:
             possible_owners[order].add(candidate_id)
+    # The runtime deliberately reserves Box ENTRY identities against the
+    # immutable source plan, not its executable Robot clone. Collapse only
+    # independently validated handoffs from the same read-only snapshot.
+    trade_candidate_ids = {
+        t.get("candidate_id") for t in evidence["trades"]
+        if t.get("trading_account_id") == "paper"
+    }
+    box_handoffs = {}
+    for link in evidence.get("box_handoffs", ()):
+        source_id = link.get("source_candidate_id")
+        robot_id = link.get("robot_candidate_id")
+        if (isinstance(source_id, str) and source_id.startswith("box-plan-")
+                and robot_id == "box-robot-" + source_id.removeprefix("box-plan-")
+                and len(candidates.get(source_id, ())) == 1
+                and len(candidates.get(robot_id, ())) == 1
+                and candidates[source_id][0]["symbol"] == candidates[robot_id][0]["symbol"]
+                and source_id not in trade_candidate_ids
+                and robot_id in trade_candidate_ids):
+            box_handoffs[source_id] = robot_id
     box_orders: dict[str, set[str]] = defaultdict(set)
     for link in evidence.get("box_entries", ()):
         if (link.get("trading_account_id") == "paper"
@@ -83,8 +102,9 @@ def attach_verified_robot_pattern_signals(
                 and isinstance(link.get("candidate_id"), str)
                 and isinstance(link.get("order_id"), str)
                 and len(candidates.get(link["candidate_id"], ())) == 1):
-            box_orders[link["candidate_id"]].add(link["order_id"])
-            possible_owners[link["order_id"]].add(link["candidate_id"])
+            owner_id = box_handoffs.get(link["candidate_id"], link["candidate_id"])
+            box_orders[owner_id].add(link["order_id"])
+            possible_owners[link["order_id"]].add(owner_id)
 
     by_trade: dict[str, list[Mapping[str, object]]] = defaultdict(list)
     for trade in evidence["trades"]:
