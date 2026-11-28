@@ -1517,7 +1517,7 @@ class TelegramMarketTests(unittest.TestCase):
         growth, decline = rest.split("🔴 Лидеры падения")
         self.assertNotIn("AAAUSDT", active)
         self.assertNotIn("BBBUSDT", active)
-        self.assertIn("Свежая лента: 0/3", active)
+        self.assertIn("Первый срез ещё не готов", active)
         self.assertIn("AAAUSDT +4.00%", growth)
         self.assertNotIn("BBBUSDT", growth)
         self.assertIn("BBBUSDT -4.00%", decline)
@@ -1642,46 +1642,62 @@ class MarketTapeTests(unittest.TestCase):
             status.assert_not_called()
             self.assertFalse(monitoring._MARKET_REQUEST_LOCK.locked())
 
-    def test_radar_collects_in_steps_and_expires_tape(self):
+    def test_radar_periodic_snapshot_candles_expiry_and_failure(self):
         from telegram_market import MarketRadar, MarketRow, PERIOD_MS
+        from telegram_market_burst import BurstReceipt, BurstRow
         from unittest.mock import Mock
         radar = MarketRadar()
         now = self.NOW // PERIOD_MS * PERIOD_MS
         symbols = Mock(return_value=[self.SYMBOL, "QUIETUSDT"])
         candles = Mock(return_value=object())
-        def response(symbol):
-            data = self.response([1000 + i * 1500 for i in range(36)])
-            data["time"] = now
-            for i, row in enumerate(data["result"]["list"]):
-                row["symbol"] = symbol
-                row["time"] = str(now - (1000 + i * 1500))
-            if symbol != self.SYMBOL:
-                data["result"]["list"] = data["result"]["list"][:1]
-            return data
-        trades = Mock(side_effect=response)
+        running = Mock(return_value=True)
+        burst = BurstReceipt("OBSERVED", 2, 2, now-15000, now,
+                             (BurstRow(self.SYMBOL, 36, 7200, now-1),), 100, 1)
+        failure = BurstReceipt("RESOURCE_LIMIT", 2, 2, now+300000,
+                               None, (), 100, 12)
+        sampler = Mock(side_effect=[burst, failure, burst])
         def step(i):
-            radar.step(symbols, candles, trades, now_ms=now, monotonic_now=i)
+            radar.step(symbols, candles, sampler, now_ms=now+i*1000,
+                       monotonic_now=i, should_continue=running)
         with patch("telegram_market.rank_candles",
                    side_effect=lambda symbol, frame, cutoff: MarketRow(
                        symbol, (1, 2, 3, 4), 3, 2, 100000)):
             step(0)
             self.assertIn("ещё не готов", radar.card(now))
             step(1)
-            step(2)
-            self.assertEqual(candles.call_count, 2)
-            trades.assert_not_called()
-            for i in range(3, 8):
-                step(i)
-            active = radar.card(now).split("🟢 Лидеры роста")[0]
+            sampler.assert_called_once_with(
+                ("QUIETUSDT", self.SYMBOL), should_continue=running)
+            active = radar.card(now+1000)
             self.assertIn(self.SYMBOL, active)
             self.assertNotIn("QUIETUSDT", active)
-            self.assertIn("Свежая лента: 2/2", active)
-            self.assertNotIn(self.SYMBOL, radar.card(now+10001).split("🟢 Лидеры роста")[0])
-            before = (symbols.call_count, candles.call_count, trades.call_count)
-            radar.card(now)
-            self.assertEqual(before, (symbols.call_count, candles.call_count, trades.call_count))
+            self.assertIn("сделки получены: 1/2", active)
+            self.assertIn("15 с", active)
+            self.assertIn("не текущая лента", active)
+            step(2)
+            step(3)
+            self.assertEqual(candles.call_count, 2)
+            step(300)
+            self.assertEqual(sampler.call_count, 1)
+            active = radar.card(now+331000).split("🟢 Лидеры роста")[0]
+            self.assertNotIn(self.SYMBOL, active)
+            self.assertIn("устарел", active)
+            step(301)
+            self.assertEqual(sampler.call_count, 2)
+            active = radar.card(now+301000).split("🟢 Лидеры роста")[0]
+            self.assertNotIn(self.SYMBOL, active)
+            self.assertIn("RESOURCE_LIMIT", active)
+            before = (symbols.call_count, candles.call_count, sampler.call_count)
+            radar.card(now+302000)
+            self.assertEqual(before, (symbols.call_count, candles.call_count, sampler.call_count))
             radar.clear()
-            self.assertIn("ещё не готов", radar.card(now))
+            self.assertIn("ещё не готов", radar.card(now+302000))
+            step(302)
+            step(303)
+            self.assertEqual(sampler.call_count, 2)
+            running.return_value = False
+            step(601)
+            self.assertEqual(sampler.call_count, 3)
+            self.assertNotIn(self.SYMBOL, radar.card(now+601000))
 
 
     def test_cadence_does_not_retry_inside_five_minutes(self):
