@@ -280,3 +280,81 @@ def test_observer_enable_does_not_retry_unknown_activation(observer_setup):
     assert enable_observer("a" * 40, **setup.kwargs).startswith("BLOCKED:")
     assert [e for e in setup.events if e[0] != "show"] == [
         ["daemon-reload"], ["enable", "--now", setup.names[1]]]
+
+
+@pytest.mark.parametrize("complete", [True, False])
+def test_wedge_archive_watch_exact_pair_and_private_retry(tmp_path, complete):
+    from tools.github_status_reporter import wedge_archive_watch, WEDGE_WATCH_CUTOFF_MS
+    from mirror_scanner import empty_state, save_state, mirror_first_card_archive_id
+    from mirror_levels.levels import line_level, LevelRegistry
+    from signal_archive import record_original_signal
+    from dataclasses import replace
+
+    root = tmp_path / "evidence"
+    archive = tmp_path / "archive"
+    outbox = tmp_path / "outbox"
+    outbox.mkdir(mode=0o700)
+    symbol, tf = "SECRETUSDT", "1"
+    t = WEDGE_WATCH_CUTOFF_MS
+    start = t - t % 60000
+    provenance = {"decision_index": 2, "parent_formation_id": "PRIVATE_FORMATION",
+                  "formation_end_open_ms": start + 60000}
+    level = line_level(symbol=symbol, timeframe=tf, pattern="Falling Wedge",
+                       side="upper", first=(start, 10.0), second=(start+60000, 9.8),
+                       confirmed_at_ms=start+180000, provenance=provenance)
+    pair = line_level(symbol=symbol, timeframe=tf, pattern="Falling Wedge",
+                      side="lower", first=(start, 8.0), second=(start+60000, 7.9),
+                      confirmed_at_ms=start+180000, provenance=provenance)
+    level = replace(level, provenance={**provenance, "chart_only_counterpart": pair.to_dict()})
+    state = empty_state(symbol, tf)
+    state["registry"] = LevelRegistry(levels={level.level_id: level}).to_dict()
+    state["records"] = {level.level_id: {}}
+    save_state(state, root)
+    sid = mirror_first_card_archive_id(symbol, tf, level.level_id)
+    bars = [{"open_time_ms": start+i*60000, "open": 9.0, "high": 11.0,
+             "low": 7.0, "close": 9.0} for i in range(4)]
+    boundaries = [{"boundary_id": lv.level_id, "kind": "ray",
+                   "anchors": [{"bar_open_time_ms": a, "price": p} for a,p in lv.anchors]}
+                  for lv in ((level, pair) if complete else (level,))]
+    snapshot = {"schema_version": 1, "signal_id": sid, "symbol": symbol,
+                "timeframe": tf, "bars": bars, "boundaries": boundaries}
+    assert record_original_signal(sid, symbol=symbol, timeframe=tf,
+                                  pattern="Falling Wedge", text="PRIVATE_TEXT",
+                                  image_bytes=b"fake-private-png", directory=archive,
+                                  geometry_snapshot=snapshot)
+    event = {"event": "mirror_delivery", "kind": "breakout", "delivered": True,
+             "test_mode": False, "chart_frozen": True, "recorded_at_ms": start+240000,
+             "symbol": symbol, "timeframe": tf, "level_id": level.level_id}
+    journal = root / "events.jsonl"
+    journal.write_text(json.dumps({**event, "test_mode": True})+"\n"+json.dumps(event))
+    kwargs = dict(token="not-a-real-token", state_dir=outbox, build_sha="a"*40,
+                  now_ms=start+300000, root=root, archive_roots=(archive,))
+    bodies = []
+    wedge_archive_watch(**kwargs, post=lambda _,body: bodies.append(body))
+    assert not bodies  # partial final line must not be treated as delivery
+    with journal.open("a") as f:
+        f.write("\n")
+    def ambiguous(_token, body):
+        bodies.append(body)
+        raise TimeoutError("unknown POST outcome")
+    with pytest.raises(TimeoutError):
+        wedge_archive_watch(**kwargs, post=ambiguous)
+    wedge_archive_watch(**kwargs, post=lambda _,body: bodies.append(body))
+    assert len(bodies) == 2 and bodies[0] == bodies[1]
+    assert ("ARCHIVE_MATCHED" if complete else "ARCHIVE_UNPROVEN") in bodies[0]
+    for private in (symbol, sid, level.level_id, pair.level_id, "PRIVATE", "7.9", str(root)):
+        assert private not in bodies[0]
+    wedge_archive_watch(**kwargs, post=lambda *_: pytest.fail("one-shot receipt already sent"))
+    assert state["registry"] == json.loads((root/"state"/f"{symbol}_{tf}.json").read_text())["registry"]
+
+
+def test_wedge_watch_failure_does_not_break_existing_status(tmp_path):
+    token = _token_file(tmp_path)
+    outputs = []
+    def fail(**kwargs):
+        raise OSError("private archive unavailable")
+    assert report_once(token_file=token, state_dir=tmp_path/"state",
+                       fetch=lambda url: status_payload()[url],
+                       post=lambda _,body: outputs.append(body), wedge_watch=fail,
+                       now_ms=1_800_000_000_000) == 0
+    assert len(outputs) == 1 and outputs[0].startswith("BYBITSCANNER_PUBLIC_STATUS_V1")

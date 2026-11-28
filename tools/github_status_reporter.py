@@ -226,9 +226,172 @@ def _post(token: str, body: str) -> None:
             raise ValueError("GitHub publication not acknowledged")
 
 
+# One-shot owner-requested engineering observation (#1274/#1388). Keep
+# the existing public status/signed diagnostic schemas unchanged.
+WEDGE_WATCH_CUTOFF_MS = int(datetime.fromisoformat(
+    "2026-11-27T12:41:26+00:00").timestamp() * 1000)
+WEDGE_WATCH_RESULTS = {"ARCHIVE_MATCHED", "ARCHIVE_UNPROVEN"}
+WEDGE_WATCH_READ_BYTES = 4 * 1024 * 1024
+
+
+def _wedge_archive_result(event, root, archive_roots):
+    """Exact delivered Wedge with original pair, or no qualifying evidence."""
+    from mirror_scanner import load_state, LevelRegistry, mirror_first_card_archive_id
+    from mirror_levels.levels import MirrorLevel, mirror_level_allowed
+    from signal_archive import load_frozen_signal_geometry
+
+    symbol, tf, lid = event.get("symbol"), event.get("timeframe"), event.get("level_id")
+    if (type(symbol) is not str or not re.fullmatch(r"[A-Z0-9]{1,64}", symbol)
+            or tf not in ("1", "5", "15", "60", "240")
+            or type(lid) is not str or not re.fullmatch(r"lvl-[0-9a-f]{24}", lid)):
+        return None
+    state_path = root / "state" / f"{symbol}_{tf}.json"
+    if not state_path.is_file() or state_path.stat().st_size > 8 * 1024 * 1024:
+        return None
+    state = load_state(symbol, tf, root)
+    registry = LevelRegistry.from_dict(state["registry"])
+    level = registry.levels.get(lid)
+    if (level is None or level.pattern not in ("Rising Wedge", "Falling Wedge")
+            or not mirror_level_allowed(level)):
+        return None
+    raw = level.provenance.get("chart_only_counterpart")
+    if not isinstance(raw, dict):
+        return None  # historical source without original opposite boundary
+    pair = MirrorLevel.from_dict(raw)
+    if (pair.symbol != symbol or pair.timeframe != tf or pair.pattern != level.pattern
+            or pair.source != level.source or pair.side == level.side
+            or pair.confirmed_at_ms != level.confirmed_at_ms
+            or level.provenance.get("decision_index") is None
+            or any(pair.provenance.get(k) != level.provenance.get(k)
+                   for k in ("decision_index", "parent_formation_id", "formation_end_open_ms"))
+            or pair.level_id == lid or mirror_level_allowed(pair)):
+        return "ARCHIVE_UNPROVEN"
+    if pair.level_id in registry.levels or pair.level_id in state["records"]:
+        return "ARCHIVE_UNPROVEN"
+    # The first card archive is immutable and keyed by the exact level, not ticker.
+    archive_id = mirror_first_card_archive_id(symbol, tf, lid)
+    expected = {
+        item.level_id: {"kind": "ray", "anchors": [
+            {"bar_open_time_ms": t, "price": p} for t, p in item.anchors]}
+        for item in (level, pair)
+    }
+    for directory in archive_roots:
+        snap = load_frozen_signal_geometry(archive_id, directory=directory)
+        if snap is None:
+            continue
+        actual = {b["boundary_id"]: {"kind": b["kind"], "anchors": b["anchors"]}
+                  for b in snap["boundaries"]}
+        if (snap["signal_id"] == archive_id and snap["symbol"] == symbol
+                and str(snap["timeframe"]) == tf and actual == expected):
+            return "ARCHIVE_MATCHED"
+    return "ARCHIVE_UNPROVEN"
+
+
+def _watch_receipt(raw):
+    if (not isinstance(raw, dict)
+            or set(raw) != {"observed_at", "build_sha", "result"}
+            or type(raw["observed_at"]) is not str or not UTC_TIME.fullmatch(raw["observed_at"])
+            or type(raw["build_sha"]) is not str or not SHA.fullmatch(raw["build_sha"])
+            or raw["result"] not in WEDGE_WATCH_RESULTS):
+        raise ValueError("unsafe wedge watch receipt")
+    return raw
+
+
+def wedge_archive_watch(*, token, state_dir, build_sha, now_ms, post,
+                        root=None, archive_roots=None):
+    """Bounded incremental journal reader; never mutates Scanner/Robot evidence.
+
+    Persist cursor and one coarse receipt before POST. No positive or negative
+    inference from a missing/evicted source, partial line or unreadable file.
+    An ambiguous POST may be retried with the same public receipt ID.
+    """
+    if not SHA.fullmatch(build_sha):
+        return
+    if root is None:
+        from mirror_scanner import evidence_root
+        root = evidence_root()
+    if archive_roots is None:
+        # This observer has its own systemd StateDirectory, not the backend's.
+        archive_roots = (Path("/var/lib/bybitscanner/signal_archive"),
+                         Path(__file__).resolve().parents[1] / "review_queue" / "signal_archive")
+    path = state_dir / "mirror-wedge-watch.json"
+    state = {"offset": 0, "file_id": None, "receipt": None, "sent": False}
+    if path.exists() or path.is_symlink():
+        meta = path.lstat()
+        if (not stat.S_ISREG(meta.st_mode) or meta.st_mode & 0o077
+                or meta.st_uid != os.geteuid() or meta.st_size > 4096):
+            raise ValueError("unsafe wedge watch state")
+        state = json.loads(path.read_text(encoding="utf-8"))
+        if (not isinstance(state, dict)
+                or set(state) != {"offset", "file_id", "receipt", "sent"}
+                or type(state["offset"]) is not int or state["offset"] < 0
+                or type(state["sent"]) is not bool
+                or (state["file_id"] is not None and (
+                    not isinstance(state["file_id"], list) or len(state["file_id"]) != 2
+                    or any(type(n) is not int or n < 0 for n in state["file_id"])))
+                or (state["sent"] and state["receipt"] is None)):
+            raise ValueError("invalid wedge watch state")
+    if state["receipt"] is not None:
+        _watch_receipt(state["receipt"])
+    if state["sent"]:
+        return
+    if state["receipt"] is None:
+        # Start at the beginning, then resume across passes. Bound both bytes
+        # and expensive archive/state lookups; never load the entire journal.
+        deadline = time.monotonic() + 4
+        with (root / "events.jsonl").open("rb") as journal:
+            meta = os.fstat(journal.fileno())
+            identity = [meta.st_dev, meta.st_ino]
+            if state["file_id"] != identity or state["offset"] > meta.st_size:
+                state.update(offset=0, file_id=identity)
+            journal.seek(state["offset"])
+            chunk = journal.read(WEDGE_WATCH_READ_BYTES)
+        checked = 0
+        advanced = False
+        for line in chunk.splitlines(keepends=True):
+            if not line.endswith(b"\n") or time.monotonic() >= deadline or checked >= 8:
+                break
+            state["offset"] += len(line)
+            advanced = True
+            try:
+                event = json.loads(line)
+                if (not isinstance(event, dict) or event.get("event") != "mirror_delivery"
+                        or event.get("kind") != "breakout" or event.get("delivered") is not True
+                        or event.get("test_mode") is not False
+                        or event.get("chart_frozen") is not True
+                        or type(event.get("recorded_at_ms")) is not int
+                        or not WEDGE_WATCH_CUTOFF_MS <= event["recorded_at_ms"] <= now_ms):
+                    continue
+                checked += 1
+                result = _wedge_archive_result(event, root, archive_roots)
+            except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+                continue
+            if result in WEDGE_WATCH_RESULTS:
+                state["receipt"] = {
+                    "observed_at": datetime.fromtimestamp(now_ms / 1000, timezone.utc).strftime(
+                        "%Y-%m-%dT%H:%M:%SZ"),
+                    "build_sha": build_sha, "result": result,
+                }
+                break
+        if advanced:
+            _save(path, state)
+    if state["receipt"] is None:
+        return
+    receipt = _watch_receipt(state["receipt"])
+    # Only constants, observation UTC and a verified-format backend SHA.
+    # No source timestamp, ticker, timeframe, IDs, prices or path escape.
+    payload = json.dumps(receipt, sort_keys=True)
+    event_id = hashlib.sha256(("mirror-wedge-watch-v1|" + payload).encode()).hexdigest()
+    post(token, "BYBITSCANNER_MIRROR_WEDGE_ARCHIVE_V1\nevent_id=" + event_id
+         + "\n~~~~json\n" + payload + "\n~~~~")
+    state["sent"] = True
+    _save(path, state)
+
+
 def report_once(*, token_file: Path = TOKEN_FILE, state_dir: Path = STATE_DIR,
-                fetch=_get, post=_post, now_ms: int | None = None) -> int:
+                fetch=_get, post=_post, now_ms: int | None = None, wedge_watch=None) -> int:
     """One bounded observer pass; no operations against trading or PAPER storage."""
+    started = time.monotonic()
     try:
         token = _token(token_file)
         _directory(state_dir)
@@ -265,6 +428,15 @@ def report_once(*, token_file: Path = TOKEN_FILE, state_dir: Path = STATE_DIR,
             state["queue"].pop(0)
             state["gap"] = False
             _save(path, state)
+        if (wedge_watch is not None and snapshot["backend"] == "REACHABLE"
+                and SHA.fullmatch(snapshot["backend_build_sha"])
+                and time.monotonic() - started < 40):
+            try:
+                wedge_watch(token=token, state_dir=state_dir, build_sha=snapshot["backend_build_sha"],
+                            now_ms=now, post=post)
+            except Exception:
+                # Independent auxiliary proof must not break status publication.
+                pass
         return 0
     except Exception:
         # Deliberately do not print arbitrary error strings, URLs or credentials.
@@ -377,7 +549,7 @@ def _enable_pinned_timer(expected_sha: str, *, names, source_paths, label,
 
 
 def main() -> int:
-    result = report_once()
+    result = report_once(wedge_watch=wedge_archive_watch)
     print("PUBLIC_GITHUB_STATUS=" + ("PUBLISHED_OR_UNCHANGED" if result == 0 else "DEFERRED_OR_DISABLED"))
     return result
 
