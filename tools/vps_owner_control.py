@@ -143,6 +143,7 @@ def status(request: str, *, run=subprocess.run, verify_sha: str = "",
     fields = _read_owner_fields(request, run=run)
     if not fields:
         print("STATUS=UNPROVEN REQUEST_ID=" + request)
+        _print_unknown_request_intent(request)
         return 2
     state = _owner_state(fields)
     print("REQUEST_ID=" + request)
@@ -232,6 +233,51 @@ def _read_request_intent(path: Path) -> bytes | None:
             or info.st_mode & 0o077 or info.st_size > 4096):
         raise ValueError("owner_request_intent_untrusted")
     return path.read_bytes()
+
+
+def _print_unknown_request_intent(request: str) -> None:
+    """Recover identity only, never dispatch or infer the last completed phase.
+
+    A durable reservation predates systemd-run. It cannot distinguish a crash
+    before dispatch from a lost/failed/completed unit. Target-scoped STOP and
+    install receipts have separate canonical proof gates; do not attribute them
+    to a UUID here or authorize continuation.
+    """
+    try:
+        raw = _read_request_intent(_owner_request_path(request))
+        if raw is None:
+            print("REQUEST_INTENT=ABSENT")
+            return
+        record = json.loads(raw)
+        if not isinstance(record, dict) or set(record) != {
+            "schema", "request_id", "action", "target_sha", "origin",
+            "expected_installed_sha",
+        }:
+            raise ValueError("invalid_intent_shape")
+        action, target, origin, old = (
+            record["action"], record["target_sha"], record["origin"],
+            record["expected_installed_sha"],
+        )
+        if (type(record["schema"]) is not int or record["schema"] != 1
+                or record["request_id"] != request
+                or not isinstance(action, str) or action not in ACTIONS
+                or not isinstance(target, str) or SHA.fullmatch(target) is None
+                or not isinstance(origin, str) or ORIGIN.fullmatch(origin) is None
+                or (old is not None and (
+                    action not in ("update", "update-and-start")
+                    or not isinstance(old, str) or SHA.fullmatch(old) is None
+                    or old == target))
+                or raw != (json.dumps(record, sort_keys=True, separators=(",", ":"))
+                           + "\n").encode("ascii")):
+            raise ValueError("invalid_intent_identity")
+    except (OSError, ValueError, TypeError, UnicodeError):
+        print("REQUEST_INTENT=UNPROVEN")
+        return
+    print("REQUEST_INTENT=RECORDED")
+    print("INTENT_ACTION=" + action)
+    print("INTENT_TARGET_SHA=" + target)
+    print("INTENT_EXPECTED_INSTALLED_SHA=" + (old or "NOT_PINNED"))
+    print("RECOVERY_BOUNDARY=DISPATCH_UNPROVEN; no retry")
 
 
 def _reserve_request_intent(request: str, payload: bytes) -> None:
