@@ -9,10 +9,23 @@ consequence evident from its label; the free-text path always remains available.
 Use options only where they save the owner effort: no buttons for open-ended input
 (logs, error text, paths, values, descriptions), for statements that need no reply, or
 as decoration. Options never replace `Сейчас сделай:` and its copy-ready block for
-commands or payloads (`2.1`, `2.2`), and never carry consent for a mandatory gate,
-LIVE/financial action or destructive step: those still require the owner's explicit
-current instruction. Where the client has no clickable-option mechanism, fall back to a
-short lettered list the owner can answer with one letter.
+commands or payloads (`2.1`, `2.2`).
+
+For a mandatory owner-approval gate, when functional reply buttons are available,
+offer an affirmative button submitting a new user message with the exact bounded
+authorization and a negative button explicitly declining that operation. State
+the specific operation, PR/SHA where applicable, scope and exclusions before
+asking. Keep independent approvals separate; a click is not execution, proof of
+preflight, or consent to any other action. Proceed only after the explicit
+affirmative user message arrives and all applicable gates are satisfied. Do not
+infer consent from a generic reply, silence, CI status or another operation's
+approval. Existing trading, financial, destructive-action, PAPER/LIVE and
+owner-acceptance restrictions remain binding; this rule supplies no new authority.
+
+If functional buttons are unavailable, request the exact explicit authorization
+as text for a mandatory gate; for ordinary short choices a lettered list is
+sufficient. Do not fabricate controls or require manual copying when a functional
+reply button can send the required message.
 
 
 ## 2.3 NO ASSUMED USER STATE + BEGINNER-SAFE STEP-BY-STEP
