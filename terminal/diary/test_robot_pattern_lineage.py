@@ -141,3 +141,59 @@ def test_wedge_uses_its_independent_stricter_lineage():
     assert "verified_signal" not in next(
         x for x in enriched["closed_episodes"] if x["trade_episode_id"] == eid
     )
+
+def test_box_plan_owned_orders_resolve_only_verified_robot_handoff():
+    snapshot, report, eid = _case()
+    evidence = snapshot.wedge_evidence
+    source_id, robot_id = "box-plan-example", "box-robot-example"
+    source = dict(evidence["candidates"][0], candidate_id=source_id, robot_state_json=None)
+    robot = dict(evidence["candidates"][0], candidate_id=robot_id)
+    linked = dict(
+        evidence, candidates=(source, robot),
+        trades=(dict(evidence["trades"][0], candidate_id=robot_id),),
+        box_entries=(dict(evidence["box_entries"][0], candidate_id=source_id),),
+        box_handoffs=({"source_candidate_id": source_id, "robot_candidate_id": robot_id},),
+    )
+    def selected(evidence):
+        result = attach_verified_robot_pattern_signals(replace(snapshot, wedge_evidence=evidence), report)
+        return next(row for row in result["closed_episodes"] if row["trade_episode_id"] == eid)
+    assert selected(linked)["verified_signal"]["candidate_id"] == robot_id
+    assert selected(dict(linked, robot_entries=()))["verified_signal"]["pattern"] == "IKIGAI_BOX"
+    assert "verified_signal" not in selected(dict(linked, box_handoffs=()))
+    assert "verified_signal" not in selected(dict(linked, candidates=(source, robot, robot)))
+    assert "verified_signal" not in selected(dict(linked, trades=(
+        linked["trades"][0], dict(linked["trades"][0], candidate_id=source_id),
+    )))
+    assert "verified_signal" not in selected(dict(linked, candidates=(
+        source, robot, dict(robot, candidate_id="unrelated"),
+    )))
+
+
+def test_handoff_reader_checks_actual_immutable_plan_and_clone(tmp_path):
+    from tests.test_box_plan_persistence import snapshot as frozen_plan
+    from terminal.persistence.sqlite_store import SQLiteStore
+    from terminal.domain.models import Symbol
+    from terminal.diary.scoped_statistics_reporter import _verified_box_handoffs
+    import sqlite3
+    from contextlib import closing
+    path = tmp_path / "isolated.sqlite3"
+    store = SQLiteStore.open(path)
+    try:
+        source, _ = store.save_box_plan_only(snapshot=frozen_plan(), created_at_ms=3001)
+        robot, _ = store.handoff_box_plan_to_robot(
+            source.candidate_id, symbol=Symbol("BTCUSDT"),
+            expected_snapshot_sha256=source.snapshot_sha256, approved_at_ms=3002,
+        )
+    finally:
+        store.close()
+    with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = [dict(row) for row in conn.execute("SELECT * FROM robot_candidates")]
+    assert _verified_box_handoffs(rows) == ({
+        "source_candidate_id": source.candidate_id,
+        "robot_candidate_id": robot.candidate_id,
+    },)
+    assert _verified_box_handoffs([dict(row, snapshot_sha256="0" * 64)
+                                  if row["candidate_id"] == robot.candidate_id else row
+                                  for row in rows]) == ()
+    assert _verified_box_handoffs([row for row in rows if row["candidate_id"] != source.candidate_id]) == ()
