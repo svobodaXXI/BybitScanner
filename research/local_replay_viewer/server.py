@@ -124,6 +124,7 @@ def local_simulation_status() -> dict[str, object]:
         "python_dependencies_available": deps, "archive_files_present": data,
         "wedge_risk_profile_present": risk,
         "can_attempt": engine and deps and data and risk,
+        "auto_m1_preparation": True,
         "supported_strategies": ["WEDGE_FALLING", "WEDGE_RISING", "IKIGAI_BOX"],
         "archive_validation": "RECHECKED_ON_RUN_NOT_CLAIMED_READY",
     }
@@ -136,10 +137,10 @@ def run_local_simulation(
     request_data: object, *,
     on_stream: Callable[[str, dict[str, object]], None] | None = None,
 ) -> dict[str, object]:
-    """Original Wedge or Ikigai Box on known local public M1 cache.
+    """Prepare public M1, then run the original isolated Wedge/Box engine.
 
-    Does not download anything, import production Scanner/Robot runtimes,
-    accept arbitrary file paths, or write to any exchange/PAPER ledger.
+    No production Scanner/Robot runtime, arbitrary paths, account credentials,
+    or exchange/PAPER writes. Caller holds the existing local SIM_LOCK.
     """
     if not isinstance(request_data, dict) or set(request_data) != {
         "symbol", "start_utc", "end_utc_inclusive",
@@ -161,33 +162,55 @@ def run_local_simulation(
         raise ValueError("Ikigai Box currently requires an isolated one-strategy run")
 
     status = local_simulation_status()
-    if not status["can_attempt"]:
-        raise ValueError(
-            "Локальный движок, pandas, проверенный архив или профиль риска отсутствует"
-        )
+    if not (status["wedge_engine_available"] and status["python_dependencies_available"]
+            and status["wedge_risk_profile_present"]):
+        raise ValueError("Локальный движок, pandas или профиль риска отсутствует")
     from research.simulator_v2.wedge_cli import (
-        MAX_MANIFEST_BYTES, parse_manifest, run_from_time_machine_config,
+        MAX_MANIFEST_BYTES, parse_manifest, parse_utc_minute, parse_run_settings,
+        run_from_time_machine_config,
     )
     from research.simulator_v2.history import last_closed_m1_boundary_ms
+    from research.local_replay_viewer.m1_preparation import prepare_m1_manifest
 
     manifest_file = SIM_DATA / "manifest.json"
     risk_file = SIM_DATA / "wedge-risk.json"
-    with manifest_file.open("rb") as fh:
-        raw_manifest = fh.read(MAX_MANIFEST_BYTES + 1)
+    if SIM_DATA.is_symlink() or risk_file.is_symlink():
+        raise ValueError("unsafe local SIMULATION state")
     with risk_file.open("rb") as fh:
         raw_profile = fh.read(MAX_SIM_CONFIG_BYTES + 1)
-    if len(raw_manifest) > MAX_MANIFEST_BYTES or len(raw_profile) > MAX_SIM_CONFIG_BYTES:
-        raise ValueError("local public manifest or virtual risk profile exceeds limit")
-    manifest = json.loads(raw_manifest)
+    if len(raw_profile) > MAX_SIM_CONFIG_BYTES:
+        raise ValueError("local virtual risk profile exceeds limit")
     profile = json.loads(raw_profile)
     if (not isinstance(profile, dict)
             or set(profile) != {"scanner", "risk"}
             or not isinstance(profile["scanner"], dict)
             or not isinstance(profile["risk"], dict)):
         raise ValueError("explicit local Wedge risk profile is required")
-    # Manifest SHA and every *daily cache SHA* will be validated by the
-    # existing trade_range loader before success is reported.
+    scanner_config, _ = parse_run_settings(profile)
+    # Legacy imported archive remains read-only; new preparations return
+    # a range manifest from the same validated daily provenance/cache.
     latest = last_closed_m1_boundary_ms()
+    legacy_proofs = ()
+    if manifest_file.exists() or manifest_file.is_symlink():
+        if manifest_file.is_symlink() or not manifest_file.is_file():
+            raise ValueError("unsafe local public manifest")
+        with manifest_file.open("rb") as fh:
+            raw_manifest = fh.read(MAX_MANIFEST_BYTES + 1)
+        if len(raw_manifest) > MAX_MANIFEST_BYTES:
+            raise ValueError("local public manifest exceeds limit")
+        old_manifest = json.loads(raw_manifest)
+        if not isinstance(old_manifest, dict):
+            raise ValueError("invalid local public manifest")
+        if old_manifest.get("symbol") == request_data["symbol"]:
+            _, legacy_proofs = parse_manifest(old_manifest, latest_closed_boundary_ms=latest)
+    manifest = prepare_m1_manifest(
+        data_dir=SIM_DATA, symbol=request_data["symbol"],
+        start_ms=parse_utc_minute(request_data["start_utc"]),
+        end_inclusive_ms=parse_utc_minute(request_data["end_utc_inclusive"]),
+        window_bars=scanner_config.window_bars,
+        latest_closed_boundary_ms=latest, legacy_proofs=legacy_proofs,
+    )
+    # The original runner independently rechecks the manifest and each SHA.
     parse_manifest(manifest, latest_closed_boundary_ms=latest)
     configuration = {
         "schema": "TIME_MACHINE_WEDGE_SIMULATION_V1",

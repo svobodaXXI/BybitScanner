@@ -129,6 +129,34 @@ def parse_manifest(
     return symbol, pinned
 
 
+def parse_run_settings(config: Mapping[str, Any]) -> tuple[WedgeScannerConfig, SimWedgeRiskSettings]:
+    """Validate explicit owner research assumptions before any preparation."""
+    scanner = config.get("scanner")
+    risk = config.get("risk")
+    if not isinstance(scanner, dict) or not isinstance(risk, dict):
+        raise ValueError("explicit Scanner and virtual risk terms required")
+    if set(scanner) != {"window_bars", "mode", "min_score"}:
+        raise ValueError("exact original Scanner configuration required")
+    if set(risk) != set(RISK_FIELDS) | {"terms_source"}:
+        raise ValueError("exact local contract/risk fields required")
+    if not isinstance(risk.get("terms_source"), str) or (
+        not 1 <= len(risk["terms_source"]) <= 120
+    ):
+        raise ValueError("explicit risk assumptions provenance required")
+    # The source string is recorded as a user-supplied research assumption.
+    # It is never proof that Bybit instruments or available leverage agree.
+    settings = SimWedgeRiskSettings(**{
+        field: _decimal_string(risk[field], field) for field in RISK_FIELDS
+    })
+    score = scanner["min_score"]
+    if type(score) not in (int, float):
+        raise ValueError("numeric Scanner minimum score required")
+    scanner_config = WedgeScannerConfig(
+        window_bars=scanner["window_bars"], mode=scanner["mode"], min_score=score,
+    )
+    return scanner_config, settings
+
+
 def run_from_time_machine_config(
     *, config: Mapping[str, Any], manifest: Mapping[str, Any],
     cache_dir: Path, latest_closed_boundary_ms: int,
@@ -156,29 +184,7 @@ def run_from_time_machine_config(
     patterns = frozenset(
         SELECTABLE[s] for s in selected if s != "IKIGAI_BOX"
     )
-    scanner = config.get("scanner")
-    risk = config.get("risk")
-    if not isinstance(scanner, dict) or not isinstance(risk, dict):
-        raise ValueError("explicit Scanner and virtual risk terms required")
-    if set(scanner) != {"window_bars", "mode", "min_score"}:
-        raise ValueError("exact original Scanner configuration required")
-    if set(risk) != set(RISK_FIELDS) | {"terms_source"}:
-        raise ValueError("exact local contract/risk fields required")
-    if not isinstance(risk.get("terms_source"), str) or (
-        not 1 <= len(risk["terms_source"]) <= 120
-    ):
-        raise ValueError("explicit risk assumptions provenance required")
-    # The source string is recorded as a user-supplied research assumption.
-    # It is never proof that Bybit instruments or available leverage agree.
-    settings = SimWedgeRiskSettings(**{
-        field: _decimal_string(risk[field], field) for field in RISK_FIELDS
-    })
-    score = scanner["min_score"]
-    if type(score) not in (int, float):
-        raise ValueError("numeric Scanner minimum score required")
-    scanner_config = WedgeScannerConfig(
-        window_bars=scanner["window_bars"], mode=scanner["mode"], min_score=score,
-    )
+    scanner_config, settings = parse_run_settings(config)
     start_ms = parse_utc_minute(config.get("start_utc"))
     end_ms = parse_utc_minute(config.get("end_utc_inclusive"))
     if not isinstance(cache_dir, Path) or cache_dir.is_symlink():

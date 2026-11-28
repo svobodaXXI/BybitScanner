@@ -50,16 +50,18 @@ try {
   });
 
   let simEnabled = false;
+  let autoPrepareM1 = false;
   await page.route("**/local-replay/simulation/status", async route => {
     await route.fulfill({
       status: 200, contentType: "application/json",
       body: JSON.stringify({
-        namespace: "SIMULATION", can_attempt: simEnabled,
+        namespace: "SIMULATION", can_attempt: simEnabled && !autoPrepareM1,
+        auto_m1_preparation: autoPrepareM1,
         wedge_engine_available: simEnabled,
         python_dependencies_available: simEnabled,
-        archive_files_present: simEnabled,
+        archive_files_present: simEnabled && !autoPrepareM1,
         wedge_risk_profile_present: simEnabled,
-        ...(simEnabled ? { archive_hint: {
+        ...(simEnabled && !autoPrepareM1 ? { archive_hint: {
           symbol: "BTCUSDT", start_utc: "2026-10-01T12:34",
           end_utc_inclusive: "2026-10-02T12:33",
         } } : {}),
@@ -935,6 +937,33 @@ try {
   await page.waitForFunction(() =>
     document.querySelector('[aria-label="PAPER факты сделки"]')?.textContent?.includes("Свечи M5 сопоставлены"));
   assert.equal(await page.getByRole("status", { name: "PAPER факты сделки" }).count(), 1);
+
+  // No imported M1 manifest: the same Apply must still request the original
+  // local native stream. Imported PAPER facts never enter that producer.
+  simEnabled = true;
+  autoPrepareM1 = true;
+  const postsBeforeAuto = posted.length;
+  await page.goto(localUrl + "#locator=" + secondEpisodeId, { waitUntil: "networkidle" });
+  await page.reload({ waitUntil: "networkidle" });
+  await page.getByRole("status", { name: "PAPER факты сделки" }).waitFor();
+  const autoSetup = page.getByRole("region", { name: "Настройка стратегий и периода" });
+  await autoSetup.getByRole("button", { name: "Снять все" }).click();
+  await autoSetup.getByRole("checkbox", { name: "Клинья" }).check();
+  await autoSetup.getByRole("button", { name: "Применить" }).click();
+  assert.equal(posted.length, postsBeforeAuto, "PAPER facts cannot request virtual M1 trades");
+  await page.goto(localUrl, { waitUntil: "networkidle" });
+  await page.reload({ waitUntil: "networkidle" });
+  await autoSetup.getByRole("button", { name: "Снять все" }).click();
+  await autoSetup.getByRole("checkbox", { name: "Клинья" }).check();
+  await autoSetup.getByRole("textbox", { name: "Координаты прогона" })
+    .fill("BTCUSDT | 2026-10-01T12:34 | 2026-10-02T12:33");
+  await autoSetup.getByRole("button", { name: "Применить" }).click();
+  await page.waitForFunction(() => {
+    const play = document.querySelector('button[aria-label="Пуск"]');
+    return play && !play.disabled;
+  });
+  assert.equal(posted.length, postsBeforeAuto + 1,
+    "Apply must prepare M1 even when no local archive hint exists");
 
   // Each Apply can request public history. Only the deliberately mocked
   // HTTP 502 errors are allowed; unrelated runtime failures are forbidden.

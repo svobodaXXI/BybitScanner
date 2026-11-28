@@ -215,13 +215,17 @@ export function RunSetupPanel({
       onSimulationBusy(false);
       generation.current++;
       const currentGeneration = generation.current;
-      // The status hint only selects an eligible local M1 attempt. The
-      // original backend still validates all M1 SHA, source and risk gates.
+      // Imported actual executions always retain the factual route.
+      // For native simulation, Apply asks the same server to prepare missing
+      // M1 days before running; never claim ready from a status hint.
       const archive = status?.archive_hint;
-      const nativeReady = request !== null && status?.can_attempt === true &&
-        archive?.symbol === ticker &&
+      const canPrepare = status?.auto_m1_preparation === true &&
+        status.wedge_engine_available && status.python_dependencies_available &&
+        status.wedge_risk_profile_present;
+      const legacyReady = status?.can_attempt === true && archive?.symbol === ticker &&
         archive.start_utc === coords.start_utc &&
         archive.end_utc_inclusive === coords.end_utc_inclusive;
+      const nativeReady = !episode && request !== null && (canPrepare || legacyReady);
       datesEdited.current = true;
       onPasteSymbol(ticker);
       setStart(coords.start_utc); setEnd(coords.end_utc_inclusive);
@@ -234,7 +238,7 @@ export function RunSetupPanel({
         void runWedges(request, currentGeneration);
       } else {
         onHistoryPreparation(ticker, coords.start_utc, coords.end_utc_inclusive);
-        onPublicHistoryRequest(ticker, coords.start_utc, coords.end_utc_inclusive, selection.selected);
+        onPublicHistoryRequest(ticker, coords.start_utc, coords.end_utc_inclusive, episode ? [] : selection.selected);
       }
     } catch (error) {
       setCoordinateError(error instanceof Error ? error.message : "Неверные координаты прогона");
@@ -375,12 +379,13 @@ export function RunSetupPanel({
           Отмеченные стратегии сохранены как выбор, но торговый запуск пока поддерживает только два клина.
         </p>}
       {statusError && <p role="status" className="replay-run-error">{statusError}</p>}
-      {status && !status.can_attempt &&
+      {status && !(status.auto_m1_preparation && status.wedge_engine_available &&
+        status.python_dependencies_available && status.wedge_risk_profile_present) && !status.can_attempt &&
         <p role="status" className="replay-run-error">
           Локальный запуск пока недоступен: {[
             !status.wedge_engine_available && "движок",
             !status.python_dependencies_available && "Python pandas",
-            !status.archive_files_present && "проверенный архив M1",
+            !status.auto_m1_preparation && !status.archive_files_present && "проверенный архив M1",
             !status.wedge_risk_profile_present && "профиль риска 1 WV",
           ].filter(Boolean).join(", ")}.
         </p>}
