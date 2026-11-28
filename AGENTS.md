@@ -2,6 +2,25 @@
 
 Compact mandatory entry point for coding agents. It routes to project authority; it does not duplicate it.
 
+## Resolve the active ref first — repository entry routing
+
+GitHub's default branch `main` is not the current product-development ref.
+It also contains separately maintained infrastructure workflows. For ordinary
+BybitScanner development and new-chat/workstream recovery, explicitly read
+[`AGENTS.md` on `stable/adfb50b-forward`](https://github.com/svobodaXXI/BybitScanner/blob/stable/adfb50b-forward/AGENTS.md)
+at the current ref, then follow its task-scoped routes (including QUEST_STATE,
+BACKLOG and workstream coordination) on that ref. Do not use the historical
+task snapshots below as current development state merely because GitHub
+defaulted to main. Verify the intended PR base/ref before any write; an
+unavailable or ambiguous active ref is a blocker, not permission to guess.
+
+For an explicitly scoped main infrastructure task, inspect main's actual
+sources and applicable contracts, while resolving current project-wide
+rules from the active development ref. Preserve existing safeguards and
+separate owner approvals; neither routing nor branch identity authorizes a
+merge, deployment, runtime/trading mutation, branch switch, or branch deletion.
+This entry note does not change any workflow or branch setting.
+
 ## Fast task entry
 
 ## Автоматический игровой bootstrap для новых чатов — OWNER RULE 2026-09-25
