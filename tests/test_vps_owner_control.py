@@ -42,6 +42,48 @@ class OwnerControlTests(unittest.TestCase):
             mock.start()
             self.addCleanup(mock.stop)
 
+    def test_unknown_status_reports_only_valid_bound_request_intent(self):
+        import json
+        from contextlib import redirect_stdout
+        from io import StringIO
+
+        record = dict(schema=1, request_id=R, action="update-and-start",
+                      target_sha=SHA, origin="private-origin",
+                      expected_installed_sha="c" * 40)
+
+        def encode(value):
+            return (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii")
+
+        cases = [
+            (None, "ABSENT"),
+            (encode(record), "RECORDED"),
+            (b"partial", "UNPROVEN"),
+            (encode(dict(record, request_id="d" * 32)), "UNPROVEN"),
+            (encode(dict(record, expected_installed_sha=SHA)), "UNPROVEN"),
+            (encode(dict(record, schema=True)), "UNPROVEN"),
+            (encode(dict(record, origin="bad\norigin")), "UNPROVEN"),
+        ]
+        for raw, expected in cases:
+            with self.subTest(raw=raw):
+                calls = []
+                def run(cmd, **kwargs):
+                    calls.append(cmd[0])
+                    return completed(cmd, out="LoadState=not-found\n")
+                with (patch.object(control, "_read_request_intent", return_value=raw),
+                      patch.object(control, "_reserve_request_intent") as reserve,
+                      patch.object(control, "verify_start") as verify,
+                      redirect_stdout(StringIO()) as reply):
+                    self.assertEqual(control.status(R, run=run, verify_start_sha=SHA), 2)
+                output = reply.getvalue()
+                self.assertIn("STATUS=UNPROVEN", output)
+                self.assertIn("REQUEST_INTENT=" + expected, output)
+                self.assertEqual("INTENT_TARGET_SHA=" in output, expected == "RECORDED")
+                self.assertNotIn("private-origin", output)
+                self.assertNotIn("POSTCHECK=VERIFIED", output)
+                reserve.assert_not_called()
+                verify.assert_not_called()
+                self.assertEqual(calls, ["systemctl"])
+
     def test_update_postcheck_is_read_only_and_fails_closed(self):
         from contextlib import redirect_stdout
         from io import StringIO
@@ -631,8 +673,17 @@ def _assert_durable_request_prevents_replay(dispatch_outcome, capsys):
     assert control.submit("update-and-start", SHA, R, "win-pc", run=run, uid=0,
                           expected_installed_sha="d" * 40) == 2
     assert "IDENTITY_MISMATCH" in capsys.readouterr().out
+    assert control.status(R, run=run, verify_start_sha=SHA) == 2
+    output = capsys.readouterr().out
+    assert "STATUS=UNPROVEN" in output
+    assert "REQUEST_INTENT=RECORDED" in output
+    assert "INTENT_ACTION=update-and-start" in output
+    assert "INTENT_TARGET_SHA=" + SHA in output
+    assert "INTENT_EXPECTED_INSTALLED_SHA=" + old in output
+    assert "RECOVERY_BOUNDARY=DISPATCH_UNPROVEN" in output
+    assert "POSTCHECK=VERIFIED" not in output
     assert path.read_bytes() == original
-    assert calls == ["systemctl", "systemd-run", "systemctl"]
+    assert calls == ["systemctl", "systemd-run", "systemctl", "systemctl"]
 
 
 def test_untrusted_or_partial_intent_never_dispatches(tmp_path, monkeypatch):
