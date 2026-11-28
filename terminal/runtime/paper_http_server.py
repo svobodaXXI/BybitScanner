@@ -1347,6 +1347,19 @@ class SerializedPaperRuntime:
         if wake:
             self._requests.put(_PROTECTION_WAKE)
 
+    def enqueue_continuity_fence(self, operation: Callable[[object], None]) -> None:
+        """Queue a continuity-loss fence even when protection ingress is full.
+
+        A failed protection event cannot use the saturated bounded event FIFO
+        to submit its own fence. This non-blocking owner request is not market
+        evidence: it bypasses only that admission capacity, not the owner
+        thread. _run drains all previously admitted protection events before
+        executing this request, preserving their FIFO order.
+        """
+        if not self._thread.is_alive():
+            raise RuntimeError("PAPER runtime owner is unavailable")
+        self._requests.put((operation, threading.Event(), {}))
+
     def fetch_manual_evidence(self, symbols) -> dict[str, object]:
         """Execution-time books for manual PAPER commands, read OFF the owner.
 
@@ -2414,11 +2427,17 @@ class RobotProtectionCoverageManager:
             return
     def _enqueue_runtime_fence(self, symbol: str, reason: str) -> None:
         try:
-            self._runtime.enqueue(
-                lambda runtime: runtime.fence_robot_protection_continuity_loss(
-                    symbol, reason,
-                )
+            fence = lambda runtime: runtime.fence_robot_protection_continuity_loss(
+                symbol, reason,
             )
+            # Do not attempt to admit a safety fence to the same bounded FIFO
+            # whose saturation triggered it. Legacy mock runtimes still use
+            # enqueue() so their ordering contracts remain exercised.
+            submit_fence = getattr(self._runtime, "enqueue_continuity_fence", None)
+            if submit_fence is not None:
+                submit_fence(fence)
+            else:
+                self._runtime.enqueue(fence)
         except Exception:
             LOGGER.exception(
                 "Robot protection coverage could not durably fence admission; "
