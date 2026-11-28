@@ -189,11 +189,69 @@ def test_handoff_reader_checks_actual_immutable_plan_and_clone(tmp_path):
     with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as conn:
         conn.row_factory = sqlite3.Row
         rows = [dict(row) for row in conn.execute("SELECT * FROM robot_candidates")]
-    assert _verified_box_handoffs(rows) == ({
-        "source_candidate_id": source.candidate_id,
-        "robot_candidate_id": robot.candidate_id,
-    },)
+    links = _verified_box_handoffs(rows)
+    assert len(links) == 1
+    assert links[0]["source_candidate_id"] == source.candidate_id
+    assert links[0]["robot_candidate_id"] == robot.candidate_id
+    assert links[0]["frozen_plan"]["source_snapshot_sha256"] == source.snapshot_sha256
+    assert links[0]["frozen_plan"]["fibonacci"] == source.signal_snapshot["fibonacci"]
+    assert links[0]["frozen_plan"]["limit_prices"] == source.signal_snapshot["plan"]["limit_prices"]
     assert _verified_box_handoffs([dict(row, snapshot_sha256="0" * 64)
                                   if row["candidate_id"] == robot.candidate_id else row
                                   for row in rows]) == ()
     assert _verified_box_handoffs([row for row in rows if row["candidate_id"] != source.candidate_id]) == ()
+
+
+def test_box_plan_geometry_requires_exact_episode_and_verified_handoff(tmp_path):
+    from tests.test_box_plan_persistence import snapshot as frozen_plan
+    from terminal.persistence.sqlite_store import SQLiteStore
+    from terminal.domain.models import Symbol
+    from terminal.diary.scoped_statistics_reporter import _verified_box_handoffs
+    from terminal.diary.episode_context import project_exact_box_plan_geometry
+    from terminal.diary.ticker_finrez import project_paper_closed_episode_facts
+    import sqlite3
+    from contextlib import closing
+
+    plan = frozen_plan()
+    plan["identity"].update(a_time_ms=100, b_time_ms=200)
+    plan["decision_time_ms"] = 300
+    path = tmp_path / "box.sqlite3"
+    store = SQLiteStore.open(path)
+    try:
+        source, _ = store.save_box_plan_only(snapshot=plan, created_at_ms=301)
+        robot, _ = store.handoff_box_plan_to_robot(
+            source.candidate_id, symbol=Symbol("BTCUSDT"),
+            expected_snapshot_sha256=source.snapshot_sha256, approved_at_ms=302,
+        )
+    finally:
+        store.close()
+    with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as conn:
+        conn.row_factory = sqlite3.Row
+        links = _verified_box_handoffs(conn.execute("SELECT * FROM robot_candidates"))
+    snapshot, _, eid = _case()
+    evidence = snapshot.wedge_evidence
+    snapshot = replace(snapshot, wedge_evidence=dict(
+        evidence,
+        candidates=(
+            dict(evidence["candidates"][0], candidate_id=source.candidate_id, robot_state_json=None),
+            dict(evidence["candidates"][0], candidate_id=robot.candidate_id),
+        ),
+        trades=(dict(evidence["trades"][0], candidate_id=robot.candidate_id),),
+        box_entries=(dict(evidence["box_entries"][0], candidate_id=source.candidate_id),),
+        box_handoffs=links,
+    ))
+    facts = project_paper_closed_episode_facts(
+        snapshot, account_id="paper", owner="ROBOT", trade_episode_id=eid,
+        source_revision=snapshot.source_revision, now_ms=2000,
+    )
+    absent = {"status": "NO_EXACT_EPISODE_LINK"}
+    result = project_exact_box_plan_geometry(snapshot, facts, absent)
+    assert result["source"] == "VERIFIED_DURABLE_BOX_PLAN_NOT_ORIGINAL_ARCHIVE"
+    assert result["anchors"] == source.signal_snapshot["anchors"]
+    assert result["fibonacci"] == source.signal_snapshot["fibonacci"]
+    assert result["limit_prices"] == source.signal_snapshot["plan"]["limit_prices"]
+    assert result["decision_time_ms"] == 300
+    assert project_exact_box_plan_geometry(snapshot, facts, {"status": "CONFLICTING_D2_LINK"}) is None
+    assert project_exact_box_plan_geometry(snapshot, dict(facts, source_revision=99), absent) is None
+    assert project_exact_box_plan_geometry(replace(snapshot, wedge_evidence=dict(
+        snapshot.wedge_evidence, box_handoffs=())), facts, absent) is None

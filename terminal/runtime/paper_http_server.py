@@ -59,6 +59,7 @@ from terminal.diary.models import DiaryEnvironment
 from terminal.diary.episode_context import (
     attach_verified_original_geometry, project_episode_d2_context_read_only,
     project_exact_candidate_archive_geometry,
+    project_exact_box_plan_geometry,
 )
 from terminal.diary.presentation import project_trade_episode_list
 from terminal.diary.service import TradeEpisodeReadService
@@ -3526,6 +3527,10 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 )
                 if candidate_geometry is not None:
                     projection["candidate_geometry"] = candidate_geometry
+                else:
+                    box_geometry = project_exact_box_plan_geometry(snapshot, projection, d2_context)
+                    if box_geometry is not None:
+                        projection["box_plan_geometry"] = box_geometry
                 from terminal.diary.episode_context import project_wedge_revision_history
                 revisions = project_wedge_revision_history(self.server.diary_source_db_path, projection)
                 if revisions is not None:
@@ -4324,6 +4329,10 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
         )
         if candidate_geometry is not None:
             projection["candidate_geometry"] = candidate_geometry
+        else:
+            box_geometry = project_exact_box_plan_geometry(snapshot, projection, d2_context)
+            if box_geometry is not None:
+                projection["box_plan_geometry"] = box_geometry
         from terminal.diary.episode_context import project_wedge_revision_history
         revisions = project_wedge_revision_history(self.server.diary_source_db_path, projection)
         if revisions is not None:

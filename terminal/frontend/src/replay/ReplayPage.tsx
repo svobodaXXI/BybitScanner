@@ -10,7 +10,7 @@ import {
 } from "./replayModel";
 import { visibleExecutionMarkers, TELEGRAM_BUY_COLOR, TELEGRAM_SELL_COLOR } from "./executionMarkers";
 import {
-  matchPaperFactsToMarket, parsePaperEpisodeFacts, revealedPaperMarkers, visibleGeometryRevisions, visiblePaperExecutionCounts,
+  matchPaperFactsToMarket, parsePaperEpisodeFacts, revealedPaperMarkers, visibleGeometryRevisions, visiblePaperExecutionCounts, visibleBoxPlan,
   type PaperEpisodeFacts, type PaperOverlay,
 } from "./paperEpisodeFacts";
 import { rayEndPoint } from "../chart/drawingGeometry";
@@ -381,6 +381,43 @@ function ReplayChart({ document, cursor, paperOverlay, paperFacts, showTrendGeom
         }
         context.setLineDash([]);
       }
+      // Separately labelled original saved PLAN geometry, never the Telegram
+      // archive or reconstructed pattern boundaries. No pre-decision leak.
+      const boxPlan = visibleBoxPlan(paperFacts, paperOverlay, shown.lastTimeMs);
+      let paintedBoxPlan = 0;
+      if (boxPlan && displayCandles.length >= 2) {
+        const xAt = (at: number) => {
+          const logical = chartLogicalAtTime(at, displayCandles);
+          return logical === null ? null : api.timeScale().logicalToCoordinate(logical as Logical);
+        };
+        const xa = xAt(boxPlan.a_time_ms), xb = xAt(boxPlan.b_time_ms);
+        const ya = candleSeries.priceToCoordinate(Number(boxPlan.anchors.a_price));
+        const yb = candleSeries.priceToCoordinate(Number(boxPlan.anchors.b_price));
+        context.strokeStyle = "#d08cf0";
+        context.fillStyle = "#d08cf0";
+        context.lineWidth = 1.25;
+        context.font = "11px sans-serif";
+        context.setLineDash([3, 4]);
+        if (xa !== null && xb !== null && ya !== null && yb !== null) {
+          context.beginPath(); context.moveTo(xa, ya); context.lineTo(xb, yb); context.stroke();
+          context.fillText("A", xa + 4, ya - 4); context.fillText("B", xb + 4, yb - 4);
+          paintedBoxPlan++;
+        }
+        const levels: [string, string][] = [
+          ["F1.0", boxPlan.fibonacci.f1], ["F1.618", boxPlan.fibonacci.f1618],
+          ["F2.618", boxPlan.fibonacci.f2618],
+          ...boxPlan.limit_prices.map((price, i): [string, string] => ["P" + (i + 1), price]),
+        ];
+        if (xb !== null) for (const [label, price] of levels) {
+          const y = candleSeries.priceToCoordinate(Number(price));
+          if (y === null || xb >= priceWidth) continue;
+          context.beginPath(); context.moveTo(Math.max(0, xb), y);
+          context.lineTo(priceWidth, y); context.stroke();
+          context.fillText(label, Math.max(0, priceWidth - 49), y - 3);
+          paintedBoxPlan++;
+        }
+        context.setLineDash([]);
+      }
       // Purple prior: second confirmed touch of the H1 main line, at its wick.
       // Old levels stop at the time of replacement; only the latest level
       // extends into the right-hand whitespace. No future version is shown.
@@ -519,6 +556,7 @@ function ReplayChart({ document, cursor, paperOverlay, paperFacts, showTrendGeom
       canvas.dataset.visibleFills = String(rendered);
       canvas.dataset.visiblePaperFills = String(paintedPaper);
       canvas.dataset.visibleOriginalGeometry = String(paintedOriginal);
+      canvas.dataset.visibleBoxPlanGeometry = String(paintedBoxPlan);
       canvas.dataset.visibleGeometry = String(knownLines.length);
       canvas.dataset.visibleEarlyGeometry = String(showTrendGeometry ? earlyGeometry.length : 0);
       canvas.dataset.visiblePriors = String(knownPriors.length);
@@ -631,7 +669,8 @@ export function ReplayPage() {
       start: new Date(startMs).toISOString().slice(0, 16),
       end: new Date(endExclusive - 60_000).toISOString().slice(0, 16),
       pattern: paperFacts.setup_context?.status === "EXACT_D2_LINK"
-        ? paperFacts.setup_context.setup.pattern : paperFacts.candidate_geometry?.pattern ?? null,
+        ? paperFacts.setup_context.setup.pattern : paperFacts.candidate_geometry?.pattern ??
+          (paperFacts.box_plan_geometry ? "IKIGAI_BOX" : null),
     };
   }, [paperFacts]);
   const paperOverlay = useMemo(
@@ -1422,6 +1461,7 @@ export function ReplayPage() {
           ? `; ещё ${paperFacts.execution_allocations.length - 8} исполнений в исходном JSON` : ""}
         {" · "}CLOSE не доказывает STOP или TAKE: причина закрытия отсутствует в экспорте.
         {" · "}JSON без криптографической подписи; не виртуальные сделки и не решения Robot.
+        {paperFacts.box_plan_geometry && " · Лиловые A/B, F1.0/F1.618/F2.618 и P1–P4: сохранённый план Box (не архив Telegram, не фактические исполнения)"} 
         {paperSetupContext && (
           paperSetupContext.status !== "EXACT_D2_LINK"
             ? " · D2: нет подтверждённой связи с исходным setup" +

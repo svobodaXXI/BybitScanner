@@ -296,7 +296,7 @@ def _verified_archive_geometry(*, candidate_id, symbol, timeframe, pattern,
     }
 
 
-def project_exact_candidate_archive_geometry(snapshot, projection, d2_context):
+def _exact_candidate_proof(snapshot, projection, d2_context):
     """Independent observational archive proof, never a D2 setup or decisions.
 
     The caller has already authorized and projected this exact closed episode
@@ -324,6 +324,56 @@ def project_exact_candidate_archive_geometry(snapshot, projection, d2_context):
             or proof.get("evidence_scope") not in {
                 "EXACT_WEDGE_CANDIDATE_ENTRY_ORDER_EXECUTION_EPISODE",
                 "EXACT_ROBOT_CANDIDATE_ENTRY_ORDER_EXECUTION_EPISODE"}):
+        return None
+    return proof
+
+
+def project_exact_box_plan_geometry(snapshot, projection, d2_context):
+    """Read-only planned anchors/grid, NOT an original Telegram archive."""
+    evidence = getattr(snapshot, "wedge_evidence", None)
+    if not isinstance(evidence, dict) or not evidence.get("box_handoffs"):
+        return None
+    proof = _exact_candidate_proof(snapshot, projection, d2_context)
+    if proof is None or proof.get("pattern") != "IKIGAI_BOX":
+        return None
+    links = [link for link in evidence["box_handoffs"]
+             if link.get("robot_candidate_id") == proof.get("candidate_id")]
+    if len(links) != 1:
+        return None
+    link = links[0]
+    frozen = link.get("frozen_plan")
+    if not isinstance(frozen, dict):
+        return None
+    identity = frozen["identity"]
+    if (identity["symbol"] != projection["symbol"]
+            or identity["direction"] != projection["side"]
+            or identity["timeframe"] not in {"1", "5"}
+            or proof["source_timeframe"] not in {
+                identity["timeframe"], identity["timeframe"] + "m"}
+            or frozen["decision_time_ms"] > projection["opened_at_ms"]):
+        return None
+    return {
+        "schema": "BYBITSCANNER_FROZEN_BOX_PLAN_GEOMETRY_V1",
+        "source": "VERIFIED_DURABLE_BOX_PLAN_NOT_ORIGINAL_ARCHIVE",
+        "trade_episode_id": projection["trade_episode_id"],
+        "source_revision": snapshot.source_revision,
+        "source_candidate_id": link["source_candidate_id"],
+        "robot_candidate_id": link["robot_candidate_id"],
+        "symbol": identity["symbol"], "side": identity["direction"],
+        "timeframe": identity["timeframe"], **{
+            key: frozen[key] for key in (
+                "source_snapshot_sha256", "decision_time_ms", "anchors",
+                "fibonacci", "limit_prices",
+            )
+        },
+        "a_time_ms": identity["a_time_ms"], "b_time_ms": identity["b_time_ms"],
+    }
+
+
+def project_exact_candidate_archive_geometry(snapshot, projection, d2_context):
+    """Exact archived signal only; no fabricated geometry or D2 link."""
+    proof = _exact_candidate_proof(snapshot, projection, d2_context)
+    if proof is None:
         return None
     candidate_id = proof.get("candidate_id")
     trades = [t for t in snapshot.wedge_evidence["trades"]
