@@ -32,7 +32,7 @@ from tools.SwordCounter.view_model import GREEN, RED, GREY, WORKER_FAILED, build
 REFRESH_INTERVAL_S = 10
 POLL_MS = 500
 SWORDS_ICON = "⚔"   # crossed swords
-WINDOW_TITLE = "SwordCounter"   # the crossed-swords icon sits left of it (swords.ico)
+WINDOW_TITLE = "Treasury Guardian"   # the crossed-swords icon sits left of it (swords.ico)
 GEAR_ICON = "⚙"
 FONT = "Segoe UI"
 COUNT_FONT_PT = 23   # reduced from 26; also reduces vertical gap between sword rows
