@@ -3239,6 +3239,22 @@ class PaperRuntime:
             # would be too late. Never dispatch any close until every active
             # symbol proves at most one Robot owner.
             candidates = self.store.load_active_robot_candidate_states(self._paper_account_id)
+            # Every durable OPEN trade must still have an active matching
+            # candidate. The candidate-driven walk below cannot see a trade
+            # whose candidate became terminal independently; without this
+            # pre-dispatch fence reconciliation could falsely succeed on FLAT.
+            open_candidates_by_id = {
+                item.candidate_id: item.symbol
+                for item in candidates if item.status == "OPEN"
+            }
+            for trade in self.store.load_open_robot_trades(self._paper_account_id):
+                if open_candidates_by_id.get(trade.candidate_id) != trade.symbol:
+                    unresolved_trade_ids.add(trade.trade_id)
+            if unresolved_trade_ids:
+                return fail(
+                    "reconcile_robot found OPEN trade without matching OPEN candidate: "
+                    + ",".join(sorted(unresolved_trade_ids))
+                )
             symbols = sorted({
                 item.symbol for item in candidates if item.status in {"APPROVED", "OPEN"}
             }, key=lambda item: item.value)
