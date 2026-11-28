@@ -1,5 +1,7 @@
 # 9. CURRENT REVISION RECORD
 
+`4.58` routes narrowly eligible routine squash merges through the owner's standing permission in GITHUB_FIRST_WORKFLOW; named-PR approval remains for all excluded or uncertain changes. No runtime, release, trading, acceptance or mandatory check authority changes.
+
 `4.57` integrates the stable owner-approved direct-command-first §7.0 rule into the routed packages; preserves the independent release and safety boundaries.
 
 `4.56` connects the existing task-context/harness to the Codex economy route and clarifies its authorized local-only verification role; no new host, publication or trading permission.

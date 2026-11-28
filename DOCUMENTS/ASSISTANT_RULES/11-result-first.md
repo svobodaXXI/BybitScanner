@@ -61,8 +61,9 @@ dashboard, new approval gate or recurring meeting.
    Upon required evidence PASS, immediately
    offer/do the next *authorized* dependent step instead of launching another
    preparation round. If only a missing owner approval remains, request
-   that approval once with its exact scope and effect. Never silently merge,
-   start/resume Scanner or Robot, enable PAPER_AUTO, or enable LIVE.
+   that approval once with its exact scope and effect. For a routine merge use the
+   standing permission and report the result under `GITHUB_FIRST_WORKFLOW.md`;
+   never silently start/resume Scanner or Robot, enable PAPER_AUTO, or enable LIVE.
    Report only the actual delta, reused/proven evidence, a real blocking
    fact (if any), and **one** next action. No new per-step document or
    mandatory reporting form.
@@ -137,8 +138,8 @@ written plan or preflight project.
   without sending every small decision back to the owner. Keep the prompt lean;
   existing AGENTS/protocol/contracts remain linked, not copied.
 - Distinguish technical choices (agent-owned), material product/strategy
-  decisions (owner-owned), and explicitly owner-only trading/runtime/merge
-  actions. Anticipate the **first unavoidable** owner action and request it
+  decisions (owner-owned), and explicitly owner-only trading/runtime actions
+  and merges outside the bounded routine publication rule. Anticipate the **first unavoidable** owner action and request it
   once at the actual dependency boundary. Never imply that a broad prompt
   delegates an expressly nondelegable Scanner/Robot launch.
 - Give the executor the end state, allowed scope, non-negotiable invariants,

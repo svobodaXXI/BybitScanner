@@ -58,9 +58,9 @@ WORKFLOW
 
 ## B. BybitScanner Project Instructions
 
-### Proposed complete compact Project Instructions — 2026-11-27 (pilot, not installed)
+### Complete compact Project Instructions — 2026-11-27 (owner-confirmed installed)
 
-Full candidate for the project field, not Global Custom Instructions. Activate only after the agreed validation and owner activation; ordinary work continues under current authority until then. Detailed contracts are reached through AGENTS.md; the historical snapshot is retained below for comparison. This candidate does not change merge or runtime permissions.
+Full text for the project field, not Global Custom Instructions. Owner confirmed activation after PR #1389. Detailed current contracts are reached through AGENTS.md; the historical snapshot is retained below for comparison. The installed text is unchanged: its existing-approval-gates instruction refers to the current repository-owned publication rule, including the bounded routine merge permission only after that rule is separately approved and merged. No runtime permissions change.
 
 ```text
 This is the BybitScanner project (svobodaXXI/BybitScanner).

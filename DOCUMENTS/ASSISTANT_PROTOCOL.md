@@ -2,7 +2,7 @@
 
 Version:
 
-4.57
+4.58
 
 Date:
 
@@ -119,7 +119,7 @@ For tasks whose outcome is code or a PR, select an execution environment with
 write access to the intended repository and a supported task harness **before**
 delegation. The assigned agent owns the complete chain: scoped edit, targeted
 verification, harness finish, commit, push and opening its own PR. ChatGPT owns
-PR review, CI/safety-gate verification and an owner-authorized merge.
+PR review, CI/safety-gate verification and merge under the canonical publication rule.
 
 Do not ask the owner to copy patches, paste code between agents, upload working
 tree diffs, perform routine git push or run GitHub UI merge merely because an
@@ -135,24 +135,11 @@ action rather than repeated manual patch forwarding. Never claim that a
 read-only sandbox's task finish passed if it failed.
 
 All existing scope, owner authorization, CI/harness, PAPER/LIVE, safety,
-runtime-start and no-auto-merge boundaries still apply.
+runtime-start and no-blanket-auto-merge boundaries still apply.
 
-### GitHub PR merge via ChatGPT — OWNER RULE 2026-10-10
+### GitHub PR merge via ChatGPT — owner rule 2026-10-10, amended 2026-11-27
 
-The owner should not need to click "Squash and merge" on GitHub when the
-connected integration can do it. Explicit permission to merge named PR(s), or
-a standalone «э» in direct response to the assistant's immediately preceding
-explicit proposal to merge those named PR(s), authorizes **only those PRs**.
-No blanket auto-merge or inference from CI success alone.
-
-Before merge, verify each PR's target base, current head SHA, mergeability,
-required CI/reviews and known safety blockers. Use squash merge with the
-expected head SHA and confirm the resulting GitHub merge commit. On conflict,
-changed head or unsatisfied gate, stop without merge. A new «э» after a blocker
-authorizes only the clearly proposed next remedy, not bypassing a gate.
-
-Owner-only runtime starts, PAPER/LIVE constraints, and mandatory safety gates
-remain unchanged. Never merge other PRs implicitly.
+`DOCUMENTS/GITHUB_FIRST_WORKFLOW.md` → Bounded routine squash merge owns the exact standing permission, exclusions and evidence gates. ChatGPT performs eligible routine merges without a redundant owner turn; all other merges require named-PR approval. No blanket auto-merge. Verify exact head/base, scope, required checks/reviews, mergeability and resulting squash commit; stop on an unresolved gate. No release, runtime, trading or acceptance authority follows from merge.
 
 ### RESULT-FIRST NEXT-ACTION GATE — OWNER RULE 2026-10-17
 (Operationalizes OUTCOME-FIRST EXECUTION, owner rule 2026-10-08)
@@ -217,8 +204,9 @@ dashboard, new approval gate or recurring meeting.
    Upon required evidence PASS, immediately
    offer/do the next *authorized* dependent step instead of launching another
    preparation round. If only a missing owner approval remains, request
-   that approval once with its exact scope and effect. Never silently merge,
-   start/resume Scanner or Robot, enable PAPER_AUTO, or enable LIVE.
+   that approval once with its exact scope and effect. For a routine merge use the
+   standing permission and report the result under `GITHUB_FIRST_WORKFLOW.md`;
+   never silently start/resume Scanner or Robot, enable PAPER_AUTO, or enable LIVE.
    Report only the actual delta, reused/proven evidence, a real blocking
    fact (if any), and **one** next action. No new per-step document or
    mandatory reporting form.
@@ -293,8 +281,8 @@ written plan or preflight project.
   without sending every small decision back to the owner. Keep the prompt lean;
   existing AGENTS/protocol/contracts remain linked, not copied.
 - Distinguish technical choices (agent-owned), material product/strategy
-  decisions (owner-owned), and explicitly owner-only trading/runtime/merge
-  actions. Anticipate the **first unavoidable** owner action and request it
+  decisions (owner-owned), and explicitly owner-only trading/runtime actions
+  and merges outside the bounded routine publication rule. Anticipate the **first unavoidable** owner action and request it
   once at the actual dependency boundary. Never imply that a broad prompt
   delegates an expressly nondelegable Scanner/Robot launch.
 - Give the executor the end state, allowed scope, non-negotiable invariants,
@@ -1580,6 +1568,8 @@ extends `8.7` (no user as file transport) and `8.8` (machine-applied file change
 ---
 
 # 9. CURRENT REVISION RECORD
+
+`4.58` routes narrowly eligible routine squash merges through the owner's standing permission in GITHUB_FIRST_WORKFLOW; named-PR approval remains for all excluded or uncertain changes. No runtime, release, trading, acceptance or mandatory check authority changes.
 
 `4.57` integrates the stable owner-approved direct-command-first §7.0 rule into the routed packages; preserves the independent release and safety boundaries.
 

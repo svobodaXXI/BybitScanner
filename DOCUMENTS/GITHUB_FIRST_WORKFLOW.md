@@ -23,7 +23,7 @@ Do not insert a local publication round-trip between GitHub-authored changes and
 ## Result-first hand-off between delivery stages
 
 At each transition (scoped implementation → evidence → PR/CI review →
-owner-approved integration → runtime acceptance), apply the
+authorized integration → runtime acceptance), apply the
 `AGENTS.md` Result-first transition gate. This is a decision inside the
 existing PR/task workflow, not an extra ticket, approval or dashboard.
 
@@ -40,7 +40,7 @@ existing PR/task workflow, not an extra ticket, approval or dashboard.
 - A known bounded limitation may be accepted by the owner only where the
   relevant contract permits it. Unknown material safety facts still need
   narrow evidence. STOP/TAKE, fail-closed, continuity, reconciliation,
-  PAPER/LIVE separation and owner-only runtime/merge approvals are unchanged.
+  PAPER/LIVE separation and owner-only runtime approvals are unchanged; merge authority is limited to the rule below.
 - For a code-ready trading change, GitHub integration is **not** a claim of
   real PAPER success; after safe integration, offer the owner the smallest
   authorized runtime acceptance step. Count completed protected PAPER
@@ -48,6 +48,21 @@ existing PR/task workflow, not an extra ticket, approval or dashboard.
 
 Do not change CI filters, branch protections, transaction/harness contracts
 or trading safety rules to make the critical path appear green.
+
+## Bounded routine squash merge — OWNER RULE 2026-11-27
+
+The owner grants ChatGPT standing permission to squash-merge a single safe routine PR after required evidence passes. This is a narrow publication permission, not automatic task authorization, GitHub auto-merge, bulk merge, deployment or acceptance.
+
+All of the following must hold:
+
+- The task is already authorized, the complete reviewed diff is small and scoped to that task, and the PR belongs to the current workstream without unrelated or concurrent conflicting changes.
+- The change is demonstrably routine and non-safety-critical (for example, editorial documentation, independent tests that do not weaken gates, or a bounded deterministic non-trading fix). Establish impact from actual callers, contracts and the diff, not title, file extension, label or CI alone.
+- No direct or indirect change to strategy, signal selection or geometry affecting trades, execution, order/position lifecycle, risk, protection, admission, reconciliation, account/data ownership, financial calculations, PAPER/LIVE boundaries, runtime control, releases, credentials/security, persisted-data contracts, material architecture, governance/authority, CI or harness/required checks. No weakening, deletion or reinterpretation of a safety, verification or owner-approval requirement. Changes to this permission itself are excluded.
+- Verify intended active base and exact current head, complete scope, mergeability, mandatory CI/reviews and applicable focused proof/acceptance prerequisites; no unresolved blocker or missing/ambiguous safety evidence. Never bypass branch protections or required reviews. A known restriction from the owner or owning spec prevails.
+
+If any condition is false or unknown, retain the existing named-PR owner approval requirement after all mandatory gates pass. An explicit owner approval, or a standalone «э» directly answering an explicit proposal to merge that named PR, covers only that named scope. Re-review after material diff/base changes; stop on conflicts, changed head or unmet gates. No permission is inferred from CI, a PR description or another agent's status.
+
+For an eligible PR, perform squash merge with expected head SHA, verify the resulting commit and report the PR, SHA, proof and bounded-routine basis in the existing PR/task record. Do not enable unattended auto-merge or create a separate approval workflow. A merge never grants local installation, VPS release, STOP/START, admission, trading, LIVE or owner-only real-world acceptance. If a separate pre-merge acceptance or permission applies, it remains binding. This rule takes effect only after its own separately owner-approved PR is merged into the active branch.
 
 ## Review-fix continuity
 
