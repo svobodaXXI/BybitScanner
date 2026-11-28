@@ -1,5 +1,7 @@
 # 9. CURRENT REVISION RECORD
 
+`4.59` reconciles clickable replies with explicit owner approval (historical PR #1142): a functional button may submit the exact new owner message for one bounded operation, never bypass a gate or grant additional authority. Text fallback and all safety restrictions remain binding.
+
 `4.58` routes narrowly eligible routine squash merges through the owner's standing permission in GITHUB_FIRST_WORKFLOW; named-PR approval remains for all excluded or uncertain changes. No runtime, release, trading, acceptance or mandatory check authority changes.
 
 `4.57` integrates the stable owner-approved direct-command-first §7.0 rule into the routed packages; preserves the independent release and safety boundaries.
