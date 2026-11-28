@@ -1,3 +1,56 @@
+# BybitScanner — актуальное состояние кампании
+
+Статус: ACTIVE  
+GAME_MODE: ACTIVE  
+Обновлено: 2026-11-27  
+Кампания: **«PAPER Robot: Гильдия паттернов»**.
+
+Это компактная GTD-проекция для автоматического восстановления, не источник торговых полномочий. Текущая команда владельца > BACKLOG/owning spec > PROJECT_STATE > QUEST_STATE > память чата. На момент обновления верхние записи BACKLOG и PROJECT_STATE старше ноябрьских решений; сверять их с актуальными owner decisions, [планёркой #1077](https://github.com/svobodaXXI/BybitScanner/issues/1077) и owning issue/ChangeRequest. Не переносить старый приоритет автоматически. Исторические разделы ниже сохранены для справки, не являются текущими активными квестами; для обычного bootstrap достаточно этого блока.
+
+## 🎯 Активный квест направления SCANNER_ROBOT — «Охота за импульсом»
+
+Ближайший босс — **«Доказательство L2»**. Цель: причинная проверка входа, поглощения и разворота по фактическому стакану и publicTrade, а не OHLC-прокси. Один существующий Robot/market-data контур; не создавать дублирующие подписки или execution owner.
+
+- [#1253 «Устойчивое поглощение»](https://github.com/svobodaXXI/BybitScanner/issues/1253) (Box): PR #1376 исправил выбор доступного защищённого host для private capture, merged a8909e073ffc33301cff179b7d9339d072be0ef5; включён в установленную сборку 64a30dea. По [read-only отчёту 27.11](https://github.com/svobodaXXI/BybitScanner/issues/1077#issuecomment-7208473341) ожидаемый .box-l2-private.json отсутствовал на проверенном canonical пути. Это не доказательство отсутствия L2 вообще или неработоспособности механизма. Не повторять тот же поиск без нового факта. Следующий шаг SCANNER_ROBOT: локализовать точную границу получения пригодного Box evidence на существующем пути при новых данных; любые новые capture/runtime изменения требуют отдельной authority. Полноценное 20s окно, causal receipts, trading efficacy не доказаны.
+- [#1254 «Разворот клина»](https://github.com/svobodaXXI/BybitScanner/issues/1254) (Wedge): отдельно разрешена [bounded read-only проверка](https://github.com/svobodaXXI/BybitScanner/issues/1077#issuecomment-7208413447) существующего .wedge-pre-breakout.json, фактического capture opt-in, build, host receipt/ACK/generation/sequence. Результат ещё не подтверждён. Не дублировать Box scope, не запускать сбор, подписки или перезапуск.
+- Ранний вход: установленные ранее исправления и dual opt-in подтверждались 25.11 ([#1077](https://github.com/svobodaXXI/BybitScanner/issues/1077#issuecomment-7162750462)); эффект на реальных eligible Wedge, net PnL и принятие стратегии не доказаны.
+- [#1306](https://github.com/svobodaXXI/BybitScanner/issues/1306): ROBOT_EXIT сохраняет собственный scope механики защитного STOP, partial/full exit, BE, tighten-only и повторного ретеста. Исследование after-cost эффективности отдельно у AUDIT. Никакого переноса ответственности между чатами.
+
+## 🏁 Следующий крупный квест (QUEUED) — «Единая боевая логика»
+
+[#1385](https://github.com/svobodaXXI/BybitScanner/issues/1385), [решение в планёрке](https://github.com/svobodaXXI/BybitScanner/issues/1077#issuecomment-7208565205), 27.11.2026.
+
+**Только после завершения текущих разрозненных задач.** SCANNER_ROBOT owns интеграционное исследование и подробную оптимизацию. Собрать фактически реализованные механики в единый последовательный алгоритм: signal/Admission → entry → build → protection → management → exit/re-entry. Определить состояния, переходы, приоритеты, конфликты, тайминги, UNKNOWN/stale, idempotency и recovery. Не заменять hard STOP, не допускать одновременных противоречивых распоряжений, не дублировать контуры. Оптимизация — по реальным source-owned PAPER fills/fees, L2/publicTrade с host receipt, depth/latency, winners+losers и holdout; существующий симулятор для детерминированной логики. Результат: спецификация алгоритмов, матрица конфликтов/сценариев, сравнительная оценка и минимальный план внедрения. Внедрение и параметры — отдельное решение владельца. Текущую работу не прерывать.
+
+## 🧭 Соседние направления (координация, не делегирование)
+
+- **AUDIT «Защита капитала»**: [каноническая когорта](https://github.com/svobodaXXI/BybitScanner/issues/1077#issuecomment-7207306237) 46 автономных Box, 639/639 allocated fills совпали с источником; существенная доля ещё рабочих ENTRY LIMIT на checkpoints. Это не эффективность выхода. [Отсутствует доказательство causal L2](https://github.com/svobodaXXI/BybitScanner/issues/1077#issuecomment-7208473341); [пять аномалий clock-vs-commit](https://github.com/svobodaXXI/BybitScanner/issues/1077#issuecomment-7208549162) не доказывают fill-after-cancel. Не повторять историческую проверку без новых данных.
+- **ROBOT_EXIT**: #1306 и [требования владельца 25.11](https://github.com/svobodaXXI/BybitScanner/issues/1306#issuecomment-7157244043). При UNKNOWN защитные ордера остаются; полный выход/re-entry требуют доказанного состояния и собственной authority.
+- **TELEGRAM_UI «Радар рынка»**: #1255; [PR #1383 merged](https://github.com/svobodaXXI/BybitScanner/issues/1077#issuecomment-7207632755), release/visual acceptance отдельно. [Очередь владельца](https://github.com/svobodaXXI/BybitScanner/issues/1077#issuecomment-7208273975): #930 «Молниеносный терминал», #930 «Рабочие кнопки», #1311 «Верный портал».
+- **GEOMETRY**: #1375 MIRROR — [owner-authorized release](https://github.com/svobodaXXI/BybitScanner/issues/1077#issuecomment-7193854432), собственная post-release acceptance; статус конкретной геометрии/прогона проверять по owning issue. GEO-U1 H28 exhaustive v4 PARKED согласно BACKLOG, не возобновлять по старой записи H27.
+- **ANALYSIS**: [#1372 desktop publication](https://github.com/svobodaXXI/BybitScanner/issues/1077#issuecomment-7165712332) подтверждена, real episode acceptance отдельно. Актуальную очередь MachineTime уточнять по собственным task records.
+- **MONOLITH**: наблюдение работоспособности и штатный выпуск отдельно авторизованных пакетов. Не заменяет ответственность остальных направлений за их результат.
+
+## 🛡️ Оперативный checkpoint (не текущее состояние без повторного наблюдения)
+
+[Отчёт #1212](https://github.com/svobodaXXI/BybitScanner/issues/1212#issuecomment-7208449754), 2026-11-27 02:48:13 UTC: build 64a30dea74212a8cc768c723575c0c9f94d1514d, ROBOT_RUNNING, SCANNER_RUNNING, PAPER_AUTO, recovery READY, Telegram READY, backend REACHABLE, 5 positions, REPORTED_COVERED, delivery_gap=false. Признаки восстановления работоспособности, не доказательство прибыльности, корректности каждой позиции или всех pattern-specific acceptance. При новом safety-блокере руководствоваться BACKLOG и owning authority.
+
+[SSH laptop подтверждён 27.11](https://github.com/svobodaXXI/BybitScanner/issues/1077#issuecomment-7207085065) по документированному маршруту; PC banner timeout не диагностирован. Использовать DOCUMENTS/WINDOWS_PC_VPS_ACCESS_RECOVERY_20261108.md, не повторять слепые транспортные пробы. Канонические ярлыки владельца неизменны: start_scanner, «Запуск робота», «Остановить робота». PAPER only; LIVE запрещён; Admission/STOP/TAKE и fail-closed сохраняются. Реальный Scanner acceptance — полный owner-run universe/Telegram по AGENTS.md, не агентский запуск.
+
+## 🏆 Канонический счёт
+
+**285 XP; уровень 3 — «Следопыт клиньев».** Последняя запись DOCUMENTS/QUEST_REWARD_LEDGER.md — REWARD-RECONCILIATION-NOTE-20260927. Новых XP, уровней или ачивок без отдельного доказательного ledger entry не заявлять. Старые достижения и добыча сохранены в ledger/историческом разделе. Текущий checkpoint не является наградой.
+
+## Автоматическое продолжение
+
+AGENTS.md → этот актуальный блок → приоритет BACKLOG + более свежие решения владельца/owning issue → только необходимый текущий evidence. Видимый русский игровой режим обязателен. «э» продолжает ближайший незавершённый разрешённый шаг своего направления, а не историческую запись или чужой scope. Не делать ContextDump/Project Sync без реального триггера.
+
+---
+
+# Архив предыдущих checkpoint (до 2026-10-04)
+
+**История, не актуальная очередь.** Следующие старые заголовки ACTIVE/NOW и следующие шаги сохранены дословно как датированные исторические записи. Они не переопределяют актуальный блок выше, текущую команду владельца, BACKLOG или owning authority. Не загружать архив при обычном bootstrap.
+
 ## 🎯 ACTIVE QUEST — GEO-U1 SLICE H27 — 2026-10-04
 
 Owner-authorized v4 calibration gate preparation; no calibration run. The v4
