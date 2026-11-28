@@ -136,22 +136,30 @@ def _market_worker(chat_id):
 def _run_market_radar(stop):
     """Existing Telegram worker only; follow Scanner state read-only.
 
-    No scanner/robot lifecycle commands. On pause, stop or unavailable
-    authority, clear the radar rather than advertise an old live ranking.
+    Periodic public-trade slices share the candle worker; no permanent
+    subscription or separate service. Pause/stop clears both caches.
     """
+    from telegram_market_burst import sample_public_burst
     source = None
     running = False
     next_probe = 0.0
+
+    def should_continue():
+        nonlocal running, next_probe
+        if stop.is_set() or _SHUTDOWN_REQUESTED.is_set():
+            return False
+        if time.monotonic() >= next_probe:
+            try:
+                running = (_scanner_request()["mode"] == "SCANNER_RUNNING")
+            except Exception:
+                running = False
+            next_probe = time.monotonic() + 5
+        return running
+
     try:
         while not stop.is_set() and not _SHUTDOWN_REQUESTED.is_set():
             started = time.monotonic()
-            if started >= next_probe:
-                try:
-                    running = (_scanner_request()["mode"] == "SCANNER_RUNNING")
-                except Exception:
-                    running = False
-                next_probe = time.monotonic() + 5
-            if not running:
+            if not should_continue():
                 _MARKET_RADAR.clear()
                 stop.wait(1)
                 continue
@@ -162,9 +170,10 @@ def _run_market_radar(stop):
                 if source.backoff_remaining() > 0:
                     stop.wait(1)
                     continue
-                _MARKET_RADAR.step(source.symbols, source.candles, source.recent_trades,
+                _MARKET_RADAR.step(source.symbols, source.candles, sample_public_burst,
                                    now_ms=int(time.time() * 1000),
-                                   monotonic_now=time.monotonic())
+                                   monotonic_now=time.monotonic(),
+                                   should_continue=should_continue)
             except Exception:
                 # A public-data failure never exits the Telegram/Scanner loop.
                 stop.wait(5)
