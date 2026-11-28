@@ -11,6 +11,7 @@ const MAX_HISTORY_MS = 7 * 86_400_000;
 export type EpisodeWindowFacts = {
   opened_at_ms: number;
   closed_at_ms: number;
+  box_plan_geometry?: { a_time_ms: number; b_time_ms: number };
   setup_context?: {
     status: string;
     geometry_status: string;
@@ -39,6 +40,7 @@ export function verifiedEpisodeHistoryWindow(facts: EpisodeWindowFacts, nowMs: n
     ? facts.setup_context.original_geometry : undefined;
   const anchorTimes = geometry?.boundaries.flatMap(boundary =>
     boundary.anchors.map(anchor => anchor.bar_open_time_ms)) ?? [];
+  if (facts.box_plan_geometry) anchorTimes.push(facts.box_plan_geometry.a_time_ms, facts.box_plan_geometry.b_time_ms);
   const earliestAnchor = anchorTimes.length ? Math.min(...anchorTimes) : null;
   const anchoredStart = earliestAnchor === null ? baseStart
     : Math.max(M5_MS, Math.floor(earliestAnchor / M5_MS) * M5_MS - M5_MS);

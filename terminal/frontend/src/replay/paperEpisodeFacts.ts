@@ -69,6 +69,15 @@ export type PaperCandidateGeometry = {
   geometry: PaperOriginalGeometry;
 };
 
+export type PaperBoxPlanGeometry = {
+  decision_time_ms: number;
+  a_time_ms: number;
+  b_time_ms: number;
+  anchors: { a_price: string; b_price: string };
+  fibonacci: { f1: string; f1618: string; f2618: string };
+  limit_prices: string[];
+};
+
 export type GeometryRevisionObservation = {
   revision: number;
   event_time_ms: number;
@@ -98,6 +107,7 @@ export type PaperEpisodeFacts = {
   execution_allocations: PaperAllocation[];
   setup_context?: PaperD2Context;
   candidate_geometry?: PaperCandidateGeometry;
+  box_plan_geometry?: PaperBoxPlanGeometry;
   geometry_revisions?: GeometryRevisionObservation[];
 };
 
@@ -392,6 +402,43 @@ export function visibleGeometryRevisions(facts: PaperEpisodeFacts | null, at: nu
   return at === null ? [] : (facts?.geometry_revisions ?? []).filter(e => e.event_time_ms <= at);
 }
 
+function parseBoxPlanGeometry(raw: unknown, facts: Record<string, unknown>, opened: number,
+  d2: PaperD2Context | undefined): PaperBoxPlanGeometry {
+  const row = object(raw);
+  if (row.schema !== "BYBITSCANNER_FROZEN_BOX_PLAN_GEOMETRY_V1" ||
+      row.source !== "VERIFIED_DURABLE_BOX_PLAN_NOT_ORIGINAL_ARCHIVE" ||
+      facts.owner !== "ROBOT" || facts.cohort !== "ROBOT" ||
+      !d2 || !["D2_STORE_ABSENT", "NO_EXACT_EPISODE_LINK"].includes(d2.status) ||
+      row.trade_episode_id !== facts.trade_episode_id || row.source_revision !== facts.source_revision ||
+      row.symbol !== facts.symbol || row.side !== facts.side ||
+      !["1", "5"].includes(row.timeframe as string) ||
+      typeof row.source_candidate_id !== "string" || !/^box-plan-[a-f0-9]{64}$/.test(row.source_candidate_id) ||
+      row.robot_candidate_id !== row.source_candidate_id.replace(/^box-plan-/, "box-robot-") ||
+      typeof row.source_snapshot_sha256 !== "string" || !/^[a-f0-9]{64}$/.test(row.source_snapshot_sha256))
+    throw new Error("Неподтверждённый план Box");
+  const a = time(row.a_time_ms, "A"), b = time(row.b_time_ms, "B");
+  const decision = time(row.decision_time_ms, "decision_time_ms");
+  if (!(a < b && b <= decision && decision <= opened)) throw new Error("Хронология Box");
+  const anchors = object(row.anchors), fib = object(row.fibonacci);
+  if (!Array.isArray(row.limit_prices) || row.limit_prices.length !== 4)
+    throw new Error("Неполная сетка Box");
+  const result = {
+    decision_time_ms: decision, a_time_ms: a, b_time_ms: b,
+    anchors: { a_price: decimal(anchors.a_price, "A", true), b_price: decimal(anchors.b_price, "B", true) },
+    fibonacci: { f1: decimal(fib.f1, "F1", true), f1618: decimal(fib.f1618, "F1.618", true),
+      f2618: decimal(fib.f2618, "F2.618", true) },
+    limit_prices: row.limit_prices.map((value, i) => decimal(value, "P" + (i + 1), true)),
+  };
+  if (result.anchors.b_price !== result.fibonacci.f1) throw new Error("Несогласованные уровни Box");
+  return result;
+}
+
+export function visibleBoxPlan(facts: PaperEpisodeFacts | null, overlay: PaperOverlay, at: number | null) {
+  const plan = facts?.box_plan_geometry;
+  return overlay.status === "MATCHED" && plan && at !== null && at >= plan.decision_time_ms
+    ? plan : undefined;
+}
+
 /** Own immutable facts only; no remote requests, persistence or exchange access. */
 export function parsePaperEpisodeFacts(input: unknown): PaperEpisodeFacts {
   const f = object(input);
@@ -479,6 +526,11 @@ export function parsePaperEpisodeFacts(input: unknown): PaperEpisodeFacts {
     ? parseD2Context(f.setup_context, f.symbol, f.side, first.controller, opened) : undefined;
   const candidate = f.candidate_geometry !== undefined
     ? parseCandidateGeometry(f.candidate_geometry, f, opened, d2) : undefined;
+  let boxPlan: PaperBoxPlanGeometry | undefined;
+  if (f.box_plan_geometry !== undefined && !candidate) {
+    try { boxPlan = parseBoxPlanGeometry(f.box_plan_geometry, f, opened, d2); }
+    catch { boxPlan = undefined; } // Never hide valid executions for optional geometry.
+  }
   let revisions: GeometryRevisionObservation[] | undefined;
   if (f.geometry_revisions !== undefined && f.owner === "ROBOT" && f.cohort === "ROBOT") {
     // Optional malformed geometry must not hide verified executions.
@@ -496,6 +548,7 @@ export function parsePaperEpisodeFacts(input: unknown): PaperEpisodeFacts {
     pnl_usdt: pnl, execution_allocations: allocations,
     ...(d2 ? { setup_context: d2 } : {}),
     ...(candidate ? { candidate_geometry: candidate } : {}),
+    ...(boxPlan ? { box_plan_geometry: boxPlan } : {}),
     ...(revisions ? { geometry_revisions: revisions } : {}),
   };
 }

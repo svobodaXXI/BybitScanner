@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { parseReplayDocument, type ReplayDocument } from "./replayModel";
 import { isReplayUsdtSymbol, parseRunCoordinates, makeWedgeRunRequest, onlyWedges, parseWedgeStatus } from "./runSetup";
 import {
-  matchPaperFactsToMarket, parsePaperEpisodeFacts, revealedPaperMarkers, visibleGeometryRevisions, visiblePaperExecutionCounts,
+  matchPaperFactsToMarket, parsePaperEpisodeFacts, revealedPaperMarkers, visibleGeometryRevisions, visiblePaperExecutionCounts, visibleBoxPlan,
 } from "./paperEpisodeFacts";
 
 const t = Date.UTC(2026, 9, 1);
@@ -426,4 +426,33 @@ describe("Recorded wedge revisions", () => {
     expect(broken.geometry_revisions).toBeUndefined();
     expect(broken.execution_allocations).toHaveLength(2);
   });
+});
+
+
+it("shows only verified saved Box plan after its decision, without converting plans to executions", () => {
+  const d2 = { status: "NO_EXACT_EPISODE_LINK", source: "TRADING_DIARY_D2",
+    geometry_status: "NOT_EXPORTED", decision_scope: "D2_OBSERVATIONS_NOT_ROBOT_RUNTIME_LOG" };
+  const box = {
+    schema: "BYBITSCANNER_FROZEN_BOX_PLAN_GEOMETRY_V1",
+    source: "VERIFIED_DURABLE_BOX_PLAN_NOT_ORIGINAL_ARCHIVE",
+    trade_episode_id: source.trade_episode_id, source_revision: source.source_revision,
+    source_candidate_id: "box-plan-" + "a".repeat(64), robot_candidate_id: "box-robot-" + "a".repeat(64),
+    source_snapshot_sha256: "b".repeat(64), symbol: source.symbol, side: source.side, timeframe: "5",
+    a_time_ms: t, b_time_ms: t + 300000, decision_time_ms: t + 600000,
+    anchors: { a_price: "112", b_price: "100" },
+    fibonacci: { f1: "100", f1618: "92", f2618: "79" },
+    limit_prices: ["94", "93.2", "92.4", "91.6"],
+  };
+  const facts = parsePaperEpisodeFacts({ ...source, setup_context: d2, box_plan_geometry: box });
+  const overlay = matchPaperFactsToMarket(facts, market());
+  expect(facts.box_plan_geometry?.fibonacci.f1618).toBe("92");
+  expect(visibleBoxPlan(facts, overlay, box.decision_time_ms - 1)).toBeUndefined();
+  expect(visibleBoxPlan(facts, overlay, box.decision_time_ms)).toEqual(facts.box_plan_geometry);
+  expect(visibleBoxPlan(facts, matchPaperFactsToMarket(facts, market("ETHUSDT")), box.decision_time_ms)).toBeUndefined();
+  for (const patch of [{ source_revision: 99 }, { robot_candidate_id: "foreign" },
+    { decision_time_ms: source.opened_at_ms + 1 }, { limit_prices: ["94"] }]) {
+    const bad = parsePaperEpisodeFacts({ ...source, setup_context: d2, box_plan_geometry: { ...box, ...patch } });
+    expect(bad.box_plan_geometry).toBeUndefined();
+    expect(bad.execution_allocations).toEqual(facts.execution_allocations);
+  }
 });

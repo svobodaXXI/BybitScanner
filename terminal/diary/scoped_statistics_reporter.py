@@ -60,7 +60,16 @@ def _verified_box_handoffs(rows):
                     **source.signal_snapshot, "source_box_candidate_id": source_id,
                 }):
             continue
-        result.append({"source_candidate_id": source_id, "robot_candidate_id": robot_id})
+        plan = source.signal_snapshot
+        result.append({
+            "source_candidate_id": source_id, "robot_candidate_id": robot_id,
+            "frozen_plan": {
+                "source_snapshot_sha256": source.snapshot_sha256,
+                "identity": plan["identity"], "decision_time_ms": plan["decision_time_ms"],
+                "anchors": plan["anchors"], "fibonacci": plan["fibonacci"],
+                "limit_prices": plan["plan"]["limit_prices"],
+            },
+        })
     return tuple(result)
 
 

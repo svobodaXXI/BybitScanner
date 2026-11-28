@@ -61,3 +61,11 @@ describe("exact PAPER episode public-M5 history window", () => {
     expect(result.episodeEndExclusive).toBe(closed);
   });
 });
+
+
+it("extends verified episode history for saved Box anchors within the existing limit", () => {
+  const a = opened - 3 * hour;
+  expect(verifiedEpisodeHistoryWindow({ ...episode(), box_plan_geometry: {
+    a_time_ms: a, b_time_ms: a + five,
+  } }, now).startMs).toBe(a - five);
+});
